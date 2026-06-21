@@ -1,0 +1,19 @@
+node_modules
+.output
+.wxt
+stats.html
+coverage
+*.tsbuildinfo
+
+# local secrets / env
+*.local
+.env*.local
+
+# test artifacts
+test-results
+playwright-report
+.playwright
+
+# os
+.DS_Store
+Thumbs.db

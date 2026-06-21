@@ -1,0 +1,51 @@
+.dz-mcp {
+  padding: 12px;
+
+  &__hint {
+    color: var(--dz-muted);
+    margin: 0 0 12px;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+
+    div {
+      display: flex;
+      flex-direction: column;
+    }
+
+    small {
+      color: var(--dz-muted);
+    }
+
+    button {
+      background: transparent;
+      border: 1px solid var(--dz-border);
+      border-radius: var(--dz-radius);
+      color: var(--dz-fg);
+      padding: 6px 12px;
+      cursor: pointer;
+      font: inherit;
+
+      &.is-connected {
+        border-color: var(--dz-accent);
+        color: var(--dz-accent);
+      }
+    }
+  }
+}

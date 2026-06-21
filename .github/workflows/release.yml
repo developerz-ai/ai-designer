@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.3.14
+
+jobs:
+  release:
+    name: Build + publish release
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Production build: tree-shaken + minified JS, minified CSS (WXT/Vite).
+      - name: Build Chrome zip
+        run: bun run release
+      - name: Build Firefox zip
+        run: bun run build:firefox && bun run zip -- -b firefox
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .output/*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      # --- Chrome Web Store publish (optional) -------------------------------
+      # Enable once the store listing + secrets exist. Requires repo secrets:
+      #   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
+      # - name: Publish to Chrome Web Store
+      #   run: bunx chrome-webstore-upload-cli@3 upload --auto-publish \
+      #     --source .output/*-chrome.zip \
+      #     --extension-id "${{ secrets.CWS_EXTENSION_ID }}" \
+      #     --client-id "${{ secrets.CWS_CLIENT_ID }}" \
+      #     --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
+      #     --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"

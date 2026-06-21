@@ -1,0 +1,45 @@
+version: 2
+updates:
+  # Bun/npm — root manifest covers the whole extension.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 14
+    groups:
+      tooling:
+        patterns:
+          - "@biomejs/*"
+          - "@types/*"
+          - "typescript"
+          - "wxt"
+          - "@wxt-dev/*"
+      vite:
+        patterns:
+          - "vite*"
+          - "@vitejs/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      ai-sdk:
+        patterns:
+          - "ai"
+          - "@ai-sdk/*"
+          - "@openrouter/*"
+      solid:
+        patterns:
+          - "solid-js"
+          - "@solidjs/*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14

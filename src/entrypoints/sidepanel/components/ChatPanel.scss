@@ -1,0 +1,60 @@
+.dz-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  &__log {
+    flex: 1;
+    list-style: none;
+    margin: 0;
+    padding: 12px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    li {
+      padding: 8px 10px;
+      border-radius: var(--dz-radius);
+      max-width: 85%;
+
+      &.is-user {
+        align-self: flex-end;
+        background: var(--dz-accent);
+        color: #1a1205;
+      }
+
+      &.is-assistant {
+        align-self: flex-start;
+        background: rgba(255, 255, 255, 0.05);
+      }
+    }
+  }
+
+  &__compose {
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    border-top: 1px solid var(--dz-border);
+
+    input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--dz-border);
+      border-radius: var(--dz-radius);
+      color: var(--dz-fg);
+      padding: 8px 10px;
+      font: inherit;
+    }
+
+    button {
+      background: var(--dz-accent);
+      border: none;
+      border-radius: var(--dz-radius);
+      color: #1a1205;
+      padding: 0 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+  }
+}

@@ -1,0 +1,41 @@
+import { defineConfig } from 'wxt';
+
+// WXT config — https://wxt.dev/api/config.html
+// Release builds are tree-shaken + minified + css-optimized via the vite block below.
+export default defineConfig({
+  srcDir: 'src',
+  modules: ['@wxt-dev/module-solid'],
+  manifest: {
+    name: 'developerz.ai Designer',
+    description:
+      'Chat with an agent, redesign the live page in real time, then ship the real code via MCP.',
+    // Side panel is the durable UI surface — survives page navigation.
+    side_panel: {
+      default_path: 'sidepanel/index.html',
+    },
+    action: {
+      default_title: 'developerz.ai Designer',
+    },
+    permissions: ['sidePanel', 'storage', 'scripting', 'activeTab', 'tabs'],
+    // Least privilege: the user grants broad host access only when they want it.
+    optional_host_permissions: ['<all_urls>'],
+    icons: {
+      '16': '/icon/logo.png',
+      '32': '/icon/logo.png',
+      '48': '/icon/logo.png',
+      '128': '/icon/logo.png',
+    },
+  },
+  // Open the side panel when the toolbar icon is clicked.
+  vite: () => ({
+    build: {
+      target: 'esnext',
+      minify: 'esbuild',
+      cssMinify: true,
+      sourcemap: false,
+      rollupOptions: {
+        treeshake: true,
+      },
+    },
+  }),
+});

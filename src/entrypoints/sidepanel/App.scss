@@ -1,0 +1,47 @@
+.dz-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--dz-border);
+  }
+
+  &__logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+  }
+
+  &__tabs {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+
+    button {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--dz-muted);
+      padding: 4px 10px;
+      border-radius: var(--dz-radius);
+      cursor: pointer;
+      font: inherit;
+
+      &.is-active {
+        color: var(--dz-fg);
+        border-color: var(--dz-border);
+        background: rgba(255, 255, 255, 0.04);
+      }
+    }
+  }
+
+  &__body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+}
