@@ -1,0 +1,25 @@
+{
+  "editor.defaultFormatter": "biomejs.biome",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.biome": "explicit",
+    "source.organizeImports.biome": "explicit"
+  },
+  "[typescript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[typescriptreact]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[javascript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[json]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[jsonc]": { "editor.defaultFormatter": "biomejs.biome" },
+  "files.exclude": {
+    "**/.output": true,
+    "**/.wxt": true,
+    "**/node_modules": true,
+    "**/coverage": true
+  },
+  "search.exclude": {
+    "**/.output": true,
+    "**/.wxt": true,
+    "**/bun.lock": true
+  },
+  "typescript.tsdk": "node_modules/typescript/lib"
+}

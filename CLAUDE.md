@@ -6,7 +6,7 @@ Spec/scaffold phase. Docs: `docs/idea/`, `docs/architecture/`.
 
 ## Stack
 
-Bun + TypeScript + WXT + SolidJS + SCSS. Agent: Vercel AI SDK + OpenRouter (BYOK). Handoff: MCP (`@modelcontextprotocol/sdk`). Validate: Zod. Lint/format: Biome. Tests: Vitest (unit+integration) + Playwright (E2E).
+Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 6 (`ai`, `ToolLoopAgent`) + OpenRouter (`@openrouter/ai-sdk-provider`, BYOK). Handoff: MCP via `@ai-sdk/mcp` (`createMCPClient`, Streamable HTTP). Validate: Zod. Lint/format: Biome. Tests: Vitest (unit+integration) + Playwright (E2E). See `docs/reference/agent-sdk.md`.
 
 ## MV3 three worlds — load-bearing
 

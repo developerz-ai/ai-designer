@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(bun *)",
+      "Bash(bun run *)",
+      "Bash(bunx biome *)",
+      "Bash(npx playwright *)",
+      "Bash(wxt *)",
+      "Bash(just *)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)"
+    ],
+    "deny": ["Bash(rm -rf /*)", "Bash(git push --force*)", "Bash(git push -f*)"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run lint:fix > /dev/null 2>&1; bun run typecheck > /dev/null 2>&1 || echo '⚠ typecheck failing — run: bun run typecheck'"
+          }
+        ]
+      }
+    ]
+  }
+}

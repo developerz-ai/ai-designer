@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "ms-playwright.playwright",
+    "wxt-dev.wxt-vscode",
+    "syler.sass-indented",
+    "editorconfig.editorconfig"
+  ]
+}
