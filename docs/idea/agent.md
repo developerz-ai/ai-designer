@@ -2,20 +2,37 @@
 
 The design agent. A [Vercel AI SDK](https://github.com/vercel/ai) loop running in the extension's service worker, talking to [OpenRouter](https://openrouter.ai/docs) (BYOK), driving DOM tools to edit the live page.
 
-## Loop
+## Loop — autonomous, multi-step
+
+One instruction kicks off an **agentic run of many tool-call steps**, not a chat turn with one edit. The agent reads, mutates, *looks at its own result*, refines, and repeats until the goal is met — then records. This is `ToolLoopAgent` with `stopWhen: stepCountIs(N)`, not a request/response.
 
 ```
-user msg ─► agent (generateText / streamText, tools, maxSteps)
-              │
-              ├─ reads page (query, getComputedStyle, screenshot)
-              ├─ mutates page (setStyle, setText, insertNode, ...)
-              ├─ asks clarifying questions in chat
-              └─ records accepted edits to the changeset
+user msg ─► ToolLoopAgent.stream({ tools, stopWhen: stepCountIs(N) })
+              │  loops on its own, step after step:
+              ├─ query / a11ySnapshot      (find + understand the target)
+              ├─ screenshot                 (see the current state)
+              ├─ setStyle / setText / ...   (mutate the live page)
+              ├─ screenshot                 (verify — did it look right?)
+              ├─ setStyle (correct)         (adjust based on what it saw)
+              ├─ ...repeat until satisfied...
+              └─ recordEdit(intent)         (finalize to the changeset)
 ```
 
-- `streamText` with `stopWhen: stepCountIs(N)` for multi-step turns; tokens stream to the side panel.
+Worked example — *"make the hero full-bleed and the CTA pop"* runs as **one** turn:
+
+1. `query` the hero + CTA → resolve stable selectors
+2. `screenshot` → baseline
+3. `setStyle` hero `max-width: none; padding-inline: 0`
+4. `screenshot` → sees the hero is now edge-to-edge but text hugs the border
+5. `setStyle` hero inner `padding-inline: 4rem` (self-correction)
+6. `setStyle` CTA `background / padding / font-size`
+7. `screenshot` → confirms contrast + size
+8. `recordEdit("full-bleed hero + prominent CTA")`
+
 - Tools are the only way the agent touches the page — it has no direct DOM handle (it's in the service worker).
-- Vision-capable models receive screenshots so the agent *sees* its own result and self-corrects.
+- Vision-capable models receive the screenshots, so the agent *sees* its own work and self-corrects mid-run.
+- It only stops to **ask** when genuinely ambiguous; otherwise it drives to a result, then reports what it did.
+- Step + token budget bound the run (see Guardrails); on budget it stops and summarizes rather than looping forever.
 
 ## Inference — OpenRouter, BYOK
 
