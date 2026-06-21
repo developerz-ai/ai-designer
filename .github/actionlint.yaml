@@ -1,0 +1,4 @@
+# Custom self-hosted runner labels (Blacksmith) so actionlint doesn't flag them.
+self-hosted-runner:
+  labels:
+    - blacksmith-2vcpu-ubuntu-2404

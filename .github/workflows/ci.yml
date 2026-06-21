@@ -95,6 +95,8 @@ jobs:
           name: extension-zip
           path: .output/*.zip
           if-no-files-found: error
+          # .output is a dotfile dir; upload-artifact skips hidden paths by default.
+          include-hidden-files: true
 
   actionlint:
     name: actionlint
