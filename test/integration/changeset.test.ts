@@ -2,15 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { resolveSelector } from '@/dom/selector';
 import { addEdit, Changeset, type Edit, emptyChangeset } from '@/shared/changeset';
 
-// Integration: build a changeset the way the recorder will — resolve a selector
-// from a DOM element, fold an edit in, and validate the whole thing parses.
+// Integration: build a changeset the way the recorder will — resolve the top
+// selector candidate from a DOM element, fold an edit in, and validate it parses.
 describe('changeset build', () => {
   it('records an edit with a resolved selector and validates', () => {
     document.body.innerHTML = '<button data-testid="cta-primary">Buy</button>';
     const node = document.querySelector('button');
     expect(node).not.toBeNull();
 
-    const selector = resolveSelector(node as unknown as Parameters<typeof resolveSelector>[0]);
+    // resolveSelector returns ranked candidates; the recorder takes the most stable.
+    const [selector] = resolveSelector(node as unknown as Parameters<typeof resolveSelector>[0]);
+    if (!selector) throw new Error('resolveSelector returned no candidates');
     expect(selector.value).toBe('[data-testid="cta-primary"]');
 
     const edit: Edit = {

@@ -21,35 +21,48 @@ function attr(el: ElementLike, name: string): string | null {
 }
 
 /**
- * Resolve the most stable selector for an element, in priority order:
- * data-attr -> id -> aria -> text -> css-path (fragile, flagged).
+ * Resolve an element to an ordered list of stable selector *candidates*, most
+ * stable first: data-attr -> id -> aria -> text -> css-path. Every candidate's
+ * `value` is a syntactically valid `document.querySelector` string (no Playwright
+ * `:has-text()` pseudo). The returned array IS the emitted heuristics: each
+ * candidate carries the `strategy` that produced it, and fragile ones are flagged.
+ *
+ * Pure — takes only an element-like shape, never touches a document. Uniqueness +
+ * round-trip verification is intentionally NOT done here (there is no document to
+ * scope against); it belongs in the DOM consumers (#4 `query`, #6 picker), which
+ * run `querySelectorAll(value).length === 1` against the live page and keep the
+ * first candidate that uniquely re-selects the element. Always returns at least one
+ * candidate (the text / css-path structural fallback).
  */
-export function resolveSelector(el: ElementLike): StableSelector {
+export function resolveSelector(el: ElementLike): StableSelector[] {
+  const candidates: StableSelector[] = [];
+  const tag = el.tagName.toLowerCase();
+
   for (const name of STABLE_DATA_ATTRS) {
     const v = attr(el, name);
-    if (v) return make(`[${name}=${cssValue(v)}]`, 'data-attr');
+    if (v) candidates.push(make(`[${name}=${cssValue(v)}]`, 'data-attr'));
   }
 
   if (el.id && !GENERATED_ID.test(el.id)) {
-    return make(`#${cssEscape(el.id)}`, 'id');
+    candidates.push(make(`#${cssEscape(el.id)}`, 'id'));
   }
 
   const role = attr(el, 'role');
   const label = attr(el, 'aria-label');
   if (role && label) {
-    return make(
-      `${el.tagName.toLowerCase()}[role=${cssValue(role)}][aria-label=${cssValue(label)}]`,
-      'aria',
-    );
+    candidates.push(make(`${tag}[role=${cssValue(role)}][aria-label=${cssValue(label)}]`, 'aria'));
   }
 
+  // Structural fallback (always present, fragile). Text content can't be matched
+  // by querySelector, so the candidate value is the valid bare tag; the `text`
+  // strategy is the heuristic the dev-agent uses to relocate the element by its
+  // visible text during source-mapping. Without usable text it degrades to css-path.
   const text = el.textContent?.trim();
-  if (text && text.length <= 50) {
-    return make(`${el.tagName.toLowerCase()}:has-text(${cssValue(text)})`, 'text');
-  }
+  candidates.push(
+    text && text.length <= 50 ? make(tag, 'text', true) : make(tag, 'css-path', true),
+  );
 
-  // Last resort — caller should treat this as fragile.
-  return make(el.tagName.toLowerCase(), 'css-path', true);
+  return candidates;
 }
 
 function make(value: string, strategy: SelectorStrategy, fragile = false): StableSelector {
