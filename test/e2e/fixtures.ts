@@ -16,12 +16,10 @@ export const test = base.extend<{
   // biome-ignore lint/correctness/noEmptyPattern: Playwright passes the fixtures object as arg 1; this fixture has no deps.
   context: async ({}, use) => {
     const context = await chromium.launchPersistentContext('', {
-      // Headed Chromium loads an unpacked MV3 extension and *starts* its service
-      // worker reliably. New-headless (channel:'chromium') failed to register the
-      // SW on the CI runner, so CI runs this headed under xvfb (see ci.yml).
-      // --no-sandbox is required on CI runners or the headed launch hangs.
-      headless: false,
-      timeout: 60_000,
+      // channel:'chromium' = the full Chrome-for-Testing build, which loads an
+      // unpacked extension in new headless (the lightweight chrome-headless-shell
+      // does not). --no-sandbox is required on CI runners.
+      channel: 'chromium',
       args: [
         '--no-sandbox',
         '--disable-dev-shm-usage',

@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 // E2E loads the built extension unpacked via a persistent context (see test/e2e/fixtures.ts).
-// Run `bun run build` first so `.output/chrome-mv3` exists. The extension is loaded headed
-// (new-headless didn't register the MV3 service worker on CI); CI runs it under xvfb.
+// Run `bun run build` first so `.output/chrome-mv3` exists. Runs headless via
+// channel:'chromium' (the full Chrome-for-Testing build) — no xvfb needed.
 export default defineConfig({
   testDir: './test/e2e',
   fullyParallel: true,
@@ -12,8 +12,8 @@ export default defineConfig({
   // workers; pin to 1 so the loaded-extension specs stay deterministic.
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',
-  // Headed Chromium cold-start + unpacked-extension load under xvfb needs headroom.
-  timeout: 120_000,
+  // Headroom for cold Chromium launch + unpacked-extension load + SW registration.
+  timeout: 60_000,
   use: {
     trace: 'on-first-retry',
   },
