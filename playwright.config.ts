@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 // E2E loads the built extension unpacked via a persistent context (see test/e2e/fixtures.ts).
-// Run `bun run build` first so `.output/chrome-mv3` exists. The extension is loaded with
-// channel:'chromium' (new headless) — no xvfb needed.
+// Run `bun run build` first so `.output/chrome-mv3` exists. The extension is loaded headed
+// (new-headless didn't register the MV3 service worker on CI); CI runs it under xvfb.
 export default defineConfig({
   testDir: './test/e2e',
   fullyParallel: true,
