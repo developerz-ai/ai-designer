@@ -21,7 +21,10 @@ export default defineConfig({
       default_title: 'developerz.ai Designer',
     },
     permissions: ['sidePanel', 'storage', 'scripting', 'activeTab', 'tabs'],
-    // Least privilege: the user grants broad host access only when they want it.
+    // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
+    // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
+    host_permissions: ['https://openrouter.ai/*'],
+    // Least privilege: the user grants broad page access only when they want it.
     optional_host_permissions: ['<all_urls>'],
     icons: {
       '16': '/icon/logo.png',

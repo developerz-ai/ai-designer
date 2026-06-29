@@ -1,6 +1,16 @@
 import { defineBackground } from '#imports';
+import {
+  clearOpenRouterKey,
+  getOpenRouterKey,
+  hasOpenRouterKey,
+  setOpenRouterKey,
+} from '@/agent/key-store';
+import { listModels, validateKey } from '@/agent/openrouter';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
 import { PanelToSw } from '@/shared/messages';
+
+// chrome.storage.local key for the (non-secret) selected model id.
+const SELECTED_MODEL_KEY = 'selected-model';
 
 // Service worker — the brain. Holds keys, runs the agent loop, owns MCP clients
 // and the changeset store. NEVER expose the OpenRouter key to the content script
@@ -30,10 +40,37 @@ export default defineBackground(() => {
       case 'ship':
         // TODO: assemble changeset -> open MCP client (src/mcp) -> task(create).
         return { ok: true };
+
+      // --- settings / BYOK: key custody + OpenRouter network are SW-only ---
+      case 'save-openrouter-key': {
+        // Validate first (cheap ping); only persist a key that authenticates.
+        const valid = await validateKey(msg.text);
+        if (valid) await setOpenRouterKey(msg.text);
+        return { ok: true, valid };
+      }
+      case 'list-models': {
+        const models = await listModels(await getOpenRouterKey());
+        return { ok: true, models };
+      }
+      case 'set-model':
+        await chrome.storage.local.set({ [SELECTED_MODEL_KEY]: msg.model });
+        return { ok: true };
+      case 'key-status': {
+        const got = await chrome.storage.local.get(SELECTED_MODEL_KEY);
+        const model = got[SELECTED_MODEL_KEY];
+        // Returns presence + selected model only — never the key value.
+        return {
+          ok: true,
+          present: await hasOpenRouterKey(),
+          model: typeof model === 'string' ? model : undefined,
+        };
+      }
+      case 'clear-openrouter-key':
+        await clearOpenRouterKey();
+        return { ok: true };
     }
   }
 
-  // TODO: getOpenRouterKey() from chrome.storage.local (encrypted), guard agent loop.
   // TODO: mcpManager — open/close MCP clients per configured backend (src/mcp).
   void sessions;
   void emptyChangeset;

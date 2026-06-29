@@ -1,12 +1,17 @@
-import { createSignal, Match, Switch } from 'solid-js';
+import { createSignal, Match, Show, Switch } from 'solid-js';
 import { ChatPanel } from './components/ChatPanel';
 import { McpPanel } from './components/McpPanel';
+import { SettingsPanel } from './components/SettingsPanel';
 import './App.scss';
 
-type Tab = 'chat' | 'mcp';
+type Tab = 'chat' | 'mcp' | 'settings';
 
-// Root side-panel shell: two surfaces — the design conversation (Chat) and the
-// implement-backend management (MCP). See docs/idea/ui.md.
+// v1 — the MCP handoff UI is hidden until the Ship loop lands (docs/idea/roadmap.md).
+// McpPanel stays wired so flipping this to true re-enables it with no rework.
+const SHOW_MCP = false;
+
+// Root side-panel shell. v0 surfaces: the design conversation (Chat) and Settings
+// (BYOK OpenRouter key + model picker). MCP backend management is v1. See docs/idea/ui.md.
 export function App() {
   const [tab, setTab] = createSignal<Tab>('chat');
 
@@ -22,12 +27,21 @@ export function App() {
           >
             Chat
           </button>
+          <Show when={SHOW_MCP}>
+            <button
+              type="button"
+              classList={{ 'is-active': tab() === 'mcp' }}
+              onClick={() => setTab('mcp')}
+            >
+              MCP
+            </button>
+          </Show>
           <button
             type="button"
-            classList={{ 'is-active': tab() === 'mcp' }}
-            onClick={() => setTab('mcp')}
+            classList={{ 'is-active': tab() === 'settings' }}
+            onClick={() => setTab('settings')}
           >
-            MCP
+            Settings
           </button>
         </nav>
       </header>
@@ -39,6 +53,9 @@ export function App() {
           </Match>
           <Match when={tab() === 'mcp'}>
             <McpPanel />
+          </Match>
+          <Match when={tab() === 'settings'}>
+            <SettingsPanel />
           </Match>
         </Switch>
       </main>

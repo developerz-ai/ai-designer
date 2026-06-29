@@ -1,14 +1,9 @@
-// Global side-panel reset + design tokens. Component styles live next to their
-// component (SRP: one .tsx + one co-located .scss). See docs/idea/ui.md.
+// Global side-panel reset. Design tokens live in src/styles/_tokens.scss
+// (CLAUDE.md "SCSS"); this emits them as runtime custom properties.
+@use '../../styles/tokens' as tokens;
 
 :root {
-  --dz-bg: #0f1115;
-  --dz-fg: #e6e8eb;
-  --dz-accent: #f97316;
-  --dz-muted: #8b909a;
-  --dz-border: #232733;
-  --dz-radius: 8px;
-  --dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  @include tokens.root-vars;
 }
 
 * {
