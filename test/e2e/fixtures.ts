@@ -19,8 +19,12 @@ export const test = base.extend<{
       // Headed Chromium loads an unpacked MV3 extension and *starts* its service
       // worker reliably. New-headless (channel:'chromium') failed to register the
       // SW on the CI runner, so CI runs this headed under xvfb (see ci.yml).
+      // --no-sandbox is required on CI runners or the headed launch hangs.
       headless: false,
+      timeout: 60_000,
       args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
         `--disable-extensions-except=${pathToExtension}`,
         `--load-extension=${pathToExtension}`,
       ],

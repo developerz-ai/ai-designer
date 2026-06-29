@@ -12,7 +12,8 @@ export default defineConfig({
   // workers; pin to 1 so the loaded-extension specs stay deterministic.
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',
-  timeout: 30_000,
+  // Headed Chromium cold-start + unpacked-extension load under xvfb needs headroom.
+  timeout: 120_000,
   use: {
     trace: 'on-first-retry',
   },
