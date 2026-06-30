@@ -38,14 +38,14 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
     "@playwright/test": "^1.50.0",
-    "@types/chrome": "^0.0.300",
-    "@types/node": "^22.13.0",
+    "@types/chrome": "^0.1.43",
+    "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
     "@wxt-dev/module-solid": "^1.1.0",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "sass": "^1.83.0",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.9",
     "wxt": "^0.20.0"
   }
