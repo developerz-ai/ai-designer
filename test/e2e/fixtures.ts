@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { type BrowserContext, test as base, chromium, type Page } from '@playwright/test';
 
@@ -15,6 +16,14 @@ export const test = base.extend<{
 }>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright passes the fixtures object as arg 1; this fixture has no deps.
   context: async ({}, use) => {
+    // Fail fast with a clear message instead of a confusing 30s service-worker
+    // timeout when the build hasn't run yet.
+    if (!existsSync(pathToExtension)) {
+      throw new Error(
+        `Built extension not found at ${pathToExtension} — run \`bun run build\` first.`,
+      );
+    }
+
     const context = await chromium.launchPersistentContext('', {
       // channel:'chromium' = the full Chrome-for-Testing build, which loads an
       // unpacked extension in new headless (the lightweight chrome-headless-shell

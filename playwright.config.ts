@@ -11,7 +11,10 @@ export default defineConfig({
   // Persistent-context extension tests don't share browser state cleanly across
   // workers; pin to 1 so the loaded-extension specs stay deterministic.
   workers: 1,
-  reporter: process.env.CI ? 'github' : 'list',
+  // CI: `github` emits inline PR annotations; `html` writes playwright-report/
+  // (uploaded as an artifact in ci.yml). The github reporter alone produces no
+  // report directory, so the artifact upload needs html to have anything to grab.
+  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   // Headroom for cold Chromium launch + unpacked-extension load + SW registration.
   timeout: 60_000,
   use: {
