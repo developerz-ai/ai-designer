@@ -2,7 +2,7 @@
 # Schema: https://coderabbit.ai/integrations/schema.v2.json
 
 language: "en-US"
-tone_instructions: "Be chill, helpful, focus on meaningful improvements. Skip nitpicks. This is an MV3 extension: flag any change that puts secrets (OpenRouter key, MCP tokens) in a content script / page world, executes remote code, or persists live-page edits to a server as blocking. Live edits must stay ephemeral; shipping happens only via an explicit MCP handoff."
+tone_instructions: "Be chill and helpful; skip nitpicks, focus on meaningful improvements. MV3 extension: flag as BLOCKING any change that leaks a secret (OpenRouter key, MCP tokens) to the content/page world, runs remote code, or persists live-page edits to a server."
 early_access: true
 
 reviews:
