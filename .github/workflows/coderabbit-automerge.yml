@@ -98,17 +98,23 @@ jobs:
               echo "skip: not mergeable ($mergeable)"; echo "::endgroup::"; continue
             fi
 
-            # Every check on the head SHA must be completed and green.
+            # Every NON-self check on the head SHA must be completed and green. This
+            # workflow's own job registers as an in-progress check-run on the head SHA
+            # when it runs (pull_request_review / workflow_run triggers), so counting it
+            # would make the Action skip itself forever ("checks still running"). Exclude
+            # it by name and gate on the remaining real checks — and require at least one
+            # real check, so we never merge before CI has registered. (dependabot-
+            # automerge.yml sidesteps this by only inspecting completed conclusions.)
             checks=$(gh api "repos/$REPO/commits/$head_oid/check-runs?per_page=100")
-            total=$(jq '.total_count' <<<"$checks")
-            if [ "$total" -eq 0 ]; then
+            real=$(jq -c '[.check_runs[] | select(.name != "Merge PRs CodeRabbit approved")]' <<<"$checks")
+            if [ "$(jq 'length' <<<"$real")" -eq 0 ]; then
               echo "skip: no checks have run yet on $head_oid"; echo "::endgroup::"; continue
             fi
-            pending=$(jq -r '.check_runs[] | select(.status != "completed") | .name' <<<"$checks")
+            pending=$(jq -r '.[] | select(.status != "completed") | .name' <<<"$real")
             if [ -n "$pending" ]; then
               echo "skip: checks still running:"; echo "$pending"; echo "::endgroup::"; continue
             fi
-            bad=$(jq -r '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not)) | .name' <<<"$checks")
+            bad=$(jq -r '.[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not)) | .name' <<<"$real")
             if [ -n "$bad" ]; then
               echo "skip: failing checks:"; echo "$bad"; echo "::endgroup::"; continue
             fi
