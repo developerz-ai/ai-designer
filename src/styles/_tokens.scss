@@ -1,0 +1,39 @@
+// Design tokens — the single source of truth (CLAUDE.md "SCSS"). Sass vars for
+// build-time use; the root-vars mixin emits the runtime var(--dz-*) custom
+// properties that components consume. Values match the existing surfaces so this
+// extraction is visually a no-op.
+
+// color
+$dz-bg: #0f1115;
+$dz-fg: #e6e8eb;
+$dz-accent: #f97316;
+$dz-accent-fg: #1a1205; // text on the accent surface (matches ChatPanel)
+$dz-muted: #8b909a;
+$dz-border: #232733;
+$dz-surface: rgba(255, 255, 255, 0.04);
+$dz-danger: #ff6b6b;
+
+// radius
+$dz-radius: 8px;
+
+// spacing
+$dz-space-1: 4px;
+$dz-space-2: 8px;
+$dz-space-3: 10px;
+$dz-space-4: 12px;
+$dz-space-5: 14px;
+
+$dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+// Runtime CSS custom properties consumed via var(--dz-*).
+@mixin root-vars {
+  --dz-bg: #{$dz-bg};
+  --dz-fg: #{$dz-fg};
+  --dz-accent: #{$dz-accent};
+  --dz-accent-fg: #{$dz-accent-fg};
+  --dz-muted: #{$dz-muted};
+  --dz-border: #{$dz-border};
+  --dz-surface: #{$dz-surface};
+  --dz-radius: #{$dz-radius};
+  --dz-font: #{$dz-font};
+}

@@ -38,6 +38,15 @@ The only secret-holding component is the **service worker**. Everything else is 
 - Encryption at rest via WebCrypto; key material never logged or rendered.
 - Content script receives **commands and results**, never credentials (see [mv3-worlds.md](mv3-worlds.md)).
 
+### How (OpenRouter key)
+
+The wrapping key is a **non-extractable** AES-GCM-256 `CryptoKey` (`generateKey({ extractable: false })`) held in IndexedDB; the key ciphertext (`{ iv, ciphertext }`) lives in `chrome.storage.local`; decrypt is service-worker-only (`src/agent/key-store.ts`). Because the key is non-extractable, JS can never read its raw bytes — the key cannot leak via a log line or across the message bus.
+
+What this does and does not buy:
+
+- **Does:** real exfiltration resistance against a hostile page / XSS / casual disk inspection, and makes "encrypted at rest via WebCrypto" honest. The at-rest ciphertext and its wrapping key are in **different** stores (IndexedDB vs `chrome.storage.local`), not co-located.
+- **Does not:** defend against a full local-machine compromise. A non-extractable key prevents key *exfiltration*, not key *use* — code already running with the extension's own privileges can still call `decryptSecret`. No browser-extension key custody can defend that, and we don't claim to.
+
 ## Threats & mitigations
 
 | Threat | Mitigation |

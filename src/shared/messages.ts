@@ -16,8 +16,58 @@ export const ShipRequest = z.object({
   summary: z.string(),
 });
 
-export const PanelToSw = z.discriminatedUnion('type', [UserMessage, ShipRequest]);
+// Settings / BYOK (panel -> service worker). The OpenRouter key is entered in the
+// panel, but custody + crypto + network are SW-only: the plaintext key crosses
+// panel->SW only (both are the trusted extension origin), NEVER panel->content.
+// See CLAUDE.md "MV3 three worlds" + docs/architecture/security.md.
+export const SaveKey = z.object({
+  type: z.literal('save-openrouter-key'),
+  text: z.string().min(1),
+});
+export const ListModels = z.object({ type: z.literal('list-models') });
+export const SetModel = z.object({ type: z.literal('set-model'), model: z.string().min(1) });
+export const KeyStatus = z.object({ type: z.literal('key-status') });
+export const ClearKey = z.object({ type: z.literal('clear-openrouter-key') });
+
+export const PanelToSw = z.discriminatedUnion('type', [
+  UserMessage,
+  ShipRequest,
+  SaveKey,
+  ListModels,
+  SetModel,
+  KeyStatus,
+  ClearKey,
+]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
+
+// --- service worker -> panel RPC responses (sendResponse replies, NOT the
+// SwToPanel stream). None of these ever carries the key value.
+export const OkResult = z.object({ ok: z.boolean(), error: z.string().optional() });
+export type OkResult = z.infer<typeof OkResult>;
+
+export const SaveKeyResult = z.object({
+  ok: z.boolean(),
+  valid: z.boolean(),
+  error: z.string().optional(),
+});
+export type SaveKeyResult = z.infer<typeof SaveKeyResult>;
+
+export const KeyStatusResult = z.object({
+  ok: z.boolean(),
+  present: z.boolean(),
+  model: z.string().optional(),
+});
+export type KeyStatusResult = z.infer<typeof KeyStatusResult>;
+
+export const ModelOption = z.object({ id: z.string(), name: z.string() });
+export type ModelOption = z.infer<typeof ModelOption>;
+
+export const ModelsResult = z.object({
+  ok: z.boolean(),
+  models: z.array(ModelOption).optional(),
+  error: z.string().optional(),
+});
+export type ModelsResult = z.infer<typeof ModelsResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 export const DomTool = z.discriminatedUnion('type', [
