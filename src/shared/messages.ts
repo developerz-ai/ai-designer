@@ -24,7 +24,11 @@ export const DomTool = z.discriminatedUnion('type', [
   z.object({ type: z.literal('query'), selector: z.string() }),
   z.object({ type: z.literal('getStyles'), selector: z.string() }),
   z.object({ type: z.literal('screenshot'), selector: z.string().optional() }),
-  z.object({ type: z.literal('setStyle'), selector: z.string(), props: z.record(z.string()) }),
+  z.object({
+    type: z.literal('setStyle'),
+    selector: z.string(),
+    props: z.record(z.string(), z.string()),
+  }),
   z.object({ type: z.literal('setText'), selector: z.string(), value: z.string() }),
   z.object({ type: z.literal('undo') }),
 ]);

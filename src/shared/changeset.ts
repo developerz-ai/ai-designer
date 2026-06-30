@@ -34,7 +34,7 @@ export const Edit = z.object({
 export type Edit = z.infer<typeof Edit>;
 
 export const Changeset = z.object({
-  url: z.string().url(),
+  url: z.url(),
   createdAt: z.string(),
   edits: z.array(Edit).default([]),
 });
