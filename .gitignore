@@ -17,3 +17,8 @@ playwright-report
 # os
 .DS_Store
 Thumbs.db
+
+# claudetm / build-tool working dirs — never commit
+.claude-task-master/
+claudetm.log
+goal.txt

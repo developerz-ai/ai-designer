@@ -23,7 +23,7 @@ export default defineConfig({
     permissions: ['sidePanel', 'storage', 'scripting', 'activeTab', 'tabs'],
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
-    host_permissions: ['https://openrouter.ai/*'],
+    host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],
     // Least privilege: the user grants broad page access only when they want it.
     optional_host_permissions: ['<all_urls>'],
     icons: {
