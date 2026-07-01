@@ -518,3 +518,102 @@ deps: add @sentry/browser
 Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
+[38;5;208m[1m[claude 08:25:28 1/9][0m [32mTool completed[0m
+[38;5;208m[1m[claude 08:25:34 1/9][0m **Changes:** Added `@sentry/browser` ^8.0.0 to dependencies (installed v8.55.2)
+
+**Tests:** Typecheck passes ✓
+
+**Commit:** 9b2081b
+
+TASK COMPLETE
+[36m[1m[claudetm 08:25:35][0m [32mTask #1 marked complete in plan.md[0m
+[36m[1m[claudetm 08:25:35][0m Task #1 took 0.8 minutes
+[36m[1m[claudetm 08:25:35][0m More tasks in PR group - continuing without creating PR
+[36m[1m[claudetm 08:25:35][0m [2m   After cycle: task_index=1, stage=working, is_all_complete=False[0m
+
+[36m[1m[claudetm 08:25:35][0m Working on task #2: Add GlitchTip host permission
+[36m[1m[claudetm 08:25:35][0m [2m   PR: Add Sentry + GlitchTip MCP Config | Complexity: coding → Model: opus[0m
+[36m[1m[claudetm 08:25:35][0m [2m      (7 more task(s) in this PR group)[0m
+[36m[1m[claudetm 08:25:35 2/9][0m [2m   Using model: opus (claude-opus-4-8) | Tools: all[0m
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+[36m[1m[claudetm 08:25:35 2/9][0m Found project instructions: /home/ivann/tm-runs/ai-designer-glitchtip-497/CLAUDE.md
+[36m[1m[claudetm 08:25:35 2/9][0m Found 1 subagent(s): extension-reviewer
+[36m[1m[claudetm 08:25:35 2/9][0m Found 5 skill(s): solid-srp, live-edit, ship, test-extension, mv3
+
+[38;5;208m[1m[claude 08:25:41 2/9][0m Using tool: Read → wxt.config.ts
+[38;5;208m[1m[claude 08:25:41 2/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:25:46 2/9][0m Using tool: Edit → wxt.config.ts
+[38;5;208m[1m[claude 08:25:50 2/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:25:53 2/9][0m Using tool: Bash → bun run lint
+
+[38;5;208m[1m[claude 08:25:53 2/9][0m Using tool: Bash → bun run typecheck
+[38;5;208m[1m[claude 08:25:53 2/9][0m [32mTool completed[0m
+[38;5;208m[1m[claude 08:25:57 2/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:00 2/9][0m Using tool: Bash → git add wxt.config.ts && git commit -m "$(cat <<'EOF'
+feat: add GlitchTip host permission
+
+- Add https://glitchtip.infra.developerz.ai/* to host_permissions
+- Required for Sentry SDK to send error events from all extension contexts
+
+Co-Authored-By...
+[38;5;208m[1m[claude 08:26:00 2/9][0m [32mTool completed[0m
+[38;5;208m[1m[claude 08:26:03 2/9][0m **Changes:** Added `https://glitchtip.infra.developerz.ai/*` to `host_permissions` in wxt.config.ts — required for Sentry SDK to send error events.
+
+**Tests:** Lint ✓, Typecheck ✓
+
+**Commit:** 7d588c5
+
+**Blockers:** None
+
+TASK COMPLETE
+[36m[1m[claudetm 08:26:03][0m [32mTask #2 marked complete in plan.md[0m
+[36m[1m[claudetm 08:26:03][0m Task #2 took 0.5 minutes
+[36m[1m[claudetm 08:26:03][0m More tasks in PR group - continuing without creating PR
+[36m[1m[claudetm 08:26:03][0m [2m   After cycle: task_index=2, stage=working, is_all_complete=False[0m
+
+[36m[1m[claudetm 08:26:03][0m Working on task #3: Create Sentry init module (shared helper)
+[36m[1m[claudetm 08:26:03][0m [2m   PR: Add Sentry + GlitchTip MCP Config | Complexity: coding → Model: opus[0m
+[36m[1m[claudetm 08:26:03][0m [2m      (6 more task(s) in this PR group)[0m
+[36m[1m[claudetm 08:26:03 3/9][0m [2m   Using model: opus (claude-opus-4-8) | Tools: all[0m
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+[36m[1m[claudetm 08:26:03 3/9][0m Found project instructions: /home/ivann/tm-runs/ai-designer-glitchtip-497/CLAUDE.md
+[36m[1m[claudetm 08:26:03 3/9][0m Found 1 subagent(s): extension-reviewer
+[36m[1m[claudetm 08:26:03 3/9][0m Found 5 skill(s): solid-srp, live-edit, ship, test-extension, mv3
+
+[38;5;208m[1m[claude 08:26:11 3/9][0m Using tool: Bash → git status
+[38;5;208m[1m[claude 08:26:11 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:15 3/9][0m Using tool: Bash → ls -la src/shared/
+[38;5;208m[1m[claude 08:26:15 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:20 3/9][0m Using tool: Read → package.json
+[38;5;208m[1m[claude 08:26:20 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:26 3/9][0m Using tool: Read → src/shared/changeset.ts
+[38;5;208m[1m[claude 08:26:26 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:30 3/9][0m Using tool: Read → src/shared/messages.ts
+[38;5;208m[1m[claude 08:26:30 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:43 3/9][0m Using tool: Write → src/shared/sentry.ts
+[38;5;208m[1m[claude 08:26:47 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:26:53 3/9][0m Using tool: Bash → bun run typecheck
+[38;5;208m[1m[claude 08:26:56 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:00 3/9][0m Using tool: Bash → bun run lint
+[38;5;208m[1m[claude 08:27:00 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:06 3/9][0m Using tool: Bash → echo "- [x] Create Sentry init module (shared helper)" >> .claude-task-master/progress.md
+[38;5;208m[1m[claude 08:27:06 3/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:11 3/9][0m Using tool: Bash → git add -A && git commit -m "$(cat <<'EOF'
+feat(sentry): add shared sentry init module
+
+- Export initSentry() helper with DSN guard
+- Set environment from import.meta.env.MODE
+- Release identifier from package.json version
+- Browser tracing + repl...

@@ -37,10 +37,10 @@ Return a structured summary with file paths and key findings for each area.Based
 
 **Architecture:** Sentry client initialized in each MV3 execution world (SW, content script, sidepanel) with shared DSN. Host permission added for ingest endpoint. .mcp.json for MCP discovery.
 
-- [ ] `[coding]` Add @sentry/browser dependency
+- [x] `[coding]` Add @sentry/browser dependency
   - `package.json` — add `"@sentry/browser": "^8.0.0"` to dependencies
 
-- [ ] `[coding]` Add GlitchTip host permission
+- [x] `[coding]` Add GlitchTip host permission
   - `wxt.config.ts:26` — add `'https://glitchtip.infra.developerz.ai/*'` to `host_permissions` array
 
 - [ ] `[coding]` Create Sentry init module (shared helper)
