@@ -1,71 +1,36 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock @sentry/browser module
-vi.mock('@sentry/browser', () => ({
-  browserTracingIntegration: vi.fn(() => ({ name: 'BrowserTracing' })),
-  replayIntegration: vi.fn(() => ({ name: 'Replay' })),
-  init: vi.fn(),
-}));
+vi.mock('@sentry/browser', () => ({ init: vi.fn() }));
 
-describe('sentry', () => {
+describe('initSentry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('guards against empty DSN: early return when DSN is falsy', () => {
-    // Simulate the guard logic: if DSN is empty/falsy, return early
-    const testDSN = '';
-    let initCalled = false;
-
-    if (testDSN) {
-      initCalled = true; // This would be Sentry.init()
-    }
-
-    expect(initCalled).toBe(false);
-  });
-
-  it('initializes Sentry with correct options when DSN is present', async () => {
+  it('inits Sentry with the GlitchTip DSN + environment, error tracking only', async () => {
     const Sentry = await import('@sentry/browser');
     const { initSentry } = await import('@/shared/sentry');
 
     initSentry();
 
-    // Verify Sentry.init was called
     expect(Sentry.init).toHaveBeenCalledOnce();
-
-    // Get the options passed to Sentry.init
-    const initCall = vi.mocked(Sentry.init).mock.calls[0];
-    if (!initCall) {
-      throw new Error('Sentry.init was not called');
-    }
-    const options = initCall[0];
+    const options = vi.mocked(Sentry.init).mock.calls[0]?.[0];
     if (!options) {
-      throw new Error('Sentry.init options are undefined');
+      throw new Error('Sentry.init was not called with options');
     }
 
-    // Verify required options
-    expect(options).toHaveProperty('dsn');
     expect(options.dsn).toBe(
       'https://bf037adaf792452d8b77377abb682bd4@glitchtip.infra.developerz.ai/2',
     );
     expect(options).toHaveProperty('environment');
-    expect(options).toHaveProperty('release');
-    expect(options).toHaveProperty('tracesSampleRate', 1.0);
-    expect(options).toHaveProperty('replaysSessionSampleRate', 0.1);
-    expect(options).toHaveProperty('replaysOnErrorSampleRate', 1.0);
 
-    // Verify integrations are present
-    expect(options).toHaveProperty('integrations');
-    const integrations = options.integrations;
-    if (Array.isArray(integrations)) {
-      expect(integrations).toHaveLength(2);
-
-      // Verify browserTracingIntegration is included
-      expect(integrations[0]).toHaveProperty('name', 'BrowserTracing');
-
-      // Verify replayIntegration is included
-      expect(integrations[1]).toHaveProperty('name', 'Replay');
-    }
+    // GlitchTip supports neither Session Replay nor performance tracing, and
+    // replay in the all_urls content script would leak the user's browsing — so
+    // assert those stay off (regression guard).
+    expect(options).not.toHaveProperty('integrations');
+    expect(options).not.toHaveProperty('tracesSampleRate');
+    expect(options).not.toHaveProperty('replaysSessionSampleRate');
+    expect(options).not.toHaveProperty('replaysOnErrorSampleRate');
   });
 });
