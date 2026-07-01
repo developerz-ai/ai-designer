@@ -256,3 +256,36 @@ References:
   - `src/entrypoints/content.ts:11` — call `initSentry()` at top of `main()` function
 
 Please complete this task.
+[RESPONSE]
+**Changes:** Added `initSentry()` call to content script main() function with import from `@/shared/sentry`
+
+**Tests:** All pass (lint clean, typecheck clean, 21 unit tests, 1 integration test)
+
+**Commit:** fed0337
+
+**Blockers:** none
+
+TASK COMPLETE
+=== END | completed | 78.1s ===
+[TIMING] Task #5 completed in 1m 18.1s
+=== SESSION 6 | WORKING | 08:29:47 ===
+[PROMPT]
+Goal: Instrument this Chrome extension (ai-designer) with GlitchTip error tracking using the Sentry browser SDK, and add the GlitchTip MCP config.
+
+Requirements:
+1. Add @sentry/browser as a dependency.
+2. Initialize Sentry as early as possible in each of the extension's entry points (recon the real entry points from the manifest/build config - e.g. background service worker, content scripts, popu...
+3. MV3/CSP: ensure the ingest host glitchtip.infra.developerz.ai is permitted (host_permissions / connect-src as needed) so events can be sent from the extension.
+4. Capture unhandled errors and unhandled promise rejections. Set environment (e.g. production) and a release identifier.
+5. Add a file .mcp.json at the repo root with exactly: {"type":"http","url":"https://glitchtip.infra.developerz.ai/mcp"}
+6. Do NOT break the existing build, lint, tests, or extension loading. Keep the change minimal and idiomatic to the existing codebase.
+
+Acceptance: the extension builds, lint and tests pass, Sentry initializes without breaking extension load, and .mcp.json is committed at the repo root. Context: this fulfills developerz-ai/infrastr...
+
+Current Task (#6): Initialize Sentry in side panel
+
+References:
+  - `src/entrypoints/sidepanel/main.tsx:1` — import `initSentry` from `@/shared/sentry`
+  - `src/entrypoints/sidepanel/main.tsx:5` — call `initSentry()` before render (after root check, line 7)
+
+Please complete this task.

@@ -712,3 +712,48 @@ init sentry in content script
 Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
+[38;5;208m[1m[claude 08:29:42 5/9][0m [32mTool completed[0m
+[38;5;208m[1m[claude 08:29:47 5/9][0m **Changes:** Added `initSentry()` call to content script main() function with import from `@/shared/sentry`
+
+**Tests:** All pass (lint clean, typecheck clean, 21 unit tests, 1 integration test)
+
+**Commit:** fed0337
+
+**Blockers:** none
+
+TASK COMPLETE
+[36m[1m[claudetm 08:29:47][0m [32mTask #5 marked complete in plan.md[0m
+[36m[1m[claudetm 08:29:47][0m Task #5 took 1.3 minutes
+[36m[1m[claudetm 08:29:47][0m More tasks in PR group - continuing without creating PR
+[36m[1m[claudetm 08:29:47][0m [2m   After cycle: task_index=5, stage=working, is_all_complete=False[0m
+
+[36m[1m[claudetm 08:29:47][0m Working on task #6: Initialize Sentry in side panel
+[36m[1m[claudetm 08:29:47][0m [2m   PR: Add Sentry + GlitchTip MCP Config | Complexity: coding → Model: opus[0m
+[36m[1m[claudetm 08:29:47][0m [2m      (3 more task(s) in this PR group)[0m
+[36m[1m[claudetm 08:29:47 6/9][0m [2m   Using model: opus (claude-opus-4-8) | Tools: all[0m
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+[36m[1m[claudetm 08:29:47 6/9][0m Found project instructions: /home/ivann/tm-runs/ai-designer-glitchtip-497/CLAUDE.md
+[36m[1m[claudetm 08:29:47 6/9][0m Found 1 subagent(s): extension-reviewer
+[36m[1m[claudetm 08:29:47 6/9][0m Found 5 skill(s): solid-srp, live-edit, ship, test-extension, mv3
+
+[38;5;208m[1m[claude 08:29:57 6/9][0m Using tool: Read → src/entrypoints/sidepanel/main.tsx
+[38;5;208m[1m[claude 08:29:57 6/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:30:06 6/9][0m Using tool: Edit → src/entrypoints/sidepanel/main.tsx
+[38;5;208m[1m[claude 08:30:11 6/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:30:16 6/9][0m Using tool: Bash → bun run lint && bun run typecheck
+[38;5;208m[1m[claude 08:30:20 6/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:30:23 6/9][0m Using tool: Bash → bun run test:unit && bun run test:integration
+[38;5;208m[1m[claude 08:30:27 6/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:30:31 6/9][0m Using tool: Bash → git add -A && git commit -m "$(cat <<'EOF'
+init(sentry): initialize in side panel entry point
+
+- Import and call initSentry() before render
+- Ensures error coverage for side panel UI world
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"

@@ -50,7 +50,7 @@ Return a structured summary with file paths and key findings for each area.Based
   - `src/entrypoints/background.ts:1` — import `initSentry` from `@/shared/sentry`
   - `src/entrypoints/background.ts:19` — call `initSentry()` at top of `defineBackground` callback (earliest possible)
 
-- [ ] `[coding]` Initialize Sentry in content script
+- [x] `[coding]` Initialize Sentry in content script
   - `src/entrypoints/content.ts:1` — import `initSentry` from `@/shared/sentry`
   - `src/entrypoints/content.ts:11` — call `initSentry()` at top of `main()` function
 
