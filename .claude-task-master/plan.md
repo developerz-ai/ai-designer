@@ -46,7 +46,7 @@ Return a structured summary with file paths and key findings for each area.Based
 - [x] `[coding]` Create Sentry init module (shared helper)
   - `src/shared/sentry.ts` — new file: export `initSentry()` helper with guards for empty DSN, environment detection, release from package.json version
 
-- [ ] `[coding]` Initialize Sentry in service worker
+- [x] `[coding]` Initialize Sentry in service worker
   - `src/entrypoints/background.ts:1` — import `initSentry` from `@/shared/sentry`
   - `src/entrypoints/background.ts:19` — call `initSentry()` at top of `defineBackground` callback (earliest possible)
 

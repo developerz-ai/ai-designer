@@ -1,5 +1,6 @@
 import { defineContentScript } from '#imports';
 import { DomTool, type ToolResult } from '@/shared/messages';
+import { initSentry } from '@/shared/sentry';
 
 // Content script — the only world with DOM access. Executes DomTool calls from
 // the service worker, runs the element picker overlay, and records accepted
@@ -9,6 +10,7 @@ export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_idle',
   main() {
+    initSentry();
     // Injected stylesheet for reversible setStyle (never inline styles).
     let sheet: HTMLStyleElement | null = null;
 
