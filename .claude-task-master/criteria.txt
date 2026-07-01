@@ -1,0 +1,38 @@
+1. **Builds clean:** `bun run build` completes without errors, extension loads in Chrome
+2. **Gate passes:** `bun run lint`, `bun run typecheck`, `bun run test:unit`, `bun run test:integration` all green
+3. **DSN committed:** Public GlitchTip DSN in `src/shared/sentry.ts` (safe to ship)
+4. **Host permission granted:** `glitchtip.infra.developerz.ai` in `host_permissions`
+5. **.mcp.json exists:** At repo root with correct HTTP MCP endpoint
+
+---
+
+## Implementation Notes
+
+**Sentry.init options (src/shared/sentry.ts):**
+```typescript
+import * as Sentry from '@sentry/browser';
+
+const DSN = 'https://bf037adaf792452d8b77377abb682bd4@glitchtip.infra.developerz.ai/2';
+
+export function initSentry() {
+  if (!DSN) return; // guard
+  const release = `@developerz-ai/designer@${VERSION}`; // from package.json
+  const environment = 'production'; // or detect via chrome.runtime.getManifest()
+  
+  Sentry.init({
+    dsn: DSN,
+    release,
+    environment,
+    integrations: [
+      Sentry.browserTracingIntegration(),
+      Sentry.replayIntegration(), // optional
+    ],
+    tracesSampleRate: 1.0,
+    // Capture unhandled errors + promise rejections by default
+  });
+}
+```
+
+**Three-world MV3 consideration:** Each execution context needs its own Sentry.init call (service worker, content script, sidepanel). No shared state across worlds.
+
+**PLANNING COMPLETE**
