@@ -43,7 +43,7 @@ Return a structured summary with file paths and key findings for each area.Based
 - [x] `[coding]` Add GlitchTip host permission
   - `wxt.config.ts:26` — add `'https://glitchtip.infra.developerz.ai/*'` to `host_permissions` array
 
-- [ ] `[coding]` Create Sentry init module (shared helper)
+- [x] `[coding]` Create Sentry init module (shared helper)
   - `src/shared/sentry.ts` — new file: export `initSentry()` helper with guards for empty DSN, environment detection, release from package.json version
 
 - [ ] `[coding]` Initialize Sentry in service worker

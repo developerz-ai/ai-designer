@@ -8,6 +8,7 @@ import {
 import { listModels, validateKey } from '@/agent/openrouter';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
 import { PanelToSw } from '@/shared/messages';
+import { initSentry } from '@/shared/sentry';
 
 // chrome.storage.local key for the (non-secret) selected model id.
 const SELECTED_MODEL_KEY = 'selected-model';
@@ -17,6 +18,8 @@ const SELECTED_MODEL_KEY = 'selected-model';
 // (it shares the page's world). See docs/architecture/{components,security}.md.
 
 export default defineBackground(() => {
+  initSentry();
+
   // Per-tab design session changeset. Rehydrated from chrome.storage.session on wake.
   const sessions = new Map<number, Changeset>();
 

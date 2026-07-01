@@ -617,3 +617,52 @@ feat(sentry): add shared sentry init module
 - Set environment from import.meta.env.MODE
 - Release identifier from package.json version
 - Browser tracing + repl...
+[38;5;208m[1m[claude 08:27:11 3/9][0m [32mTool completed[0m
+[38;5;208m[1m[claude 08:27:16 3/9][0m **Changes:** Created `src/shared/sentry.ts` with `initSentry()` helper — DSN guard, environment detection, release from version, browser + replay integrations.
+
+**Tests:** Lint ✅ Typecheck ✅
+
+**Commit:** 2143224
+
+**Blockers:** None
+
+TASK COMPLETE
+[36m[1m[claudetm 08:27:16][0m [32mTask #3 marked complete in plan.md[0m
+[36m[1m[claudetm 08:27:16][0m Task #3 took 1.2 minutes
+[36m[1m[claudetm 08:27:16][0m More tasks in PR group - continuing without creating PR
+[36m[1m[claudetm 08:27:16][0m [2m   After cycle: task_index=3, stage=working, is_all_complete=False[0m
+
+[36m[1m[claudetm 08:27:16][0m Working on task #4: Initialize Sentry in service worker
+[36m[1m[claudetm 08:27:16][0m [2m   PR: Add Sentry + GlitchTip MCP Config | Complexity: coding → Model: opus[0m
+[36m[1m[claudetm 08:27:16][0m [2m      (5 more task(s) in this PR group)[0m
+[36m[1m[claudetm 08:27:16 4/9][0m [2m   Using model: opus (claude-opus-4-8) | Tools: all[0m
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+[36m[1m[claudetm 08:27:16 4/9][0m Found project instructions: /home/ivann/tm-runs/ai-designer-glitchtip-497/CLAUDE.md
+[36m[1m[claudetm 08:27:16 4/9][0m Found 1 subagent(s): extension-reviewer
+[36m[1m[claudetm 08:27:16 4/9][0m Found 5 skill(s): solid-srp, live-edit, ship, test-extension, mv3
+
+[38;5;208m[1m[claude 08:27:22 4/9][0m Using tool: Read → src/entrypoints/background.ts
+[38;5;208m[1m[claude 08:27:22 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:33 4/9][0m Using tool: Edit → src/entrypoints/background.ts
+[38;5;208m[1m[claude 08:27:37 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:43 4/9][0m Using tool: Read → src/entrypoints/background.ts
+[38;5;208m[1m[claude 08:27:43 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:27:53 4/9][0m Using tool: Edit → src/entrypoints/background.ts
+[38;5;208m[1m[claude 08:27:56 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:28:01 4/9][0m Using tool: Bash → bun run lint && bun run typecheck
+[38;5;208m[1m[claude 08:28:05 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:28:11 4/9][0m Using tool: Bash → bun run test:unit && bun run test:integration
+[38;5;208m[1m[claude 08:28:14 4/9][0m [32mTool completed[0m
+
+[38;5;208m[1m[claude 08:28:23 4/9][0m Using tool: Bash → git add -A && git commit -m "$(cat <<'EOF'
+feat(sentry): initialize Sentry in service worker
+
+- Import initSentry from @/shared/sentry
+- Call initSentry() at top of defineBackground callback (earliest possible)
+
+Co-Authored-By: Claude <noreply@ant...
