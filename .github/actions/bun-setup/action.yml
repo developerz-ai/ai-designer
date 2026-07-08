@@ -1,0 +1,38 @@
+name: Bun setup
+description: Install Bun (pinned via caller) with a warm package cache, then install deps.
+
+inputs:
+  bun-version:
+    description: Bun version to install. Omit to install the latest.
+    required: false
+  install:
+    description: Run `bun install --frozen-lockfile` after setup.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # Third-party actions pinned to a commit SHA (supply-chain hardening); the
+    # trailing comment tracks the human-readable tag for Dependabot.
+    - name: setup bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    # Cache Bun's global package store, keyed by the lockfile, so the CI jobs hit
+    # warm tarballs instead of a cold download each. Blacksmith transparently
+    # accelerates native actions/cache (useblacksmith/cache is deprecated).
+    # Best-effort by design: a cache miss or backend hiccup warns and continues,
+    # so caching can never fail CI.
+    - name: cache bun package store
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.bun/install/cache
+        key: bun-store-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          bun-store-${{ runner.os }}-
+
+    - name: install
+      if: inputs.install == 'true'
+      shell: bash
+      run: bun install --frozen-lockfile
