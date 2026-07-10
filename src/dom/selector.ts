@@ -83,7 +83,21 @@ export function pickUnique(el: Element, doc: ParentNode): StableSelector {
   for (const candidate of resolveSelector(el)) {
     if (resolvesToExactly(doc, candidate.value, el)) return candidate;
   }
-  return make(cssPath(el), 'css-path', true);
+  // The loop's guard rejects an unparseable candidate; this fallback bypasses it, so
+  // re-check here. Every emitted value must be a legal querySelector argument, even
+  // when it resolves to nothing. A bare tag always parses.
+  const path = cssPath(el);
+  if (parsesAsSelector(doc, path)) return make(path, 'css-path', true);
+  return make(el.tagName.toLowerCase(), 'css-path', true);
+}
+
+function parsesAsSelector(doc: ParentNode, value: string): boolean {
+  try {
+    doc.querySelectorAll(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolvesToExactly(doc: ParentNode, value: string, el: Element): boolean {
@@ -140,6 +154,42 @@ function cssValue(v: string): string {
   return `"${v.replace(/"/g, '\\"')}"`;
 }
 
+// Serialize a string as a CSS identifier (CSSOM "serialize an identifier").
+//
+// NOT delegated to the platform `CSS.escape`: that global is absent in jsdom, where
+// every unit test here runs, and in the MV3 service worker. A naive `[^\w-]` escape
+// is not enough either — a leading digit is legal in an HTML id (`id="2col"`) but
+// illegal at the head of a CSS ident, so `#2col` throws in querySelector. Digits in
+// that position must be hex-escaped (`\32 col`); the trailing space terminates the
+// escape and is not a descendant combinator.
 function cssEscape(v: string): string {
-  return v.replace(/([^\w-])/g, '\\$1');
+  const first = v.charCodeAt(0);
+  let out = '';
+  for (let i = 0; i < v.length; i += 1) {
+    const c = v.charCodeAt(i);
+    if (c === 0x00) {
+      out += '�';
+    } else if (
+      (c >= 0x01 && c <= 0x1f) ||
+      c === 0x7f ||
+      (i === 0 && c >= 0x30 && c <= 0x39) ||
+      (i === 1 && c >= 0x30 && c <= 0x39 && first === 0x2d)
+    ) {
+      out += `\\${c.toString(16)} `;
+    } else if (i === 0 && c === 0x2d && v.length === 1) {
+      out += `\\${v[i]}`;
+    } else if (
+      c >= 0x80 ||
+      c === 0x2d ||
+      c === 0x5f ||
+      (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a)
+    ) {
+      out += v[i];
+    } else {
+      out += `\\${v[i]}`;
+    }
+  }
+  return out;
 }

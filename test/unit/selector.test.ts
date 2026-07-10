@@ -171,4 +171,40 @@ describe('pickUnique', () => {
     }
     expect(() => document.querySelector(pickUnique(anchor, document).value)).not.toThrow();
   });
+
+  // A leading digit is legal in an HTML id and illegal at the head of a CSS ident.
+  // Anchoring the css-path at such an ancestor must hex-escape it, or every consumer
+  // that calls querySelector on the result throws.
+  it('escapes a digit-leading ancestor id so the anchored css-path still parses', () => {
+    mount('<div id="2col"><span></span><span></span></div>');
+    const target = document.querySelectorAll('span')[1] as Element;
+
+    const picked = pickUnique(target, document);
+
+    expect(() => document.querySelector(picked.value)).not.toThrow();
+    expect(document.querySelector(picked.value)).toBe(target);
+  });
+
+  // Unescaped, `#2col` throws and the id candidate is silently rejected, so the element
+  // degrades to a css-path. Escaped, the far more stable `id` strategy is kept.
+  it('keeps the id strategy for a digit-leading id on the element itself', () => {
+    mount('<div id="2col"></div>');
+    const target = q('#\\32 col');
+
+    const picked = pickUnique(target, document);
+
+    expect(picked.strategy).toBe('id');
+    expect(() => document.querySelector(picked.value)).not.toThrow();
+    expect(document.querySelector(picked.value)).toBe(target);
+  });
+
+  it('escapes an id that is a lone hyphen', () => {
+    mount('<div id="-"><em></em><em></em></div>');
+    const target = document.querySelectorAll('em')[1] as Element;
+
+    const picked = pickUnique(target, document);
+
+    expect(() => document.querySelector(picked.value)).not.toThrow();
+    expect(document.querySelector(picked.value)).toBe(target);
+  });
 });
