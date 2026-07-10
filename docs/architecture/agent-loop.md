@@ -7,10 +7,10 @@
 ```ts
 streamText({
   model: openrouter(session.model),   // BYOK, model-agnostic
-  system: designerSystemPrompt,
+  instructions: designerSystemPrompt,
   messages: history,
   tools,                              // page-read / page-mutate / session
-  stopWhen: stepCountIs(MAX_STEPS),   // budget guard
+  stopWhen: isStepCount(MAX_STEPS),   // budget guard
 })
 ```
 
@@ -60,7 +60,7 @@ flowchart LR
 
 | Guard | Mechanism |
 |-------|-----------|
-| Runaway loop | `stopWhen: stepCountIs(N)` |
+| Runaway loop | `stopWhen: isStepCount(N)` |
 | Token spend | per-turn token cap; stop + ask the user |
 | Destructive surprise | mutations reversible + previewed; user accepts before record |
 | Auto-ship | none — `handoff` is user-triggered only (see [handoff.md](handoff.md)) |

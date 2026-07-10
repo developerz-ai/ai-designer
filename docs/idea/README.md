@@ -18,7 +18,7 @@ Two surfaces, one extension: a **chat** (design conversation) and **MCP manageme
 | [extension.md](extension.md) | Manifest V3 layout — side panel, content script, isolated worlds |
 | [live-edit.md](live-edit.md) | Ephemeral DOM/CSS edits, overlay, the changeset recorder |
 | [agent.md](agent.md) | Vercel AI SDK loop, OpenRouter + BYOK, design tools |
-| [../reference/agent-sdk.md](../reference/agent-sdk.md) | AI SDK 6 API reference — `ToolLoopAgent`, OpenRouter, MCP, version gotchas |
+| [../reference/agent-sdk.md](../reference/agent-sdk.md) | AI SDK 7 API reference — `ToolLoopAgent`, OpenRouter, MCP, version gotchas |
 | [handoff.md](handoff.md) | Changeset → implementation task → PR |
 | [mcp.md](mcp.md) | MCP management UI, connecting ai-dev / GitHub, auth |
 | [ui.md](ui.md) | SolidJS chat + MCP panel, diff review, screenshots |
