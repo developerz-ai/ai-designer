@@ -30,6 +30,10 @@ export default defineContentScript({
         case 'screenshot':
           // TODO: crop via chrome.tabs.captureVisibleTab (proxied through SW).
           return { type: 'tool-result', ok: true };
+        case 'a11ySnapshot':
+          // TODO: build the role/name tree (A11yResult). Stub keeps the DomTool
+          // switch exhaustive now that a11ySnapshot is a member (#55 schema).
+          return { type: 'tool-result', ok: true };
         case 'setStyle':
           // TODO: write rules into `sheet`, record edit to changeset recorder.
           ensureSheet();
