@@ -56,10 +56,13 @@ function scrubException(exception: Exception): Exception {
   };
 }
 
-// Disable console + DOM breadcrumb capture before it is recorded: console
-// breadcrumbs capture logged arguments and DOM (`ui.*`) breadcrumbs capture
-// clicked-element identifiers — both page-derived. Network and navigation
-// breadcrumbs carry no page content and are kept so the trail stays useful.
+// Defence in depth, not the guarantee. `scrubEvent`'s allowlist omits `breadcrumbs`
+// entirely, so NO breadcrumb ever reaches GlitchTip — Sentry merges the scope's
+// breadcrumbs onto the event before `beforeSend` runs, and we then rebuild the event
+// without them. This hook stops the two page-derived kinds from being *recorded* in
+// the first place: console breadcrumbs capture logged arguments, and DOM (`ui.*`)
+// breadcrumbs capture clicked-element identifiers. Crumbs it returns stay in memory
+// for the session and are dropped at send time like every other crumb.
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
   const category = breadcrumb.category ?? '';
   if (category === 'console' || category.startsWith('ui.')) {

@@ -168,6 +168,26 @@ describe('scrubEvent', () => {
     expect(scrubbed.event_id).toBe('evt-3');
     expect(scrubbed.platform).toBe('javascript');
   });
+
+  // Sentry merges the scope's breadcrumbs onto the event before beforeSend runs, so
+  // this is the layer that decides what ships. The allowlist omits `breadcrumbs`, and
+  // that is the actual privacy guarantee — scrubBreadcrumb only stops two kinds from
+  // being recorded. Pin it: a crumb scrubBreadcrumb happily keeps still never ships.
+  it('transmits no breadcrumbs at all, even ones scrubBreadcrumb keeps', () => {
+    const event: ErrorEvent = {
+      type: undefined,
+      event_id: 'evt-4',
+      breadcrumbs: [
+        { category: 'navigation', data: { to: '/panel' } },
+        { category: 'fetch', data: { url: 'https://openrouter.ai/api/v1/chat' } },
+      ],
+    };
+
+    const scrubbed = scrubEvent(event);
+
+    expect(scrubbed.breadcrumbs).toBeUndefined();
+    expect(JSON.stringify(scrubbed)).not.toContain('openrouter.ai');
+  });
 });
 
 describe('scrubBreadcrumb', () => {
@@ -180,7 +200,10 @@ describe('scrubBreadcrumb', () => {
     expect(scrubBreadcrumb({ category: 'ui.input', message: 'input#card' })).toBeNull();
   });
 
-  it('keeps non-page breadcrumbs so the trail stays useful', () => {
+  // scrubBreadcrumb is a recording filter, not a transmission filter: what it keeps
+  // still never leaves the browser, because scrubEvent drops the whole breadcrumbs
+  // array. See the scrubEvent test below that pins that contract.
+  it('keeps non-page breadcrumbs in the in-memory trail', () => {
     const navCrumb: Breadcrumb = { category: 'navigation', data: { to: '/panel' } };
     expect(scrubBreadcrumb(navCrumb)).toBe(navCrumb);
     const fetchCrumb: Breadcrumb = { category: 'fetch' };
