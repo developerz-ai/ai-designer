@@ -157,11 +157,14 @@ export const GetStylesResult = z.object({
 export type GetStylesResult = z.infer<typeof GetStylesResult>;
 
 // Accessibility role/name tree (cheaper than a screenshot for the agent to read).
+// `children` defaults to `[]`: a leaf is the common case, and every real producer of
+// an a11y tree (Chrome's AX API, ARIA serializers) omits the key on leaves rather than
+// emitting an empty array. Requiring it would reject a well-formed snapshot outright.
 export const A11yNode = z.object({
   role: z.string(),
   name: z.string(),
   get children() {
-    return z.array(A11yNode);
+    return z.array(A11yNode).default([]);
   },
 });
 export type A11yNode = z.infer<typeof A11yNode>;

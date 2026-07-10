@@ -296,9 +296,34 @@ describe('typed tool result payloads (ToolResult.data envelope stays unknown)', 
     ).toBe(true);
   });
 
+  // Chrome's AX API and every ARIA serializer omit `children` on a leaf rather than
+  // emitting an empty array. A required `children` would reject a well-formed snapshot.
+  it('accepts an a11y leaf with no children key, defaulting it to an empty array', () => {
+    const parsed = A11yResult.safeParse({ tree: { role: 'button', name: 'Buy' } });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.tree.children).toEqual([]);
+  });
+
   it('rejects malformed tool result payloads', () => {
     expect(QueryResult.safeParse({ matches: 'nope' }).success).toBe(false);
     expect(GetStylesResult.safeParse({ styles: { color: 42 } }).success).toBe(false);
-    expect(A11yResult.safeParse({ tree: { role: 'button' } }).success).toBe(false);
+  });
+
+  // Each required field pinned on its own. Omitting several at once cannot tell you
+  // which one the schema actually enforces: a reject stays a reject even if one of
+  // them silently regresses to optional.
+  it('requires role and name independently on an a11y node', () => {
+    expect(A11yResult.safeParse({ tree: { name: 'Buy', children: [] } }).success).toBe(false);
+    expect(A11yResult.safeParse({ tree: { role: 'button', children: [] } }).success).toBe(false);
+    expect(A11yResult.safeParse({ tree: { role: 'button', name: 'Buy' } }).success).toBe(true);
+  });
+
+  it('rejects a malformed node nested inside an otherwise valid a11y tree', () => {
+    const parsed = A11yResult.safeParse({
+      tree: { role: 'navigation', name: 'Main', children: [{ role: 'link' }] },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
