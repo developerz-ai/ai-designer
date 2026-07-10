@@ -1,7 +1,10 @@
 version: 2
 updates:
-  # Bun/npm — root manifest covers the whole extension.
-  - package-ecosystem: npm
+  # Bun — root manifest covers the whole extension.
+  # MUST be `bun`, not `npm`: the npm ecosystem maintains package-lock.json /
+  # yarn.lock and never touches bun.lock, so its PRs bump package.json alone and
+  # every CI job then dies at `bun install --frozen-lockfile`. See PR #47.
+  - package-ecosystem: bun
     directory: "/"
     schedule:
       interval: weekly
