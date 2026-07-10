@@ -9,6 +9,10 @@ export interface ElementLike {
   readonly id: string;
   readonly tagName: string;
   readonly textContent: string | null;
+  // Optional tree links. A real DOM Element supplies them; the minimal unit-test
+  // fakes omit them, so the css-path generator degrades to a bare tag when absent.
+  readonly parentElement?: ElementLike | null;
+  readonly previousElementSibling?: ElementLike | null;
 }
 
 const STABLE_DATA_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
@@ -27,12 +31,12 @@ function attr(el: ElementLike, name: string): string | null {
  * `:has-text()` pseudo). The returned array IS the emitted heuristics: each
  * candidate carries the `strategy` that produced it, and fragile ones are flagged.
  *
- * Pure — takes only an element-like shape, never touches a document. Uniqueness +
- * round-trip verification is intentionally NOT done here (there is no document to
- * scope against); it belongs in the DOM consumers (#4 `query`, #6 picker), which
- * run `querySelectorAll(value).length === 1` against the live page and keep the
- * first candidate that uniquely re-selects the element. Always returns at least one
- * candidate (the text / css-path structural fallback).
+ * Pure — element-like in, candidates out. Never takes a `document` and never runs a
+ * query; it reads only the element and its own ancestor/sibling links. The
+ * structural fallback is a scoped `nth-of-type` css-path (see {@link cssPath}), which
+ * uniquely re-selects the element wherever the DOM allows it. Identity-checked
+ * uniqueness against a live document is {@link pickUnique}'s job — the one function
+ * that takes a `doc`. Always returns at least one candidate (the structural fallback).
  */
 export function resolveSelector(el: ElementLike): StableSelector[] {
   const candidates: StableSelector[] = [];
@@ -53,16 +57,79 @@ export function resolveSelector(el: ElementLike): StableSelector[] {
     candidates.push(make(`${tag}[role=${cssValue(role)}][aria-label=${cssValue(label)}]`, 'aria'));
   }
 
-  // Structural fallback (always present, fragile). Text content can't be matched
-  // by querySelector, so the candidate value is the valid bare tag; the `text`
-  // strategy is the heuristic the dev-agent uses to relocate the element by its
-  // visible text during source-mapping. Without usable text it degrades to css-path.
+  // Structural fallback (always present, fragile). Text content can't be matched by
+  // querySelector, so a text-bearing element keeps a bare-tag `text` candidate — the
+  // heuristic the dev-agent uses to relocate the element by its visible text during
+  // source-mapping. Without usable text it degrades to a scoped css-path that actually
+  // re-selects the element.
   const text = el.textContent?.trim();
   candidates.push(
-    text && text.length <= 50 ? make(tag, 'text', true) : make(tag, 'css-path', true),
+    text && text.length <= 50 ? make(tag, 'text', true) : make(cssPath(el), 'css-path', true),
   );
 
   return candidates;
+}
+
+/**
+ * Pick the single stable selector that resolves to *exactly* `el` within `doc`.
+ * Walks {@link resolveSelector}'s ranked candidates and returns the first one whose
+ * value selects this and only this element — `hits.length === 1 && hits[0] === el`.
+ * A bare count check is a bug: a different single element can match, so a candidate
+ * that resolves to one *wrong* element is rejected. When nothing uniquely resolves,
+ * degrades to the scoped css-path flagged `fragile` rather than throwing. The one and
+ * only function here that takes a `doc`.
+ */
+export function pickUnique(el: Element, doc: ParentNode): StableSelector {
+  for (const candidate of resolveSelector(el)) {
+    if (resolvesToExactly(doc, candidate.value, el)) return candidate;
+  }
+  return make(cssPath(el), 'css-path', true);
+}
+
+function resolvesToExactly(doc: ParentNode, value: string, el: Element): boolean {
+  let hits: NodeListOf<Element>;
+  try {
+    hits = doc.querySelectorAll(value);
+  } catch {
+    // A value that is not a valid selector for this document never counts as unique.
+    return false;
+  }
+  // Identity, not count: `length === 1` alone accepts a different single element.
+  return hits.length === 1 && hits[0] === el;
+}
+
+/**
+ * Build a scoped `nth-of-type` css-path that uniquely re-selects `el`. Walks up the
+ * ancestor chain emitting `tag:nth-of-type(n)` per level, anchoring at the nearest
+ * ancestor with a stable id (`#id > ...`) for a shorter, more resilient scope, else
+ * up to the root. Degrades to a bare tag when the element-like exposes no tree.
+ */
+function cssPath(el: ElementLike): string {
+  const segments: string[] = [];
+  let cur: ElementLike | null | undefined = el;
+  let isTarget = true;
+  while (cur) {
+    const tag = cur.tagName.toLowerCase();
+    if (!isTarget && cur.id && !GENERATED_ID.test(cur.id)) {
+      segments.unshift(`#${cssEscape(cur.id)}`);
+      break;
+    }
+    const parent: ElementLike | null | undefined = cur.parentElement;
+    segments.unshift(parent ? `${tag}:nth-of-type(${nthOfType(cur)})` : tag);
+    cur = parent;
+    isTarget = false;
+  }
+  return segments.join(' > ');
+}
+
+function nthOfType(el: ElementLike): number {
+  let n = 1;
+  let sib: ElementLike | null | undefined = el.previousElementSibling;
+  while (sib) {
+    if (sib.tagName === el.tagName) n += 1;
+    sib = sib.previousElementSibling;
+  }
+  return n;
 }
 
 function make(value: string, strategy: SelectorStrategy, fragile = false): StableSelector {
