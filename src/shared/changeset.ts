@@ -36,12 +36,18 @@ export type Edit = z.infer<typeof Edit>;
 export const Changeset = z.object({
   url: z.url(),
   createdAt: z.string(),
+  // Idempotency key for the #19 handoff: a retried `task(action:'create', {spec})`
+  // after a network failure must resolve to the same session, not open a second PR.
+  // The SW session owns it (crypto.randomUUID); nothing else in the schema fits.
+  sessionId: z.uuid(),
   edits: z.array(Edit).default([]),
 });
 export type Changeset = z.infer<typeof Changeset>;
 
-export function emptyChangeset(url: string, createdAt: string): Changeset {
-  return { url, createdAt, edits: [] };
+// sessionId is passed in, never minted here: the caller already knows its session,
+// and an internally-generated uuid would be non-deterministic (untestable).
+export function emptyChangeset(url: string, createdAt: string, sessionId: string): Changeset {
+  return { url, createdAt, sessionId, edits: [] };
 }
 
 export function addEdit(changeset: Changeset, edit: Edit): Changeset {
