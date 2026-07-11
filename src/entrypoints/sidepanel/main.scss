@@ -1,6 +1,6 @@
 // Global side-panel reset. Design tokens live in src/styles/_tokens.scss
 // (CLAUDE.md "SCSS"); this emits them as runtime custom properties.
-@use '../../styles/tokens' as tokens;
+@use "../../styles/tokens" as tokens;
 
 :root {
   @include tokens.root-vars;

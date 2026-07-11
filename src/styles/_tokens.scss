@@ -23,7 +23,7 @@ $dz-space-3: 10px;
 $dz-space-4: 12px;
 $dz-space-5: 14px;
 
-$dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+$dz-font: system-ui, -apple-system, "Segoe UI", sans-serif;
 
 // Runtime CSS custom properties consumed via var(--dz-*).
 @mixin root-vars {
