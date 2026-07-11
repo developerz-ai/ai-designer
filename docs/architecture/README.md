@@ -14,6 +14,7 @@ Deep reference for developerz.ai Designer. For the elevator pitch see [`../idea/
 | [changeset.md](changeset.md) | Data model, selector strategy, frameworkHints bridge |
 | [handoff.md](handoff.md) | Ship → MCP task → PR, status stream-back |
 | [security.md](security.md) | Threat model, key custody, least privilege |
+| [privacy.md](privacy.md) | Data categories, key custody, what reaches the model + MCP, permissions |
 | [adr/](adr/) | Decision records |
 
 ## System context (C4 L1)
