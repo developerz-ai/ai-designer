@@ -227,5 +227,8 @@ export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('changeset'), changeset: Changeset }),
   z.object({ type: z.literal('task-status'), status: z.string(), prUrl: z.string().optional() }),
   z.object({ type: z.literal('error'), message: z.string() }),
+  // SW relays of ContentToSw picker events.
+  z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
+  z.object({ type: z.literal('picker-state'), active: z.boolean() }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;
