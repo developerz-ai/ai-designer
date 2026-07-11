@@ -67,5 +67,7 @@ What this does and does not buy:
 
 ## Privacy posture
 
+> Formal, user-facing privacy policy + data-handling disclosure: [privacy.md](privacy.md).
+
 - BYOK end to end — we sit between the user and *their* providers; we don't proxy or resell.
 - No first-party server in v0/v1; nothing about the page leaves the user's chosen endpoints.
