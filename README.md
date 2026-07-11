@@ -81,6 +81,7 @@ bun run release            # wxt build && wxt zip → .output/*.zip
 |--|--|
 | [docs/idea/](docs/idea/README.md) | Vision, the design→ship loop, principles, surfaces |
 | [docs/architecture/](docs/architecture/README.md) | Components, MV3 worlds, agent loop, handoff, security, ADRs |
+| [Privacy policy](docs/architecture/privacy.md) | Data handling: BYOK inference, ephemeral edits, changeset-only durable output |
 
 ## Status
 
