@@ -7,7 +7,9 @@ import {
 } from '@/agent/key-store';
 import { listModels, validateKey } from '@/agent/openrouter';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
-import { PanelToSw } from '@/shared/messages';
+import type { SwToPanel } from '@/shared/messages';
+import { ContentToSw, PanelToSw } from '@/shared/messages';
+import { PORT_NAME } from '@/shared/port';
 import { initSentry } from '@/shared/sentry';
 
 // chrome.storage.local key for the (non-secret) selected model id.
@@ -22,6 +24,19 @@ export default defineBackground(() => {
 
   // Per-tab design session changeset. Rehydrated from chrome.storage.session on wake.
   const sessions = new Map<number, Changeset>();
+
+  const panelPorts = new Set<chrome.runtime.Port>();
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== PORT_NAME) return;
+    panelPorts.add(port);
+    port.onDisconnect.addListener(() => {
+      panelPorts.delete(port);
+    });
+  });
+
+  function postToPanel(msg: SwToPanel): void {
+    for (const port of panelPorts) port.postMessage(msg);
+  }
 
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     const parsed = PanelToSw.safeParse(raw);
@@ -73,6 +88,30 @@ export default defineBackground(() => {
         return { ok: true };
     }
   }
+
+  // Content -> SW push (fire-and-forget forwarding to the panel; no response).
+  chrome.runtime.onMessage.addListener((raw) => {
+    const parsed = ContentToSw.safeParse(raw);
+    if (!parsed.success) return; // PanelToSw RPC handled by the listener above
+
+    const msg = parsed.data;
+    switch (msg.type) {
+      case 'element-picked': {
+        const first = msg.candidates[0];
+        if (first) postToPanel({ type: 'focus', selector: first, rect: msg.rect });
+        break;
+      }
+      case 'picker-state':
+        postToPanel({ type: 'picker-state', active: msg.active });
+        break;
+      case 'multi-select-changed':
+        // TODO: forward to panel (consumer lands in a later issue)
+        break;
+      case 'recorder-event':
+        // TODO: forward to changeset recorder (consumer lands in a later issue)
+        break;
+    }
+  });
 
   // TODO: mcpManager — open/close MCP clients per configured backend (src/mcp).
   void sessions;
