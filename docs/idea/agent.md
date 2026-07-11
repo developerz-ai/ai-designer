@@ -4,10 +4,10 @@ The design agent. A [Vercel AI SDK](https://github.com/vercel/ai) loop running i
 
 ## Loop — autonomous, multi-step
 
-One instruction kicks off an **agentic run of many tool-call steps**, not a chat turn with one edit. The agent reads, mutates, *looks at its own result*, refines, and repeats until the goal is met — then records. This is `ToolLoopAgent` with `stopWhen: stepCountIs(N)`, not a request/response.
+One instruction kicks off an **agentic run of many tool-call steps**, not a chat turn with one edit. The agent reads, mutates, *looks at its own result*, refines, and repeats until the goal is met — then records. This is `ToolLoopAgent` with `stopWhen: isStepCount(N)`, not a request/response.
 
 ```
-user msg ─► ToolLoopAgent.stream({ tools, stopWhen: stepCountIs(N) })
+user msg ─► ToolLoopAgent.stream({ tools, stopWhen: isStepCount(N) })
               │  loops on its own, step after step:
               ├─ query / a11ySnapshot      (find + understand the target)
               ├─ screenshot                 (see the current state)
@@ -89,4 +89,4 @@ If an MCP backend exposes read tools (e.g. ai-dev's `kb` / repo search), the age
 
 ## Reference
 
-Current SDK API (AI SDK 6 `ToolLoopAgent`, OpenRouter provider, `@ai-sdk/mcp`), code sketches, and version gotchas: [../reference/agent-sdk.md](../reference/agent-sdk.md).
+Current SDK API (AI SDK 7 `ToolLoopAgent`, OpenRouter provider, `@ai-sdk/mcp`), code sketches, and version gotchas: [../reference/agent-sdk.md](../reference/agent-sdk.md).

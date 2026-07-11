@@ -29,10 +29,10 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^1.0.52",
-    "@openrouter/ai-sdk-provider": "^2.9.1",
+    "@ai-sdk/mcp": "^2.0.10",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
     "@sentry/browser": "^10.62.0",
-    "ai": "^6.0.208",
+    "ai": "^7.0.19",
     "solid-js": "^1.9.5",
     "zod": "^4.4.3"
   },
