@@ -34,8 +34,15 @@ const [pickerActive, setPickerActive] = createSignal<boolean>(false);
 
 export { pickerActive, rect, selector };
 
-/** Open the SW port and fold incoming messages into the focus signals. */
+let wired = false;
+
+/** Open the SW port and fold incoming messages into the focus signals.
+ * Idempotent: guards against a double-subscribe if called more than once. */
 export function initFocusStore(): void {
+  if (wired) {
+    return;
+  }
+  wired = true;
   connectPort();
   subscribeToSw((msg) => {
     const next = reduceFocus(

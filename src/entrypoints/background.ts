@@ -36,7 +36,15 @@ export default defineBackground(() => {
   });
 
   function postToPanel(msg: SwToPanel): void {
-    for (const port of panelPorts) port.postMessage(msg);
+    for (const port of panelPorts) {
+      try {
+        port.postMessage(msg);
+      } catch {
+        // Port disconnected before its onDisconnect fired — drop it so one dead
+        // panel can't abort the fan-out to the others.
+        panelPorts.delete(port);
+      }
+    }
   }
 
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {

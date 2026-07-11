@@ -21,7 +21,6 @@ export function connectPort(): void {
   if (connected) {
     return;
   }
-  connected = true;
   const port = chrome.runtime.connect({ name: PORT_NAME });
   port.onMessage.addListener((raw) => {
     const parsed = parseSwToPanel(raw);
@@ -39,6 +38,9 @@ export function connectPort(): void {
     connected = false;
     setTimeout(connectPort, RECONNECT_DELAY_MS);
   });
+  // Latch only after a successful connect + listener wiring: if connect() throws
+  // (context invalidated), connected stays false so the next call can retry.
+  connected = true;
 }
 
 // Register a handler for validated SW -> panel messages. Returns an unsubscribe
