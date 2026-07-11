@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { Changeset, Edit, StableSelector } from './changeset';
 
+// StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
+// it so panel/content consumers import the selector type from the message-schema hub.
+export { StableSelector };
+
 // Typed message bus across the three MV3 worlds: panel <-> service worker <-> content.
 // Every payload is Zod-validated at the boundary. See docs/architecture/mv3-worlds.md.
 
@@ -227,5 +231,8 @@ export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('changeset'), changeset: Changeset }),
   z.object({ type: z.literal('task-status'), status: z.string(), prUrl: z.string().optional() }),
   z.object({ type: z.literal('error'), message: z.string() }),
+  // SW relays of ContentToSw picker events.
+  z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
+  z.object({ type: z.literal('picker-state'), active: z.boolean() }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;

@@ -17,6 +17,7 @@ import {
   ScreenshotInput,
   SetStyleInput,
   SetTextInput,
+  SwToPanel,
   UndoInput,
 } from '@/shared/messages';
 
@@ -325,5 +326,34 @@ describe('typed tool result payloads (ToolResult.data envelope stays unknown)', 
     });
 
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
+  it('accepts focus with selector + rect', () => {
+    expect(SwToPanel.safeParse({ type: 'focus', selector, rect }).success).toBe(true);
+  });
+
+  it('accepts picker-state active boolean', () => {
+    expect(SwToPanel.safeParse({ type: 'picker-state', active: false }).success).toBe(true);
+  });
+
+  it('rejects focus missing rect (malformed)', () => {
+    expect(SwToPanel.safeParse({ type: 'focus', selector }).success).toBe(false);
+  });
+
+  it('accepts picker-state with active true', () => {
+    expect(SwToPanel.safeParse({ type: 'picker-state', active: true }).success).toBe(true);
+  });
+
+  it('rejects picker-state with non-boolean active', () => {
+    expect(SwToPanel.safeParse({ type: 'picker-state', active: 'yes' }).success).toBe(false);
+  });
+
+  it('exposes focus and picker-state as SwToPanel discriminants', () => {
+    const discs = SwToPanel.options.map((s) => s.shape.type.value);
+
+    expect(discs).toContain('focus');
+    expect(discs).toContain('picker-state');
   });
 });

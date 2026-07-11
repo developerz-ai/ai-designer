@@ -7,7 +7,10 @@ import {
 } from '@/agent/key-store';
 import { listModels, validateKey } from '@/agent/openrouter';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
-import { PanelToSw } from '@/shared/messages';
+import type { SwToPanel } from '@/shared/messages';
+import { ContentToSw, PanelToSw } from '@/shared/messages';
+import { PORT_NAME } from '@/shared/port';
+import { relayToPanel } from '@/shared/relay';
 import { initSentry } from '@/shared/sentry';
 
 // chrome.storage.local key for the (non-secret) selected model id.
@@ -22,6 +25,27 @@ export default defineBackground(() => {
 
   // Per-tab design session changeset. Rehydrated from chrome.storage.session on wake.
   const sessions = new Map<number, Changeset>();
+
+  const panelPorts = new Set<chrome.runtime.Port>();
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== PORT_NAME) return;
+    panelPorts.add(port);
+    port.onDisconnect.addListener(() => {
+      panelPorts.delete(port);
+    });
+  });
+
+  function postToPanel(msg: SwToPanel): void {
+    for (const port of panelPorts) {
+      try {
+        port.postMessage(msg);
+      } catch {
+        // Port disconnected before its onDisconnect fired — drop it so one dead
+        // panel can't abort the fan-out to the others.
+        panelPorts.delete(port);
+      }
+    }
+  }
 
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     const parsed = PanelToSw.safeParse(raw);
@@ -73,6 +97,17 @@ export default defineBackground(() => {
         return { ok: true };
     }
   }
+
+  // Content -> SW push (fire-and-forget forwarding to the panel; no response).
+  chrome.runtime.onMessage.addListener((raw) => {
+    const parsed = ContentToSw.safeParse(raw);
+    if (!parsed.success) return; // PanelToSw RPC handled by the listener above
+
+    // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
+    // coverage-excluded). null = no panel consumer for this event yet.
+    const out = relayToPanel(parsed.data);
+    if (out) postToPanel(out);
+  });
 
   // TODO: mcpManager — open/close MCP clients per configured backend (src/mcp).
   void sessions;
