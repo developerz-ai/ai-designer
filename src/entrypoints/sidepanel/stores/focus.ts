@@ -32,13 +32,16 @@ const [selector, setSelector] = createSignal<StableSelector | null>(null);
 const [rect, setRect] = createSignal<Rect | null>(null);
 const [pickerActive, setPickerActive] = createSignal<boolean>(false);
 
-export { selector, rect, pickerActive };
+export { pickerActive, rect, selector };
 
 /** Open the SW port and fold incoming messages into the focus signals. */
 export function initFocusStore(): void {
   connectPort();
   subscribeToSw((msg) => {
-    const next = reduceFocus({ selector: selector(), rect: rect(), pickerActive: pickerActive() }, msg);
+    const next = reduceFocus(
+      { selector: selector(), rect: rect(), pickerActive: pickerActive() },
+      msg,
+    );
     setSelector(next.selector);
     setRect(next.rect);
     setPickerActive(next.pickerActive);

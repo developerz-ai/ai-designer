@@ -1,0 +1,66 @@
+{
+  "openrouterApiKey": "<from profile>",
+  "apiKeySource": "profile",
+  "activeProfile": "zai",
+  "baseURL": "https://api.z.ai/api/coding/paas/v4",
+  "models": {
+    "generic": "glm-5.2",
+    "smart": "glm-5.2",
+    "coding": "glm-5.2",
+    "fast": "glm-5-turbo"
+  },
+  "maxPrs": 1,
+  "maxSessions": 40,
+  "maxCiFixAttempts": 3,
+  "llmStepTimeoutMs": 900000,
+  "autoMerge": false,
+  "prPerTask": false,
+  "mergeMethod": "squash",
+  "adminMerge": false,
+  "stylePath": "/home/ivann/ws/developerz.ai/Projects/ai-designer-wt/bus-transport-56/CLAUDE.md",
+  "formatCommand": null,
+  "verifyCommand": null,
+  "logLevel": "info",
+  "concurrency": 1,
+  "allowForcePush": true,
+  "reasoningEffort": {},
+  "bashRules": [
+    {
+      "pattern": "git push --force*",
+      "action": "deny"
+    },
+    {
+      "pattern": "git push -f",
+      "action": "deny"
+    },
+    {
+      "pattern": "git push +*",
+      "action": "deny"
+    },
+    {
+      "pattern": "gh pr merge",
+      "action": "deny"
+    },
+    {
+      "pattern": "git reset --hard",
+      "action": "deny"
+    }
+  ],
+  "mcpServers": {
+    "db-gateway": {
+      "type": "http",
+      "url": "https://db.developerz.ai/mcp"
+    },
+    "devin": {
+      "type": "http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer cog_hmcl463ljpgnqlen52k6jyksskm6w7hcmrezdmmslehzfvtlejtq"
+      }
+    }
+  },
+  "mcpServerSources": {
+    "db-gateway": "claude-user",
+    "devin": "claude-user"
+  }
+}

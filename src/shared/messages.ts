@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { Changeset, Edit, StableSelector } from './changeset';
 
+// StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
+// it so panel/content consumers import the selector type from the message-schema hub.
+export { StableSelector };
+
 // Typed message bus across the three MV3 worlds: panel <-> service worker <-> content.
 // Every payload is Zod-validated at the boundary. See docs/architecture/mv3-worlds.md.
 

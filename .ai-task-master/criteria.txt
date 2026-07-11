@@ -1,0 +1,1 @@
+All local gates green (bun run lint, bun run typecheck, bun test); one PR from branch refactor/bus-transport-56 with Closes #56; no force-push; no emojis; fix-and-push only - never resolve review threads, never post @coderabbitai commands, never merge.

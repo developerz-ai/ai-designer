@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { reduceFocus, type FocusState } from '@/entrypoints/sidepanel/stores/focus';
+import { type FocusState, reduceFocus } from '@/entrypoints/sidepanel/stores/focus';
 
-const selector = { value: '[data-testid="cta"]', strategy: 'data-attr' as const };
+const selector = { value: '[data-testid="cta"]', strategy: 'data-attr' as const, fragile: false };
 const rect = { x: 10, y: 20, width: 100, height: 50 };
 const initial: FocusState = { selector: null, rect: null, pickerActive: false };
 
