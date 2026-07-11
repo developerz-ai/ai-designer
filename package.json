@@ -37,10 +37,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
+    "@biomejs/biome": "^2.5.1",
     "@playwright/test": "^1.50.0",
-    "@types/chrome": "^0.1.43",
-    "@types/node": "^25.9.3",
+    "@types/chrome": "^0.2.0",
+    "@types/node": "^26.0.1",
     "@vitest/coverage-v8": "^4.1.9",
     "@wxt-dev/module-solid": "^1.1.0",
     "fake-indexeddb": "^6.2.5",
@@ -48,6 +48,6 @@
     "sass": "^1.83.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
-    "wxt": "^0.20.0"
+    "wxt": "^0.20.27"
   }
 }
