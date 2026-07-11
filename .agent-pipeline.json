@@ -2,5 +2,8 @@
   "repo": "developerz-ai/ai-designer",
   "repoSync": {
     "ciProvider": "github-actions"
+  },
+  "merge": {
+    "reviewGate": "ci-only"
   }
 }
