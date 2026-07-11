@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import type { Rect, StableSelector, SwToPanel } from '@/shared/messages';
-import { connectPort, subscribeToSw } from './bus';
+import { connectPort, subscribeToSw } from './sw-stream';
 
 // Focus store: tracks the picker's target element + activation state for the
 // panel UI. reduceFocus is a pure function (no chrome, no signals) so the

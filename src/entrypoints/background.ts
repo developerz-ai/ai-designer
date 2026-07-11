@@ -10,6 +10,7 @@ import { type Changeset, emptyChangeset } from '@/shared/changeset';
 import type { SwToPanel } from '@/shared/messages';
 import { ContentToSw, PanelToSw } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
+import { relayToPanel } from '@/shared/relay';
 import { initSentry } from '@/shared/sentry';
 
 // chrome.storage.local key for the (non-secret) selected model id.
@@ -94,23 +95,10 @@ export default defineBackground(() => {
     const parsed = ContentToSw.safeParse(raw);
     if (!parsed.success) return; // PanelToSw RPC handled by the listener above
 
-    const msg = parsed.data;
-    switch (msg.type) {
-      case 'element-picked': {
-        const first = msg.candidates[0];
-        if (first) postToPanel({ type: 'focus', selector: first, rect: msg.rect });
-        break;
-      }
-      case 'picker-state':
-        postToPanel({ type: 'picker-state', active: msg.active });
-        break;
-      case 'multi-select-changed':
-        // TODO: forward to panel (consumer lands in a later issue)
-        break;
-      case 'recorder-event':
-        // TODO: forward to changeset recorder (consumer lands in a later issue)
-        break;
-    }
+    // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
+    // coverage-excluded). null = no panel consumer for this event yet.
+    const out = relayToPanel(parsed.data);
+    if (out) postToPanel(out);
   });
 
   // TODO: mcpManager — open/close MCP clients per configured backend (src/mcp).
