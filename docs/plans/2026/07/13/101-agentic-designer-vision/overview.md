@@ -28,6 +28,8 @@ Turn the scaffold into the product: settings-first onboarding (openai-compatible
 12. [`12-docs-wiki-claude-md.md`](12-docs-wiki-claude-md.md) — update `docs/idea` + `docs/architecture`, new `docs/wiki/` guide, refresh CLAUDE.md.
 13. [`13-browser-control-vision.md`](13-browser-control-vision.md) — the agent really **controls the browser**: navigate/click/type/scroll/wait/tabs + full-page screenshots + image checks; **iframe- and multi-tab-aware** (`{tabId, frameId}` on every tool).
 14. [`14-describe-identity.md`](14-describe-identity.md) — `describe` a page/region/image **in text** + `extractIdentity` (color palette / type scale) so copy reuses a site's identity and reports read in tokens.
+15. [`15-complex-sites-spa-widgets-charts.md`](15-complex-sites-spa-widgets-charts.md) — robustness on real apps: SPA/hydration awaiting, **shadow-DOM widgets** (datetime pickers, comboboxes), virtualized lists, **canvas/WebGL charts read via vision + a guarded page-world data probe**.
+16. [`16-responsive-mobile.md`](16-responsive-mobile.md) — **check how the site looks on mobile**: device emulation (CDP), multi-breakpoint capture, responsive problem detection.
 
 ## Done when
 - Fresh install opens Settings; user configures an openai-compatible provider + model and (optionally) a custom MCP server with OAuth or API-key auth.
@@ -43,6 +45,9 @@ Turn the scaffold into the product: settings-first onboarding (openai-compatible
 - **Host permissions**: arbitrary openai-compatible endpoints + arbitrary MCP servers + arbitrary sites-to-copy all need runtime `optional_host_permissions` grants (`<all_urls>` already optional). Request per-origin at connect/first-use, don't broaden static host_permissions.
 - **Cross-site browse** ("go look at nvidia"): decide the mechanism — a background `chrome.tabs` fetch/snapshot vs opening a real tab and injecting the content script. Affects perms + CSP. See `06`.
 - **Real browser control across frames/tabs** (`13`): content scripts are **per-frame** — need `all_frames: true` + `webNavigation` to enumerate frames, and every tool must carry a `{ tabId, frameId }` target. Cross-origin iframes can't be reached from the parent — address each via its own injected frame script. Multi-tab copy (own tab + reference tab) means the SW owns a tab/frame registry.
+- **Complex sites** (`15`): shadow DOM (`selector.ts` can't pierce it today), canvas/WebGL charts (no DOM — vision + a **page-world (MAIN) bridge** that must never carry secrets), SPA hydration timing. Closed shadow roots / canvas fall back to vision + coordinates, flagged fragile.
+- **Device emulation** (`16`): true mobile emulation (DPR/touch/UA) wants the `chrome.debugger` permission + shows a "being debugged" banner — surface it; a viewport-resize fallback approximates when the user declines.
+- **Debugging is a first-class mode** (`06`): observe → reproduce (drive the page) → confirm (vision) → root-cause + fix, across runtime/network/interaction/a11y/layout/responsive/state — not just console-error listing.
 - **MCP transport/auth**: follow `modelcontextprotocol.io/specification/2025-03-26/basic/transports` (Streamable HTTP; SSE deprecated). PKCE required for public clients; `chrome.identity.launchWebAuthFlow`.
 - **Agent autonomy vs human-in-loop**: agent drives multi-step, but **Ship is never automatic** (`toolApproval` gate). Overlay + step budget keep it observable/bounded.
 - **SW eviction mid-turn**: persist in-flight run + changeset to `chrome.storage.session`, resume on wake (`agent-loop.md`, `mv3-worlds.md`).

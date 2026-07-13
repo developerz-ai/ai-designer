@@ -8,7 +8,14 @@ The two headline use cases. **Copy site**: (a) no site — "look at nvidia, buil
 ## Files to change
 - `src/agent/tools/browse.ts` — **new**. `browse(url)` tool: open the reference site and snapshot it without hijacking the user's tab. **Decision (see overview Risks)** — recommended: SW opens a background/inactive tab (`chrome.tabs.create({ active:false })`) or reuses a hidden context, injects the content script, runs `a11ySnapshot`/`screenshot`/`getStyles` there, closes it. Requires `optional_host_permissions` grant for the target origin (request at call time; surface denial to chat). Returns a structured "design read": palette, type scale, layout regions, key components.
 - `src/agent/modes.ts` — **new**. `Mode = 'copy' | 'debug'`; picks the system-prompt addendum (`04` `system-prompt.ts`) + which tools are emphasized. Copy: browse ref + read own page + propose edits/ideas. Debug: diagnostics-first (console/network/a11y/broken-interaction), propose fixes.
-- `src/agent/diagnostics.ts` — **new** (SW-orchestrated, content-executed). Collect console errors, failed network requests, broken handlers, a11y violations for the debug flow. Content-side collectors emit `ContentToSw`; SW aggregates into a report input (feeds `07`).
+- `src/agent/diagnostics.ts` — **new** (SW-orchestrated, content-executed). The **debug engine** — the agent genuinely *debugs*, not just lints. Collect + correlate a broad problem catalog, then **reproduce** the failure by driving the page (13) and **confirm** with vision (13/14):
+  - **Runtime**: console errors/warnings, uncaught exceptions, unhandled promise rejections, CSP violations.
+  - **Network**: failed/4xx/5xx requests, slow/hanging calls, CORS failures, broken assets.
+  - **Interaction/functional**: dead buttons/handlers, forms that don't submit, broken widgets (datetime picker/combobox/modal — 15), broken client-side routes (SPA — 15), stuck loading states.
+  - **A11y**: role/name/contrast/focus-order/keyboard-trap violations.
+  - **Layout/visual**: overflow, CLS, z-index/overlap, **responsive breakage (16)**, broken/oversize images (13).
+  - **State/data**: empty/error states, stale data, hydration mismatch (15).
+  - Method: **observe → hypothesize → reproduce (click/type/wait, 13) → capture (screenshot/console/network) → confirm → propose fix** with a root-cause note. Content-side collectors emit `ContentToSw`; SW aggregates + correlates into a report input (feeds `07`), each finding with repro steps + evidence (screenshot/log links).
 - `src/dom/diagnostics-collector.ts` — **new** (content). Console/error/network hooks (page-world-safe), a11y scan; feeds `diagnostics.ts`.
 - `src/shared/messages.ts` — add `browse`/`diagnostics` DomTool + result schemas; `Mode` on `UserMessage` (or infer from intent). Add `ContentToSw` diagnostics events.
 - `src/entrypoints/content.ts` — init diagnostics collectors; handle `browse`-injected snapshot requests.
