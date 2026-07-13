@@ -17,10 +17,15 @@
     font-size: 12px;
   }
 
+  &__presetrow,
   &__keyrow,
   &__modelrow {
     display: flex;
     gap: tokens.$dz-space-2;
+  }
+
+  &__url {
+    margin-top: tokens.$dz-space-2;
   }
 
   input,
@@ -33,6 +38,10 @@
     color: var(--dz-fg);
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
     font: inherit;
+
+    &:disabled {
+      opacity: 0.5;
+    }
   }
 
   button {
@@ -48,6 +57,11 @@
       opacity: 0.5;
       cursor: default;
     }
+  }
+
+  &__save {
+    align-self: flex-start;
+    padding: tokens.$dz-space-2 tokens.$dz-space-5;
   }
 
   &__ghost {

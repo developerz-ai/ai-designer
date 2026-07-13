@@ -1,8 +1,8 @@
 // Secret custody for the service worker. A non-extractable AES-GCM-256 "wrapping
 // key" lives in IndexedDB (extension origin, SW-reachable, never exportable by JS);
-// the OpenRouter key is encrypted with it and the {iv, ciphertext} pair (base64)
-// lives in chrome.storage.local. Decrypt is SW-only. The raw key bytes can never
-// leave JS. See docs/architecture/security.md "Key custody".
+// named secrets are encrypted with it and each {iv, ciphertext} pair (base64) lives
+// in chrome.storage.local under `secret:<name>`. Decrypt is SW-only. The raw key
+// bytes can never leave JS. See docs/architecture/security.md "Key custody".
 //
 // SW-ONLY: never import this from content.ts or the page world.
 
@@ -11,8 +11,13 @@ export type EncryptedPayload = { iv: string; ciphertext: string };
 const DB_NAME = 'dz-designer';
 const STORE = 'keys';
 const KEY_ID = 'wrapping-key';
-const STORAGE_KEY = 'openrouter-key';
+const SECRET_PREFIX = 'secret:'; // namespaces encrypted secrets from plaintext config
 const IV_BYTES = 12; // AES-GCM standard nonce length
+
+/** chrome.storage.local key for a named secret (namespaced, greppable). */
+function secret(name: string): string {
+  return `${SECRET_PREFIX}${name}`;
+}
 
 // --- WebCrypto -----------------------------------------------------------
 
@@ -50,30 +55,58 @@ export async function decryptSecret(payload: EncryptedPayload): Promise<string> 
   return new TextDecoder().decode(buf);
 }
 
-// --- chrome.storage.local persistence (thin) -----------------------------
+// --- named-secret persistence (chrome.storage.local, thin) ---------------
 
-/** Encrypt + persist the OpenRouter API key. */
-export async function setOpenRouterKey(plaintext: string): Promise<void> {
+/** Encrypt + persist a named secret (e.g. `provider:default:key`). */
+export async function setSecret(name: string, plaintext: string): Promise<void> {
   const payload = await encryptSecret(plaintext);
-  await chrome.storage.local.set({ [STORAGE_KEY]: payload });
+  await chrome.storage.local.set({ [secret(name)]: payload });
 }
 
-/** Read + decrypt the OpenRouter API key, or null if unset. */
-export async function getOpenRouterKey(): Promise<string | null> {
-  const got = await chrome.storage.local.get(STORAGE_KEY);
-  const payload = got[STORAGE_KEY] as EncryptedPayload | undefined;
+/** Read + decrypt a named secret, or null if unset. */
+export async function getSecret(name: string): Promise<string | null> {
+  const storageKey = secret(name);
+  const got = await chrome.storage.local.get(storageKey);
+  const payload = got[storageKey] as EncryptedPayload | undefined;
   return payload ? decryptSecret(payload) : null;
 }
 
-/** Whether a key is currently stored (without decrypting it). */
-export async function hasOpenRouterKey(): Promise<boolean> {
-  const got = await chrome.storage.local.get(STORAGE_KEY);
-  return got[STORAGE_KEY] != null;
+/** Whether a named secret is stored (without decrypting it). */
+export async function hasSecret(name: string): Promise<boolean> {
+  const storageKey = secret(name);
+  const got = await chrome.storage.local.get(storageKey);
+  return got[storageKey] != null;
 }
 
-/** Forget the stored key (the wrapping key is left in IndexedDB, unused). */
-export async function clearOpenRouterKey(): Promise<void> {
-  await chrome.storage.local.remove(STORAGE_KEY);
+/** Forget a named secret (the wrapping key is left in IndexedDB, unused). */
+export async function clearSecret(name: string): Promise<void> {
+  await chrome.storage.local.remove(secret(name));
+}
+
+// --- OpenRouter shims (default provider slot) ----------------------------
+// Back-compat over the named-secret API; the default provider key lives under
+// `provider:default:key`. Prefer setSecret/getSecret directly in new code.
+
+const DEFAULT_PROVIDER_KEY = 'provider:default:key';
+
+/** Encrypt + persist the default provider API key. */
+export function setOpenRouterKey(plaintext: string): Promise<void> {
+  return setSecret(DEFAULT_PROVIDER_KEY, plaintext);
+}
+
+/** Read + decrypt the default provider API key, or null if unset. */
+export function getOpenRouterKey(): Promise<string | null> {
+  return getSecret(DEFAULT_PROVIDER_KEY);
+}
+
+/** Whether the default provider key is currently stored (without decrypting it). */
+export function hasOpenRouterKey(): Promise<boolean> {
+  return hasSecret(DEFAULT_PROVIDER_KEY);
+}
+
+/** Forget the stored default provider key. */
+export function clearOpenRouterKey(): Promise<void> {
+  return clearSecret(DEFAULT_PROVIDER_KEY);
 }
 
 // --- base64 (works in the SW + Node; avoids Buffer) ----------------------

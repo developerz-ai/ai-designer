@@ -34,11 +34,40 @@ export const ShipRequest = z.object({
 // panel, but custody + crypto + network are SW-only: the plaintext key crosses
 // panel->SW only (both are the trusted extension origin), NEVER panel->content.
 // See CLAUDE.md "MV3 three worlds" + docs/architecture/security.md.
+// An openai-compatible endpoint the agent talks to (OpenRouter, OpenAI, a local
+// llama.cpp server, ...). `apiKey` is write-only across the bus: `save-provider` carries
+// it panel->SW once; `get-provider` never echoes it back (see `GetProviderResult` —
+// `hasKey` signals presence only). `src/agent/config-store.ts` is the SW-side persistence
+// for this same shape; it imports the type from here rather than redefining it.
+export const ProviderConfig = z.object({
+  baseURL: z.string().url(),
+  apiKey: z.string().optional(),
+  model: z.string().min(1),
+  label: z.string().optional(),
+});
+export type ProviderConfig = z.infer<typeof ProviderConfig>;
+
+export const SaveProvider = z.object({
+  type: z.literal('save-provider'),
+  config: ProviderConfig,
+});
+export const GetProvider = z.object({ type: z.literal('get-provider') });
+
+// Legacy alias predating ProviderConfig: a bare OpenRouter key with no baseURL/model
+// choice. Kept for back-compat; the SW maps it onto ProviderConfig with the OpenRouter
+// preset baseURL against the existing selected model.
 export const SaveKey = z.object({
   type: z.literal('save-openrouter-key'),
   text: z.string().min(1),
 });
-export const ListModels = z.object({ type: z.literal('list-models') });
+// baseURL-aware: omitted -> SW lists models for the currently saved provider config
+// (back-compat with the OpenRouter-only caller); present -> lists models for that
+// not-yet-saved endpoint so the panel can populate the model dropdown before Save.
+export const ListModels = z.object({
+  type: z.literal('list-models'),
+  baseURL: z.string().url().optional(),
+  apiKey: z.string().optional(),
+});
 export const SetModel = z.object({ type: z.literal('set-model'), model: z.string().min(1) });
 export const KeyStatus = z.object({ type: z.literal('key-status') });
 export const ClearKey = z.object({ type: z.literal('clear-openrouter-key') });
@@ -51,6 +80,8 @@ export const StopPicker = z.object({ type: z.literal('stop-picker') });
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
+  SaveProvider,
+  GetProvider,
   SaveKey,
   ListModels,
   SetModel,
@@ -79,6 +110,22 @@ export const KeyStatusResult = z.object({
   model: z.string().optional(),
 });
 export type KeyStatusResult = z.infer<typeof KeyStatusResult>;
+
+export const SaveProviderResult = z.object({
+  ok: z.boolean(),
+  valid: z.boolean(),
+  error: z.string().optional(),
+});
+export type SaveProviderResult = z.infer<typeof SaveProviderResult>;
+
+// `config` omits `apiKey` (write-only across the bus, see ProviderConfig above);
+// `hasKey` lets the panel render its key field as a presence-only placeholder.
+export const GetProviderResult = z.object({
+  ok: z.boolean(),
+  config: ProviderConfig.omit({ apiKey: true }).optional(),
+  hasKey: z.boolean().optional(),
+});
+export type GetProviderResult = z.infer<typeof GetProviderResult>;
 
 export const ModelOption = z.object({ id: z.string(), name: z.string() });
 export type ModelOption = z.infer<typeof ModelOption>;
