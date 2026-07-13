@@ -4,6 +4,7 @@ import {
   A11ySnapshotInput,
   ContentToSw,
   DomTool,
+  GetProviderResult,
   GetStylesInput,
   GetStylesResult,
   KeyStatusResult,
@@ -11,9 +12,11 @@ import {
   MutationEvent,
   PanelToSw,
   PickerCmd,
+  ProviderConfig,
   QueryInput,
   QueryResult,
   SaveKeyResult,
+  SaveProviderResult,
   ScreenshotInput,
   SetStyleInput,
   SetTextInput,
@@ -82,6 +85,37 @@ describe('settings message schemas', () => {
     expect(ModelsResult.safeParse({ ok: true, models: [{ id: 'a/b', name: 'B' }] }).success).toBe(
       true,
     );
+  });
+});
+
+describe('provider config message schemas (openai-compatible BYOK)', () => {
+  const cfg = { baseURL: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-4o' };
+
+  it('accepts save-provider carrying a ProviderConfig', () => {
+    expect(PanelToSw.safeParse({ type: 'save-provider', config: cfg }).success).toBe(true);
+  });
+
+  it('accepts a keyless provider config (local endpoint)', () => {
+    expect(
+      ProviderConfig.safeParse({ baseURL: 'http://localhost:1234/v1', model: 'local' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a provider config with a non-URL baseURL or an empty model', () => {
+    expect(ProviderConfig.safeParse({ baseURL: 'not-a-url', model: 'gpt-4o' }).success).toBe(false);
+    expect(ProviderConfig.safeParse({ baseURL: cfg.baseURL, model: '' }).success).toBe(false);
+  });
+
+  it('accepts get-provider and a baseURL-scoped list-models', () => {
+    expect(PanelToSw.safeParse({ type: 'get-provider' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'list-models', baseURL: cfg.baseURL }).success).toBe(true);
+  });
+
+  it('parses the save/get-provider results; GetProviderResult.config never carries apiKey', () => {
+    expect(SaveProviderResult.safeParse({ ok: true, valid: false, error: 'x' }).success).toBe(true);
+    // A stray apiKey on the config is stripped by the omit schema, not echoed to the panel.
+    const parsed = GetProviderResult.parse({ ok: true, config: { ...cfg }, hasKey: true });
+    expect(parsed.config && 'apiKey' in parsed.config).toBe(false);
   });
 });
 

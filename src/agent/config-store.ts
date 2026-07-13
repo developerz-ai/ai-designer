@@ -5,7 +5,14 @@
 // See docs/architecture/security.md "Key custody".
 
 import { ProviderConfig } from '@/shared/messages';
-import { clearSecret, getSecret, hasSecret, setSecret } from './key-store';
+import {
+  clearSecret,
+  decryptSecret,
+  type EncryptedPayload,
+  getSecret,
+  hasSecret,
+  setSecret,
+} from './key-store';
 
 // ProviderConfig is the bus vocabulary (src/shared/messages.ts) — imported rather than
 // redefined here so the SW-persisted shape and the panel<->SW wire shape can never drift.
@@ -18,6 +25,13 @@ export { ProviderConfig };
 const PROVIDER_ID = 'default';
 const KEY_SECRET = `provider:${PROVIDER_ID}:key`;
 const CONFIG_KEY = 'provider:config'; // plaintext, non-secret fields
+
+// OpenRouter is the preset the legacy key-only flow implied; a migrated install lands here.
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+// Pre-refactor storage keys: the OpenRouter key was a bare payload under `openrouter-key`
+// (before the named-secret `secret:` namespace), and the model id under `selected-model`.
+const LEGACY_KEY_STORAGE = 'openrouter-key';
+const LEGACY_MODEL_STORAGE = 'selected-model';
 
 // The plaintext subset persisted to storage.local (apiKey stripped). Its own schema so a
 // corrupt or legacy record is rejected on read rather than trusted.
@@ -58,4 +72,46 @@ export function hasProviderKey(): Promise<boolean> {
 export async function clearProviderConfig(): Promise<void> {
   await chrome.storage.local.remove(CONFIG_KEY);
   await clearSecret(KEY_SECRET);
+}
+
+/**
+ * One-shot migration of a pre-ProviderConfig OpenRouter install. Ports the encrypted key
+ * out of the bare `openrouter-key` slot into the named-secret slot this store reads, and —
+ * if a model was selected under the old key-only flow — seeds an OpenRouter-preset config so
+ * the migrated key is usable without re-entry. Idempotent: a no-op once the legacy record is
+ * gone, and it never clobbers a key/config the user already has under the new scheme. Run
+ * once at service-worker startup (background.ts). See docs/architecture/security.md.
+ */
+export async function migrateLegacyProvider(): Promise<void> {
+  const got = await chrome.storage.local.get([LEGACY_KEY_STORAGE, LEGACY_MODEL_STORAGE]);
+  const legacy = got[LEGACY_KEY_STORAGE] as EncryptedPayload | undefined;
+  if (legacy == null) return; // nothing legacy to migrate (fresh install or already ported)
+
+  // Move the key only if the new slot is empty — never overwrite a re-entered key. The
+  // wrapping key survives the refactor (it lives in IndexedDB), so the old ciphertext still
+  // decrypts; re-encrypting under the new name keeps this on the public key-store API.
+  if (!(await hasProviderKey())) {
+    try {
+      await setSecret(KEY_SECRET, await decryptSecret(legacy));
+    } catch {
+      // Corrupt / undecryptable legacy payload: drop it below rather than retry forever.
+    }
+  }
+
+  // Seed a config from the legacy selected model so the key is immediately usable. Skip when
+  // a config already exists (new scheme wins) or no model was ever picked (the key persists;
+  // the user completes the config by choosing a model).
+  const model = got[LEGACY_MODEL_STORAGE];
+  if (typeof model === 'string' && model.length > 0 && !(await hasProviderConfig())) {
+    await chrome.storage.local.set({
+      [CONFIG_KEY]: StoredConfig.parse({
+        baseURL: OPENROUTER_BASE_URL,
+        model,
+        label: 'OpenRouter',
+      }),
+    });
+  }
+
+  // Retire the legacy records so this runs exactly once.
+  await chrome.storage.local.remove([LEGACY_KEY_STORAGE, LEGACY_MODEL_STORAGE]);
 }
