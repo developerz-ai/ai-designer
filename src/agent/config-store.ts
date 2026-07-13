@@ -4,8 +4,12 @@
 // `provider:<id>:key`. SW-ONLY — imports key-store; never import this from content.ts.
 // See docs/architecture/security.md "Key custody".
 
-import { z } from 'zod';
+import { ProviderConfig } from '@/shared/messages';
 import { clearSecret, getSecret, hasSecret, setSecret } from './key-store';
+
+// ProviderConfig is the bus vocabulary (src/shared/messages.ts) — imported rather than
+// redefined here so the SW-persisted shape and the panel<->SW wire shape can never drift.
+export { ProviderConfig };
 
 // One provider slot for this slice; the `<id>` segment leaves room for named providers
 // later (the key-store is already name-parametrized). The secret name matches the
@@ -14,18 +18,6 @@ import { clearSecret, getSecret, hasSecret, setSecret } from './key-store';
 const PROVIDER_ID = 'default';
 const KEY_SECRET = `provider:${PROVIDER_ID}:key`;
 const CONFIG_KEY = 'provider:config'; // plaintext, non-secret fields
-
-// An openai-compatible endpoint the agent talks to. `apiKey` is write-only here — on
-// save it is split out to the key-store and is never returned inside the plaintext
-// record on read (getProviderConfig re-attaches the decrypted value). `baseURL` is the
-// /v1 root the provider client and model list hang off.
-export const ProviderConfig = z.object({
-  baseURL: z.string().url(),
-  apiKey: z.string().optional(),
-  model: z.string().min(1),
-  label: z.string().optional(),
-});
-export type ProviderConfig = z.infer<typeof ProviderConfig>;
 
 // The plaintext subset persisted to storage.local (apiKey stripped). Its own schema so a
 // corrupt or legacy record is rejected on read rather than trusted.
