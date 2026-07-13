@@ -5,17 +5,23 @@ import { expect, test } from './fixtures';
 // so navigate a tab directly to the panel's extension-origin page and assert the
 // Chat surface renders. WXT flattens the entrypoint to `sidepanel.html` at the
 // output root (the source path is `sidepanel/index.html`).
-test('side panel mounts and shows the Chat surface', async ({ openExtensionPage }) => {
+test('side panel mounts on the Chat tab, gated behind Start on a fresh profile', async ({
+  openExtensionPage,
+}) => {
   const page = await openExtensionPage('sidepanel.html');
 
   // App shell rendered (App.tsx → <div class="dz-app">).
   await expect(page.locator('.dz-app')).toBeVisible({ timeout: 10_000 });
 
-  // Default tab is Chat → ChatPanel rendered. Static DOM, no chrome.* / network
-  // dependency at mount, so this is deterministic across CI retries.
+  // Default tab is Chat, but a fresh profile has no provider configured yet, so
+  // ChatPanel stays gated behind the pre-Start empty state (App.tsx `sessionStarted`,
+  // see readiness.spec.ts for the full configure -> Ready -> Start walk). Static DOM, no
+  // chrome.* / network dependency at mount, so this is deterministic across CI retries.
   await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
-  await expect(page.getByPlaceholder('Tell the agent what to change…')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+  await expect(
+    page.getByText('Configure a provider above, then hit Start to begin chatting.'),
+  ).toBeVisible();
+  await expect(page.getByPlaceholder('Tell the agent what to change…')).toHaveCount(0);
 });
 
 // CSP no-remote-fetch verification: icons are self-hosted, tree-shaken SVG (bundled JS,

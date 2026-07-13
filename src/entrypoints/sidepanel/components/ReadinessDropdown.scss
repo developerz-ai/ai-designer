@@ -1,0 +1,120 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+.dz-readiness {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: tokens.$dz-space-2;
+
+  &__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    background: transparent;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-status-warning);
+    padding: tokens.$dz-space-1 tokens.$dz-space-3;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+
+    &.is-ready {
+      color: var(--dz-status-connected);
+    }
+
+    &.is-running {
+      color: var(--dz-primary);
+    }
+
+    &:hover {
+      background: var(--dz-surface-overlay);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--dz-primary);
+      outline-offset: 2px;
+    }
+  }
+
+  &__chevron {
+    color: var(--dz-muted);
+  }
+
+  &__toggle {
+    background: var(--dz-accent);
+    border: none;
+    border-radius: var(--dz-radius);
+    color: var(--dz-accent-fg);
+    padding: tokens.$dz-space-1 tokens.$dz-space-4;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  &__panel {
+    position: absolute;
+    top: calc(100% + #{tokens.$dz-space-2});
+    left: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+    min-width: 240px;
+    background: var(--dz-surface);
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    padding: tokens.$dz-space-3;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+  }
+
+  &__rowlabel {
+    flex: 1;
+    min-width: 0;
+    color: var(--dz-fg);
+  }
+
+  &__rowdetail {
+    color: var(--dz-muted);
+  }
+
+  &__link {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    background: transparent;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-fg);
+    padding: tokens.$dz-space-1 tokens.$dz-space-2;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+
+    &:hover {
+      background: var(--dz-surface-overlay);
+    }
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    color: tokens.$dz-danger;
+    font-size: 12px;
+    margin: 0;
+  }
+}

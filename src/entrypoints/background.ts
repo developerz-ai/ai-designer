@@ -8,6 +8,7 @@ import {
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { listModels, validateProvider } from '@/agent/provider';
+import { computeReadiness } from '@/agent/readiness';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpConnectionSpec } from '@/mcp/client';
 import { McpManager } from '@/mcp/manager';
@@ -79,6 +80,22 @@ export default defineBackground(() => {
     postToPanel({ type: 'mcp-status', server: toBusServer(stored) });
   }
 
+  // Readiness (slice 03): pushed unsolicited whenever provider/model/host-permission/MCP
+  // health changes, so the header pill updates without the panel polling the RPC.
+  async function pushReadiness(): Promise<void> {
+    postToPanel({ type: 'readiness', state: await computeReadiness(mcpManager) });
+  }
+
+  // Start/Stop session lifecycle (04 wires the real agent-turn AbortController into
+  // `turnAbort`; this slice only tracks/pushes the tri-state and aborts if one is set).
+  let sessionState: 'idle' | 'running' | 'stopped' = 'idle';
+  let turnAbort: AbortController | null = null;
+
+  function setSessionState(next: typeof sessionState): void {
+    sessionState = next;
+    postToPanel({ type: 'session-state', state: sessionState });
+  }
+
   // Rehydrate the registry from the persisted server list before any RPC is served.
   // Registration is cheap/lazy (client.ts doesn't open until `tools()`/`connect()`).
   const mcpReady = listServers().then((stored) => {
@@ -139,6 +156,7 @@ export default defineBackground(() => {
         await saveProviderConfig(msg.config);
         const saved = await getProviderConfig(); // includes the decrypted key (new or kept)
         const result = saved ? await validateProvider(saved) : { ok: false, error: undefined };
+        void pushReadiness();
         return { ok: true, valid: result.ok, error: result.error };
       }
       // Presence + non-secret config only — never the key value (apiKey is stripped here).
@@ -170,6 +188,7 @@ export default defineBackground(() => {
           apiKey: msg.text,
         });
         if (valid) await setOpenRouterKey(msg.text); // shared `provider:default:key` slot
+        if (valid) void pushReadiness();
         return { ok: true, valid, error };
       }
       case 'set-model': {
@@ -181,6 +200,7 @@ export default defineBackground(() => {
           label: cfg?.label,
           model: msg.model,
         });
+        void pushReadiness();
         return { ok: true };
       }
       case 'key-status': {
@@ -189,6 +209,7 @@ export default defineBackground(() => {
       }
       case 'clear-openrouter-key':
         await clearProviderConfig();
+        void pushReadiness();
         return { ok: true };
 
       // --- MCP servers: registry + auth are SW-only (tokens/headers never reach content) ---
@@ -207,6 +228,7 @@ export default defineBackground(() => {
         });
         mcpManager.register(mcpSpec(stored));
         pushMcpStatus(stored);
+        void pushReadiness();
         return { ok: true, server: toBusServer(stored) };
       }
       // Tear down the connection and purge the persisted record + both credential slots
@@ -215,6 +237,7 @@ export default defineBackground(() => {
         await mcpManager.unregister(msg.id);
         oauthConfigs.delete(msg.id);
         await removeServer(msg.id);
+        void pushReadiness();
         return { ok: true };
       }
       case 'mcp-list': {
@@ -229,6 +252,7 @@ export default defineBackground(() => {
         if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(stored));
         await mcpManager.connect(msg.id);
         pushMcpStatus(stored);
+        void pushReadiness();
         return { ok: true, server: toBusServer(stored) };
       }
       // Submit the chosen auth kind's credential, then reconnect so the new header takes
@@ -251,6 +275,7 @@ export default defineBackground(() => {
         mcpManager.register(mcpSpec(next));
         await mcpManager.connect(msg.id);
         pushMcpStatus(next);
+        void pushReadiness();
         return { ok: true, server: toBusServer(next) };
       }
       // Manual refresh: republish every registered server's current health on the
@@ -259,6 +284,25 @@ export default defineBackground(() => {
         for (const stored of await listServers()) pushMcpStatus(stored);
         return { ok: true };
       }
+
+      // --- readiness + session (slice 03) ---------------------------------
+      case 'readiness':
+        return { ok: true, state: await computeReadiness(mcpManager) };
+      // Marks the session active (primes the agent — see 04) and flips the panel from
+      // the readiness/empty state to chat. A stale in-flight turn from a prior session
+      // is aborted first so it can never leak tokens into the new one.
+      case 'session-start':
+        turnAbort?.abort();
+        turnAbort = null;
+        setSessionState('running');
+        return { ok: true };
+      // Aborts the in-flight agent turn (04 sets `turnAbort` at turn-start) without
+      // ending the session — the panel stays on chat, ready for the next message.
+      case 'session-stop':
+        turnAbort?.abort();
+        turnAbort = null;
+        setSessionState('stopped');
+        return { ok: true };
     }
   }
 

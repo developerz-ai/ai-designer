@@ -154,6 +154,31 @@ export type McpAuthStart = z.infer<typeof McpAuthStart>;
 // `mcp-status` stream — e.g. when a panel (re)connects and has no cached state yet.
 export const McpStatusRequest = z.object({ type: z.literal('mcp-status') });
 
+// --- readiness + session (slice 03) ---------------------------------------
+// Header status-pill truth: whether the agent can run at all. `ready` gates chat entry
+// and is `provider && model` only — MCP is optional (copy/debug flows still work without
+// a connected backend, see 06/07). Computed SW-side in `src/agent/readiness.ts` from the
+// config-store (01), the live `McpManager` (02), and the runtime host-permission grant.
+export const ReadinessState = z.object({
+  provider: z.enum(['ok', 'missing']),
+  model: z.enum(['ok', 'missing']),
+  hostPermission: z.enum(['granted', 'needed']),
+  mcp: z.object({
+    connected: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  ready: z.boolean(),
+});
+export type ReadinessState = z.infer<typeof ReadinessState>;
+
+export const Readiness = z.object({ type: z.literal('readiness') });
+
+// Start/Stop toggle. Start is only actionable once `ReadinessState.ready`; while a turn
+// runs the panel shows Stop, which aborts the in-flight agent turn (04) without ending the
+// session. Ending the session (toggling off) returns the panel to the pre-Start state.
+export const SessionStart = z.object({ type: z.literal('session-start') });
+export const SessionStop = z.object({ type: z.literal('session-stop') });
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -172,6 +197,9 @@ export const PanelToSw = z.discriminatedUnion('type', [
   McpConnect,
   McpAuthStart,
   McpStatusRequest,
+  Readiness,
+  SessionStart,
+  SessionStop,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -235,6 +263,11 @@ export const McpListResult = z.object({
   error: z.string().optional(),
 });
 export type McpListResult = z.infer<typeof McpListResult>;
+
+// RPC response for `readiness`. Compute never throws (see `src/agent/readiness.ts`), so
+// `ok` is always true here; the field is kept for the bus's shared response shape.
+export const ReadinessResult = z.object({ ok: z.boolean(), state: ReadinessState });
+export type ReadinessResult = z.infer<typeof ReadinessResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // One named input const per tool. The DomTool union is built FROM these, so #11
@@ -383,5 +416,12 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // Live connection-health push for one MCP server (add/connect/auth/remove, or an
   // explicit mcp-status refresh request) — the panel's mcpStore reflects this stream.
   z.object({ type: z.literal('mcp-status'), server: McpServer }),
+  // Unsolicited readiness push whenever provider/model/host-permission/MCP health
+  // changes, so the header pill updates without the panel polling the `readiness` RPC.
+  z.object({ type: z.literal('readiness'), state: ReadinessState }),
+  // Start/Stop session lifecycle: `idle` (pre-Start) -> `running` (session-start) ->
+  // `stopped` (session-stop aborted the in-flight turn; session stays open for the next
+  // message). See `SessionStart`/`SessionStop` above.
+  z.object({ type: z.literal('session-state'), state: z.enum(['idle', 'running', 'stopped']) }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;
