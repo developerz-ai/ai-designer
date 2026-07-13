@@ -13,7 +13,7 @@ runs:
   using: composite
   steps:
     # Third-party actions pinned to a commit SHA (supply-chain hardening); the
-    # trailing comment tracks the human-readable tag for Dependabot.
+    # trailing comment tracks the human-readable tag.
     - name: setup bun
       uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       with:
