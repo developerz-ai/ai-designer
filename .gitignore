@@ -22,3 +22,6 @@ Thumbs.db
 .claude-task-master/
 claudetm.log
 goal.txt
+
+# CodeGraph index — local per-machine SQLite graph, never commit
+.codegraph/
