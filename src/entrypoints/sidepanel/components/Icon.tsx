@@ -1,11 +1,9 @@
-import { createEffect, mergeProps } from 'solid-js';
-import type { IconName } from './icon-registry';
-import { buildIconSvg } from './icon-registry';
+import { createEffect, createMemo, mergeProps } from 'solid-js';
+import type { IconName, IconSize } from './icon-registry';
+import { buildIconClass, buildIconSvg } from './icon-registry';
 import './Icon.scss';
 
-export type { IconName } from './icon-registry';
-
-export type IconSize = 'sm' | 'md' | 'lg';
+export type { IconName, IconSize } from './icon-registry';
 
 export interface IconProps {
   name: IconName;
@@ -23,18 +21,14 @@ export function Icon(rawProps: IconProps) {
   const props = mergeProps({ size: 'md' as IconSize, spin: false }, rawProps);
   let host: HTMLSpanElement | undefined;
 
+  const hostClass = createMemo(() =>
+    buildIconClass({ size: props.size, spin: props.spin, class: props.class }),
+  );
+
   createEffect(() => {
     const svg = buildIconSvg(props.name);
     host?.replaceChildren(svg);
   });
 
-  return (
-    <span
-      ref={host}
-      class={`dz-icon dz-icon--${props.size}${props.spin ? ' dz-icon--spin' : ''}${
-        props.class ? ` ${props.class}` : ''
-      }`}
-      aria-hidden="true"
-    />
-  );
+  return <span ref={host} class={hostClass()} aria-hidden="true" />;
 }

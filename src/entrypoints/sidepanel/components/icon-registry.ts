@@ -55,6 +55,27 @@ export type IconName = keyof typeof REGISTRY;
 /** All registered names, e.g. for a Storybook-less visual smoke check or a <select>. */
 export const ICON_NAMES = Object.keys(REGISTRY) as IconName[];
 
+export type IconSize = 'sm' | 'md' | 'lg';
+
+export interface IconClassOptions {
+  size?: IconSize;
+  spin?: boolean;
+  class?: string;
+}
+
+/**
+ * Builds the host `<span>` class list for `Icon` (size + spin + caller-supplied class).
+ * Pure and side-effect-free so it's unit-testable without mounting Solid (CLAUDE.md
+ * "no business logic in components" — Icon.tsx only maps this string onto the DOM).
+ */
+export function buildIconClass(options: IconClassOptions = {}): string {
+  const size = options.size ?? 'md';
+  const classes = ['dz-icon', `dz-icon--${size}`];
+  if (options.spin) classes.push('dz-icon--spin');
+  if (options.class) classes.push(options.class);
+  return classes.join(' ');
+}
+
 const FALLBACK_ICON: IconName = 'warning';
 
 function isIconName(name: string): name is IconName {
