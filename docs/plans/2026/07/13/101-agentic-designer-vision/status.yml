@@ -1,0 +1,54 @@
+plan: 101-agentic-designer-vision
+title: "Agentic Designer Vision — Onboarding → Chat → Ship/Report"
+status: not_started        # not_started | in_progress | blocked | complete | superseded
+created_by: sebi
+worked_by: ""              # executor fills with their git user.name when picked up
+owner: sebi
+percent: 0
+current_focus: ""
+slices:
+  - file: 01-provider-config.md
+    status: not_started
+    percent: 0
+  - file: 02-mcp-servers.md
+    status: not_started
+    percent: 0
+  - file: 03-readiness-start.md
+    status: not_started
+    percent: 0
+  - file: 04-agent-loop.md
+    status: not_started
+    percent: 0
+  - file: 05-dom-tools-content.md
+    status: not_started
+    percent: 0
+  - file: 06-browse-copy-debug.md
+    status: not_started
+    percent: 0
+  - file: 07-handoff-and-report.md
+    status: not_started
+    percent: 0
+  - file: 08-history.md
+    status: not_started
+    percent: 0
+  - file: 09-agent-overlay.md
+    status: not_started
+    percent: 0
+  - file: 10-fontawesome-ui-system.md
+    status: not_started
+    percent: 0
+  - file: 11-chat-ui-leo.md
+    status: not_started
+    percent: 0
+  - file: 12-docs-wiki-claude-md.md
+    status: not_started
+    percent: 0
+  - file: 13-browser-control-vision.md
+    status: not_started
+    percent: 0
+  - file: 14-describe-identity.md
+    status: not_started
+    percent: 0
+evidence: []
+notes: "Vision plan from .codegraph/vision.txt. Plumbing tier done; agent/DOM/MCP/history/reports/overlay are net-new. Leo (Brave) is the chat-UI reference — copy its polish, build for web developers + vibecoders. 13=real browser control (iframes/tabs)+vision, 14=describe-in-text + design-identity extraction. Report is agent-authored (colors/fonts/problems/pros); multi-problem→multi-task when MCP connected; Start/Stop toggle."
+last_updated: 2026-07-13
