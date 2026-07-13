@@ -1,0 +1,88 @@
+@use './tokens' as t;
+
+// Icon button — clickable icon with accessible hit target and hover state.
+// Usage: @include icon-button to create a button-like container for an Icon.
+// Supports :hover, :focus-visible, :active states; automatically sized to 44px
+// minimum hit target (WCAG AAA). Icon color inherits from --dz-fg; set custom
+// --icon-color on the element to override.
+@mixin icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: t.$dz-space-2; // 8px padding → 40px total with Icon.md (24px default)
+  min-width: 44px;
+  min-height: 44px;
+  background-color: transparent;
+  border: none;
+  border-radius: t.$dz-radius;
+  cursor: pointer;
+  color: var(--icon-color, var(--dz-fg));
+  transition: background-color 150ms ease, color 150ms ease;
+
+  &:hover {
+    background-color: var(--dz-surface-overlay);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--dz-primary);
+    outline-offset: 2px;
+  }
+
+  &:active {
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+
+    &:hover {
+      background-color: transparent;
+    }
+  }
+}
+
+// Status indicator dot — small colored badge for connection/error/warning states.
+// Variants: connected, error, warning, muted.
+// Usage: @include status-dot('connected') or @include status-dot('error').
+// Renders as a 12px circle with a 2px ring, animates pulse on 'connected' state.
+@mixin status-dot($status: 'muted') {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  flex: none;
+
+  @if $status == 'connected' {
+    background-color: var(--dz-status-connected);
+    color: var(--dz-status-connected);
+    animation: dz-status-pulse 2s ease-in-out infinite;
+  } @else if $status == 'error' {
+    background-color: var(--dz-status-error);
+    color: var(--dz-status-error);
+  } @else if $status == 'warning' {
+    background-color: var(--dz-status-warning);
+    color: var(--dz-status-warning);
+  } @else if $status == 'muted' {
+    background-color: var(--dz-status-muted);
+    color: var(--dz-status-muted);
+  }
+}
+
+// Pulse animation for connected status dot — gentle opacity fade.
+@keyframes dz-status-pulse {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
