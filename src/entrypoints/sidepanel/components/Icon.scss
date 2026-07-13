@@ -1,0 +1,45 @@
+// Sized in `em` relative to the surrounding text so it scales with font-size instead of
+// needing its own pixel tokens (CLAUDE.md "SCSS" — no hardcoded hex/px that's a token;
+// dedicated icon-size tokens land with the mixins in a later slice-10 task).
+.dz-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 0;
+  color: currentColor;
+
+  &--sm {
+    width: 0.875em;
+    height: 0.875em;
+  }
+
+  &--md {
+    width: 1em;
+    height: 1em;
+  }
+
+  &--lg {
+    width: 1.25em;
+    height: 1.25em;
+  }
+
+  &--spin {
+    animation: dz-icon-spin 1s linear infinite;
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+}
+
+@keyframes dz-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

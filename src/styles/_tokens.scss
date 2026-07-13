@@ -3,15 +3,31 @@
 // properties that components consume. Values match the existing surfaces so this
 // extraction is visually a no-op.
 
-// color
-$dz-bg: #0f1115;
-$dz-fg: #e6e8eb;
-$dz-accent: #f97316;
+// Brand palette — developerz.ai primary identity
+$dz-primary: #f97316;
+$dz-accent: #f97316; // same as primary
+$dz-surface: #0f1115; // dark background
+$dz-on-surface: #e6e8eb; // light foreground
+
+// Semantic color aliases (legacy, mapped to brand palette)
+$dz-bg: $dz-surface;
+$dz-fg: $dz-on-surface;
 $dz-accent-fg: #1a1205; // text on the accent surface (matches ChatPanel)
 $dz-muted: #8b909a;
 $dz-border: #232733;
-$dz-surface: rgba(255, 255, 255, 0.04);
+$dz-surface-overlay: rgba(255, 255, 255, 0.04);
 $dz-danger: #ff6b6b;
+
+// Status colors
+$dz-status-connected: #22c55e; // green — online/ready state
+$dz-status-error: #ff6b6b; // red — error state (same as danger)
+$dz-status-warning: #fbbf24; // yellow — warning state
+$dz-status-muted: $dz-muted; // gray — muted/inactive state
+
+// Icon sizes (pixel values for direct use in layouts)
+$dz-icon-size-sm: 16px;
+$dz-icon-size-md: 24px;
+$dz-icon-size-lg: 32px;
 
 // radius
 $dz-radius: 8px;
@@ -27,13 +43,28 @@ $dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
 
 // Runtime CSS custom properties consumed via var(--dz-*).
 @mixin root-vars {
+  // Brand palette
+  --dz-primary: #{$dz-primary};
+  --dz-accent: #{$dz-accent};
+  --dz-surface: #{$dz-surface};
+  --dz-on-surface: #{$dz-on-surface};
+  // Semantic aliases
   --dz-bg: #{$dz-bg};
   --dz-fg: #{$dz-fg};
-  --dz-accent: #{$dz-accent};
   --dz-accent-fg: #{$dz-accent-fg};
   --dz-muted: #{$dz-muted};
   --dz-border: #{$dz-border};
-  --dz-surface: #{$dz-surface};
+  --dz-surface-overlay: #{$dz-surface-overlay};
+  // Status colors
+  --dz-status-connected: #{$dz-status-connected};
+  --dz-status-error: #{$dz-status-error};
+  --dz-status-warning: #{$dz-status-warning};
+  --dz-status-muted: #{$dz-status-muted};
+  // Icon sizes
+  --dz-icon-size-sm: #{$dz-icon-size-sm};
+  --dz-icon-size-md: #{$dz-icon-size-md};
+  --dz-icon-size-lg: #{$dz-icon-size-lg};
+  // Other
   --dz-radius: #{$dz-radius};
   --dz-font: #{$dz-font};
 }
