@@ -1,12 +1,20 @@
 // Optional host-permission handling for BYOK provider endpoints. A custom provider base
 // URL points at a host the manifest doesn't statically grant (only `openrouter.ai` is in
-// `host_permissions`), so the service worker must hold a runtime host permission before it
-// can fetch that origin (cross-origin fetch is otherwise CORS-blocked). SW-ONLY — the
-// chrome.permissions calls run in the service worker; never import this from content.ts.
+// `host_permissions`), so an extension context needs a runtime host permission before it
+// can fetch that origin without CORS trouble.
 //
-// `originPattern` is pure + unit-tested; `ensureHostAccess` wraps it around
-// chrome.permissions. Least privilege: the grant is requested per-origin at save, drawing
-// from `optional_host_permissions` (wxt.config.ts), not baked into the manifest.
+// `chrome.permissions.request` REQUIRES a live user gesture in the SAME call stack — it
+// does not survive a hop across `chrome.runtime.sendMessage` (verified against a loaded
+// extension: a click in the side panel that reaches the service worker via a message and
+// then calls `request()` there fails immediately with "This function must be called
+// during a user gesture", even though the click was real). So the request has to happen
+// in whichever world actually receives the gesture. The side panel does it synchronously
+// inside the Save button's click handler (`sidepanel/stores/settings.ts`); the service
+// worker calls this again before persisting (`entrypoints/background.ts`) as a no-op
+// defense-in-depth check — `contains()` is already true by then, so no second prompt.
+//
+// `chrome.permissions` is available in the SW and extension pages (side panel, popup,
+// options) alike — never import this from content.ts (page world, no extension APIs).
 
 export type HostAccess = { ok: boolean; error?: string };
 
@@ -28,16 +36,12 @@ export function originPattern(baseURL: string): string | null {
 }
 
 /**
- * Ensure the SW can reach `baseURL`, requesting an optional host permission if it isn't
- * already held. Returns `{ ok: true }` when the origin is covered by a static
+ * Ensure the calling context can reach `baseURL`, requesting an optional host permission if
+ * it isn't already held. Returns `{ ok: true }` when the origin is covered by a static
  * `host_permissions` entry (e.g. OpenRouter) or an existing runtime grant — in that case no
  * prompt is shown. For a not-yet-granted custom host it calls `chrome.permissions.request`;
- * a user denial surfaces as `{ ok: false, error }` so the caller can avoid persisting a
- * config it can never fetch.
- *
- * `chrome.permissions.request` requires a user gesture, which does not cross the panel->SW
- * message boundary. The panel is expected to grant on the Save click (leaving `contains`
- * true here); if it didn't, `request` rejects and we surface that rather than throwing.
+ * a user denial (or a call outside a user gesture) surfaces as `{ ok: false, error }` so the
+ * caller can avoid persisting a config it can never fetch.
  */
 export async function ensureHostAccess(baseURL: string): Promise<HostAccess> {
   const pattern = originPattern(baseURL);

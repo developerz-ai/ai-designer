@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ensureHostAccess, originPattern } from '@/agent/host-permissions';
+import { ensureHostAccess, originPattern } from '@/shared/host-permissions';
 
 // originPattern is pure; ensureHostAccess is exercised against a minimal chrome.permissions
 // fake (contains/request) so the grant / deny / already-granted / gesture-rejection branches

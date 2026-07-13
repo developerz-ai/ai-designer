@@ -1,4 +1,5 @@
 import { createStore } from 'solid-js/store';
+import { ensureHostAccess } from '@/shared/host-permissions';
 import {
   GetProviderResult,
   type ModelOption,
@@ -148,7 +149,13 @@ export async function loadModels(apiKeyText?: string): Promise<void> {
 /** Validate + persist the full provider config (base URL + key + model). A blank key
  *  leaves any existing stored key intact (see config-store.ts). Re-hydrates afterward
  *  so `hasKey`/`savedBaseURL`/`model` reflect what the SW actually persisted, rather
- *  than guessing from the RPC result (a custom-host permission denial saves nothing). */
+ *  than guessing from the RPC result (a custom-host permission denial saves nothing).
+ *
+ *  A not-yet-granted custom host needs `chrome.permissions.request`, which only succeeds
+ *  called synchronously within a live user gesture — it does NOT survive the hop across
+ *  `chrome.runtime.sendMessage` to the service worker (see shared/host-permissions.ts). So
+ *  the grant is requested here, inside the Save click, before the RPC ever goes out; the SW
+ *  re-checks (a no-op once this has granted it) before persisting. */
 export async function saveProvider(apiKeyText: string, model: string): Promise<void> {
   const trimmedModel = model.trim();
   if (!trimmedModel) {
@@ -157,6 +164,11 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
   }
   const preset = PRESETS.find((p) => p.id === settings.preset);
   set({ saveStatus: 'saving', error: null });
+  const access = await ensureHostAccess(settings.baseURL);
+  if (!access.ok) {
+    set({ saveStatus: 'invalid', error: access.error ?? 'Host access denied.' });
+    return;
+  }
   try {
     const r = await request(
       {

@@ -6,10 +6,10 @@ import {
   migrateLegacyProvider,
   saveProviderConfig,
 } from '@/agent/config-store';
-import { ensureHostAccess } from '@/agent/host-permissions';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { listModels, validateProvider } from '@/agent/provider';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
+import { ensureHostAccess } from '@/shared/host-permissions';
 import type { SwToPanel } from '@/shared/messages';
 import { ContentToSw, PanelToSw } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
