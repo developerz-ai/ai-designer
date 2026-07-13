@@ -6,12 +6,12 @@ import './App.scss';
 
 type Tab = 'chat' | 'mcp' | 'settings';
 
-// v1 — the MCP handoff UI is hidden until the Ship loop lands (docs/idea/roadmap.md).
-// McpPanel stays wired so flipping this to true re-enables it with no rework.
-const SHOW_MCP = false;
+// MCP server management is live (slice 02) — connect implement backends the agent
+// ships changesets to. See docs/idea/mcp.md.
+const SHOW_MCP = true;
 
-// Root side-panel shell. v0 surfaces: the design conversation (Chat) and Settings
-// (BYOK OpenRouter key + model picker). MCP backend management is v1. See docs/idea/ui.md.
+// Root side-panel shell. Surfaces: the design conversation (Chat), MCP backend
+// management, and Settings (BYOK provider key + model picker). See docs/idea/ui.md.
 export function App() {
   const [tab, setTab] = createSignal<Tab>('chat');
 
