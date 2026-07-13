@@ -8,6 +8,9 @@ import {
   GetStylesInput,
   GetStylesResult,
   KeyStatusResult,
+  McpListResult,
+  McpServer,
+  McpServerResult,
   ModelsResult,
   MutationEvent,
   PanelToSw,
@@ -389,5 +392,137 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
 
     expect(discs).toContain('focus');
     expect(discs).toContain('picker-state');
+  });
+
+  it('accepts an mcp-status push carrying a full McpServer record', () => {
+    const server = {
+      id: 'ai-dev',
+      label: 'ai-dev',
+      url: 'https://ai-dev.example.com/mcp',
+      transport: 'http' as const,
+      authKind: 'apikey' as const,
+      status: 'connected' as const,
+      toolCount: 2,
+      tools: ['create_task', 'get_task'],
+    };
+    expect(SwToPanel.safeParse({ type: 'mcp-status', server }).success).toBe(true);
+    expect(McpServer.safeParse(server).success).toBe(true);
+  });
+
+  it('rejects an mcp-status push with a malformed server (bad url)', () => {
+    expect(
+      SwToPanel.safeParse({
+        type: 'mcp-status',
+        server: {
+          id: 'x',
+          label: 'X',
+          url: 'not-a-url',
+          transport: 'http',
+          authKind: 'none',
+          status: 'disconnected',
+          toolCount: 0,
+          tools: [],
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('MCP server RPCs (panel <-> service worker)', () => {
+  it('accepts mcp-add with just label + url, transport/authKind optional', () => {
+    const r = PanelToSw.safeParse({
+      type: 'mcp-add',
+      label: 'ai-dev',
+      url: 'https://ai-dev.example.com/mcp',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts mcp-add with an explicit transport + authKind', () => {
+    expect(
+      PanelToSw.safeParse({
+        type: 'mcp-add',
+        label: 'GitHub MCP',
+        url: 'https://github.example.com/mcp',
+        transport: 'http',
+        authKind: 'oauth',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects mcp-add missing a url or with an empty label', () => {
+    expect(PanelToSw.safeParse({ type: 'mcp-add', label: 'x' }).success).toBe(false);
+    expect(PanelToSw.safeParse({ type: 'mcp-add', label: '', url: 'https://x/mcp' }).success).toBe(
+      false,
+    );
+  });
+
+  it('accepts mcp-remove / mcp-list / mcp-connect / mcp-status', () => {
+    expect(PanelToSw.safeParse({ type: 'mcp-remove', id: 's1' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'mcp-list' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'mcp-connect', id: 's1' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'mcp-status' }).success).toBe(true);
+  });
+
+  it('rejects mcp-remove / mcp-connect without an id', () => {
+    expect(PanelToSw.safeParse({ type: 'mcp-remove' }).success).toBe(false);
+    expect(PanelToSw.safeParse({ type: 'mcp-connect' }).success).toBe(false);
+  });
+
+  it('accepts mcp-auth-start (apikey variant)', () => {
+    expect(
+      PanelToSw.safeParse({
+        type: 'mcp-auth-start',
+        id: 's1',
+        authKind: 'apikey',
+        apiKey: 'admin-key-abc',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts mcp-auth-start (oauth variant)', () => {
+    expect(
+      PanelToSw.safeParse({
+        type: 'mcp-auth-start',
+        id: 's1',
+        authKind: 'oauth',
+        oauth: {
+          authorizationEndpoint: 'https://auth.example.com/authorize',
+          tokenEndpoint: 'https://auth.example.com/token',
+          clientId: 'client-123',
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects mcp-auth-start when the payload does not match its authKind', () => {
+    // apikey without apiKey
+    expect(
+      PanelToSw.safeParse({ type: 'mcp-auth-start', id: 's1', authKind: 'apikey' }).success,
+    ).toBe(false);
+    // oauth without oauth config
+    expect(
+      PanelToSw.safeParse({ type: 'mcp-auth-start', id: 's1', authKind: 'oauth' }).success,
+    ).toBe(false);
+    // unknown authKind
+    expect(
+      PanelToSw.safeParse({ type: 'mcp-auth-start', id: 's1', authKind: 'none' }).success,
+    ).toBe(false);
+  });
+
+  it('parses the McpServerResult / McpListResult RPC response shapes', () => {
+    const server = {
+      id: 's1',
+      label: 'S1',
+      url: 'https://s1.example.com/mcp',
+      transport: 'http' as const,
+      authKind: 'none' as const,
+      status: 'disconnected' as const,
+      toolCount: 0,
+      tools: [],
+    };
+    expect(McpServerResult.safeParse({ ok: true, server }).success).toBe(true);
+    expect(McpServerResult.safeParse({ ok: false, error: 'boom' }).success).toBe(true);
+    expect(McpListResult.safeParse({ ok: true, servers: [server] }).success).toBe(true);
   });
 });

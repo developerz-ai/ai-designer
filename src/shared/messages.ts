@@ -77,6 +77,83 @@ export const ClearKey = z.object({ type: z.literal('clear-openrouter-key') });
 export const StartPicker = z.object({ type: z.literal('start-picker') });
 export const StopPicker = z.object({ type: z.literal('stop-picker') });
 
+// --- MCP servers (panel <-> service worker) -------------------------------
+// Server management + auth: docs/idea/mcp.md. Mirrors the non-secret shape persisted by
+// `src/mcp/store.ts` (`StoredServer`/`AuthKind`) — duplicated here rather than imported,
+// since that module (and `src/mcp/auth.ts`) is SW-only (chrome.identity, key-store
+// decrypt) and this file is shared with content.ts. The credential itself (API key /
+// OAuth token) never lives in these schemas except as a one-time write in `McpAuthStart`.
+export const McpTransport = z.enum(['http']);
+export type McpTransport = z.infer<typeof McpTransport>;
+
+export const AuthKind = z.enum(['none', 'apikey', 'oauth']);
+export type AuthKind = z.infer<typeof AuthKind>;
+
+export const McpConnectionStatus = z.enum(['disconnected', 'connected', 'error']);
+export type McpConnectionStatus = z.infer<typeof McpConnectionStatus>;
+
+// OAuth endpoints + public client id for one backend (mirrors `src/mcp/auth.ts`'s
+// `OAuthConfig`). Non-secret — supplied by the Add-server/AuthDialog form or a preset.
+export const McpOAuthConfig = z.object({
+  authorizationEndpoint: z.string().url(),
+  tokenEndpoint: z.string().url(),
+  clientId: z.string().min(1),
+  scope: z.string().optional(),
+});
+export type McpOAuthConfig = z.infer<typeof McpOAuthConfig>;
+
+// A configured server as the panel sees it: `mcp/store.ts`'s persisted record merged
+// with `mcp/manager.ts`'s live connection health. `toolCount`/`tools` are 0/[] until a
+// successful connect; `error` is set only when `status === 'error'`.
+export const McpServer = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  url: z.string().url(),
+  transport: McpTransport,
+  authKind: AuthKind,
+  status: McpConnectionStatus,
+  toolCount: z.number().int().nonnegative(),
+  tools: z.array(z.string()),
+  error: z.string().optional(),
+});
+export type McpServer = z.infer<typeof McpServer>;
+
+export const McpAdd = z.object({
+  type: z.literal('mcp-add'),
+  label: z.string().min(1),
+  url: z.string().url(),
+  transport: McpTransport.optional(),
+  authKind: AuthKind.optional(),
+});
+export const McpRemove = z.object({ type: z.literal('mcp-remove'), id: z.string().min(1) });
+export const McpList = z.object({ type: z.literal('mcp-list') });
+export const McpConnect = z.object({ type: z.literal('mcp-connect'), id: z.string().min(1) });
+
+// Submits the credential for a server's chosen auth kind — one RPC for both `AuthDialog`
+// paths: an API key (stored as-is, Bearer at connect time) or an OAuth PKCE flow the SW
+// drives end-to-end via `chrome.identity.launchWebAuthFlow` (`src/mcp/auth.ts`
+// `startOAuth`) before returning. `authKind` is the discriminant so each variant carries
+// exactly the credential shape it needs.
+export const McpAuthStart = z.discriminatedUnion('authKind', [
+  z.object({
+    type: z.literal('mcp-auth-start'),
+    id: z.string().min(1),
+    authKind: z.literal('apikey'),
+    apiKey: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('mcp-auth-start'),
+    id: z.string().min(1),
+    authKind: z.literal('oauth'),
+    oauth: McpOAuthConfig,
+  }),
+]);
+export type McpAuthStart = z.infer<typeof McpAuthStart>;
+
+// Ask the SW to (re)publish current health for every registered server on the
+// `mcp-status` stream — e.g. when a panel (re)connects and has no cached state yet.
+export const McpStatusRequest = z.object({ type: z.literal('mcp-status') });
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -89,6 +166,12 @@ export const PanelToSw = z.discriminatedUnion('type', [
   ClearKey,
   StartPicker,
   StopPicker,
+  McpAdd,
+  McpRemove,
+  McpList,
+  McpConnect,
+  McpAuthStart,
+  McpStatusRequest,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -136,6 +219,22 @@ export const ModelsResult = z.object({
   error: z.string().optional(),
 });
 export type ModelsResult = z.infer<typeof ModelsResult>;
+
+// RPC responses for mcp-add / mcp-connect / mcp-auth-start (one server) and mcp-list
+// (the full set). mcp-remove / mcp-status(request) reply with the plain `OkResult`.
+export const McpServerResult = z.object({
+  ok: z.boolean(),
+  server: McpServer.optional(),
+  error: z.string().optional(),
+});
+export type McpServerResult = z.infer<typeof McpServerResult>;
+
+export const McpListResult = z.object({
+  ok: z.boolean(),
+  servers: z.array(McpServer).optional(),
+  error: z.string().optional(),
+});
+export type McpListResult = z.infer<typeof McpListResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // One named input const per tool. The DomTool union is built FROM these, so #11
@@ -281,5 +380,8 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // SW relays of ContentToSw picker events.
   z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
+  // Live connection-health push for one MCP server (add/connect/auth/remove, or an
+  // explicit mcp-status refresh request) — the panel's mcpStore reflects this stream.
+  z.object({ type: z.literal('mcp-status'), server: McpServer }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;

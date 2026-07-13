@@ -8,9 +8,13 @@ import {
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { listModels, validateProvider } from '@/agent/provider';
+import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
+import type { McpConnectionSpec } from '@/mcp/client';
+import { McpManager } from '@/mcp/manager';
+import { getServer, listServers, removeServer, type StoredServer, saveServer } from '@/mcp/store';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
-import type { SwToPanel } from '@/shared/messages';
+import type { McpOAuthConfig, McpServer, SwToPanel } from '@/shared/messages';
 import { ContentToSw, PanelToSw } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
@@ -35,6 +39,51 @@ export default defineBackground(() => {
 
   // Per-tab design session changeset. Rehydrated from chrome.storage.session on wake.
   const sessions = new Map<number, Changeset>();
+
+  // MCP registry (slice 02). OAuth endpoint configs aren't persisted (mcp/store.ts's
+  // StoredServer is intentionally non-secret + config-free) — cached here for the SW's
+  // lifetime so a refresh can re-derive headers without the panel resupplying them each
+  // open; lost on SW restart, which just degrades `getAccessToken` to the stale token
+  // (see mcp/auth.ts) until the user re-authorizes.
+  const mcpManager = new McpManager();
+  const oauthConfigs = new Map<string, McpOAuthConfig>();
+
+  function mcpSpec(stored: StoredServer): McpConnectionSpec {
+    return {
+      id: stored.id,
+      url: stored.url,
+      getHeaders: headerResolverFor({
+        id: stored.id,
+        authKind: stored.authKind,
+        oauth: oauthConfigs.get(stored.id),
+      }),
+    };
+  }
+
+  function toBusServer(stored: StoredServer): McpServer {
+    const health = mcpManager.health(stored.id);
+    return {
+      id: stored.id,
+      label: stored.label,
+      url: stored.url,
+      transport: stored.transport,
+      authKind: stored.authKind,
+      status: health?.status ?? 'disconnected',
+      toolCount: health?.toolCount ?? 0,
+      tools: health?.tools ?? [],
+      error: health?.error,
+    };
+  }
+
+  function pushMcpStatus(stored: StoredServer): void {
+    postToPanel({ type: 'mcp-status', server: toBusServer(stored) });
+  }
+
+  // Rehydrate the registry from the persisted server list before any RPC is served.
+  // Registration is cheap/lazy (client.ts doesn't open until `tools()`/`connect()`).
+  const mcpReady = listServers().then((stored) => {
+    for (const s of stored) mcpManager.register(mcpSpec(s));
+  });
 
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
@@ -70,6 +119,7 @@ export default defineBackground(() => {
 
   async function handle(msg: PanelToSw, _tabId?: number) {
     await migrated; // settings reads must see the migrated (named-secret) state
+    await mcpReady; // mcp-* cases need the registry rehydrated from storage
     switch (msg.type) {
       case 'user-message':
         // TODO: run the Vercel AI SDK loop (src/agent), stream tokens + tool calls
@@ -140,6 +190,75 @@ export default defineBackground(() => {
       case 'clear-openrouter-key':
         await clearProviderConfig();
         return { ok: true };
+
+      // --- MCP servers: registry + auth are SW-only (tokens/headers never reach content) ---
+      // Add + persist a server; request the origin's host permission first (same
+      // optional_host_permissions pattern as save-provider) so a denied grant never
+      // persists an unreachable config.
+      case 'mcp-add': {
+        const access = await ensureHostAccess(msg.url);
+        if (!access.ok) return { ok: false, error: access.error };
+        const stored = await saveServer({
+          id: crypto.randomUUID(),
+          label: msg.label,
+          url: msg.url,
+          transport: msg.transport,
+          authKind: msg.authKind,
+        });
+        mcpManager.register(mcpSpec(stored));
+        pushMcpStatus(stored);
+        return { ok: true, server: toBusServer(stored) };
+      }
+      // Tear down the connection and purge the persisted record + both credential slots
+      // (mcp/store.ts removeServer already clears the key-store side).
+      case 'mcp-remove': {
+        await mcpManager.unregister(msg.id);
+        oauthConfigs.delete(msg.id);
+        await removeServer(msg.id);
+        return { ok: true };
+      }
+      case 'mcp-list': {
+        const servers = (await listServers()).map(toBusServer);
+        return { ok: true, servers };
+      }
+      // (Re)open a registered server and refresh its cached health/tool catalog.
+      // McpManager.connect never throws — a failed open comes back as status:'error'.
+      case 'mcp-connect': {
+        const stored = await getServer(msg.id);
+        if (!stored) return { ok: false, error: `Unknown MCP server: ${msg.id}` };
+        if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(stored));
+        await mcpManager.connect(msg.id);
+        pushMcpStatus(stored);
+        return { ok: true, server: toBusServer(stored) };
+      }
+      // Submit the chosen auth kind's credential, then reconnect so the new header takes
+      // effect immediately. `authKind` on the record is updated to match what was just
+      // authorized (an add can predate its auth step with authKind left at the default).
+      case 'mcp-auth-start': {
+        const stored = await getServer(msg.id);
+        if (!stored) return { ok: false, error: `Unknown MCP server: ${msg.id}` };
+        try {
+          if (msg.authKind === 'apikey') {
+            await saveApiKey(msg.id, msg.apiKey);
+          } else {
+            oauthConfigs.set(msg.id, msg.oauth);
+            await startOAuth(msg.id, msg.oauth);
+          }
+        } catch (err) {
+          return { ok: false, error: String(err) };
+        }
+        const next = await saveServer({ ...stored, authKind: msg.authKind });
+        mcpManager.register(mcpSpec(next));
+        await mcpManager.connect(msg.id);
+        pushMcpStatus(next);
+        return { ok: true, server: toBusServer(next) };
+      }
+      // Manual refresh: republish every registered server's current health on the
+      // mcp-status stream (e.g. a panel that just (re)connected with no cached state).
+      case 'mcp-status': {
+        for (const stored of await listServers()) pushMcpStatus(stored);
+        return { ok: true };
+      }
     }
   }
 
@@ -154,7 +273,6 @@ export default defineBackground(() => {
     if (out) postToPanel(out);
   });
 
-  // TODO: mcpManager — open/close MCP clients per configured backend (src/mcp).
   void sessions;
   void emptyChangeset;
 });
