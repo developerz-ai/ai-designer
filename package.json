@@ -31,6 +31,8 @@
   "dependencies": {
     "@ai-sdk/mcp": "^2.0.10",
     "@ai-sdk/openai-compatible": "^3.0.7",
+    "@fortawesome/fontawesome-svg-core": "^6.6.0",
+    "@fortawesome/free-solid-svg-icons": "^6.6.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@sentry/browser": "^10.62.0",
     "ai": "^7.0.19",
