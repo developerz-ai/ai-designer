@@ -20,7 +20,9 @@ export default defineConfig({
     action: {
       default_title: 'developerz.ai Designer',
     },
-    permissions: ['sidePanel', 'storage', 'scripting', 'activeTab', 'tabs'],
+    // `identity` powers the OAuth 2.0 PKCE flow for MCP backends
+    // (`chrome.identity.launchWebAuthFlow`) — SW-only, tokens never touch the page.
+    permissions: ['sidePanel', 'storage', 'scripting', 'activeTab', 'tabs', 'identity'],
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
     host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],

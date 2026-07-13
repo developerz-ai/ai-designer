@@ -1,0 +1,116 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+.dz-authdialog__backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dz-authdialog__backdrop-dismiss {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+.dz-authdialog {
+  position: relative;
+  width: min(320px, calc(100% - #{tokens.$dz-space-4} * 2));
+  background: var(--dz-surface);
+  border: 1px solid var(--dz-border);
+  border-radius: var(--dz-radius);
+  padding: tokens.$dz-space-4;
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-3;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--dz-fg);
+  }
+
+  &__close {
+    @include mixins.icon-button;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  &__tabs {
+    display: flex;
+    gap: tokens.$dz-space-2;
+    border-bottom: 1px solid var(--dz-border);
+
+    button {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--dz-muted);
+      padding: tokens.$dz-space-2;
+      cursor: pointer;
+      font: inherit;
+
+      &.is-active {
+        color: var(--dz-fg);
+        border-bottom-color: var(--dz-accent);
+      }
+    }
+  }
+
+  &__form {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+  }
+
+  &__label {
+    color: var(--dz-muted);
+    font-size: 12px;
+  }
+
+  input {
+    background: var(--dz-bg);
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-fg);
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    font: inherit;
+  }
+
+  &__submit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: tokens.$dz-space-1;
+    background: var(--dz-accent);
+    border: none;
+    border-radius: var(--dz-radius);
+    color: var(--dz-accent-fg);
+    padding: tokens.$dz-space-2 tokens.$dz-space-4;
+    cursor: pointer;
+    font: inherit;
+    margin-top: tokens.$dz-space-1;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    color: tokens.$dz-danger;
+    font-size: 12px;
+    margin: 0;
+  }
+}

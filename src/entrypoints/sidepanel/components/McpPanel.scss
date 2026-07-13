@@ -1,9 +1,53 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
 .dz-mcp {
-  padding: 12px;
+  padding: tokens.$dz-space-4;
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-4;
 
   &__hint {
     color: var(--dz-muted);
-    margin: 0 0 12px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    color: tokens.$dz-danger;
+    font-size: 12px;
+    margin: 0;
+  }
+
+  &__presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: tokens.$dz-space-2;
+  }
+
+  &__preset {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    background: transparent;
+    border: 1px dashed var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-fg);
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+      border-style: solid;
+    }
   }
 
   &__list {
@@ -12,40 +56,121 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: tokens.$dz-space-2;
   }
 
   &__item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
+    gap: tokens.$dz-space-3;
+    padding: tokens.$dz-space-3 tokens.$dz-space-4;
     border: 1px solid var(--dz-border);
     border-radius: var(--dz-radius);
+  }
 
-    div {
-      display: flex;
-      flex-direction: column;
+  &__status {
+    flex: none;
+    display: inline-flex;
+
+    &.is-connected {
+      color: var(--dz-status-connected);
+    }
+
+    &.is-error {
+      color: var(--dz-status-error);
+    }
+
+    &.is-disconnected {
+      color: var(--dz-status-muted);
+    }
+  }
+
+  &__meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+
+    strong {
+      color: var(--dz-fg);
     }
 
     small {
       color: var(--dz-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+  }
+
+  &__tools {
+    color: var(--dz-status-connected);
+  }
+
+  &__errortext {
+    color: tokens.$dz-danger;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    flex: none;
 
     button {
       background: transparent;
       border: 1px solid var(--dz-border);
       border-radius: var(--dz-radius);
       color: var(--dz-fg);
-      padding: 6px 12px;
+      padding: tokens.$dz-space-1 tokens.$dz-space-3;
       cursor: pointer;
       font: inherit;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+    }
+  }
 
-      &.is-connected {
-        border-color: var(--dz-accent);
-        color: var(--dz-accent);
-      }
+  &__ghost {
+    color: var(--dz-muted);
+  }
+
+  &__add {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+    padding-top: tokens.$dz-space-3;
+    border-top: 1px solid var(--dz-border);
+  }
+
+  &__label {
+    color: var(--dz-muted);
+    font-size: 12px;
+  }
+
+  &__add {
+    input,
+    select {
+      background: var(--dz-surface);
+      border: 1px solid var(--dz-border);
+      border-radius: var(--dz-radius);
+      color: var(--dz-fg);
+      padding: tokens.$dz-space-2 tokens.$dz-space-3;
+      font: inherit;
+    }
+
+    button {
+      align-self: flex-start;
+      display: inline-flex;
+      align-items: center;
+      gap: tokens.$dz-space-1;
+      background: var(--dz-accent);
+      border: none;
+      border-radius: var(--dz-radius);
+      color: var(--dz-accent-fg);
+      padding: tokens.$dz-space-2 tokens.$dz-space-5;
+      cursor: pointer;
+      font: inherit;
     }
   }
 }
