@@ -1,0 +1,165 @@
+// Reusable surface / accent effects. No layout here.
+@use 'sass:color';
+@use 'tokens' as *;
+
+// Frosted glass surface.
+.dz-glass {
+  background-color: color-mix(in srgb, var(--dz-surface) 60%, transparent);
+  border: 1px solid var(--dz-border);
+  border-radius: $radius-lg;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+// Gradient-clipped text (brand). Fills with brand-500 if background-clip unsupported.
+.dz-gradient-text {
+  background: $grad-brand;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: $brand-500;
+
+  @supports not (background-clip: text) {
+    background: none;
+    color: $brand-400;
+  }
+}
+
+// 1px gradient border via double background-clip.
+.dz-gradient-border {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--dz-surface), var(--dz-surface)) padding-box,
+    $grad-brand border-box;
+}
+
+// Hover lift (translateY only when motion is allowed).
+.dz-lift {
+  transition:
+    transform $dur-3 $ease-out,
+    box-shadow $dur-3 $ease-out,
+    border-color $dur-3 $ease-out;
+
+  &:hover,
+  &:focus-within {
+    transform: translateY(-2px);
+    box-shadow: $elev-3;
+    border-color: color.change($brand-500, $alpha: 0.35);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:hover,
+    &:focus-within {
+      transform: none;
+    }
+  }
+}
+
+// Brand glow halo (paint only).
+.dz-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  pointer-events: none;
+  background: $grad-brand;
+}
+
+// Icon chip — soft brand tint behind a brand-colored glyph.
+.icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: $radius;
+  background: color.change($brand-500, $alpha: 0.12);
+  color: $brand-400;
+
+  svg {
+    width: 1.5rem;
+    height: 1.5rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// ─── Buttons ──────────────────────────────────────────────────────────────────
+.dz-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: $space-2;
+  padding: $space-3 $space-5;
+  font-family: $font-sans;
+  font-size: fluid(0.9rem, 0.95rem);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--dz-ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: $radius-pill;
+  white-space: nowrap;
+  transition:
+    transform $dur-2 $ease-out,
+    box-shadow $dur-2 $ease-out,
+    background-color $dur-2 $ease-out,
+    border-color $dur-2 $ease-out,
+    color $dur-2 $ease-out;
+
+  &__icon {
+    width: 1.1em;
+    height: 1.1em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform $dur-2 $ease-out;
+  }
+
+  &:hover .dz-btn__icon {
+    transform: translateX(2px);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+}
+
+// Primary = product orange (the hybrid accent).
+.dz-btn--primary {
+  background: $grad-product;
+  color: $paper;
+  box-shadow:
+    $elev-2,
+    0 0 0 1px color.change($product, $alpha: 0.4);
+
+  &:hover {
+    background: linear-gradient(135deg, $product 0%, $product-600 100%);
+    box-shadow:
+      $elev-3,
+      0 0 24px color.change($product, $alpha: 0.35);
+    transform: translateY(-2px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:hover {
+      transform: none;
+    }
+  }
+}
+
+// Ghost = transparent, brand-tinted on hover.
+.dz-btn--ghost {
+  border-color: var(--dz-border);
+  color: var(--dz-ink);
+
+  &:hover {
+    border-color: color.change($brand-500, $alpha: 0.5);
+    color: $brand-300;
+  }
+}

@@ -1,0 +1,206 @@
+// Hero: copy left, floating frosted chat + changeset card right.
+@use 'sass:color';
+@use 'tokens' as *;
+
+.hero {
+  position: relative;
+  padding-block: clamp(3rem, 9vw, 7rem);
+  overflow: hidden;
+
+  &__glow {
+    position: absolute;
+    top: -12rem;
+    left: 50%;
+    translate: -50% 0;
+    width: 60rem;
+    height: 40rem;
+    background: $grad-brand;
+    opacity: 0.14;
+    filter: blur(120px);
+    border-radius: 50%;
+    pointer-events: none;
+    animation: pulse-glow 8s $ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+
+  &__grid {
+    position: relative;
+    display: grid;
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: center;
+
+    @media (min-width: $bp-lg) {
+      grid-template-columns: 1.05fr 0.95fr;
+    }
+  }
+
+  &__copy {
+    max-width: 40rem;
+  }
+
+  &__title {
+    margin-top: $space-4;
+    font-size: fluid(2.5rem, 4rem);
+    line-height: 1.05;
+
+    .dz-gradient-text {
+      display: block;
+    }
+  }
+
+  .lead {
+    margin-top: $space-5;
+  }
+
+  &__cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-3;
+    margin-top: $space-6;
+  }
+
+  &__fine {
+    margin-top: $space-4;
+    font-size: 0.85rem;
+    color: var(--dz-muted);
+  }
+
+  &__visual {
+    display: flex;
+    justify-content: center;
+
+    @media (min-width: $bp-lg) {
+      justify-content: flex-end;
+    }
+  }
+
+  &__card {
+    position: relative;
+    width: 100%;
+    max-width: 26rem;
+    padding: $space-5;
+    box-shadow: $elev-4;
+    animation: float 7s $ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+  }
+}
+
+.window-dots {
+  display: flex;
+  gap: $space-2;
+  margin-bottom: $space-4;
+
+  span {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: var(--dz-border);
+
+    &:nth-child(1) {
+      background: #ff5f57;
+    }
+
+    &:nth-child(2) {
+      background: #febc2e;
+    }
+
+    &:nth-child(3) {
+      background: #28c840;
+    }
+  }
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  margin-bottom: $space-4;
+
+  &__bubble {
+    padding: $space-2 $space-3;
+    border-radius: $radius;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    max-width: 92%;
+
+    &--user {
+      align-self: flex-end;
+      background: color.change($brand-500, $alpha: 0.16);
+      color: var(--dz-ink);
+      border-bottom-right-radius: 2px;
+    }
+
+    &--agent {
+      align-self: flex-start;
+      background: var(--dz-surface-2);
+      border: 1px solid var(--dz-border);
+      color: var(--dz-muted);
+      border-bottom-left-radius: 2px;
+    }
+  }
+}
+
+.diff {
+  margin: 0 0 $space-4;
+  padding: $space-3 $space-4;
+  background: color.change($ink, $alpha: 0.45);
+  border: 1px solid var(--dz-border);
+  border-radius: $radius;
+  overflow-x: auto;
+  font-family: $font-mono;
+  font-size: 0.78rem;
+  line-height: 1.7;
+
+  code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-family: inherit;
+  }
+
+  .diff__file {
+    display: block;
+    color: $slate-300;
+    margin-bottom: 0.25rem;
+  }
+
+  .diff__add {
+    color: $success;
+  }
+
+  .diff__del {
+    color: $danger;
+  }
+
+  .diff__ctx {
+    color: var(--dz-muted);
+  }
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2;
+}
+
+.chip {
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0.6rem;
+  border-radius: $radius-pill;
+  background: var(--dz-surface-2);
+  border: 1px solid var(--dz-border);
+  color: var(--dz-muted);
+
+  &--accent {
+    background: color.change($brand-500, $alpha: 0.14);
+    border-color: color.change($brand-500, $alpha: 0.35);
+    color: $brand-300;
+  }
+}

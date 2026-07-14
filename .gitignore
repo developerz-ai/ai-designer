@@ -5,6 +5,9 @@ stats.html
 coverage
 *.tsbuildinfo
 
+# landing site (site/) build output
+site/dist
+
 # local secrets / env
 *.local
 .env*.local

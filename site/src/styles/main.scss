@@ -1,0 +1,9 @@
+// Entry stylesheet. @use order matters only for readability — each partial is a
+// standalone module; CSS is emitted once regardless of @use order.
+@use 'fonts';
+@use 'base';
+@use 'effects';
+@use 'nav';
+@use 'hero';
+@use 'sections';
+@use 'footer';

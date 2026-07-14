@@ -1,0 +1,23 @@
+{
+  "name": "@developerz-ai/designer-landing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coming-soon landing page for the developerz.ai Designer extension. Static, dark, matches the developerz.ai frontend language.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5180 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@types/node": "^26.1.1",
+    "sass": "^1.101.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
+  }
+}

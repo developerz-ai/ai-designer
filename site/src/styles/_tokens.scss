@@ -1,0 +1,143 @@
+// Design tokens — the ONLY file with raw color/dimension literals. Ported from the
+// developerz.ai design system (Projects/developerz.ai/packages/ui/styles/_tokens.scss),
+// adapted to a forced-dark coming-soon page with a hybrid accent:
+//   primary brand = violet→fuchsia gradient (developerz.ai corporate)
+//   product accent = ai-designer orange (#f97316) — used on the primary CTA
+// No CSS is emitted here except via the root-vars mixin.
+
+@use 'sass:color';
+@use 'sass:math';
+
+// ─── fluid() — clamp() between two sizes across a viewport range ──────────────
+@function fluid($min, $max, $min-vw: 20rem, $max-vw: 80rem) {
+  $slope: math.div($max - $min, $max-vw - $min-vw);
+  $intercept: $min - $slope * $min-vw;
+  @return clamp(#{$min}, calc(#{$intercept} + #{$slope} * 100vw), #{$max});
+}
+
+// ─── Brand: violet / purple ramp ─────────────────────────────────────────────
+$brand-300: #c4b5fd;
+$brand-400: #a78bfa;
+$brand-500: #8b5cf6; // gradient-text fallback, icon tint
+$brand-600: #7c3aed; // primary
+$brand-700: #6d28d9;
+
+// ─── Accent: fuchsia / pink (gradient partner to brand) ───────────────────────
+$accent-400: #e879f9;
+$accent-500: #d946ef;
+$pink-500: #ec4899;
+
+// ─── Product: ai-designer orange (hybrid) ─────────────────────────────────────
+$product-400: #fb923c;
+$product: #f97316; // primary CTA
+$product-600: #ea580c;
+
+// ─── Neutrals: slate ──────────────────────────────────────────────────────────
+$slate-300: #cbd5e1;
+$slate-400: #94a3b8; // muted text
+$slate-500: #64748b;
+$slate-700: #334155;
+$slate-800: #1e293b; // border
+$slate-900: #0f172a;
+$slate-950: #0a0a0f;
+
+// ─── Semantic ─────────────────────────────────────────────────────────────────
+$success: #10b981;
+$info: #38bdf8;
+$warning: #f59e0b;
+$danger: #ef4444;
+
+// ─── Ink / paper anchors ──────────────────────────────────────────────────────
+$ink: #0a0a0f; // dark fg on light
+$paper: #f8fafc; // light fg on dark
+
+// ─── Surfaces (dark, FORCED) ──────────────────────────────────────────────────
+$bg: #0a0a0f;
+$surface: #0f1117;
+$surface-2: #14161f;
+$border: #1e293b;
+
+// ─── Gradients ────────────────────────────────────────────────────────────────
+$grad-brand: linear-gradient(135deg, $brand-600 0%, $accent-500 100%);
+$grad-brand-soft: linear-gradient(135deg, $brand-500 0%, $pink-500 100%);
+$grad-product: linear-gradient(135deg, $product-400 0%, $product-600 100%);
+
+// ─── Typography ───────────────────────────────────────────────────────────────
+$font-sans: (
+  'Inter',
+  system-ui,
+  -apple-system,
+  'Segoe UI',
+  Roboto,
+  'Helvetica Neue',
+  Arial,
+  sans-serif
+);
+$font-mono: (
+  'JetBrains Mono',
+  ui-monospace,
+  SFMono-Regular,
+  'SF Mono',
+  Menlo,
+  Monaco,
+  Consolas,
+  monospace
+);
+
+// ─── Radius ───────────────────────────────────────────────────────────────────
+$radius-sm: 0.25rem;
+$radius: 0.5rem;
+$radius-lg: 1rem;
+$radius-pill: 50rem;
+
+// ─── Spacing scale ────────────────────────────────────────────────────────────
+$space-0: 0;
+$space-1: 0.25rem;
+$space-2: 0.5rem;
+$space-3: 0.75rem;
+$space-4: 1rem;
+$space-5: 1.5rem;
+$space-6: 2rem;
+$space-8: 3rem;
+$space-10: 4rem;
+$space-12: 6rem;
+
+// ─── Motion ───────────────────────────────────────────────────────────────────
+$ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+$ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+$ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+$dur-1: 120ms;
+$dur-2: 200ms;
+$dur-3: 320ms;
+$dur-4: 480ms;
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+$container: 75rem;
+$container-narrow: 52rem;
+$nav-h: 4.25rem;
+$bp-sm: 576px;
+$bp-md: 768px;
+$bp-lg: 992px;
+$bp-xl: 1200px;
+
+// ─── Elevation (ink-based) ────────────────────────────────────────────────────
+$elev-1: 0 1px 2px color.change($ink, $alpha: 0.06);
+$elev-2: 0 4px 12px color.change($ink, $alpha: 0.1);
+$elev-3: 0 12px 32px color.change($ink, $alpha: 0.16);
+$elev-4: 0 24px 64px color.change($ink, $alpha: 0.24);
+
+$focus-ring: 0 0 0 3px color.change($brand-500, $alpha: 0.5);
+
+// ─── Runtime custom properties (forced dark) ──────────────────────────────────
+@mixin root-vars {
+  --dz-bg: #{$bg};
+  --dz-surface: #{$surface};
+  --dz-surface-2: #{$surface-2};
+  --dz-border: #{$border};
+  --dz-ink: #{$paper};
+  --dz-muted: #{$slate-400};
+  --dz-brand-500: #{$brand-500};
+  --dz-accent-500: #{$accent-500};
+  --dz-product: #{$product};
+  --dz-grad-brand: #{$grad-brand};
+}

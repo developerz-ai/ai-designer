@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>developerz.ai Designer — Design in the live page. Ship the real code.</title>
+    <meta
+      name="description"
+      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP. Coming soon to Chrome."
+    />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="color-scheme" content="dark" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="developerz.ai Designer — Design in the live page. Ship the real code." />
+    <meta
+      property="og:description"
+      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP."
+    />
+    <meta property="og:image" content="/logo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+
+    <link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ───────────────────────── nav ───────────────────────── -->
+    <header class="nav">
+      <div class="container nav__inner">
+        <a class="nav__brand" href="#main" aria-label="developerz.ai Designer home">
+          <img class="nav__logo" src="/logo.png" alt="" width="302" height="302" />
+          <span class="nav__wordmark">developerz.ai<span class="nav__wordmark-sub"> Designer</span></span>
+        </a>
+        <nav class="nav__actions" aria-label="primary">
+          <a class="nav__link" href="#how">How it works</a>
+          <a class="nav__link" href="#notify">Notify me</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ─────────────────────── hero ─────────────────────── -->
+      <section class="hero" data-reveal>
+        <div class="hero__glow" aria-hidden="true"></div>
+        <div class="container hero__grid">
+          <div class="hero__copy">
+            <p class="eyebrow">
+              <span class="eyebrow__dot" aria-hidden="true"></span>
+              Coming soon · Chrome extension
+            </p>
+            <h1 class="hero__title">
+              Design in the live page.
+              <span class="dz-gradient-text">Ship the real code.</span>
+            </h1>
+            <p class="lead">
+              Open any page — your prod app or <code>localhost</code> — tell the agent what to change,
+              and watch it redesign the live DOM in real time. When it looks right, click
+              <strong>Ship</strong>: a structured changeset goes over MCP to your dev agent, which edits
+              the source and opens a reviewable PR.
+            </p>
+            <div class="hero__cta">
+              <a class="dz-btn dz-btn--primary" href="#notify" data-cta="notify">
+                Notify me at launch
+                <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+              </a>
+              <a class="dz-btn dz-btn--ghost" href="#how">See how it works</a>
+            </div>
+            <p class="hero__fine">BYOK · ephemeral live edits · human-in-the-loop. Nothing ships without you.</p>
+          </div>
+
+          <!-- decorative floating chat + changeset card -->
+          <div class="hero__visual" aria-hidden="true">
+            <div class="dz-glass dz-card dz-hero__card">
+              <div class="window-dots">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="chat">
+                <div class="chat__bubble chat__bubble--user">Make the hero full-bleed and the CTA orange.</div>
+                <div class="chat__bubble chat__bubble--agent">Done — applied to the live page. Recording a changeset.</div>
+              </div>
+              <pre class="diff"><code><span class="diff__file">components/hero.tsx</span>
+<span class="diff__add">+ min-height: 100vh;</span>
+<span class="diff__add">+ background: radial-gradient(...);</span>
+<span class="diff__del">- padding: 2rem 0;</span>
+<span class="diff__ctx">  cta {</span>
+<span class="diff__add">+   color: #f97316;</span>
+<span class="diff__ctx">  }</span></code></pre>
+              <div class="chip-row">
+                <span class="chip">live edit</span>
+                <span class="chip chip--accent">changeset recorded</span>
+                <span class="chip">ready to ship</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────────── how it works ─────────────────────── -->
+      <section class="how section" id="how" data-reveal>
+        <div class="container">
+          <header class="section__head">
+            <p class="eyebrow">The loop</p>
+            <h2 class="section__title">From a sentence to a <span class="dz-gradient-text">real PR</span>.</h2>
+            <p class="lead">Three steps. No mockups, no copy-paste, no re-implementation by hand.</p>
+          </header>
+
+          <ol class="how__grid">
+            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+              <span class="how__bar" aria-hidden="true"></span>
+              <span class="how__step">01</span>
+              <span class="icon-chip">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.7A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z" /></svg>
+              </span>
+              <h3 class="how__title">Talk</h3>
+              <p class="how__text">
+                Open the side panel on any page and describe the change in plain English —
+                "make the hero full-bleed, tighten the nav, CTA orange."
+              </p>
+            </li>
+
+            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+              <span class="how__bar" aria-hidden="true"></span>
+              <span class="how__step">02</span>
+              <span class="icon-chip">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" /><circle cx="12" cy="12" r="3" /></svg>
+              </span>
+              <h3 class="how__title">See</h3>
+              <p class="how__text">
+                The agent mutates the real DOM and CSS instantly. You watch it happen, react, and
+                refine in conversation until the page is exactly right.
+              </p>
+            </li>
+
+            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+              <span class="how__bar" aria-hidden="true"></span>
+              <span class="how__step">03</span>
+              <span class="icon-chip">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>
+              </span>
+              <h3 class="how__title">Ship</h3>
+              <p class="how__text">
+                Click Ship. A structured changeset — selectors, styles, intent — goes over MCP to your
+                dev agent, which edits the source and opens a tested, reviewable PR.
+              </p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ─────────────────────── notify / waitlist ─────────────────────── -->
+      <section class="notify section" id="notify" data-reveal>
+        <div class="container container--narrow notify__inner dz-glass">
+          <div class="notify__glow" aria-hidden="true"></div>
+          <p class="eyebrow">Coming soon</p>
+          <h2 class="section__title">Be first to try <span class="dz-gradient-text">Designer</span>.</h2>
+          <p class="lead">
+            We'll email you when Designer hits the Chrome Web Store. No spam — one message at launch.
+          </p>
+
+          <form class="notify__form" id="notify-form" novalidate>
+            <label class="notify__field">
+              <span class="sr-only">Email address</span>
+              <input
+                type="email"
+                name="email"
+                inputmode="email"
+                autocomplete="email"
+                placeholder="you@yourteam.dev"
+                required
+              />
+            </label>
+            <button type="submit" class="dz-btn dz-btn--primary notify__submit">
+              Notify me
+              <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </button>
+          </form>
+
+          <p class="notify__success" id="notify-success" role="status" hidden>
+            You're on the list — we'll email you at launch.
+          </p>
+          <p class="notify__count">
+            Join <strong id="waitlist-count">0</strong> developers on the waitlist.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── footer ───────────────────────── -->
+    <footer class="footer">
+      <div class="container footer__grid">
+        <div class="footer__brand">
+          <a class="footer__lockup" href="#main">
+            <img class="footer__logo" src="/logo.png" alt="" width="302" height="302" />
+            <span>developerz.ai Designer</span>
+          </a>
+          <p class="footer__blurb">Design in the live page. Ship the real code. An agent-driven tool by developerz.ai.</p>
+        </div>
+
+        <nav class="footer__col" aria-label="product">
+          <h4 class="footer__heading">Product</h4>
+          <a href="#how">How it works</a>
+          <a href="#notify">Notify me</a>
+          <a href="https://developerz.ai" rel="noopener">developerz.ai</a>
+        </nav>
+
+        <nav class="footer__col" aria-label="legal">
+          <h4 class="footer__heading">Legal</h4>
+          <a href="https://developerz.ai" rel="noopener">Privacy</a>
+          <a href="https://developerz.ai" rel="noopener">Security</a>
+          <a href="https://github.com/developerz-ai" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+      <div class="container footer__bottom">
+        <p>&copy; 2026 developerz.ai. Designer is a preview — not yet shipped.</p>
+        <p class="footer__bot">An agent-driven tool · built by developerz.ai</p>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

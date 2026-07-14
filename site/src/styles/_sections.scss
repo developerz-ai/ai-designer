@@ -1,0 +1,159 @@
+// How-it-works grid + notify/waitlist band.
+@use 'sass:color';
+@use 'tokens' as *;
+
+.section__head {
+  max-width: 48rem;
+  margin-bottom: $space-8;
+
+  .section__title {
+    margin-top: $space-3;
+    font-size: fluid(2rem, 3rem);
+  }
+
+  .lead {
+    margin-top: $space-4;
+  }
+}
+
+// ─── how it works ─────────────────────────────────────────────────────────────
+.how__grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: $space-5;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.how__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  padding: $space-6;
+  padding-top: $space-8;
+  overflow: hidden;
+}
+
+.how__bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: $grad-brand;
+}
+
+.how__step {
+  font-family: $font-mono;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: $brand-400;
+}
+
+.how__title {
+  font-size: fluid(1.25rem, 1.6rem);
+  line-height: 1.2;
+}
+
+.how__text {
+  color: var(--dz-muted);
+  font-size: 0.95rem;
+}
+
+// ─── notify / waitlist ────────────────────────────────────────────────────────
+.notify__inner {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(2rem, 6vw, 4rem);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.notify__glow {
+  position: absolute;
+  top: -6rem;
+  left: 50%;
+  translate: -50% 0;
+  width: 30rem;
+  height: 20rem;
+  background: $grad-brand;
+  opacity: 0.12;
+  filter: blur(90px);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.notify {
+  .section__title {
+    margin-top: $space-3;
+    font-size: fluid(1.75rem, 2.5rem);
+  }
+
+  .lead {
+    margin-top: $space-4;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  &__form {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-2;
+    justify-content: center;
+    margin-top: $space-6;
+    width: 100%;
+    max-width: 30rem;
+  }
+
+  &__field {
+    flex: 1 1 16rem;
+
+    input {
+      width: 100%;
+      padding: $space-3 $space-4;
+      background: color-mix(in srgb, var(--dz-bg) 60%, transparent);
+      border: 1px solid var(--dz-border);
+      border-radius: $radius-pill;
+      color: var(--dz-ink);
+
+      &::placeholder {
+        color: var(--dz-muted);
+      }
+
+      &:focus {
+        outline: none;
+        border-color: color.change($brand-500, $alpha: 0.5);
+        box-shadow: $focus-ring;
+      }
+    }
+  }
+
+  &__submit {
+    flex: 0 0 auto;
+  }
+
+  &__success {
+    position: relative;
+    margin-top: $space-4;
+    font-weight: 500;
+    color: $success;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  &__count {
+    position: relative;
+    margin-top: $space-4;
+    font-size: 0.9rem;
+    color: var(--dz-muted);
+
+    strong {
+      color: var(--dz-ink);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
