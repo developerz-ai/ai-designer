@@ -44,9 +44,11 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
   ).toBeVisible();
 
   // Expand the pill and confirm the per-check rows all read not-ok before anything's set.
+  // Five rows total: the four readiness checks plus the "On-page overlay" toggle (slice 09).
+  // Only the four not-ok checks expose a "Fix" deep-link — the overlay toggle does not.
   await pill.click();
   const rows = page.locator('.dz-readiness__row');
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(5);
   await expect(page.locator('.dz-readiness__link', { hasText: 'Fix' })).toHaveCount(4);
   await pill.click(); // collapse again
 
