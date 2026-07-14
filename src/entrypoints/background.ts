@@ -10,15 +10,13 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
-import { runTurn, screenshotToModelOutput } from '@/agent/loop';
+import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
 import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
-import { createInteractTools } from '@/agent/tools/interact';
-import { createTabsTools } from '@/agent/tools/tabs';
-import { createVisionTools, type ScreenshotDispatch } from '@/agent/tools/vision';
+import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runInspect } from '@/agent/vision';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
@@ -273,50 +271,15 @@ export default defineBackground(() => {
         // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
         const mode = resolveMode(msg.mode, msg.text);
 
-        // Browser-control + vision tools (slice 13), assembled per turn like the MCP tools and
-        // merged into the loop's tool extension point. `content` drives the page (DOM + interaction)
-        // in the target frame; nav/tabs/frames run SW-side against `chromeBrowserDriver`; vision
-        // captures + inspects. The vision `screenshot` carries the image→model hook so a returned PNG
-        // is fed back as an image part, and it overrides the DOM `screenshot` (adds `fullPage`).
+        // Browser-control + vision dispatches (slice 13) — the loop builds the tools from these
+        // (`interact`/`tabsFrames`/`vision`) and wraps `waitFor`/`navigate*`/`inspectVisually`
+        // with its budget guards, so construction lives in one place (`loop.ts` `buildTools`)
+        // and stays consistent with the DOM/browse tools instead of being assembled ad hoc here.
+        // `content` drives the page (DOM + interaction) in the target frame; nav/tabs/frames run
+        // SW-side against `chromeBrowserDriver`; vision captures + inspects.
         const model = createProvider(cfg);
         const content = contentDispatchFor(tabId);
         const screenshot = screenshotDispatchFor(tabId);
-        const vision = createVisionTools({
-          screenshot,
-          readImages: content,
-          inspect: (msg, signal) =>
-            runInspect(
-              {
-                model,
-                generate: visionGenerate,
-                capture: (i, sig) =>
-                  screenshot(
-                    {
-                      type: 'screenshot',
-                      selector: i.selector,
-                      fullPage: i.fullPage,
-                      tabId: i.tabId,
-                      frameId: i.frameId,
-                    },
-                    sig,
-                  ),
-              },
-              msg,
-              signal,
-            ),
-        });
-        const browserTools = {
-          ...createInteractTools({
-            control: content,
-            nav: (msg, signal) => runNav(chromeBrowserDriver, msg, tabId, signal),
-          }),
-          ...createTabsTools({
-            tabs: (msg) => runTabs(chromeBrowserDriver, msg),
-            frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
-          }),
-          ...vision,
-          screenshot: { ...vision.screenshot, toModelOutput: screenshotToModelOutput },
-        };
 
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
@@ -328,9 +291,41 @@ export default defineBackground(() => {
           instructions: buildSystemPrompt({ addenda: modeGuidance(mode).addenda }),
           dispatch: content,
           browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
+          interact: {
+            control: content,
+            nav: (msg, signal) => runNav(chromeBrowserDriver, msg, tabId, signal),
+          },
+          tabsFrames: {
+            tabs: (msg) => runTabs(chromeBrowserDriver, msg),
+            frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
+          },
+          vision: {
+            screenshot,
+            readImages: content,
+            inspect: (msg, signal) =>
+              runInspect(
+                {
+                  model,
+                  generate: visionGenerate,
+                  capture: (i, sig) =>
+                    screenshot(
+                      {
+                        type: 'screenshot',
+                        selector: i.selector,
+                        fullPage: i.fullPage,
+                        tabId: i.tabId,
+                        frameId: i.frameId,
+                      },
+                      sig,
+                    ),
+                },
+                msg,
+                signal,
+              ),
+          },
           emit: postToPanel,
           // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
-          tools: { ...browserTools, ...(await mcpManager.toolsFor()) },
+          tools: await mcpManager.toolsFor(),
           approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
         })
           .then(async (outcome) => {

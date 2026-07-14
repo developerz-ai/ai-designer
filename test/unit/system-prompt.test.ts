@@ -80,6 +80,35 @@ describe('buildSystemPrompt: load-bearing content', () => {
     expect(prompt).toMatch(/Copy \/ design/i);
     expect(prompt).toMatch(/Debug/);
   });
+
+  it('states the drive-vs-mutate-vs-look doctrine (slice 13)', () => {
+    expect(prompt).toMatch(/drive vs\. mutate vs\. look/i);
+    expect(prompt).toMatch(/\*\*drive\*\*/i);
+    expect(prompt).toMatch(/\*\*mutate\*\*/i);
+    expect(prompt).toMatch(/\*\*look\*\*/i);
+    expect(prompt).toMatch(/never on a reference tab you opened to copy from/i);
+  });
+
+  it('gives explicit iframe guidance: list frames, address frameId, do not assume top document', () => {
+    expect(prompt).toMatch(/`frames`/);
+    expect(prompt).toMatch(/frameId/);
+    expect(prompt).toMatch(/top document/i);
+  });
+
+  it('gives explicit multi-tab guidance: open references in their own tab, address by tabId', () => {
+    expect(prompt).toMatch(/`tabs`/);
+    expect(prompt).toMatch(/its own tab/i);
+    expect(prompt).toMatch(/discards\s+their unsaved live edits/i);
+  });
+
+  it('warns waitFor/navigation are bounded and not to loop on them', () => {
+    expect(prompt).toMatch(/`waitFor`.*bounded/i);
+    expect(prompt).toMatch(/stop retrying that action/i);
+  });
+
+  it('names the per-tool budget guards (vision/wait/nav) alongside the step/token budget', () => {
+    expect(prompt).toMatch(/`inspectVisually`, `waitFor`, and navigation calls/);
+  });
 });
 
 describe('buildSystemPrompt: addenda injection (modes-ready)', () => {

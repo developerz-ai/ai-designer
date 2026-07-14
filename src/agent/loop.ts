@@ -10,7 +10,7 @@
 // That keeps the loop unit/integration-testable against a mock model with no `chrome.*`.
 
 import { isStepCount, type LanguageModel, ToolLoopAgent, type ToolSet } from 'ai';
-import type { SwToPanel, ToolResult } from '@/shared/messages';
+import type { ControlTool, NavIntent, SwToPanel, ToolResult } from '@/shared/messages';
 import {
   type BudgetLimits,
   type BudgetReason,
@@ -21,6 +21,9 @@ import {
 import type { ChatMessage } from './session';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
 import { createDomTools, type DomDispatch } from './tools/dom';
+import { createInteractTools, type InteractDeps } from './tools/interact';
+import { createTabsTools, type TabsToolDeps } from './tools/tabs';
+import { createVisionTools, type VisionToolDeps } from './tools/vision';
 
 // Shown alongside a screenshot fed back to the model, so it reads the image as its own result
 // to judge and refine — the vision self-correction loop (docs/architecture/agent-loop.md).
@@ -55,12 +58,22 @@ export interface RunTurnArgs {
   /** Opens a reference site in a background tab and returns its compact design read (slice 06).
    *  Absent ⇒ the `browse` tool isn't offered this turn (e.g. a context with no tab access). */
   readonly browse?: BrowseDispatch;
+  /** Browser-control interaction dispatches (click/type/…/waitFor + navigate/back/reload,
+   *  slice 13). Absent ⇒ the drive-the-page tools aren't offered this turn. */
+  readonly interact?: InteractDeps;
+  /** Multi-tab + frame-enumeration dispatches (slice 13). Absent ⇒ `tabs`/`frames` aren't
+   *  offered this turn. */
+  readonly tabsFrames?: TabsToolDeps;
+  /** Vision dispatches — `screenshot` (with `fullPage`), `readImages`, `inspectVisually`
+   *  (slice 13). Absent ⇒ falls back to the DOM tools' plain `screenshot` only. */
+  readonly vision?: VisionToolDeps;
   /** Sink for stream events → the side-panel port (`postToPanel`). */
   readonly emit: (event: SwToPanel) => void;
-  /** Extra tools merged after the DOM tools: connected MCP tools (02), session/recorder (07). */
+  /** Extra tools merged after the built-ins: connected MCP tools (02), session/recorder (07). */
   readonly tools?: ToolSet;
-  /** Per-turn step/token ceilings. */
-  readonly limits?: BudgetLimits;
+  /** Per-turn step/token/vision/wait/nav ceilings (see {@link BudgetLimits}); any omitted field
+   *  falls back to {@link DEFAULT_BUDGET}. */
+  readonly limits?: Partial<BudgetLimits>;
   /** Ship approval gate for the `handoff` tool (07). Absent/false ⇒ handoff never runs — the
    *  agent never ships on its own (docs/idea/principles.md). */
   readonly approveHandoff?: () => boolean | Promise<boolean>;
@@ -74,9 +87,8 @@ export interface RunTurnArgs {
  */
 export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
   const { messages, signal, model, instructions, dispatch, emit } = args;
-  const limits = args.limits ?? undefined;
-  const budget = new TurnBudget(limits);
-  const tools = buildTools(dispatch, args.browse, args.tools);
+  const budget = new TurnBudget(args.limits);
+  const tools = buildTools(dispatch, budget, args);
   const agent = new ToolLoopAgent({
     model,
     instructions,
@@ -165,14 +177,71 @@ export type ModelToolOutput =
       >;
     };
 
-/** Build the turn's ToolSet: DOM tools (with the screenshot vision hook), the cross-site
- *  `browse` tool when a dispatch is injected, + any injected extras (MCP, session). Extras win
- *  on a name clash — a backend can't be shadowed by a built-in tool. */
-function buildTools(dispatch: DomDispatch, browse?: BrowseDispatch, extra?: ToolSet): ToolSet {
+/** Just the tool-building slice of {@link RunTurnArgs} — kept separate so `buildTools` doesn't
+ *  need the whole turn's args (messages, model, emit, …) to assemble the ToolSet. */
+type ToolDeps = Pick<RunTurnArgs, 'browse' | 'interact' | 'tabsFrames' | 'vision' | 'tools'>;
+
+/** Build the turn's ToolSet: DOM tools, the cross-site `browse` tool, browser-control
+ *  (interact/tabs/frames/vision, slice 13) — each only when its dispatch is injected — + any
+ *  injected extras (MCP, session). Extras win on a name clash — a backend can't be shadowed by a
+ *  built-in tool. The `waitFor`/`navigate*`/`inspectVisually` dispatches are wrapped with
+ *  `budget`'s per-tool guards so a runaway loop fails that call, not the whole turn. Whichever
+ *  `screenshot` tool survives the merge (vision's `fullPage`-capable one if present, else the
+ *  DOM one) gets the image→model hook so a returned PNG is fed back as a vision part. */
+function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): ToolSet {
   const dom = createDomTools(dispatch);
-  const screenshot = { ...dom.screenshot, toModelOutput: screenshotToModelOutput };
-  const cross = browse ? createBrowseTool(browse) : {};
-  return { ...dom, screenshot, ...cross, ...(extra ?? {}) };
+  const cross = deps.browse ? createBrowseTool(deps.browse) : {};
+  const interact = deps.interact
+    ? createInteractTools(guardInteractDeps(deps.interact, budget))
+    : {};
+  const tabsFrames = deps.tabsFrames ? createTabsTools(deps.tabsFrames) : {};
+  const vision = deps.vision ? createVisionTools(guardVisionDeps(deps.vision, budget)) : {};
+
+  const merged: ToolSet = { ...dom, ...cross, ...interact, ...tabsFrames, ...vision };
+  const base = merged.screenshot;
+  const screenshot = base ? { ...base, toModelOutput: screenshotToModelOutput } : undefined;
+
+  return { ...merged, ...(screenshot ? { screenshot } : {}), ...(deps.tools ?? {}) };
+}
+
+// The ToolResult a guarded call returns once its per-tool budget is exhausted — the model reacts
+// to it like any other tool failure (its `error` names the ceiling), rather than the turn dying.
+const guardExceeded = (what: string): ToolResult => ({
+  type: 'tool-result',
+  ok: false,
+  error:
+    `${what} budget for this turn is exhausted — stop retrying this and move on, or tell ` +
+    'the user what you need before continuing.',
+});
+
+/** Cap `waitFor` re-tries (a stuck page can otherwise be re-waited every step) and `navigate` /
+ *  `navigateBack` / `reload` bouncing, without touching `src/agent/tools/interact.ts` — the guard
+ *  wraps the injected dispatches by inspecting the reassembled message's `type`. */
+function guardInteractDeps(deps: InteractDeps, budget: TurnBudget): InteractDeps {
+  return {
+    control: (msg: ControlTool, signal?: AbortSignal) => {
+      if (msg.type === 'waitFor' && !budget.spendWait()) {
+        return Promise.resolve(guardExceeded('The `waitFor`'));
+      }
+      return deps.control(msg, signal);
+    },
+    nav: (msg: NavIntent, signal?: AbortSignal) => {
+      if (!budget.spendNav()) return Promise.resolve(guardExceeded('The `navigate`/`reload`'));
+      return deps.nav(msg, signal);
+    },
+  };
+}
+
+/** Cap `inspectVisually`'s extra vision-model round-trips — invisible to the step/token ceilings
+ *  since it doesn't go through `onStepFinish` (it calls the model itself, inside the tool). */
+function guardVisionDeps(deps: VisionToolDeps, budget: TurnBudget): VisionToolDeps {
+  return {
+    ...deps,
+    inspect: (msg, signal) => {
+      if (!budget.spendVision()) return Promise.resolve(guardExceeded('The `inspectVisually`'));
+      return deps.inspect(msg, signal);
+    },
+  };
 }
 
 // Present a successful `screenshot` result to the model as a PNG image part (vision
