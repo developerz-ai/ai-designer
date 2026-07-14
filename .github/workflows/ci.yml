@@ -45,7 +45,7 @@ jobs:
 
   test-unit:
     name: Test (unit)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
@@ -57,7 +57,7 @@ jobs:
 
   test-integration:
     name: Test (integration)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
