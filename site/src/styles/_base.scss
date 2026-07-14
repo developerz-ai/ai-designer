@@ -33,6 +33,7 @@ body {
   background: var(--dz-bg);
   color: var(--dz-ink);
   font-family: $font-sans;
+  font-optical-sizing: auto;
   font-size: fluid(1rem, 1.0625rem);
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
