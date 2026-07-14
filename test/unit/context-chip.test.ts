@@ -25,4 +25,15 @@ describe('describeSelector', () => {
     const sel: StableSelector = { value: '12345', strategy: 'text', fragile: false };
     expect(describeSelector(sel, 5)).toBe('12345 · text');
   });
+
+  // The remaining strategies — every label ContextChip's pin can actually show (task #70's
+  // "render states" ask), rounding out the id/css-path/text coverage above.
+  it.each([
+    ['data-attr', '[data-testid="cta"]', 'data attr'],
+    ['aria', 'role=button[name="Buy now"]', 'aria'],
+    ['shadow', 'my-widget >>> .inner', 'shadow'],
+  ] as const)('labels strategy "%s"', (strategy, value, label) => {
+    const sel: StableSelector = { value, strategy, fragile: false };
+    expect(describeSelector(sel)).toBe(`${value} · ${label}`);
+  });
 });
