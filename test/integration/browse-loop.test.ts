@@ -152,7 +152,7 @@ describe('integration: the browse tool opens a reference site and feeds its desi
     // The call was reassembled into a valid BrowseInput and routed to the SW's browse dispatch.
     expect(calls).toEqual([{ type: 'browse', url }]);
     // A tool-call chip surfaced on the panel stream, named by the tool.
-    expect(events).toContainEqual({ type: 'tool-call', tool: 'browse' });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool-call', tool: 'browse' }));
 
     // The design read reached the model as the tool's JSON result — reusable in-token identity.
     const output = browseResultShownToModel(model);

@@ -1,5 +1,11 @@
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import {
+  initOverlayStore,
+  enabled as overlayEnabled,
+  error as overlayError,
+  setOverlayEnabled,
+} from '../stores/overlay';
+import {
   initReadinessStore,
   error as readinessError,
   loading as readinessLoading,
@@ -45,6 +51,7 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
   onMount(() => {
     initReadinessStore();
     initSessionStore();
+    initOverlayStore();
   });
 
   const ready = createMemo(() => state()?.ready ?? false);
@@ -137,9 +144,25 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
               </div>
             )}
           </For>
-          <Show when={sessionError() ?? readinessError()}>
+
+          <div class="dz-readiness__row">
+            <Icon name="eye" size="sm" />
+            <span class="dz-readiness__rowlabel">On-page overlay</span>
+            <button
+              type="button"
+              class="dz-readiness__link"
+              role="switch"
+              aria-checked={overlayEnabled()}
+              onClick={() => void setOverlayEnabled(!overlayEnabled())}
+            >
+              {overlayEnabled() ? 'On' : 'Off'}
+            </button>
+          </div>
+
+          <Show when={sessionError() ?? readinessError() ?? overlayError()}>
             <p class="dz-readiness__error">
-              <Icon name="warning" size="sm" /> {sessionError() ?? readinessError()}
+              <Icon name="warning" size="sm" />{' '}
+              {sessionError() ?? readinessError() ?? overlayError()}
             </p>
           </Show>
         </div>
