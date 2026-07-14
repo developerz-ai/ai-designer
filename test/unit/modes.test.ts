@@ -62,6 +62,9 @@ describe('modeGuidance', () => {
     expect(addenda.modes?.[0]).toContain('extractIdentity');
     expect(addenda.modes?.[0]).toMatch(/apply that identity's palette and type/i);
     expect(addenda.modes?.[0]).toMatch(/prefer `describe` over a `screenshot`/i);
+    expect(addenda.modes?.[0]).toMatch(/check mobile and tablet,\s*not just desktop/i);
+    expect(addenda.modes?.[0]).toContain('setDevice');
+    expect(addenda.modes?.[0]).toMatch(/breakpoint/i);
     expect(modeGuidance('copy').toolEmphasis).toEqual([
       'browse',
       'extractIdentity',
@@ -71,6 +74,7 @@ describe('modeGuidance', () => {
       'a11ySnapshot',
       'setStyle',
       'setText',
+      'setDevice',
     ]);
   });
 
@@ -79,7 +83,11 @@ describe('modeGuidance', () => {
     expect(addenda.modes).toHaveLength(1);
     expect(addenda.modes?.[0]).toMatch(/debug task/i);
     expect(addenda.modes?.[0]).toMatch(/observe.*hypothesize.*reproduce/is);
+    expect(addenda.modes?.[0]).toMatch(/responsive breakage explicitly/i);
+    expect(addenda.modes?.[0]).toContain('checkResponsive');
     expect(modeGuidance('debug').toolEmphasis[0]).toBe('diagnostics');
+    expect(modeGuidance('debug').toolEmphasis).toContain('setDevice');
+    expect(modeGuidance('debug').toolEmphasis).toContain('checkResponsive');
   });
 
   it('undefined mode returns no addendum and no tool emphasis (the base MODES section already covers it)', () => {

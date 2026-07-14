@@ -50,8 +50,10 @@ export function createSessionTools(deps: SessionToolDeps) {
     recordEdit: tool({
       description:
         'Record an accepted change as a durable edit in the session changeset — the intent (why), ' +
-        'the target selector, and the style/text changes. This is what Ship hands off; record ' +
-        'after you have applied and visually verified a change.',
+        'the target selector, and the style/text changes. When you made this change under device ' +
+        'emulation (`setDevice`), set `breakpoint` to the device so the changeset and report show ' +
+        'which viewport it targets. This is what Ship hands off; record after you have applied and ' +
+        'visually verified a change.',
       inputSchema: Edit,
       outputSchema: ToolResult,
       execute: async (edit) => {

@@ -110,6 +110,14 @@ describe('buildSystemPrompt: load-bearing content', () => {
     expect(prompt).toMatch(/`inspectVisually`, `waitFor`, and navigation calls/);
   });
 
+  it('gives the responsive doctrine: check mobile/tablet, match reference, record breakpoint', () => {
+    expect(prompt).toMatch(/check more than desktop/i);
+    expect(prompt).toMatch(/`setDevice`.*mobile and tablet/i);
+    expect(prompt).toMatch(/`responsiveCapture`/);
+    expect(prompt).toMatch(/`checkResponsive`/);
+    expect(prompt).toMatch(/set\s+its `breakpoint`/i);
+  });
+
   it('gives the complex-site doctrine: detect → hydrate → shadow/canvas → widgets → charts', () => {
     expect(prompt).toMatch(/`pageFacts`.*first/i);
     expect(prompt).toMatch(/`hydrated`.*`quiescent`/);

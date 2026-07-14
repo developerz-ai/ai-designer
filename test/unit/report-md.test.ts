@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { renderIdentityTokens } from '@/changeset/report-md';
-import type { IdentityResult } from '@/shared/messages';
+import {
+  type ResponsiveBreakpointFindings,
+  renderIdentityTokens,
+  renderResponsiveFindings,
+  renderResponsiveShots,
+} from '@/changeset/report-md';
+import type { CheckResponsiveResult, IdentityResult, ResponsiveShot } from '@/shared/messages';
 
-// report-md.ts unit (slice 14 hook for PR12's report): `renderIdentityTokens` turns an extracted
-// `IdentityResult` into a Markdown tokens table + typography/spacing sections — deterministic, no
-// chrome.*, so a regression here shows up before the full report assembly (PR12) ever runs.
+// report-md.ts unit (slice 14/16 hooks for PR12's report): `renderIdentityTokens` turns an
+// extracted `IdentityResult` into a Markdown tokens table + typography/spacing sections;
+// `renderResponsiveFindings`/`renderResponsiveShots` turn per-breakpoint `checkResponsive`/
+// `responsiveCapture` results into a Markdown findings table + embedded captures — deterministic,
+// no chrome.*, so a regression here shows up before the full report assembly (PR12) ever runs.
 
 const IDENTITY: IdentityResult = {
   palette: [
@@ -68,5 +75,85 @@ describe('renderIdentityTokens', () => {
     expect(md).toContain('### Color tokens');
     expect(md).not.toContain('### Typography');
     expect(md).not.toContain('### Spacing & effects');
+  });
+});
+
+const finding = (
+  overrides: Partial<CheckResponsiveResult['findings'][number]> = {},
+): CheckResponsiveResult['findings'][number] => ({
+  category: 'overflow',
+  severity: 'moderate',
+  detail: 'element overflows the viewport',
+  selector: { value: '.hero', strategy: 'css-path', fragile: false },
+  ...overrides,
+});
+
+const MOBILE_FINDINGS: ResponsiveBreakpointFindings = {
+  label: 'iPhone SE',
+  result: {
+    viewportWidth: 375,
+    findings: [
+      finding({ category: 'tap-target', severity: 'minor', detail: 'button is 32x32px' }),
+      finding({ category: 'overflow', severity: 'serious', detail: 'nav overflows by 40px' }),
+    ],
+  },
+};
+
+const DESKTOP_CLEAN: ResponsiveBreakpointFindings = {
+  label: 'Desktop',
+  result: { viewportWidth: 1440, findings: [] },
+};
+
+describe('renderResponsiveFindings', () => {
+  it('renders one heading + table per breakpoint that has findings', () => {
+    const md = renderResponsiveFindings([MOBILE_FINDINGS]);
+    expect(md).toContain('### iPhone SE (375px)');
+    expect(md).toContain('| Severity | Category | Detail | Selector |');
+    expect(md).toContain('`.hero`');
+  });
+
+  it('sorts findings most-severe-first within a breakpoint', () => {
+    const md = renderResponsiveFindings([MOBILE_FINDINGS]);
+    const seriousIdx = md.indexOf('Serious');
+    const minorIdx = md.indexOf('Minor');
+    expect(seriousIdx).toBeGreaterThanOrEqual(0);
+    expect(seriousIdx).toBeLessThan(minorIdx);
+  });
+
+  it('skips a breakpoint with no findings', () => {
+    const md = renderResponsiveFindings([MOBILE_FINDINGS, DESKTOP_CLEAN]);
+    expect(md).not.toContain('### Desktop');
+  });
+
+  it('returns an empty string when every breakpoint is clean', () => {
+    expect(renderResponsiveFindings([DESKTOP_CLEAN])).toBe('');
+    expect(renderResponsiveFindings([])).toBe('');
+  });
+});
+
+const shot = (overrides: Partial<ResponsiveShot> = {}): ResponsiveShot => ({
+  label: 'Mobile',
+  metrics: { width: 375, height: 667, dpr: 2, touch: true, mobile: true },
+  mechanism: 'cdp',
+  image: 'AAAA',
+  ...overrides,
+});
+
+describe('renderResponsiveShots', () => {
+  it('embeds a data-URI image per breakpoint with its label and dimensions', () => {
+    const md = renderResponsiveShots([shot()]);
+    expect(md).toContain('### Responsive captures');
+    expect(md).toContain('**Mobile** (375×667)');
+    expect(md).toContain('![Mobile](data:image/png;base64,AAAA)');
+  });
+
+  it('renders a failure note instead of a broken image link for a failed capture', () => {
+    const md = renderResponsiveShots([shot({ image: undefined, error: 'tab closed' })]);
+    expect(md).toContain('capture failed: tab closed');
+    expect(md).not.toContain('![Mobile]');
+  });
+
+  it('returns an empty string for an empty shot set', () => {
+    expect(renderResponsiveShots([])).toBe('');
   });
 });
