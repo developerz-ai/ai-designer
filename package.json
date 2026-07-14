@@ -43,6 +43,7 @@
     "@biomejs/biome": "^2.4.15",
     "@playwright/test": "^1.61.1",
     "@types/chrome": "^0.1.43",
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
     "@wxt-dev/module-solid": "^1.1.0",
