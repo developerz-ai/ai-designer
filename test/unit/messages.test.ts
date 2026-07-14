@@ -5,28 +5,45 @@ import {
   CaptureRequest,
   CaptureResult,
   ContentToSw,
+  ControlTool,
   DomTool,
+  FrameInfo,
+  FramesInput,
+  FramesResult,
   GetProviderResult,
   GetStylesInput,
   GetStylesResult,
+  ImageInfo,
+  InspectVisuallyInput,
+  InspectVisuallyResult,
   KeyStatusResult,
   McpListResult,
   McpServer,
   McpServerResult,
   ModelsResult,
   MutationEvent,
+  NavIntent,
+  NavResult,
   PanelToSw,
   PickerCmd,
   ProviderConfig,
   QueryInput,
   QueryResult,
+  ReadImagesResult,
   SaveKeyResult,
   SaveProviderResult,
   ScreenshotInput,
   SetStyleInput,
   SetTextInput,
   SwToPanel,
+  TabInfo,
+  TabsCmd,
+  TabsResult,
+  Target,
+  ToolResult,
   UndoInput,
+  WaitCondition,
+  WaitForInput,
 } from '@/shared/messages';
 
 // A valid StableSelector (fragile defaults to false) + a bounding rect, reused
@@ -564,5 +581,203 @@ describe('MCP server RPCs (panel <-> service worker)', () => {
     expect(McpServerResult.safeParse({ ok: true, server }).success).toBe(true);
     expect(McpServerResult.safeParse({ ok: false, error: 'boom' }).success).toBe(true);
     expect(McpListResult.safeParse({ ok: true, servers: [server] }).success).toBe(true);
+  });
+});
+
+describe('shared Target on DOM tools (slice 13 iframes / multi-tab)', () => {
+  it('accepts a DomTool carrying tabId + frameId', () => {
+    expect(
+      DomTool.safeParse({ type: 'query', selector: '#hero', tabId: 3, frameId: 7 }).success,
+    ).toBe(true);
+    expect(
+      DomTool.safeParse({ type: 'setStyle', selector: '#x', props: { color: 'red' }, tabId: 0 })
+        .success,
+    ).toBe(true);
+  });
+
+  it('keeps tabId/frameId optional — a pre-frames call still validates unchanged', () => {
+    expect(DomTool.safeParse({ type: 'query', selector: '#hero' }).success).toBe(true);
+    expect(Target.safeParse({}).success).toBe(true);
+    expect(Target.safeParse({ tabId: 2, frameId: 0 }).success).toBe(true);
+  });
+
+  it('rejects a negative or non-integer tabId/frameId', () => {
+    expect(DomTool.safeParse({ type: 'query', selector: '#h', frameId: -1 }).success).toBe(false);
+    expect(DomTool.safeParse({ type: 'query', selector: '#h', tabId: 1.5 }).success).toBe(false);
+  });
+
+  it('adds an optional fullPage flag to screenshot', () => {
+    expect(ScreenshotInput.safeParse({ type: 'screenshot', fullPage: true }).success).toBe(true);
+    expect(ScreenshotInput.safeParse({ type: 'screenshot', fullPage: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('ControlTool (slice 13 content-routed driving tools)', () => {
+  it('accepts click / hover with a selector + Target', () => {
+    expect(ControlTool.safeParse({ type: 'click', selector: '#buy', frameId: 2 }).success).toBe(
+      true,
+    );
+    expect(ControlTool.safeParse({ type: 'hover', selector: 'nav' }).success).toBe(true);
+  });
+
+  it('accepts type with text and an optional submit flag', () => {
+    expect(ControlTool.safeParse({ type: 'type', selector: 'input', text: 'hi' }).success).toBe(
+      true,
+    );
+    expect(
+      ControlTool.safeParse({ type: 'type', selector: 'input', text: 'hi', submit: true }).success,
+    ).toBe(true);
+  });
+
+  it('accepts pressKey / scrollTo (selector or y) / selectOption', () => {
+    expect(ControlTool.safeParse({ type: 'pressKey', key: 'Enter' }).success).toBe(true);
+    expect(ControlTool.safeParse({ type: 'scrollTo', y: 800 }).success).toBe(true);
+    expect(ControlTool.safeParse({ type: 'scrollTo', selector: '#footer' }).success).toBe(true);
+    expect(
+      ControlTool.safeParse({ type: 'selectOption', selector: 'select', value: 'us' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects pressKey with an empty key and click without a selector', () => {
+    expect(ControlTool.safeParse({ type: 'pressKey', key: '' }).success).toBe(false);
+    expect(ControlTool.safeParse({ type: 'click' }).success).toBe(false);
+  });
+
+  it('accepts handleDialog and readImages', () => {
+    expect(ControlTool.safeParse({ type: 'handleDialog', accept: true }).success).toBe(true);
+    expect(
+      ControlTool.safeParse({ type: 'handleDialog', accept: false, promptText: 'ok' }).success,
+    ).toBe(true);
+    expect(ControlTool.safeParse({ type: 'readImages' }).success).toBe(true);
+    expect(ControlTool.safeParse({ type: 'readImages', selector: '.gallery' }).success).toBe(true);
+  });
+
+  it('does not overlap DomTool — the two unions share no discriminant', () => {
+    expect(DomTool.safeParse({ type: 'click', selector: '#x' }).success).toBe(false);
+    expect(ControlTool.safeParse({ type: 'query', selector: '#x' }).success).toBe(false);
+  });
+});
+
+describe('waitFor is bounded (slice 13 guardrail)', () => {
+  it('accepts each condition and a plain timed wait', () => {
+    expect(WaitForInput.safeParse({ type: 'waitFor', selector: '#loaded' }).success).toBe(true);
+    expect(WaitForInput.safeParse({ type: 'waitFor', text: 'Done' }).success).toBe(true);
+    expect(WaitForInput.safeParse({ type: 'waitFor', networkIdle: true }).success).toBe(true);
+    expect(WaitForInput.safeParse({ type: 'waitFor', timeMs: 500 }).success).toBe(true);
+    expect(WaitCondition.safeParse({ selector: '#x', timeMs: 2000 }).success).toBe(true);
+  });
+
+  it('caps the wait at 30s and rejects a non-positive time', () => {
+    expect(WaitForInput.safeParse({ type: 'waitFor', timeMs: 30_001 }).success).toBe(false);
+    expect(WaitForInput.safeParse({ type: 'waitFor', timeMs: 0 }).success).toBe(false);
+  });
+});
+
+describe('ImageInfo / ReadImagesResult (slice 13 vision signal)', () => {
+  const img = {
+    selector,
+    kind: 'img' as const,
+    src: 'https://cdn.example.com/hero.png',
+    alt: 'Hero',
+    naturalWidth: 2000,
+    naturalHeight: 1000,
+    renderedWidth: 400,
+    renderedHeight: 200,
+    broken: false,
+    oversized: true,
+  };
+
+  it('accepts a well-formed image (alt optional, background kind)', () => {
+    expect(ImageInfo.safeParse(img).success).toBe(true);
+    expect(ImageInfo.safeParse({ ...img, kind: 'background', alt: undefined }).success).toBe(true);
+  });
+
+  it('rejects an unknown kind and a non-StableSelector target', () => {
+    expect(ImageInfo.safeParse({ ...img, kind: 'svg' }).success).toBe(false);
+    expect(ImageInfo.safeParse({ ...img, selector: '#x' }).success).toBe(false);
+  });
+
+  it('bounds the enumerated image list (defense-in-depth)', () => {
+    expect(ReadImagesResult.safeParse({ images: [img] }).success).toBe(true);
+    expect(
+      ReadImagesResult.safeParse({ images: Array.from({ length: 201 }, () => img) }).success,
+    ).toBe(false);
+  });
+});
+
+describe('SW-orchestrated control tools (navigation / tabs / frames / vision)', () => {
+  it('navigate requires a url; navigateBack / reload take none', () => {
+    expect(NavIntent.safeParse({ type: 'navigate', url: 'https://x.dev/' }).success).toBe(true);
+    expect(NavIntent.safeParse({ type: 'navigate' }).success).toBe(false);
+    expect(NavIntent.safeParse({ type: 'navigate', url: 'not-a-url' }).success).toBe(false);
+    expect(NavIntent.safeParse({ type: 'navigateBack' }).success).toBe(true);
+    expect(NavIntent.safeParse({ type: 'reload', tabId: 4 }).success).toBe(true);
+    expect(NavResult.safeParse({ url: 'https://x.dev/', title: 'X' }).success).toBe(true);
+  });
+
+  it('tabs accepts every action; open carries a url, close/activate a tabId', () => {
+    expect(TabsCmd.safeParse({ type: 'tabs', action: 'list' }).success).toBe(true);
+    expect(TabsCmd.safeParse({ type: 'tabs', action: 'open', url: 'https://x.dev/' }).success).toBe(
+      true,
+    );
+    expect(TabsCmd.safeParse({ type: 'tabs', action: 'close', tabId: 9 }).success).toBe(true);
+    expect(TabsCmd.safeParse({ type: 'tabs', action: 'teleport' }).success).toBe(false);
+    const tab = { tabId: 1, url: 'https://x.dev/', title: 'X', active: true };
+    expect(TabInfo.safeParse(tab).success).toBe(true);
+    expect(TabsResult.safeParse({ tabs: [tab] }).success).toBe(true);
+  });
+
+  it('frames lists a tab; FrameInfo carries frameId / origin / isMain', () => {
+    expect(FramesInput.safeParse({ type: 'frames', action: 'list', tabId: 1 }).success).toBe(true);
+    expect(FramesInput.safeParse({ type: 'frames', action: 'walk' }).success).toBe(false);
+    expect(
+      FrameInfo.safeParse({
+        frameId: 0,
+        url: 'https://x.dev/',
+        origin: 'https://x.dev',
+        isMain: true,
+      }).success,
+    ).toBe(true);
+    expect(FramesResult.safeParse({ frames: [] }).success).toBe(true);
+  });
+
+  it('inspectVisually needs a question and returns a verdict', () => {
+    expect(
+      InspectVisuallyInput.safeParse({ type: 'inspectVisually', question: 'Does the CTA pop?' })
+        .success,
+    ).toBe(true);
+    expect(
+      InspectVisuallyInput.safeParse({
+        type: 'inspectVisually',
+        selector: '#cta',
+        fullPage: false,
+        question: 'q',
+        frameId: 1,
+      }).success,
+    ).toBe(true);
+    expect(InspectVisuallyInput.safeParse({ type: 'inspectVisually' }).success).toBe(false);
+    expect(
+      InspectVisuallyResult.safeParse({ verdict: 'Yes, sufficient contrast.', pass: true }).success,
+    ).toBe(true);
+  });
+
+  it('keeps the SW-orchestrated tools out of DomTool and ControlTool', () => {
+    for (const t of ['navigate', 'tabs', 'frames', 'inspectVisually']) {
+      expect(DomTool.safeParse({ type: t }).success).toBe(false);
+      expect(ControlTool.safeParse({ type: t }).success).toBe(false);
+    }
+  });
+});
+
+describe('ToolResult frame tagging (slice 13)', () => {
+  it('accepts an optional frameId on the result envelope', () => {
+    expect(ToolResult.safeParse({ type: 'tool-result', ok: true, frameId: 5 }).success).toBe(true);
+    expect(ToolResult.safeParse({ type: 'tool-result', ok: true }).success).toBe(true);
+  });
+
+  it('rejects a negative frameId', () => {
+    expect(ToolResult.safeParse({ type: 'tool-result', ok: true, frameId: -2 }).success).toBe(
+      false,
+    );
   });
 });
