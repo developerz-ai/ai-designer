@@ -200,7 +200,13 @@
 
     strong {
       color: var(--dz-ink);
-      font-variant-numeric: tabular-nums;
+      display: inline-block;
+      min-width: 4ch; // reserve max digit count (seed 1283 = 4) so the count-up
+      // growing 1 -> 4 digits doesn't shift "developers" right (tabular-nums alone
+      // fixes per-digit width, not digit-count growth).
+      text-align: right;
+      font-variant-numeric: tabular-nums lining-nums;
+      font-feature-settings: 'tnum' 1, 'lnum' 1;
     }
   }
 }
