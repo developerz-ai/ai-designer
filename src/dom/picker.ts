@@ -215,14 +215,19 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     });
   }
 
-  function toggleMulti(target: Element): void {
-    if (selected.has(target)) selected.delete(target);
-    else selected.add(target);
-    renderSelected();
+  // Panel resync: the emitted selector set mirrors `selected`. Emit only after a mutation.
+  function emitMultiSelect(): void {
     emit({
       type: 'multi-select-changed',
       selectors: [...selected].map((s) => pickUnique(s, docOf(s))),
     });
+  }
+
+  function toggleMulti(target: Element): void {
+    if (selected.has(target)) selected.delete(target);
+    else selected.add(target);
+    renderSelected();
+    emitMultiSelect();
   }
 
   const onOver = (e: MouseEvent): void => {
@@ -261,8 +266,16 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
         hovered = null;
       }
     }
-    for (const target of selected) if (!target.isConnected) selected.delete(target);
+    let pruned = false;
+    for (const target of selected)
+      if (!target.isConnected) {
+        selected.delete(target);
+        pruned = true;
+      }
     renderSelected();
+    // Pruning changed the selector set — resync the panel so it drops selectors for elements
+    // that left the DOM. Stay silent when nothing was pruned.
+    if (pruned) emitMultiSelect();
   };
 
   function start(): void {

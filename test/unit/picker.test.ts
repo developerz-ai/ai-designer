@@ -188,6 +188,37 @@ describe('selection', () => {
     expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
   });
 
+  it('reflow prunes a disconnected multi-selected target and re-emits the selector set', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    click(byId('b'), { shiftKey: true });
+    const before = byType(msgs, 'multi-select-changed').length;
+
+    byId('a').remove(); // a leaves the DOM while still selected
+    document.dispatchEvent(new Event('scroll')); // reflow prunes a
+
+    expect(byType(msgs, 'multi-select-changed')).toHaveLength(before + 1);
+    expect(values(msgs).at(-1)).toEqual(['#b']);
+    // stale outline is gone — only b's box remains
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
+  it('reflow does not re-emit when the multi-selection is unchanged', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    const before = byType(msgs, 'multi-select-changed').length;
+
+    document.dispatchEvent(new Event('scroll')); // a still connected — nothing to prune
+
+    expect(byType(msgs, 'multi-select-changed')).toHaveLength(before);
+  });
+
   it('ignores non-primary clicks', () => {
     document.body.innerHTML = '<button id="b">x</button>';
     const { picker, msgs } = spawn();
