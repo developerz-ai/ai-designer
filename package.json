@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Chrome extension: chat with an agent, redesign the live page in real time, ship the real code via MCP.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/developerz-ai/ai-designer.git"
+  },
+  "homepage": "https://github.com/developerz-ai/ai-designer#readme",
+  "bugs": {
+    "url": "https://github.com/developerz-ai/ai-designer/issues"
+  },
   "packageManager": "bun@1.3.0",
   "engines": {
     "bun": ">=1.3.0"

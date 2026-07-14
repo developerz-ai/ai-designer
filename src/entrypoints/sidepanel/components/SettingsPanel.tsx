@@ -11,6 +11,7 @@ import {
   setCustomBaseURL,
   settings,
 } from '../stores/settings';
+import { AboutSection } from './AboutSection';
 import './SettingsPanel.scss';
 
 // Render + dispatch only — no fetch, no crypto, no chrome.*. All logic lives in
@@ -135,6 +136,8 @@ export function SettingsPanel() {
           {statusText()}
         </p>
       </section>
+
+      <AboutSection />
     </div>
   );
 }
