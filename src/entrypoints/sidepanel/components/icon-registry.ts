@@ -1,15 +1,19 @@
 import type { AbstractElement, IconDefinition } from '@fortawesome/fontawesome-svg-core';
 import { icon as faIcon } from '@fortawesome/fontawesome-svg-core';
 import {
+  faArrowLeft,
   faArrowPointer,
   faArrowUpRightFromSquare,
   faCheck,
   faChevronDown,
   faCircleDot,
+  faClockRotateLeft,
   faCopy,
   faDownload,
   faEye,
+  faFileLines,
   faGear,
+  faGlobe,
   faPaperPlane,
   faPlug,
   faPlus,
@@ -45,6 +49,10 @@ const REGISTRY = {
   agent: faWandMagicSparkles,
   status: faCircleDot,
   download: faDownload,
+  history: faClockRotateLeft,
+  back: faArrowLeft,
+  site: faGlobe,
+  report: faFileLines,
 } as const satisfies Record<string, IconDefinition>;
 
 /**

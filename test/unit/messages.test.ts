@@ -8,6 +8,8 @@ import {
   CheckResponsiveResult,
   ContentToSw,
   ControlTool,
+  Conversation,
+  ConversationSummary,
   DomTool,
   FrameInfo,
   FramesInput,
@@ -15,6 +17,14 @@ import {
   GetProviderResult,
   GetStylesInput,
   GetStylesResult,
+  HISTORY_MAX_MESSAGES,
+  HISTORY_MAX_REPORT_CHARS,
+  HISTORY_MAX_TITLE_CHARS,
+  HistoryDelete,
+  HistoryGet,
+  HistoryGetResult,
+  HistoryList,
+  HistoryListResult,
   ImageInfo,
   InspectVisuallyInput,
   InspectVisuallyResult,
@@ -875,6 +885,102 @@ describe('ToolResult frame tagging (slice 13)', () => {
   it('rejects a negative frameId', () => {
     expect(ToolResult.safeParse({ type: 'tool-result', ok: true, frameId: -2 }).success).toBe(
       false,
+    );
+  });
+});
+
+// History (slice 08): `Conversation`/`ConversationSummary` + the history-* RPCs on the bus. The
+// bounds asserted here mirror `history-store.ts`'s write-time `boundMessages`/title/report slices —
+// a corrupt or hand-crafted oversized record must fail `hydrate()`'s re-validation, not just the
+// writer's own bounding.
+describe('Conversation / history schemas (slice 08)', () => {
+  const base = {
+    id: 'sess-1',
+    title: 'Redesign hero',
+    url: 'https://example.com/pricing',
+    mode: 'copy' as const,
+    createdAt: 1_700_000_000_000,
+    messages: [{ role: 'user' as const, content: 'redesign the hero' }],
+  };
+
+  it('accepts a minimal conversation (mode/report/prLink all optional)', () => {
+    const r = Conversation.safeParse({
+      id: 'a',
+      title: 't',
+      url: 'https://example.com',
+      createdAt: 0,
+      messages: [],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a full conversation with a report + PR link', () => {
+    const r = Conversation.safeParse({ ...base, report: '# Report', prLink: 'https://gh/p/1' });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects a title over HISTORY_MAX_TITLE_CHARS', () => {
+    const r = Conversation.safeParse({ ...base, title: 'x'.repeat(HISTORY_MAX_TITLE_CHARS + 1) });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a report over HISTORY_MAX_REPORT_CHARS', () => {
+    const r = Conversation.safeParse({
+      ...base,
+      report: 'x'.repeat(HISTORY_MAX_REPORT_CHARS + 1),
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects more than HISTORY_MAX_MESSAGES messages', () => {
+    const messages = Array.from({ length: HISTORY_MAX_MESSAGES + 1 }, () => ({
+      role: 'user' as const,
+      content: 'x',
+    }));
+    const r = Conversation.safeParse({ ...base, messages });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a message that fails modelMessageSchema (unknown role)', () => {
+    const r = Conversation.safeParse({ ...base, messages: [{ role: 'narrator', content: 'x' }] });
+    expect(r.success).toBe(false);
+  });
+
+  it('ConversationSummary drops messages/report in favor of counts', () => {
+    const r = ConversationSummary.safeParse({
+      id: 'a',
+      title: 't',
+      url: 'https://example.com',
+      createdAt: 0,
+      messageCount: 3,
+      hasReport: true,
+    });
+    expect(r.success).toBe(true);
+    // The heavy fields aren't part of the shape at all.
+    expect(
+      ConversationSummary.safeParse({ ...base, messageCount: 1, hasReport: false }).data,
+    ).not.toHaveProperty('messages');
+  });
+
+  it('history-list/get/delete parse as PanelToSw RPCs', () => {
+    expect(PanelToSw.safeParse({ type: 'history-list' }).success).toBe(true);
+    expect(HistoryList.safeParse({ type: 'history-list' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'history-get', id: 'a' }).success).toBe(true);
+    expect(HistoryGet.safeParse({ type: 'history-get' }).success).toBe(false); // id required
+    expect(PanelToSw.safeParse({ type: 'history-delete', id: 'a' }).success).toBe(true);
+    expect(HistoryDelete.safeParse({ type: 'history-delete', id: '' }).success).toBe(false); // min(1)
+  });
+
+  it('HistoryListResult/HistoryGetResult accept the SW replies', () => {
+    expect(
+      HistoryListResult.safeParse({
+        ok: true,
+        conversations: [{ ...base, messageCount: 1, hasReport: false }],
+      }).success,
+    ).toBe(true);
+    expect(HistoryGetResult.safeParse({ ok: true, conversation: base }).success).toBe(true);
+    expect(HistoryGetResult.safeParse({ ok: false, error: 'No conversation a' }).success).toBe(
+      true,
     );
   });
 });

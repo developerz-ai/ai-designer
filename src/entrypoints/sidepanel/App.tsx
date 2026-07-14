@@ -1,5 +1,7 @@
 import { createMemo, createSignal, Match, Show, Switch } from 'solid-js';
 import { ChatPanel } from './components/ChatPanel';
+import { HistoryPanel } from './components/HistoryPanel';
+import { Icon } from './components/Icon';
 import { McpPanel } from './components/McpPanel';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
@@ -7,7 +9,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { sessionState } from './stores/session';
 import './App.scss';
 
-type Tab = 'chat' | 'mcp' | 'settings';
+type Tab = 'chat' | 'mcp' | 'history' | 'settings';
 
 // MCP server management is live (slice 02) — connect implement backends the agent
 // ships changesets to. See docs/idea/mcp.md.
@@ -51,6 +53,14 @@ export function App() {
           </Show>
           <button
             type="button"
+            classList={{ 'is-active': tab() === 'history' }}
+            onClick={() => setTab('history')}
+            aria-label="History"
+          >
+            <Icon name="history" size="sm" />
+          </button>
+          <button
+            type="button"
             classList={{ 'is-active': tab() === 'settings' }}
             onClick={() => setTab('settings')}
           >
@@ -75,6 +85,9 @@ export function App() {
           </Match>
           <Match when={tab() === 'mcp'}>
             <McpPanel />
+          </Match>
+          <Match when={tab() === 'history'}>
+            <HistoryPanel />
           </Match>
           <Match when={tab() === 'settings'}>
             <SettingsPanel />

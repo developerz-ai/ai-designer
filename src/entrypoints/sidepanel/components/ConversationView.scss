@@ -1,0 +1,152 @@
+@use '../../../styles/tokens' as tokens;
+
+.dz-convview {
+  padding: tokens.$dz-space-4;
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-3;
+
+  &__header {
+    display: flex;
+  }
+
+  &__back {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    background: transparent;
+    border: none;
+    color: var(--dz-muted);
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+
+    &:hover {
+      color: var(--dz-fg);
+    }
+  }
+
+  &__hint {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    color: var(--dz-muted);
+    margin: 0;
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    padding-bottom: tokens.$dz-space-3;
+    border-bottom: 1px solid var(--dz-border);
+  }
+
+  &__title {
+    flex-basis: 100%;
+    color: var(--dz-fg);
+  }
+
+  &__url {
+    color: var(--dz-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px tokens.$dz-space-2;
+    border-radius: 999px;
+    background: var(--dz-surface-overlay);
+    border: 1px solid var(--dz-border);
+    text-transform: capitalize;
+    font-size: 11px;
+
+    &.is-copy {
+      color: var(--dz-accent);
+    }
+
+    &.is-debug {
+      color: tokens.$dz-status-warning;
+    }
+  }
+
+  &__readonly {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    margin-left: auto;
+    color: var(--dz-muted);
+    font-size: 11px;
+  }
+
+  &__thread {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  &__line {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    border-radius: var(--dz-radius);
+    background: var(--dz-surface-overlay);
+
+    &.is-user {
+      align-self: flex-end;
+      background: var(--dz-accent);
+      color: var(--dz-accent-fg);
+
+      .dz-convview__role {
+        color: inherit;
+        opacity: 0.7;
+      }
+    }
+  }
+
+  &__role {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--dz-muted);
+  }
+
+  &__text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__footer {
+    display: flex;
+    gap: tokens.$dz-space-2;
+    padding-top: tokens.$dz-space-3;
+    border-top: 1px solid var(--dz-border);
+  }
+
+  &__action {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    background: transparent;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-fg);
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    text-decoration: none;
+  }
+}

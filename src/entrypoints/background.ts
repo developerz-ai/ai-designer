@@ -15,6 +15,7 @@ import {
   runResponsiveCapture,
   runSetDevice,
 } from '@/agent/device-emulation';
+import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
@@ -120,6 +121,12 @@ export default defineBackground(() => {
   // chrome.storage.session so an SW eviction mid-turn resumes with context (src/agent/session).
   const sessions = new SessionStore();
 
+  // Last-10-conversations history (slice 08): a durable record of completed turns + their
+  // shipped report/PR, mirrored to chrome.storage.local. Distinct from `sessions` above (the
+  // in-flight, chrome.storage.session-backed resume state) — a conversation is appended here once
+  // a turn finishes, and outlives the tab/session that produced it.
+  const historyStore = new HistoryStore();
+
   // MCP registry (slice 02). OAuth endpoint configs aren't persisted (mcp/store.ts's
   // StoredServer is intentionally non-secret + config-free) — cached here for the SW's
   // lifetime so a refresh can re-derive headers without the panel resupplying them each
@@ -183,6 +190,9 @@ export default defineBackground(() => {
 
   // Rehydrate persisted design sessions before any user-message turn reads them (SW wake).
   const sessionsReady = sessions.hydrate();
+
+  // Rehydrate persisted history before any history-* RPC or turn-done append reads it (SW wake).
+  const historyReady = historyStore.hydrate();
 
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
@@ -316,10 +326,15 @@ export default defineBackground(() => {
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
     if (opts.downloadOnly) {
       const report = await makeReport();
+      const markdown = toMarkdown(report);
+      // Update-on-report (slice 08): attach the brief to this session's history entry, if it has
+      // one — best-effort (`setReport` throws for an id `appendTurn` never created, e.g. a report
+      // requested before any turn ran; that's not this RPC's failure to surface).
+      await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
       return {
         ok: true,
         routed: 'report',
-        markdown: toMarkdown(report),
+        markdown,
         filename: reportFilename(changeset.url),
       };
     }
@@ -345,10 +360,12 @@ export default defineBackground(() => {
         return { ok: false, error: 'Nothing to ship yet — make some edits first.' };
       }
       const report = await makeReport();
+      const markdown = toMarkdown(report);
+      await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
       return {
         ok: true,
         routed: 'report',
-        markdown: toMarkdown(report),
+        markdown,
         filename: reportFilename(changeset.url),
         reason: fallbackMessage(route.reason),
       };
@@ -380,7 +397,14 @@ export default defineBackground(() => {
     );
     void ship(source, target, {
       backend,
-      onStatus: (update) => postToPanel({ type: 'task-status', ...update }),
+      onStatus: (update) => {
+        postToPanel({ type: 'task-status', ...update });
+        // Update-on-ship (slice 08): the PR a task opens lands as a `prUrl` on a later status
+        // update — attach it to this session's history entry as soon as it's known. Best-effort,
+        // same as the report path above.
+        if (update.prUrl)
+          void historyStore.setPrLink(changeset.sessionId, update.prUrl).catch(() => {});
+      },
     }).catch((err) =>
       postToPanel({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
     );
@@ -392,6 +416,7 @@ export default defineBackground(() => {
     await migrated; // settings reads must see the migrated (named-secret) state
     await mcpReady; // mcp-* cases need the registry rehydrated from storage
     await sessionsReady; // user-message resumes any persisted session thread
+    await historyReady; // history-* RPCs and turn-done append need the persisted ring buffer
     switch (msg.type) {
       case 'user-message': {
         // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
@@ -561,6 +586,26 @@ export default defineBackground(() => {
               await sessions.appendMessages(tabId, { role: 'assistant', content: outcome.text });
             }
             await sessions.patch(tabId, { usage: outcome.usage });
+            // Persist this turn to history (slice 08): the conversation is keyed by the
+            // changeset's sessionId (minted once per tab session), so every turn in the same
+            // design session appends to one entry rather than forking a new ring-buffer slot.
+            // Only this turn's new messages are appended — the full resume thread already lives
+            // in `sessions`; history keeps its own size-bounded copy (see `history-store.ts`).
+            const newMessages = outcome.text
+              ? [
+                  { role: 'user' as const, content: msg.text },
+                  { role: 'assistant' as const, content: outcome.text },
+                ]
+              : [{ role: 'user' as const, content: msg.text }];
+            await historyStore
+              .appendTurn({
+                id: changesetStore.current.sessionId,
+                title: msg.text,
+                url: changesetStore.current.url,
+                mode,
+                messages: newMessages,
+              })
+              .catch((err) => postToPanel({ type: 'error', message: String(err) }));
           })
           .catch((err) => postToPanel({ type: 'error', message: String(err) }))
           .finally(() => {
@@ -766,6 +811,21 @@ export default defineBackground(() => {
         turnAbort?.abort();
         turnAbort = null;
         setSessionState('stopped');
+        return { ok: true };
+
+      // --- history: last-10 conversations + reports (slice 08) ------------
+      // Lightweight summaries for the History SPA list — never the full thread/report payload.
+      case 'history-list':
+        return { ok: true, conversations: historyStore.list() };
+      // One conversation's full record for a read-only replay + re-download.
+      case 'history-get': {
+        const conversation = historyStore.get(msg.id);
+        return conversation
+          ? { ok: true, conversation }
+          : { ok: false, error: `No conversation ${msg.id} in history` };
+      }
+      case 'history-delete':
+        await historyStore.delete(msg.id);
         return { ok: true };
     }
   }

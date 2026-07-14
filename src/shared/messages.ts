@@ -1,3 +1,4 @@
+import { modelMessageSchema } from 'ai';
 import { z } from 'zod';
 import { Changeset, Edit, StableSelector } from './changeset';
 import { CollectorSignal } from './diagnostics';
@@ -204,6 +205,56 @@ export type McpAuthStart = z.infer<typeof McpAuthStart>;
 // `mcp-status` stream — e.g. when a panel (re)connects and has no cached state yet.
 export const McpStatusRequest = z.object({ type: z.literal('mcp-status') });
 
+// --- history: last-10 conversations + reports (slice 08) ------------------
+// Persisted history of the agent's last 10 conversations (`src/agent/history-store.ts`, SW-only —
+// touches `chrome.storage.local`; the panel never touches storage directly, only these RPCs).
+// `Conversation` + its bound consts live HERE (the message-vocabulary hub), not in history-store.ts,
+// so history-store.ts can import them without a messages.ts -> history-store.ts -> messages.ts cycle
+// (history-store needs `Mode`, defined above in this same file). `messages`/`report` are re-bounded
+// on write (history-store's `boundMessages`/`MAX_REPORT_CHARS` slice) — the schema caps below mirror
+// those write-time bounds so a corrupt/oversized persisted record is rejected on `hydrate()` rather
+// than trusted.
+export const HISTORY_MAX_TITLE_CHARS = 200;
+export const HISTORY_MAX_REPORT_CHARS = 20_000;
+export const HISTORY_MAX_MESSAGES = 200;
+
+// One persisted conversation: the turn thread + whatever the session produced (a handoff report,
+// the PR it became). `messages`/`report` are bounded on write by `history-store.ts`'s
+// `boundMessages`/slice — never trust an unbounded value coming back from storage either, hence
+// the schema caps too.
+export const Conversation = z.object({
+  id: z.string().min(1),
+  title: z.string().max(HISTORY_MAX_TITLE_CHARS),
+  url: z.string(),
+  mode: Mode.optional(),
+  createdAt: z.number(),
+  messages: z.array(modelMessageSchema).max(HISTORY_MAX_MESSAGES).default([]),
+  // The handoff brief (07), already rendered to Markdown — never the raw `Report` object or any
+  // embedded images; keeps a history entry cheap to list and safe to store.
+  report: z.string().max(HISTORY_MAX_REPORT_CHARS).optional(),
+  // The PR the ship flow (12) opened from this conversation's changeset.
+  prLink: z.string().max(2048).optional(),
+});
+export type Conversation = z.infer<typeof Conversation>;
+
+// A history-list row: everything but the heavy fields, plus counts the panel can render without
+// pulling the full thread over the bus (`history-list` vs `history-get(id)` below).
+export const ConversationSummary = Conversation.omit({ messages: true, report: true }).extend({
+  messageCount: z.number().int().nonnegative(),
+  hasReport: z.boolean(),
+});
+export type ConversationSummary = z.infer<typeof ConversationSummary>;
+
+// List every persisted conversation as lightweight summaries (no thread/report payload).
+export const HistoryList = z.object({ type: z.literal('history-list') });
+// Fetch one conversation's full record (thread + report/PR link) for a read-only replay.
+export const HistoryGet = z.object({ type: z.literal('history-get'), id: z.string().min(1) });
+// Remove a conversation from history. No-op server-side for an unknown id.
+export const HistoryDelete = z.object({
+  type: z.literal('history-delete'),
+  id: z.string().min(1),
+});
+
 // --- readiness + session (slice 03) ---------------------------------------
 // Header status-pill truth: whether the agent can run at all. `ready` gates chat entry
 // and is `provider && model` only — MCP is optional (copy/debug flows still work without
@@ -252,6 +303,9 @@ export const PanelToSw = z.discriminatedUnion('type', [
   Readiness,
   SessionStart,
   SessionStop,
+  HistoryList,
+  HistoryGet,
+  HistoryDelete,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -337,6 +391,20 @@ export const HandoffResult = z.object({
   error: z.string().optional(),
 });
 export type HandoffResult = z.infer<typeof HandoffResult>;
+
+// RPC responses for the history RPCs above. `history-delete` replies with the plain `OkResult`.
+export const HistoryListResult = z.object({
+  ok: z.boolean(),
+  conversations: z.array(ConversationSummary).optional(),
+});
+export type HistoryListResult = z.infer<typeof HistoryListResult>;
+
+export const HistoryGetResult = z.object({
+  ok: z.boolean(),
+  conversation: Conversation.optional(),
+  error: z.string().optional(),
+});
+export type HistoryGetResult = z.infer<typeof HistoryGetResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
