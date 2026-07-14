@@ -20,7 +20,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     color: tokens.$dz-danger;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     margin: 0;
   }
 
@@ -41,7 +41,7 @@
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
 
     &:disabled {
       opacity: 0.5;
@@ -125,7 +125,7 @@
       padding: tokens.$dz-space-1 tokens.$dz-space-3;
       cursor: pointer;
       font: inherit;
-      font-size: 12px;
+      font-size: tokens.$dz-font-sm;
       display: inline-flex;
       align-items: center;
     }
@@ -145,7 +145,7 @@
 
   &__label {
     color: var(--dz-muted);
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
   }
 
   &__add {

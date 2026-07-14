@@ -14,7 +14,7 @@
 
   &__label {
     color: var(--dz-muted);
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
   }
 
   &__presetrow,
@@ -72,7 +72,7 @@
 
   &__status {
     margin: 0;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     color: var(--dz-muted);
 
     &.is-ok {
@@ -86,7 +86,7 @@
 
   &__hint {
     margin: 0;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     color: var(--dz-muted);
   }
 }

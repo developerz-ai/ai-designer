@@ -1,10 +1,12 @@
+@use '../../../styles/tokens' as tokens;
+
 .dz-chat {
   display: flex;
   flex-direction: column;
   height: 100%;
 
   &__error {
-    margin: 0 12px 8px;
+    margin: 0 tokens.$dz-space-4 tokens.$dz-space-2;
     color: var(--dz-status-error);
     font-size: 0.85em;
   }

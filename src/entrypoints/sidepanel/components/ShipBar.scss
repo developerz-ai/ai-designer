@@ -57,7 +57,7 @@
     top: calc(100% + #{tokens.$dz-space-1});
     left: 0;
     z-index: 10;
-    min-width: 160px;
+    min-width: tokens.rem(160);
     margin: 0;
     padding: tokens.$dz-space-1;
     list-style: none;
@@ -89,7 +89,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     color: var(--dz-muted);
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     margin: 0;
   }
 
@@ -98,7 +98,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     color: tokens.$dz-danger;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     margin: 0;
   }
 }

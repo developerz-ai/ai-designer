@@ -1,3 +1,5 @@
+@use '../../styles/tokens' as tokens;
+
 .dz-app {
   display: flex;
   flex-direction: column;
@@ -6,27 +8,27 @@
   &__header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 12px;
+    gap: tokens.$dz-space-4;
+    padding: tokens.$dz-space-2 tokens.$dz-space-4;
     border-bottom: 1px solid var(--dz-border);
   }
 
   &__logo {
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: tokens.$dz-icon-size-md;
+    height: tokens.$dz-icon-size-md;
+    border-radius: tokens.rem(6);
   }
 
   &__tabs {
     display: flex;
-    gap: 4px;
+    gap: tokens.$dz-space-1;
     margin-left: auto;
 
     button {
       background: transparent;
       border: 1px solid transparent;
       color: var(--dz-muted);
-      padding: 4px 10px;
+      padding: tokens.$dz-space-1 tokens.$dz-space-3;
       border-radius: var(--dz-radius);
       cursor: pointer;
       font: inherit;
@@ -47,7 +49,7 @@
 
   &__empty {
     color: var(--dz-muted);
-    padding: 24px;
+    padding: tokens.rem(24);
     text-align: center;
   }
 }
