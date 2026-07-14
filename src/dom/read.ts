@@ -1,5 +1,12 @@
 import { pickUnique } from '@/dom/selector';
-import type { A11yNode, A11yResult, GetStylesResult, QueryResult, Rect } from '@/shared/messages';
+import type {
+  A11yNode,
+  A11yResult,
+  GetStylesResult,
+  PageMetrics,
+  QueryResult,
+  Rect,
+} from '@/shared/messages';
 
 // DOM readers — the content script's read half (query / getStyles / a11ySnapshot / screenshot).
 // Pure DOM in, typed result out: no chrome.*, so every branch runs under jsdom and the content
@@ -252,4 +259,78 @@ export function cropBox(
   if (sw <= 0 || sh <= 0) return null;
   if (sx === 0 && sy === 0 && sw >= imgWidth && sh >= imgHeight) return null; // whole frame
   return { sx, sy, sw, sh };
+}
+
+// --- full-page capture (scroll-stitch geometry) --------------------------
+
+/** The page's scroll + viewport geometry — the content input to the SW's full-page scroll-stitch.
+ *  `scroll{Width,Height}` are the max of the documentElement/body scroll size and the viewport, so a
+ *  short page still reports at least one viewport. */
+export function pageMetrics(doc: Document = document, win: Window = window): PageMetrics {
+  const el = doc.documentElement;
+  const body = doc.body;
+  const scrollWidth = Math.max(el?.scrollWidth ?? 0, body?.scrollWidth ?? 0, win.innerWidth);
+  const scrollHeight = Math.max(el?.scrollHeight ?? 0, body?.scrollHeight ?? 0, win.innerHeight);
+  return {
+    scrollWidth,
+    scrollHeight,
+    viewportWidth: win.innerWidth,
+    viewportHeight: win.innerHeight,
+    devicePixelRatio: win.devicePixelRatio || 1,
+    scrollX: win.scrollX,
+    scrollY: win.scrollY,
+  };
+}
+
+// One band of a full-page capture: scroll the viewport to `scrollY` (CSS px), grab it, then copy a
+// `height`-tall device-px slice from `srcY` in the grab to `destY` on the stitched canvas. The last
+// band clamps its scroll to the page bottom, so `srcY > 0` there (its top rows overlap the prior
+// band and are skipped) — this is how the stitch avoids a double-exposed seam.
+export interface StitchBand {
+  scrollY: number;
+  srcY: number;
+  destY: number;
+  height: number;
+}
+
+export interface StitchPlan {
+  /** Device-px canvas the bands compose onto. */
+  canvasWidth: number;
+  canvasHeight: number;
+  bands: StitchBand[];
+}
+
+// Bounds keep the capture cheap: a tall page yields many viewport grabs (each a `captureVisibleTab`
+// + a vision-token cost downstream), so cap both the band count and the total stitched height.
+export interface StitchLimits {
+  maxBands: number;
+  maxHeightCss: number;
+}
+export const DEFAULT_STITCH_LIMITS: StitchLimits = { maxBands: 12, maxHeightCss: 20_000 };
+
+/** Plan the scroll bands + device-px canvas for a full-page capture from the page's {@link
+ *  PageMetrics}. Pure math (the SW's OffscreenCanvas glue just runs the returned rects), so the
+ *  seam/overlap handling is unit-testable with no chrome. */
+export function planStitch(
+  m: PageMetrics,
+  limits: StitchLimits = DEFAULT_STITCH_LIMITS,
+): StitchPlan {
+  const dpr = m.devicePixelRatio > 0 ? m.devicePixelRatio : 1;
+  const vh = Math.max(1, m.viewportHeight);
+  const canvasWidth = Math.max(1, Math.round(m.viewportWidth * dpr));
+  // Cover the shorter of: the real page, the absolute cap, and what `maxBands` viewports can reach.
+  const coveredCss = Math.min(m.scrollHeight, limits.maxHeightCss, vh * limits.maxBands);
+  const canvasHeight = Math.max(1, Math.round(coveredCss * dpr));
+  const maxScroll = Math.max(0, m.scrollHeight - vh);
+  const bands: StitchBand[] = [];
+  for (let top = 0; top < coveredCss; top += vh) {
+    const bottom = Math.min(top + vh, coveredCss);
+    const scrollY = Math.min(top, maxScroll); // last band clamps to the page bottom (overlaps prior)
+    const destY = Math.round(top * dpr);
+    const srcY = Math.round((top - scrollY) * dpr);
+    const height = Math.min(Math.round((bottom - top) * dpr), canvasHeight - destY);
+    if (height <= 0) break;
+    bands.push({ scrollY, srcY, destY, height });
+  }
+  return { canvasWidth, canvasHeight, bands };
 }

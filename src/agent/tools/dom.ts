@@ -45,8 +45,7 @@ export function createDomTools(dispatch: DomDispatch) {
         'Confirm your target with this before mutating.',
       inputSchema: QueryInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector }, { abortSignal }) =>
-        dispatch({ type: 'query', selector }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'query', ...input }, abortSignal),
     }),
     getStyles: tool({
       description:
@@ -55,8 +54,7 @@ export function createDomTools(dispatch: DomDispatch) {
         'checking current color, spacing, or typography.',
       inputSchema: GetStylesInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector }, { abortSignal }) =>
-        dispatch({ type: 'getStyles', selector }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'getStyles', ...input }, abortSignal),
     }),
     screenshot: tool({
       description:
@@ -65,8 +63,7 @@ export function createDomTools(dispatch: DomDispatch) {
         'self-correct.',
       inputSchema: ScreenshotInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector }, { abortSignal }) =>
-        dispatch({ type: 'screenshot', selector }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'screenshot', ...input }, abortSignal),
     }),
     a11ySnapshot: tool({
       description:
@@ -75,8 +72,8 @@ export function createDomTools(dispatch: DomDispatch) {
         'structure, labels, and hierarchy.',
       inputSchema: A11ySnapshotInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector }, { abortSignal }) =>
-        dispatch({ type: 'a11ySnapshot', selector }, abortSignal),
+      execute: (input, { abortSignal }) =>
+        dispatch({ type: 'a11ySnapshot', ...input }, abortSignal),
     }),
     setStyle: tool({
       description:
@@ -84,8 +81,7 @@ export function createDomTools(dispatch: DomDispatch) {
         'Reversible and recorded as an edit. ToolResult.data = the resulting computed subset.',
       inputSchema: SetStyleInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector, props }, { abortSignal }) =>
-        dispatch({ type: 'setStyle', selector, props }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'setStyle', ...input }, abortSignal),
     }),
     setText: tool({
       description:
@@ -93,14 +89,13 @@ export function createDomTools(dispatch: DomDispatch) {
         'Reversible and recorded as an edit.',
       inputSchema: SetTextInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ selector, value }, { abortSignal }) =>
-        dispatch({ type: 'setText', selector, value }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'setText', ...input }, abortSignal),
     }),
     undo: tool({
       description: 'Revert the most recent recorded page mutation. Takes no arguments.',
       inputSchema: UndoInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: (_input, { abortSignal }) => dispatch({ type: 'undo' }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'undo', ...input }, abortSignal),
     }),
     diagnostics: tool({
       description:
@@ -110,8 +105,7 @@ export function createDomTools(dispatch: DomDispatch) {
         'Debug-mode first move: observe before you reproduce.',
       inputSchema: DiagnosticsInput.omit({ type: true }),
       outputSchema: ToolResult,
-      execute: ({ action }, { abortSignal }) =>
-        dispatch({ type: 'diagnostics', action }, abortSignal),
+      execute: (input, { abortSignal }) => dispatch({ type: 'diagnostics', ...input }, abortSignal),
     }),
   };
 }

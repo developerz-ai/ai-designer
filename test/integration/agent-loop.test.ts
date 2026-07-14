@@ -9,10 +9,12 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { runTurn } from '@/agent/loop';
 import type { DomDispatch } from '@/agent/tools/dom';
+import type { InteractDeps } from '@/agent/tools/interact';
 import { createSessionTools } from '@/agent/tools/session';
+import type { VisionToolDeps } from '@/agent/tools/vision';
 import { ChangesetStore } from '@/changeset/store';
 import { emptyChangeset } from '@/shared/changeset';
-import type { DomTool, SwToPanel } from '@/shared/messages';
+import type { ControlTool, DomTool, NavIntent, SwToPanel } from '@/shared/messages';
 
 // Integration: the slice-04 spine — a `user-message` turn runs the ToolLoopAgent in the SW
 // against a MOCKED model (no network), streams tokens + a tool-call to the panel sink, and
@@ -123,7 +125,13 @@ describe('integration: agent turn streams tokens + tool-calls and drives the DOM
     // Natural completion, spend summed across both steps (500+100 + 600+40).
     expect(outcome.stop).toBe('done');
     expect(outcome.budgetReason).toBeNull();
-    expect(outcome.usage).toEqual({ steps: 2, tokens: 1240 });
+    expect(outcome.usage).toEqual({
+      steps: 2,
+      tokens: 1240,
+      visionCalls: 0,
+      waitCalls: 0,
+      navCalls: 0,
+    });
     expect(outcome.text).toContain('Done — the CTA now pops');
     expect(events.some((e) => e.type === 'error')).toBe(false);
   });
@@ -307,5 +315,177 @@ describe('integration: the handoff tool is gated by approveHandoff — never shi
     });
 
     expect(handoffResultShownToModel(model)).toEqual({ type: 'execution-denied' });
+  });
+});
+
+// Slice 13: `interact`/`tabsFrames`/`vision` are optional RunTurnArgs deps the loop turns into
+// tools (`buildTools`), with `waitFor`/`navigate*`/`inspectVisually` wrapped by the turn's
+// per-tool budget guards (src/agent/budget.ts `spendWait`/`spendNav`/`spendVision`) — a cap
+// exceeded fails just that call with an error ToolResult instead of ending the turn.
+
+function fakeInteract() {
+  const calls: ControlTool[] = [];
+  const navCalls: NavIntent[] = [];
+  const deps: InteractDeps = {
+    control: async (msg) => {
+      calls.push(msg);
+      return { type: 'tool-result', ok: true, data: {} };
+    },
+    nav: async (msg) => {
+      navCalls.push(msg);
+      return { type: 'tool-result', ok: true, data: { url: 'https://example.com/' } };
+    },
+  };
+  return { calls, navCalls, deps };
+}
+
+function fakeVision() {
+  const inspectCalls: unknown[] = [];
+  const deps: VisionToolDeps = {
+    screenshot: async () => ({ type: 'tool-result', ok: true, data: 'iVBORw0KGgo=' }),
+    readImages: async () => ({ type: 'tool-result', ok: true, data: { images: [] } }),
+    inspect: async (msg) => {
+      inspectCalls.push(msg);
+      return { type: 'tool-result', ok: true, data: { verdict: 'looks fine' } };
+    },
+  };
+  return { inspectCalls, deps };
+}
+
+// A model that calls the same `toolName`/`input` on each of `n` steps, then wraps up on step
+// `n + 1` — models a (possibly budget-refused) tool being retried across several turns of the loop.
+function repeatedToolCallModel(toolName: string, input: unknown, n: number): MockLanguageModelV4 {
+  const steps: LanguageModelV4StreamPart[][] = [];
+  for (let i = 0; i < n; i += 1) {
+    steps.push([
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-call', toolCallId: `t${i}`, toolName, input: JSON.stringify(input) },
+      finish(usage(50, 10), 'tool-calls'),
+    ]);
+  }
+  steps.push([
+    { type: 'stream-start', warnings: [] },
+    { type: 'text-start', id: 'x' },
+    { type: 'text-delta', id: 'x', delta: 'Done.' },
+    { type: 'text-end', id: 'x' },
+    finish(usage(50, 10), 'stop'),
+  ]);
+  return new MockLanguageModelV4({ doStream: steps.map((s) => stream(s)) });
+}
+
+// What the model was shown for the tool call made on doStream call `callIndex`.
+function toolResultShownAt(
+  model: MockLanguageModelV4,
+  callIndex: number,
+): LanguageModelV4ToolResultOutput {
+  const prompt = model.doStreamCalls[callIndex]?.prompt as LanguageModelV4Prompt | undefined;
+  const last = prompt?.[prompt.length - 1];
+  if (last?.role !== 'tool') throw new Error('expected a tool-result message');
+  const [part] = last.content;
+  if (part?.type !== 'tool-result') throw new Error('expected a tool-result part');
+  return part.output;
+}
+
+describe('integration: browser-control tools (interact/tabs/vision) wire in and guard their loops', () => {
+  it('guards waitFor past maxWaitCalls — the refused call never reaches the dispatch', async () => {
+    const { calls, deps } = fakeInteract();
+    const { emit } = collectEmit();
+    const model = repeatedToolCallModel('waitFor', { timeMs: 100 }, 3);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'wait for it' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      interact: deps,
+      limits: { maxWaitCalls: 2 },
+    });
+
+    // Only the first two waitFor calls reached the injected dispatch; the third was refused.
+    expect(calls.filter((c) => c.type === 'waitFor')).toHaveLength(2);
+    expect(outcome.usage.waitCalls).toBe(2);
+
+    // The model saw a guard error naming the exhausted budget on its third call.
+    const third = toolResultShownAt(model, 3);
+    if (third.type !== 'json') throw new Error('unreachable');
+    expect(third.value).toMatchObject({ ok: false });
+    expect(JSON.stringify(third.value)).toMatch(/budget/i);
+  });
+
+  it('guards navigate/navigateBack/reload past maxNavCalls, independently of waitFor', async () => {
+    const { navCalls, deps } = fakeInteract();
+    const { emit } = collectEmit();
+    const model = repeatedToolCallModel('navigate', { url: 'https://example.com/' }, 2);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'go there' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      interact: deps,
+      limits: { maxNavCalls: 1 },
+    });
+
+    expect(navCalls).toHaveLength(1);
+    expect(outcome.usage.navCalls).toBe(1);
+    const second = toolResultShownAt(model, 2);
+    if (second.type !== 'json') throw new Error('unreachable');
+    expect(second.value).toMatchObject({ ok: false });
+  });
+
+  it('guards inspectVisually past maxVisionCalls — a vision round-trip invisible to step/token usage', async () => {
+    const { inspectCalls, deps } = fakeVision();
+    const { emit } = collectEmit();
+    const model = repeatedToolCallModel('inspectVisually', { question: 'is it centered?' }, 2);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'check it' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      vision: deps,
+      limits: { maxVisionCalls: 1 },
+    });
+
+    expect(inspectCalls).toHaveLength(1);
+    expect(outcome.usage.visionCalls).toBe(1);
+    const second = toolResultShownAt(model, 2);
+    if (second.type !== 'json') throw new Error('unreachable');
+    expect(second.value).toMatchObject({ ok: false });
+  });
+
+  it('does not offer interact/tabsFrames/vision tools when their deps are omitted', async () => {
+    const { emit } = collectEmit();
+    // A model that immediately wraps up — proves a plain turn with none of the slice-13 deps
+    // still runs fine (they're optional, matching `browse`).
+    const model = new MockLanguageModelV4({
+      doStream: [
+        stream([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: '1' },
+          { type: 'text-delta', id: '1', delta: 'No page-driving needed here.' },
+          { type: 'text-end', id: '1' },
+          finish(usage(10, 5), 'stop'),
+        ]),
+      ],
+    });
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'hi' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+    });
+
+    expect(outcome.stop).toBe('done');
+    expect(outcome.usage).toMatchObject({ waitCalls: 0, navCalls: 0, visionCalls: 0 });
   });
 });

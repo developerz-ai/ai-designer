@@ -283,31 +283,61 @@ export const ReadinessResult = z.object({ ok: z.boolean(), state: ReadinessState
 export type ReadinessResult = z.infer<typeof ReadinessResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
+// Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
+// tab (default: the turn's active tab); `frameId` picks an iframe within it (default: the top
+// document). Content scripts run per-frame (`all_frames`), so the SW routes a tool to the right
+// frame via `chrome.tabs.sendMessage(tabId, msg, { frameId })`, and a cross-origin child frame is
+// addressed on its own injected script — never reached into from its parent. Both optional +
+// backward-compatible: a call with neither field hits the active tab's top document, exactly as
+// before frames/tabs existed (every pre-13 DomTool call still validates unchanged).
+export const Target = z.object({
+  tabId: z.number().int().nonnegative().optional(),
+  frameId: z.number().int().nonnegative().optional(),
+});
+export type Target = z.infer<typeof Target>;
+
 // One named input const per tool. The DomTool union is built FROM these, so #11
 // can derive `tool({ inputSchema })` 1:1 with zero drift — add a tool = add a
 // const + one union entry. The `type` literal is both the bus discriminant and
-// the tool name #11 maps to.
-export const QueryInput = z.object({ type: z.literal('query'), selector: z.string() });
-export const GetStylesInput = z.object({ type: z.literal('getStyles'), selector: z.string() });
+// the tool name #11 maps to. Every input spreads `Target.shape` for frame/tab addressing.
+export const QueryInput = z.object({
+  type: z.literal('query'),
+  selector: z.string(),
+  ...Target.shape,
+});
+export const GetStylesInput = z.object({
+  type: z.literal('getStyles'),
+  selector: z.string(),
+  ...Target.shape,
+});
 export const ScreenshotInput = z.object({
   type: z.literal('screenshot'),
   selector: z.string().optional(),
+  // Capture the whole scrollable page (the SW scroll-stitches viewport grabs), not just the
+  // viewport. Ignored when `selector` is set — an element crop wins. Vision path: bound its use
+  // (slice 13 budget guards) since a tall page yields many captures.
+  fullPage: z.boolean().optional(),
+  ...Target.shape,
 });
+export type ScreenshotInput = z.infer<typeof ScreenshotInput>;
 export const SetStyleInput = z.object({
   type: z.literal('setStyle'),
   selector: z.string(),
   props: z.record(z.string(), z.string()),
+  ...Target.shape,
 });
 export const SetTextInput = z.object({
   type: z.literal('setText'),
   selector: z.string(),
   value: z.string(),
+  ...Target.shape,
 });
 export const A11ySnapshotInput = z.object({
   type: z.literal('a11ySnapshot'),
   selector: z.string(),
+  ...Target.shape,
 });
-export const UndoInput = z.object({ type: z.literal('undo') });
+export const UndoInput = z.object({ type: z.literal('undo'), ...Target.shape });
 
 // The debug engine's content-side pull (slice 06, complements the `diagnostics-signal` PUSH
 // below): `drain` returns everything the collector has buffered since the last drain (runtime +
@@ -317,6 +347,7 @@ export const UndoInput = z.object({ type: z.literal('undo') });
 export const DiagnosticsInput = z.object({
   type: z.literal('diagnostics'),
   action: z.enum(['drain', 'scan']),
+  ...Target.shape,
 });
 export type DiagnosticsInput = z.infer<typeof DiagnosticsInput>;
 
@@ -352,6 +383,9 @@ export const ToolResult = z.object({
   selector: StableSelector.optional(),
   data: z.unknown().optional(),
   error: z.string().optional(),
+  // The frame the result came from (slice 13 iframes): query/screenshot/readImages tag their frame
+  // so the SW can compose coordinates and re-address the same frame. Absent = the top document.
+  frameId: z.number().int().nonnegative().optional(),
 });
 export type ToolResult = z.infer<typeof ToolResult>;
 
@@ -385,6 +419,128 @@ export type A11yNode = z.infer<typeof A11yNode>;
 
 export const A11yResult = z.object({ tree: A11yNode });
 export type A11yResult = z.infer<typeof A11yResult>;
+
+// --- browser control: interaction tools (content-routed, slice 13) --------
+// The agent drives the page like a user — click / type / press / hover / scroll / select, plus a
+// bounded `waitFor`, native-dialog handling, and `readImages` to see what's on screen. Each runs
+// in the content script of the target frame (so each spreads `Target`) and rides its own input
+// const. Kept OUT of `DomTool` on purpose: that union stays 1:1 with `createDomTools`
+// (`src/agent/tools/dom.ts`) — the slice-05 read/mutate primitives — whereas these slice-13
+// driving tools derive in `src/agent/tools/interact.ts` and route through `content.ts` beside
+// DomTool. Driving the page (navigation, form entry) is an ACTION, not a recorder mutation: the
+// report flags it as such and it is not reversible via `undo`.
+export const ClickInput = z.object({
+  type: z.literal('click'),
+  selector: z.string(),
+  ...Target.shape,
+});
+export const TypeInput = z.object({
+  type: z.literal('type'),
+  selector: z.string(),
+  text: z.string(),
+  // Press Enter after typing to submit the field/form. Default: fire input/change, keep focus.
+  submit: z.boolean().optional(),
+  ...Target.shape,
+});
+export const PressKeyInput = z.object({
+  type: z.literal('pressKey'),
+  // A single key or named key, e.g. 'Enter', 'Escape', 'Tab', 'ArrowDown'.
+  key: z.string().min(1),
+  ...Target.shape,
+});
+export const HoverInput = z.object({
+  type: z.literal('hover'),
+  selector: z.string(),
+  ...Target.shape,
+});
+// Scroll an element into view (`selector`) OR to an absolute page offset (`y`). Provide one — the
+// content impl prefers `selector` when both are present; neither is a no-op (reads current pos).
+export const ScrollToInput = z.object({
+  type: z.literal('scrollTo'),
+  selector: z.string().optional(),
+  y: z.number().optional(),
+  ...Target.shape,
+});
+export const SelectOptionInput = z.object({
+  type: z.literal('selectOption'),
+  selector: z.string(),
+  // Choose the option by value (the impl falls back to matching the visible label) — a native
+  // <select> or an ARIA listbox/combobox.
+  value: z.string(),
+  ...Target.shape,
+});
+// The condition `waitFor` blocks on: resolve as soon as `selector`/`text` appears or the network
+// goes idle, capped by `timeMs` (hard max 30s so a stuck page can't hang the turn — slice 13
+// guardrail). Given only `timeMs`, it is a plain bounded delay. Exported standalone for the tool
+// wrapper (`src/agent/tools/interact.ts`) and the content impl (`src/dom/interact.ts`).
+export const WaitCondition = z.object({
+  selector: z.string().min(1).optional(),
+  text: z.string().min(1).optional(),
+  networkIdle: z.boolean().optional(),
+  timeMs: z.number().int().positive().max(30_000).optional(),
+});
+export type WaitCondition = z.infer<typeof WaitCondition>;
+export const WaitForInput = z.object({
+  type: z.literal('waitFor'),
+  ...WaitCondition.shape,
+  ...Target.shape,
+});
+// Answer a native dialog the agent's OWN action triggered (confirm / alert / prompt / beforeunload):
+// `accept` = OK vs Cancel, `promptText` fills a prompt(). Auto-answered only for agent-initiated
+// actions (slice 13 step 5) — a dialog the user raised is never silently dismissed.
+export const HandleDialogInput = z.object({
+  type: z.literal('handleDialog'),
+  accept: z.boolean(),
+  promptText: z.string().optional(),
+  ...Target.shape,
+});
+// Enumerate the images in the target subtree (`selector`) or the whole document — both `<img>` and
+// CSS background-image. The content side resolves each to a stable selector + natural/rendered size
+// and flags broken/oversized (a debug + copy signal). Result payload = `ReadImagesResult`.
+export const ReadImagesInput = z.object({
+  type: z.literal('readImages'),
+  selector: z.string().optional(),
+  ...Target.shape,
+});
+export type ReadImagesInput = z.infer<typeof ReadImagesInput>;
+
+// The content-routed slice-13 driving tools as one discriminated union — `content.ts` parses it
+// beside `DomTool`, and `createControlTools` (slice 13) derives one `tool()` per member 1:1, the
+// same zero-drift contract `DomTool`/`createDomTools` hold.
+export const ControlTool = z.discriminatedUnion('type', [
+  ClickInput,
+  TypeInput,
+  PressKeyInput,
+  HoverInput,
+  ScrollToInput,
+  SelectOptionInput,
+  WaitForInput,
+  HandleDialogInput,
+  ReadImagesInput,
+]);
+export type ControlTool = z.infer<typeof ControlTool>;
+
+// One image the page renders — an `<img>` or a CSS background-image — resolved to a stable selector
+// so the agent can act on it. `broken` = failed load (naturalWidth 0); `oversized` = intrinsic
+// pixels far exceed the rendered box (wasted bytes / layout-shift risk). Sizes are content-measured;
+// bounds cap a hostile or image-heavy page's payload (as DiagnosticsToolResult / DesignRead do).
+export const ImageInfo = z.object({
+  selector: StableSelector,
+  kind: z.enum(['img', 'background']),
+  src: z.string().max(2048),
+  alt: z.string().max(500).optional(),
+  naturalWidth: z.number().int().nonnegative(),
+  naturalHeight: z.number().int().nonnegative(),
+  renderedWidth: z.number().nonnegative(),
+  renderedHeight: z.number().nonnegative(),
+  broken: z.boolean(),
+  oversized: z.boolean(),
+});
+export type ImageInfo = z.infer<typeof ImageInfo>;
+
+// `readImages` payload (`ToolResult.data`): every enumerated image, bounded.
+export const ReadImagesResult = z.object({ images: z.array(ImageInfo).max(200) });
+export type ReadImagesResult = z.infer<typeof ReadImagesResult>;
 
 // --- cross-site browse (agent tool, service-worker-orchestrated) ----------
 // `browse(url)` is an agent tool like the DOM tools, but it is deliberately NOT a `DomTool`:
@@ -461,6 +617,111 @@ export const DesignReadResult = z.object({
 });
 export type DesignReadResult = z.infer<typeof DesignReadResult>;
 
+// --- browser control: SW-orchestrated tools (navigation / tabs / frames / vision) ----------
+// Unlike the content-routed DomTool/ControlTool sets, these need `chrome.tabs`,
+// `chrome.webNavigation`, or the vision model — all SW-side (content has no `chrome.tabs`, and the
+// provider key/model never cross into the page's world). So each rides its own input + typed
+// `ToolResult.data` payload, exactly like `browse`: the agent tool wrappers
+// (`src/agent/tools/{interact,tabs,vision}.ts`) derive from these consts and the SW
+// (`background.ts`) executes them — never the content DomTool listener.
+
+// Navigation — the SW drives `chrome.tabs.update` (url) / `goBack` / `reload`, then awaits load. It
+// tears down + re-injects the target's content script, so it cannot be content-routed. `navigate`
+// warns before discarding an unsaved live-edit session (edits are ephemeral — slice 13 step 5).
+export const NavigateInput = z.object({
+  type: z.literal('navigate'),
+  url: z.string().url(),
+  ...Target.shape,
+});
+export const NavigateBackInput = z.object({
+  type: z.literal('navigateBack'),
+  ...Target.shape,
+});
+export const ReloadInput = z.object({
+  type: z.literal('reload'),
+  ...Target.shape,
+});
+// The three navigation intents as one union — SW routing (`background.ts`) switches on `type`.
+export const NavIntent = z.discriminatedUnion('type', [
+  NavigateInput,
+  NavigateBackInput,
+  ReloadInput,
+]);
+export type NavIntent = z.infer<typeof NavIntent>;
+
+// Where a navigation landed (`ToolResult.data` for the nav tools) so the agent knows the new page.
+export const NavResult = z.object({
+  url: z.string().max(2048),
+  title: z.string().max(300).optional(),
+});
+export type NavResult = z.infer<typeof NavResult>;
+
+// Multi-tab manager (the SW owns the tab registry + per-tab session/changeset). `open` needs `url`;
+// `close` / `activate` need `tabId`; `list` neither. Copy runs the user's tab + a reference tab at
+// once, the agent addressing each by `tabId` (the shared `Target` on the other tools).
+export const TabsCmd = z.object({
+  type: z.literal('tabs'),
+  action: z.enum(['list', 'open', 'close', 'activate']),
+  url: z.string().url().optional(),
+  tabId: z.number().int().nonnegative().optional(),
+});
+export type TabsCmd = z.infer<typeof TabsCmd>;
+
+export const TabInfo = z.object({
+  tabId: z.number().int().nonnegative(),
+  url: z.string().max(2048),
+  title: z.string().max(300),
+  active: z.boolean(),
+});
+export type TabInfo = z.infer<typeof TabInfo>;
+
+// `tabs` payload: the full tab registry after the command runs (list / open / activate / close all
+// return it, so the agent always sees current state). Bounded against a tab-bomb page.
+export const TabsResult = z.object({ tabs: z.array(TabInfo).max(50) });
+export type TabsResult = z.infer<typeof TabsResult>;
+
+// Enumerate a tab's frame tree (`chrome.webNavigation.getAllFrames`) so the agent can target an
+// iframe by `frameId`. Takes only a `tabId` (via `Target`); `frameId` is unused for a list.
+export const FramesInput = z.object({
+  type: z.literal('frames'),
+  action: z.literal('list'),
+  ...Target.shape,
+});
+export type FramesInput = z.infer<typeof FramesInput>;
+
+export const FrameInfo = z.object({
+  frameId: z.number().int().nonnegative(),
+  url: z.string().max(2048),
+  origin: z.string().max(2048),
+  isMain: z.boolean(),
+});
+export type FrameInfo = z.infer<typeof FrameInfo>;
+
+// `frames` payload: every frame in the tab, bounded.
+export const FramesResult = z.object({ frames: z.array(FrameInfo).max(100) });
+export type FramesResult = z.infer<typeof FramesResult>;
+
+// Ask the vision model about a captured region: screenshot `selector` (or the viewport, or
+// `fullPage`), hand it to the vision-capable model as an image part, and return its verdict for
+// self-correction ("does the CTA contrast enough?"). SW-only (owns capture + the model) and
+// cost-aware — only on demand, counted as a vision sub-call against the turn budget (slice 13).
+export const InspectVisuallyInput = z.object({
+  type: z.literal('inspectVisually'),
+  question: z.string().min(1).max(500),
+  selector: z.string().optional(),
+  fullPage: z.boolean().optional(),
+  ...Target.shape,
+});
+export type InspectVisuallyInput = z.infer<typeof InspectVisuallyInput>;
+
+// The vision model's answer (`ToolResult.data`). `pass` is an optional yes/no distillation for a
+// boolean check the agent can branch on without re-reading the prose.
+export const InspectVisuallyResult = z.object({
+  verdict: z.string().max(4000),
+  pass: z.boolean().optional(),
+});
+export type InspectVisuallyResult = z.infer<typeof InspectVisuallyResult>;
+
 // --- recorder events (shared) --------------------------------------------
 // The reversible, element-targeting mutation primitives that emit a recorder
 // event (docs/idea/live-edit.md). Page-level ops (injectCss, setViewport) have no
@@ -536,6 +797,38 @@ export const CaptureResult = z.object({
   error: z.string().optional(),
 });
 export type CaptureResult = z.infer<typeof CaptureResult>;
+
+// --- full-page capture: page metrics (SW -> content, request/response) -----
+// A full-page `screenshot` scroll-stitches viewport grabs in the SW (only it has
+// `captureVisibleTab` + OffscreenCanvas). To plan the scroll bands the SW needs the page's
+// scroll + viewport geometry, which only the DOM world knows — so it asks the content script for
+// it here (mirroring `DesignReadRequest`). NOT a `DomTool`/`ControlTool`: it is an internal step of
+// the full-page capture, never an agent-facing tool. `Target.frameId` addresses the frame to read
+// (full-page capture uses the top document, frameId 0).
+export const PageMetricsRequest = z.object({ type: z.literal('page-metrics'), ...Target.shape });
+export type PageMetricsRequest = z.infer<typeof PageMetricsRequest>;
+
+// The page's scroll + viewport geometry in CSS px (+ `devicePixelRatio`). The SW turns this into a
+// stitch plan (`src/dom/read.ts` `planStitch`): how far to scroll for each band and where each band
+// lands on the device-px canvas.
+export const PageMetrics = z.object({
+  scrollWidth: z.number().nonnegative(),
+  scrollHeight: z.number().nonnegative(),
+  viewportWidth: z.number().positive(),
+  viewportHeight: z.number().positive(),
+  devicePixelRatio: z.number().positive(),
+  scrollX: z.number(),
+  scrollY: z.number(),
+});
+export type PageMetrics = z.infer<typeof PageMetrics>;
+
+export const PageMetricsResult = z.object({
+  type: z.literal('page-metrics-result'),
+  ok: z.boolean(),
+  metrics: PageMetrics.optional(),
+  error: z.string().optional(),
+});
+export type PageMetricsResult = z.infer<typeof PageMetricsResult>;
 
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
