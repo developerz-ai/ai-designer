@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" class="js">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -27,9 +27,6 @@
     <link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/inter-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
 
-    <script>
-      document.documentElement.classList.add('js');
-    </script>
     <style>
       *,
       *::before,
@@ -44,14 +41,13 @@
         background: #0a0a0f;
       }
       body {
+        opacity: 0;
         background: #0a0a0f;
         color: #f8fafc;
         font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
         font-size: 16px;
         line-height: 1.65;
         min-height: 100dvh;
-        display: flex;
-        flex-direction: column;
         -webkit-font-smoothing: antialiased;
       }
       img,
@@ -59,10 +55,14 @@
         display: block;
         max-width: 100%;
       }
-      .js [data-reveal] {
-        opacity: 0;
-      }
     </style>
+    <noscript>
+      <style>
+        body {
+          opacity: 1;
+        }
+      </style>
+    </noscript>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -83,7 +83,7 @@
 
     <main id="main">
       <!-- ─────────────────────── hero ─────────────────────── -->
-      <section class="hero" data-reveal>
+      <section class="hero">
         <div class="hero__glow" aria-hidden="true"></div>
         <div class="container hero__grid">
           <div class="hero__copy">
