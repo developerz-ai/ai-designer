@@ -149,10 +149,10 @@ function initReveal(): void {
   if (targets.length === 0) {
     return;
   }
-  // Native scroll-driven animations (Chrome/Safari) handle these in CSS.
-  if (CSS.supports('animation-timeline: view()')) {
-    return;
-  }
+  // IntersectionObserver is the single reveal driver: it fires immediately for
+  // anything already in view, so content can never strand hidden. (The native
+  // animation-timeline path was removed because it strands the last element,
+  // which can't be scrolled past its reveal range.)
   if (!('IntersectionObserver' in window)) {
     targets.forEach((el) => {
       el.classList.add('is-visible');
