@@ -28,7 +28,17 @@
         align-self: flex-start;
         background: rgba(255, 255, 255, 0.05);
       }
+
+      &.is-streaming {
+        opacity: 0.85;
+      }
     }
+  }
+
+  &__error {
+    margin: 0 12px 8px;
+    color: var(--dz-status-error);
+    font-size: 0.85em;
   }
 
   &__compose {

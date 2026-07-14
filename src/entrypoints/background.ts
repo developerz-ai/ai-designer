@@ -640,10 +640,17 @@ export default defineBackground(() => {
           })
           .catch((err) => postToPanel({ type: 'error', message: String(err) }))
           .finally(() => {
-            if (turnAbort === controller) turnAbort = null;
+            // Same "still current" guard as the `.then()` above: a superseded turn (newer
+            // user-message) or one Stop already cleared `turnAbort` and pushed `session-state:
+            // 'stopped'` itself (case 'session-stop') — that already tells the chat store (11) the
+            // turn is done, so this natural-completion signal only fires for the turn that's still
+            // the one in flight.
+            const wasCurrent = turnAbort === controller;
+            if (wasCurrent) turnAbort = null;
             // Tear down any device emulation this turn applied (detach the debugger / restore the
             // window) so the user's page + the "being debugged" banner don't outlast the turn.
             void restoreDevice(chromeDeviceDriver, tabId);
+            if (wasCurrent) postToPanel({ type: 'turn-done' });
           });
 
         return { ok: true };
