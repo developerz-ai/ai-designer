@@ -1,8 +1,10 @@
 import { defineContentScript } from '#imports';
+import { describePage } from '@/dom/describe';
 import { extractDesignRead } from '@/dom/design-read';
 import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
 import { createDomExecutor } from '@/dom/execute';
-import { readImages } from '@/dom/images';
+import { extractIdentity } from '@/dom/identity';
+import { imageContent, readImages } from '@/dom/images';
 import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
@@ -13,10 +15,14 @@ import {
   CaptureResult,
   type ContentToSw,
   ControlTool,
+  DescribeCmd,
+  type DescribeResult,
   DesignReadRequest,
   type DesignReadResult,
   type DiagnosticsInput,
   DomTool,
+  type IdentityResult,
+  type ImageDescription,
   PageMetricsRequest,
   type PageMetricsResult,
   PickerCmd,
@@ -123,6 +129,42 @@ export default defineContentScript({
       return interactor.run(tool);
     }
 
+    // Describe-in-text + design-identity reads (slice 14): all pure DOM, routed to the tested
+    // src/dom modules. `describe` text modes → describePage; `extractIdentity` → the identity
+    // extractor; `readImageContent` → the image's alt/src (the SW adds the vision prose). `scene`
+    // describe is a vision call the SW owns, so it never reaches content — guarded defensively.
+    function handleDescribe(cmd: DescribeCmd): ToolResult {
+      if (cmd.type === 'extractIdentity') {
+        const data: IdentityResult = extractIdentity(document, window);
+        return { type: 'tool-result', ok: true, data };
+      }
+      if (cmd.type === 'readImageContent') {
+        const img = imageContent(document, cmd.selector, window);
+        if (!img) {
+          const error = `No element matches selector: ${cmd.selector}`;
+          return { type: 'tool-result', ok: false, error };
+        }
+        const data: ImageDescription = {
+          selector: img.selector,
+          src: img.src,
+          ...(img.alt !== undefined ? { alt: img.alt } : {}),
+          description: img.alt ?? '',
+        };
+        return { type: 'tool-result', ok: true, data };
+      }
+      if (cmd.mode === 'scene') {
+        const error = 'Scene description needs the vision model — it runs in the service worker.';
+        return { type: 'tool-result', ok: false, error };
+      }
+      const root = cmd.selector ? queryOne(document, cmd.selector) : document;
+      if (cmd.selector && !root) {
+        const error = `No element matches selector: ${cmd.selector}`;
+        return { type: 'tool-result', ok: false, error };
+      }
+      const data: DescribeResult = describePage(root ?? document, cmd.mode);
+      return { type: 'tool-result', ok: true, data };
+    }
+
     // The SW addresses this tab with three message kinds: agent DomTool + ControlTool calls (reply
     // with a frame-tagged ToolResult) and user-driven PickerCmds (start/stop the overlay, no
     // reply). Parse each with its own schema; anything else is a foreign message and is ignored.
@@ -173,6 +215,9 @@ export default defineContentScript({
 
       const control = ControlTool.safeParse(raw);
       if (control.success) return answer(handleControl(control.data));
+
+      const describeCmd = DescribeCmd.safeParse(raw);
+      if (describeCmd.success) return answer(Promise.resolve(handleDescribe(describeCmd.data)));
 
       const cmd = PickerCmd.safeParse(raw);
       if (cmd.success) {

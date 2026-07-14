@@ -20,7 +20,9 @@ import {
 } from './budget';
 import type { ChatMessage } from './session';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
+import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
+import { createIdentityTool, type IdentityDispatch } from './tools/identity';
 import { createInteractTools, type InteractDeps } from './tools/interact';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
 import { createVisionTools, type VisionToolDeps } from './tools/vision';
@@ -67,6 +69,15 @@ export interface RunTurnArgs {
   /** Vision dispatches — `screenshot` (with `fullPage`), `readImages`, `inspectVisually`
    *  (slice 13). Absent ⇒ falls back to the DOM tools' plain `screenshot` only. */
   readonly vision?: VisionToolDeps;
+  /** `extractIdentity` dispatch — a content round-trip that reduces the live page to a role-tagged
+   *  palette + type scale + spacing/radius/shadow rhythm (slice 14). Absent ⇒ `extractIdentity`
+   *  isn't offered this turn. Copy mode leans on it first: read the reference's identity, then
+   *  apply it to the user's page, rather than eyeballing a screenshot. */
+  readonly identity?: IdentityDispatch;
+  /** `describe` (layout/content DOM-only, scene vision) + `readImageContent` dispatches (slice
+   *  14). Absent ⇒ neither tool is offered this turn. `describe` is the cheap text-first read the
+   *  system prompt asks the model to prefer over a screenshot when vision isn't warranted. */
+  readonly describe?: DescribeToolDeps;
   /** Sink for stream events → the side-panel port (`postToPanel`). */
   readonly emit: (event: SwToPanel) => void;
   /** Extra tools merged after the built-ins: connected MCP tools (02), session/recorder (07). */
@@ -179,15 +190,19 @@ export type ModelToolOutput =
 
 /** Just the tool-building slice of {@link RunTurnArgs} — kept separate so `buildTools` doesn't
  *  need the whole turn's args (messages, model, emit, …) to assemble the ToolSet. */
-type ToolDeps = Pick<RunTurnArgs, 'browse' | 'interact' | 'tabsFrames' | 'vision' | 'tools'>;
+type ToolDeps = Pick<
+  RunTurnArgs,
+  'browse' | 'interact' | 'tabsFrames' | 'vision' | 'identity' | 'describe' | 'tools'
+>;
 
 /** Build the turn's ToolSet: DOM tools, the cross-site `browse` tool, browser-control
- *  (interact/tabs/frames/vision, slice 13) — each only when its dispatch is injected — + any
- *  injected extras (MCP, session). Extras win on a name clash — a backend can't be shadowed by a
- *  built-in tool. The `waitFor`/`navigate*`/`inspectVisually` dispatches are wrapped with
- *  `budget`'s per-tool guards so a runaway loop fails that call, not the whole turn. Whichever
- *  `screenshot` tool survives the merge (vision's `fullPage`-capable one if present, else the
- *  DOM one) gets the image→model hook so a returned PNG is fed back as a vision part. */
+ *  (interact/tabs/frames/vision, slice 13), `extractIdentity` + `describe`/`readImageContent`
+ *  (slice 14) — each only when its dispatch is injected — + any injected extras (MCP, session).
+ *  Extras win on a name clash — a backend can't be shadowed by a built-in tool. The
+ *  `waitFor`/`navigate*`/`inspectVisually` dispatches are wrapped with `budget`'s per-tool guards
+ *  so a runaway loop fails that call, not the whole turn. Whichever `screenshot` tool survives the
+ *  merge (vision's `fullPage`-capable one if present, else the DOM one) gets the image→model hook
+ *  so a returned PNG is fed back as a vision part. */
 function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): ToolSet {
   const dom = createDomTools(dispatch);
   const cross = deps.browse ? createBrowseTool(deps.browse) : {};
@@ -196,8 +211,18 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     : {};
   const tabsFrames = deps.tabsFrames ? createTabsTools(deps.tabsFrames) : {};
   const vision = deps.vision ? createVisionTools(guardVisionDeps(deps.vision, budget)) : {};
+  const identity = deps.identity ? createIdentityTool(deps.identity) : {};
+  const describeTools = deps.describe ? createDescribeTools(deps.describe) : {};
 
-  const merged: ToolSet = { ...dom, ...cross, ...interact, ...tabsFrames, ...vision };
+  const merged: ToolSet = {
+    ...dom,
+    ...cross,
+    ...interact,
+    ...tabsFrames,
+    ...vision,
+    ...identity,
+    ...describeTools,
+  };
   const base = merged.screenshot;
   const screenshot = base ? { ...base, toModelOutput: screenshotToModelOutput } : undefined;
 

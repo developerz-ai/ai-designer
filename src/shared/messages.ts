@@ -722,6 +722,111 @@ export const InspectVisuallyResult = z.object({
 });
 export type InspectVisuallyResult = z.infer<typeof InspectVisuallyResult>;
 
+// --- describe-in-text + design identity (slice 14) ------------------------
+// Two agent asks the earlier reads don't cover: turn a page/region/image into compact TEXT (so a
+// non-vision model, a report, or a handoff spec can reason without pixels), and extract a site's
+// visual IDENTITY (role-tagged palette + type scale + spacing/radius/shadow) so `copy` reuses the
+// source's brand and reports speak in tokens, not raw hex. The cheap paths are content-routed DOM
+// reads (`src/dom/{describe,identity,images}.ts`); the `scene` describe + `readImageContent` prose
+// escalate to the vision model in the SW (reusing the slice-13 `inspectVisually` capture path). All
+// three ride the `DescribeCmd` union `content.ts` parses beside DomTool/ControlTool; the agent tools
+// derive 1:1 from the input consts in `src/agent/tools/{describe,identity}.ts`. Result payloads are
+// bounded above the extractors' own caps — defense-in-depth against an untrusted content-world reply,
+// exactly as `DesignRead` / `ReadImagesResult` are.
+
+// `describe` mode: `layout`/`content` are cheap DOM-only text; `scene` screenshots the region and
+// asks the vision model for prose — so the tool routes `scene` to the SW and the text modes to
+// content. The content DOM builder only produces the two text modes; it never sees `scene`.
+export const DescribeMode = z.enum(['layout', 'content', 'scene']);
+export type DescribeMode = z.infer<typeof DescribeMode>;
+
+export const DescribeInput = z.object({
+  type: z.literal('describe'),
+  selector: z.string().optional(),
+  mode: DescribeMode,
+  ...Target.shape,
+});
+export type DescribeInput = z.infer<typeof DescribeInput>;
+
+// `describe` payload (`ToolResult.data`): the mode that ran + its compact text — the DOM builder's
+// layout/content skeleton, or the vision model's scene prose. Bounded well above the extractor's
+// 2000-char clip so the SW scene prose fits too.
+export const DescribeResult = z.object({
+  mode: DescribeMode,
+  text: z.string().max(8000),
+});
+export type DescribeResult = z.infer<typeof DescribeResult>;
+
+// Extract the page's design identity. Whole-document by design — a site's identity is a page-level
+// concept; address a specific frame/tab via `Target`, not a sub-selector. Pure DOM read →
+// `IdentityResult`.
+export const ExtractIdentityInput = z.object({
+  type: z.literal('extractIdentity'),
+  ...Target.shape,
+});
+export type ExtractIdentityInput = z.infer<typeof ExtractIdentityInput>;
+
+// One identity color: normalized `#rrggbb`, the role it plays most (bg / fg / accent / border), and
+// how many sampled elements use it that way — so `copy` can rebuild a palette by weight + role.
+export const IdentityColor = z.object({
+  hex: z.string().max(9),
+  role: z.enum(['bg', 'fg', 'accent', 'border']),
+  count: z.number().int().nonnegative(),
+});
+export type IdentityColor = z.infer<typeof IdentityColor>;
+
+// The type system: font families (most-used first), the distinct size scale (descending px), and the
+// distinct numeric weights — the page's typographic identity in tokens.
+export const IdentityTypeScale = z.object({
+  families: z.array(z.string().max(120)).max(8),
+  sizes: z.array(z.number().int().positive()).max(20),
+  weights: z.array(z.number().int().positive()).max(16),
+});
+export type IdentityTypeScale = z.infer<typeof IdentityTypeScale>;
+
+// `extractIdentity` payload (`ToolResult.data`): a compact, token-like identity — role-tagged palette,
+// type scale, and the spacing / border-radius / box-shadow rhythm — reused by `copy` and rendered as a
+// tokens table in reports. Bounds sit above `src/dom/identity.ts`'s own caps (defense-in-depth).
+export const IdentityResult = z.object({
+  palette: z.array(IdentityColor).max(24),
+  type: IdentityTypeScale,
+  spacing: z.array(z.number().int().nonnegative()).max(16),
+  radius: z.array(z.number().int().nonnegative()).max(12),
+  shadows: z.array(z.string().max(200)).max(12),
+});
+export type IdentityResult = z.infer<typeof IdentityResult>;
+
+// Describe one image — the `<img>` / media element matching `selector`. The content leg resolves its
+// alt + src; the SW escalates to the vision model for a prose description when alt is thin (cost-aware
+// — vision only on request). Result = `ImageDescription`.
+export const ReadImageContentInput = z.object({
+  type: z.literal('readImageContent'),
+  selector: z.string(),
+  ...Target.shape,
+});
+export type ReadImageContentInput = z.infer<typeof ReadImageContentInput>;
+
+// `readImageContent` payload (`ToolResult.data`): the resolved image + a text `description` of what it
+// depicts — the vision model's prose, or the `alt` text when no vision call was made (feeds copy /
+// report when alt is missing). Bounds cap an untrusted content-world reply.
+export const ImageDescription = z.object({
+  selector: StableSelector.optional(),
+  src: z.string().max(2048).optional(),
+  alt: z.string().max(500).optional(),
+  description: z.string().max(4000),
+});
+export type ImageDescription = z.infer<typeof ImageDescription>;
+
+// The content-routed describe-family union — `content.ts` parses it beside DomTool/ControlTool and
+// runs each against the live DOM (`describe`'s text modes, `extractIdentity`, and `readImageContent`'s
+// alt/src leg). A `describe` with `mode: 'scene'` is served by the SW vision path, never routed here.
+export const DescribeCmd = z.discriminatedUnion('type', [
+  DescribeInput,
+  ExtractIdentityInput,
+  ReadImageContentInput,
+]);
+export type DescribeCmd = z.infer<typeof DescribeCmd>;
+
 // --- recorder events (shared) --------------------------------------------
 // The reversible, element-targeting mutation primitives that emit a recorder
 // event (docs/idea/live-edit.md). Page-level ops (injectCss, setViewport) have no

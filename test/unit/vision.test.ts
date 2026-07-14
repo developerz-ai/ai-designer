@@ -1,13 +1,22 @@
 import type { LanguageModel, ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
 import {
+  type DescribeSceneDeps,
   derivePass,
+  describeScenePrompt,
   type GenerateVision,
   type InspectDeps,
   inspectPrompt,
+  runDescribeScene,
   runInspect,
 } from '@/agent/vision';
-import type { InspectVisuallyInput, InspectVisuallyResult, ToolResult } from '@/shared/messages';
+import type {
+  DescribeInput,
+  DescribeResult,
+  InspectVisuallyInput,
+  InspectVisuallyResult,
+  ToolResult,
+} from '@/shared/messages';
 
 // vision unit: the `inspectVisually` sub-call — capture a region, ask the vision model, distill a
 // verdict. Chrome-free + model-free: we inject a fake capture + a fake generate, so this asserts the
@@ -109,5 +118,79 @@ describe('inspectPrompt', () => {
     const p = inspectPrompt('Is the hero image cropped?');
     expect(p).toContain('Is the hero image cropped?');
     expect(p).toMatch(/YES or NO/);
+  });
+});
+
+// `describe(mode:'scene')`'s vision leg — same capture-then-generate shape as `runInspect`, but
+// returns a `DescribeResult` (prose, no verdict) instead of an `InspectVisuallyResult`.
+
+function sceneHarness(over: Partial<DescribeSceneDeps> = {}) {
+  const captured: Array<{ selector?: string }> = [];
+  const generated: Array<{ messages: ModelMessage[] }> = [];
+  const generate: GenerateVision = async ({ messages }) => {
+    generated.push({ messages });
+    return { text: '  Dark hero, centered headline, orange CTA on the right.  ' };
+  };
+  const deps: DescribeSceneDeps = {
+    model: MODEL,
+    capture: async (input) => {
+      captured.push({ selector: input.selector });
+      return okShot(PNG);
+    },
+    generate,
+    ...over,
+  };
+  return { captured, generated, deps };
+}
+
+const sceneInput = (over: Partial<DescribeInput> = {}): DescribeInput => ({
+  type: 'describe',
+  mode: 'scene',
+  ...over,
+});
+
+describe('runDescribeScene', () => {
+  it('captures the target and returns the model prose, trimmed, as a scene DescribeResult', async () => {
+    const { captured, generated, deps } = sceneHarness();
+    const res = await runDescribeScene(deps, sceneInput({ selector: '.hero' }));
+    expect(res.ok).toBe(true);
+    const data = res.data as DescribeResult;
+    expect(data.mode).toBe('scene');
+    expect(data.text).toBe('Dark hero, centered headline, orange CTA on the right.');
+
+    expect(captured).toEqual([{ selector: '.hero' }]);
+    const [call] = generated;
+    if (!call) throw new Error('model was not called');
+    const [msg] = call.messages;
+    expect(msg?.content).toContainEqual({ type: 'image', image: PNG });
+  });
+
+  it('does not call the model when the capture fails', async () => {
+    const { generated, deps } = sceneHarness({
+      capture: async () => ({ type: 'tool-result', ok: false, error: 'no such element' }),
+    });
+    const res = await runDescribeScene(deps, sceneInput({ selector: '#missing' }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('no such element');
+    expect(generated).toHaveLength(0);
+  });
+
+  it('degrades a model error to an error ToolResult', async () => {
+    const { deps } = sceneHarness({
+      generate: async () => {
+        throw new Error('402 payment required');
+      },
+    });
+    const res = await runDescribeScene(deps, sceneInput());
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('402');
+  });
+});
+
+describe('describeScenePrompt', () => {
+  it('asks for compact prose, not a verdict', () => {
+    const p = describeScenePrompt();
+    expect(p).toMatch(/prose/i);
+    expect(p).not.toMatch(/YES or NO/);
   });
 });
