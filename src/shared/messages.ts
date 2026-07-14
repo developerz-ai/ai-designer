@@ -1187,6 +1187,150 @@ export const ControlTool = z.discriminatedUnion('type', [
 ]);
 export type ControlTool = z.infer<typeof ControlTool>;
 
+// --- device emulation + responsive capture (slice 16) --------------------
+// "Also check how it looks on mobile." The agent must SEE and TEST mobile/tablet/desktop, not just
+// the current viewport. Three capabilities: `setDevice` emulates a real device (CDP device metrics +
+// touch + UA in the SW, or a viewport-resize fallback when the `debugger` permission is declined);
+// `responsiveCapture` screenshots the page across breakpoints for the vision model + report;
+// `checkResponsive` runs the content-world problem scanner (`src/dom/responsive.ts`, slice 16 scanner
+// task) at the current — possibly emulated — width. `setDevice`/`responsiveCapture` are SW-owned
+// (they need `chrome.debugger`/`chrome.tabs` capture), so they ride their own input consts executed
+// in `background.ts` like `browse`/nav/vision; `checkResponsive` is content-routed like a read.
+
+// Named device presets the executor resolves to concrete metrics (`src/agent/device-emulation.ts`
+// `DEVICE_PRESETS`). `desktop` restores a plain large viewport with no touch/mobile UA.
+export const DevicePreset = z.enum(['iphone-se', 'iphone-15', 'pixel-7', 'ipad-mini', 'desktop']);
+export type DevicePreset = z.infer<typeof DevicePreset>;
+
+// The concrete metrics an emulation resolves to (a preset expanded, or custom dims filled in):
+// CSS-px `width`×`height`, device-pixel-ratio, touch emulation, the `mobile` flag CDP's
+// `setDeviceMetricsOverride` takes, and the optional UA override. Returned to the agent so it knows
+// exactly what it's viewing at.
+export const DeviceMetrics = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  dpr: z.number().positive(),
+  touch: z.boolean(),
+  mobile: z.boolean(),
+  userAgent: z.string().max(512).optional(),
+});
+export type DeviceMetrics = z.infer<typeof DeviceMetrics>;
+
+// How an emulation was applied: `cdp` = true device emulation via `chrome.debugger` (DPR + touch +
+// UA; the visible "being debugged" banner is up); `viewport` = the resize-only fallback (approximates
+// layout, not UA/touch) used when the debugger permission is declined or attach fails; `reset` =
+// emulation cleared, page back to its natural state.
+export const EmulationMechanism = z.enum(['cdp', 'viewport']);
+export type EmulationMechanism = z.infer<typeof EmulationMechanism>;
+
+// `setDevice`: apply a `preset` OR custom `width`×`height` (+ optional dpr/touch/ua overrides), or
+// `reset: true` to clear emulation. Preset-vs-custom is validated in the executor (returns an error
+// ToolResult, like `tabs` open needing a url) so this stays a plain object `.omit({type:true})` can
+// derive the tool from. Custom dims on top of a preset override that preset's field.
+export const SetDeviceInput = z.object({
+  type: z.literal('setDevice'),
+  preset: DevicePreset.optional(),
+  width: z.number().int().positive().max(5000).optional(),
+  height: z.number().int().positive().max(5000).optional(),
+  dpr: z.number().positive().max(5).optional(),
+  touch: z.boolean().optional(),
+  userAgent: z.string().max(512).optional(),
+  reset: z.boolean().optional(),
+  ...Target.shape,
+});
+export type SetDeviceInput = z.infer<typeof SetDeviceInput>;
+
+// `setDevice` payload (`ToolResult.data`): the human label, what mechanism applied it, whether the
+// debug banner is now showing (surface it to the user), and the resolved metrics (absent on `reset`).
+export const SetDeviceResult = z.object({
+  label: z.string().max(80),
+  mechanism: z.enum(['cdp', 'viewport', 'reset']),
+  banner: z.boolean(),
+  metrics: DeviceMetrics.optional(),
+});
+export type SetDeviceResult = z.infer<typeof SetDeviceResult>;
+
+// One breakpoint for `responsiveCapture`: a `preset` or custom dims, with an optional `label`. Same
+// resolver as `setDevice` (`resolveDevice`), so the shapes stay in lockstep.
+export const Breakpoint = z.object({
+  label: z.string().max(40).optional(),
+  preset: DevicePreset.optional(),
+  width: z.number().int().positive().max(5000).optional(),
+  height: z.number().int().positive().max(5000).optional(),
+  dpr: z.number().positive().max(5).optional(),
+  touch: z.boolean().optional(),
+});
+export type Breakpoint = z.infer<typeof Breakpoint>;
+
+// `responsiveCapture`: screenshot the page across `breakpoints` (default mobile/tablet/desktop —
+// `src/agent/device-emulation.ts` `DEFAULT_BREAKPOINTS`). `selector` crops one element, `fullPage`
+// scroll-stitches each breakpoint. Emulation is restored to the page's natural state after the sweep.
+export const ResponsiveCaptureInput = z.object({
+  type: z.literal('responsiveCapture'),
+  breakpoints: z.array(Breakpoint).max(8).optional(),
+  selector: z.string().optional(),
+  fullPage: z.boolean().optional(),
+  ...Target.shape,
+});
+export type ResponsiveCaptureInput = z.infer<typeof ResponsiveCaptureInput>;
+
+// One breakpoint's shot: its label + resolved metrics + how it was emulated, and either the base64
+// PNG (`image`) or a per-breakpoint `error` (one failed grab doesn't abort the sweep). The loop's
+// `responsiveCaptureToModelOutput` hook turns the set into labeled image parts the vision model sees.
+export const ResponsiveShot = z.object({
+  label: z.string().max(60),
+  metrics: DeviceMetrics,
+  mechanism: EmulationMechanism,
+  image: z.string().optional(),
+  error: z.string().max(300).optional(),
+});
+export type ResponsiveShot = z.infer<typeof ResponsiveShot>;
+
+export const ResponsiveCaptureResult = z.object({ shots: z.array(ResponsiveShot).max(8) });
+export type ResponsiveCaptureResult = z.infer<typeof ResponsiveCaptureResult>;
+
+// A responsive problem the content scanner found — mirrors `src/dom/responsive.ts`'s `ResponsiveFinding`
+// (that module stays chrome-free/jsdom-testable and owns the geometry; this is its bus shape). Bounds
+// sit above the scanner's own caps (defense-in-depth against an untrusted content-world reply).
+export const ResponsiveCategory = z.enum([
+  'overflow',
+  'tap-target',
+  'text-legibility',
+  'clip',
+  'media-scaling',
+  'nav',
+  'viewport-unit',
+]);
+export type ResponsiveCategory = z.infer<typeof ResponsiveCategory>;
+
+export const ResponsiveSeverity = z.enum(['serious', 'moderate', 'minor']);
+export type ResponsiveSeverity = z.infer<typeof ResponsiveSeverity>;
+
+export const ResponsiveFinding = z.object({
+  category: ResponsiveCategory,
+  severity: ResponsiveSeverity,
+  detail: z.string().max(280),
+  selector: StableSelector,
+});
+export type ResponsiveFinding = z.infer<typeof ResponsiveFinding>;
+
+// `checkResponsive`: content-routed problem scan at the current (possibly emulated) width. `selector`
+// scopes it to a subtree; omitted scans the document. Runs `scanResponsive` in the content world.
+export const CheckResponsiveInput = z.object({
+  type: z.literal('checkResponsive'),
+  selector: z.string().optional(),
+  ...Target.shape,
+});
+export type CheckResponsiveInput = z.infer<typeof CheckResponsiveInput>;
+
+// `checkResponsive` payload (`ToolResult.data`): the width measured at + the findings, most-severe
+// first. Feeds debug mode + the report (slice 16 doctrine task).
+export const CheckResponsiveResult = z.object({
+  viewportWidth: z.number().nonnegative(),
+  findings: z.array(ResponsiveFinding).max(80),
+});
+export type CheckResponsiveResult = z.infer<typeof CheckResponsiveResult>;
+
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),

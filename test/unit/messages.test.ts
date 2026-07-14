@@ -4,6 +4,8 @@ import {
   A11ySnapshotInput,
   CaptureRequest,
   CaptureResult,
+  CheckResponsiveInput,
+  CheckResponsiveResult,
   ContentToSw,
   ControlTool,
   DomTool,
@@ -30,9 +32,12 @@ import {
   QueryInput,
   QueryResult,
   ReadImagesResult,
+  ResponsiveCaptureInput,
   SaveKeyResult,
   SaveProviderResult,
   ScreenshotInput,
+  SetDeviceInput,
+  SetDeviceResult,
   SetStyleInput,
   SetTextInput,
   SwToPanel,
@@ -74,6 +79,61 @@ describe('message schemas', () => {
   it('rejects setStyle without props', () => {
     const r = DomTool.safeParse({ type: 'setStyle', selector: '#x' });
     expect(r.success).toBe(false);
+  });
+});
+
+describe('responsive / device-emulation schemas (slice 16)', () => {
+  it('accepts a preset setDevice and a custom one', () => {
+    expect(SetDeviceInput.safeParse({ type: 'setDevice', preset: 'iphone-15' }).success).toBe(true);
+    expect(
+      SetDeviceInput.safeParse({ type: 'setDevice', width: 400, height: 800, touch: true }).success,
+    ).toBe(true);
+    expect(SetDeviceInput.safeParse({ type: 'setDevice', reset: true }).success).toBe(true);
+  });
+
+  it('rejects an unknown preset and an over-large dimension', () => {
+    expect(SetDeviceInput.safeParse({ type: 'setDevice', preset: 'nokia' }).success).toBe(false);
+    expect(SetDeviceInput.safeParse({ type: 'setDevice', width: 99999, height: 800 }).success).toBe(
+      false,
+    );
+  });
+
+  it('parses a setDevice result (metrics optional for reset)', () => {
+    expect(
+      SetDeviceResult.safeParse({ label: 'Reset', mechanism: 'reset', banner: false }).success,
+    ).toBe(true);
+    expect(
+      SetDeviceResult.safeParse({
+        label: 'iPhone 15',
+        mechanism: 'cdp',
+        banner: true,
+        metrics: { width: 393, height: 852, dpr: 3, touch: true, mobile: true },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts responsiveCapture with breakpoints and defaults', () => {
+    expect(ResponsiveCaptureInput.safeParse({ type: 'responsiveCapture' }).success).toBe(true);
+    expect(
+      ResponsiveCaptureInput.safeParse({
+        type: 'responsiveCapture',
+        breakpoints: [{ preset: 'ipad-mini' }, { label: 'wide', width: 1440, height: 900 }],
+        fullPage: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('parses checkResponsive + its findings payload', () => {
+    expect(
+      CheckResponsiveInput.safeParse({ type: 'checkResponsive', selector: '#main' }).success,
+    ).toBe(true);
+    const r = CheckResponsiveResult.safeParse({
+      viewportWidth: 375,
+      findings: [
+        { category: 'overflow', severity: 'serious', detail: 'scrolls sideways', selector },
+      ],
+    });
+    expect(r.success).toBe(true);
   });
 });
 
