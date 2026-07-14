@@ -54,6 +54,19 @@ export const Changeset = z.object({
 });
 export type Changeset = z.infer<typeof Changeset>;
 
+// The full serializable state of a `ChangesetStore` (src/changeset/store.ts): the live changeset
+// plus the redo stack (edits popped by `undo`, newest last). Persisting only the `Changeset` would
+// lose the redo history on an SW eviction — a rehydrated session could no longer `redo` an edit it
+// had just undone. This is the unit `chrome.storage.session` round-trips so undo/redo survives a
+// wake, exactly as the model thread does (docs/architecture/mv3-worlds.md "Service-worker
+// ephemerality"). `redoStack` defaults to empty so a legacy record holding a bare `Changeset` shape
+// still rehydrates (forward-compatible).
+export const ChangesetState = z.object({
+  changeset: Changeset,
+  redoStack: z.array(Edit).default([]),
+});
+export type ChangesetState = z.infer<typeof ChangesetState>;
+
 // sessionId is passed in, never minted here: the caller already knows its session,
 // and an internally-generated uuid would be non-deterministic (untestable).
 export function emptyChangeset(url: string, createdAt: string, sessionId: string): Changeset {
