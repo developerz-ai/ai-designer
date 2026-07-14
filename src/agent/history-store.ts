@@ -10,49 +10,30 @@
 // SW-ONLY (touches `chrome.storage.local`); never import from content.ts. Chrome-free by
 // construction otherwise — the storage calls are the only I/O, so this is unit-testable against an
 // in-memory `chrome.storage.local` fake with no real extension runtime.
+//
+// `Conversation`/`ConversationSummary` are defined in `@/shared/messages` (the message-vocabulary
+// hub, since `history-list`/`history-get`/`history-delete` need them on the bus), not here.
 
 import { modelMessageSchema } from 'ai';
 import { z } from 'zod';
-import { Mode } from '@/shared/messages';
+import {
+  Conversation,
+  type ConversationSummary,
+  HISTORY_MAX_MESSAGES,
+  HISTORY_MAX_REPORT_CHARS,
+  HISTORY_MAX_TITLE_CHARS,
+  type Mode,
+} from '@/shared/messages';
 import type { ChatMessage } from './session';
+
+export type { Conversation, ConversationSummary };
 
 const STORAGE_KEY = 'history:conversations';
 /** Ring-buffer capacity — "last 10 conversations" per the vision doc. */
 const CAP = 10;
-/** Per-conversation message cap enforced on write — bounds a single very long-running thread
- *  independently of the 10-conversation ring buffer. */
-const MAX_MESSAGES = 200;
-const MAX_TITLE_CHARS = 200;
-const MAX_REPORT_CHARS = 20_000;
 /** Any single string leaf longer than this (outside a recognized data-URL image) is truncated. */
 const MAX_STRING_CHARS = 4_000;
 const IMAGE_PLACEHOLDER = '[image omitted from history]';
-
-// One persisted conversation: the turn thread + whatever the session produced (a handoff report,
-// the PR it became). `messages`/`report` are bounded on write by `boundMessages`/`MAX_REPORT_CHARS`
-// below — never trust an unbounded value in from storage either, hence the schema caps too.
-export const Conversation = z.object({
-  id: z.string().min(1),
-  title: z.string().max(MAX_TITLE_CHARS),
-  url: z.string(),
-  mode: Mode.optional(),
-  createdAt: z.number(),
-  messages: z.array(modelMessageSchema).max(MAX_MESSAGES).default([]),
-  /** The handoff brief (07), already rendered to Markdown — never the raw `Report` object or any
-   *  embedded images; keeps a history entry cheap to list and safe to store. */
-  report: z.string().max(MAX_REPORT_CHARS).optional(),
-  /** The PR the ship flow (12) opened from this conversation's changeset. */
-  prLink: z.string().max(2048).optional(),
-});
-export type Conversation = z.infer<typeof Conversation>;
-
-// A history-list row: everything but the heavy fields, plus counts the panel can render without
-// pulling the full thread over the bus (`history-list` vs `history-get(id)` in the RPC step).
-export const ConversationSummary = Conversation.omit({ messages: true, report: true }).extend({
-  messageCount: z.number().int().nonnegative(),
-  hasReport: z.boolean(),
-});
-export type ConversationSummary = z.infer<typeof ConversationSummary>;
 
 export interface HistoryStoreOptions {
   /** Injectable clock for a new conversation's `createdAt` (tests pin it — no `Date.now()` here). */
@@ -131,7 +112,7 @@ export class HistoryStore {
         }
       : {
           id: input.id,
-          title: input.title.slice(0, MAX_TITLE_CHARS),
+          title: input.title.slice(0, HISTORY_MAX_TITLE_CHARS),
           url: input.url,
           mode: input.mode,
           createdAt: this.now(),
@@ -144,7 +125,7 @@ export class HistoryStore {
    *  history. Throws if `id` isn't present — `appendTurn` first. */
   async setReport(id: string, report: string): Promise<Conversation> {
     const current = this.require(id);
-    return this.upsert({ ...current, report: report.slice(0, MAX_REPORT_CHARS) });
+    return this.upsert({ ...current, report: report.slice(0, HISTORY_MAX_REPORT_CHARS) });
   }
 
   /** Attach/replace the PR link a ship (12) produced from this conversation. Throws if `id` isn't
@@ -214,12 +195,12 @@ export function boundValue(value: unknown): unknown {
 }
 
 /** Bound a turn's messages for history persistence: keep at most the most recent
- *  {@link MAX_MESSAGES}, then strip/truncate oversized string payloads throughout (see
+ *  {@link HISTORY_MAX_MESSAGES}, then strip/truncate oversized string payloads throughout (see
  *  {@link boundValue}). Re-validated against `modelMessageSchema` — a message that somehow fails to
  *  parse after bounding is dropped rather than persisting something the schema would reject on the
  *  next `hydrate()`. */
 export function boundMessages(messages: readonly ChatMessage[]): ChatMessage[] {
-  const recent = messages.slice(-MAX_MESSAGES);
+  const recent = messages.slice(-HISTORY_MAX_MESSAGES);
   const bounded: ChatMessage[] = [];
   for (const message of recent) {
     const parsed = modelMessageSchema.safeParse(boundValue(message));
