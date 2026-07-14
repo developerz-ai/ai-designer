@@ -1,4 +1,4 @@
-import { generateText } from 'ai';
+import { generateObject, generateText, type Tool } from 'ai';
 import { defineBackground } from '#imports';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
@@ -20,15 +20,33 @@ import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
 import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
+import { generateReport as authorReport, type GenerateReport } from '@/agent/report';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
+import { toMarkdown } from '@/changeset/report-md';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
+import {
+  createTaskBackend,
+  fallbackMessage,
+  routeHandoff,
+  type TaskToolExecute,
+  taskBackends,
+} from '@/mcp/backend';
 import type { McpConnectionSpec } from '@/mcp/client';
+import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
-import { getServer, listServers, removeServer, type StoredServer, saveServer } from '@/mcp/store';
+import {
+  getOriginRepoMap,
+  getServer,
+  listServers,
+  removeServer,
+  type StoredServer,
+  saveServer,
+} from '@/mcp/store';
+import { emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -38,8 +56,10 @@ import type {
   DesignRead,
   DesignReadRequest,
   DomTool,
+  HandoffResult,
   McpOAuthConfig,
   McpServer,
+  Mode,
   PageMetrics,
   PageMetricsRequest,
   PickerCmd,
@@ -56,6 +76,7 @@ import {
 } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
+import type { Report } from '@/shared/report';
 import { initSentry } from '@/shared/sentry';
 
 // The preset the legacy OpenRouter-only RPCs (save-openrouter-key/set-model) map onto.
@@ -255,6 +276,111 @@ export default defineBackground(() => {
     };
   }
 
+  // User-triggered Ship / report handoff (slice 07) — NEVER auto-invoked (docs/idea/principles.md);
+  // only the `ship` / `send-report` / `download-report` RPCs below reach it. Assemble the session's
+  // changeset, then route (`src/mcp/backend.ts` `routeHandoff`): a connected backend exposing a `task`
+  // tool + a repo mapped to this page's origin ⇒ dispatch `task(create)` (single, or one per problem)
+  // and stream `task-status`; otherwise author the brief and return its Markdown for the panel to
+  // download. The create+watch fan-out runs fire-and-forget so a long CI watch never blocks the RPC;
+  // a planning error (empty changeset) surfaces synchronously in the reply.
+  async function runHandoffRoute(opts: {
+    source: 'changeset' | 'report';
+    target?: string;
+    mode?: Mode;
+    problems?: readonly string[];
+    title?: string;
+    downloadOnly?: boolean;
+  }): Promise<HandoffResult> {
+    const tab = await resolveTargetTab();
+    if (tab?.id === undefined || !tab.url) {
+      return { ok: false, error: 'Open a web page to design first.' };
+    }
+    const cfg = await getProviderConfig();
+    if (!cfg) return { ok: false, error: 'Add a model provider in Settings first.' };
+
+    const session = sessions.get(tab.id);
+    const changeset =
+      session?.changeset ?? emptyChangeset(tab.url, new Date().toISOString(), crypto.randomUUID());
+
+    const model = createProvider(cfg);
+    const makeReport = (): Promise<Report> =>
+      authorReport({ model, generate: reportGenerate }, { changeset, mode: opts.mode });
+
+    // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
+    if (opts.downloadOnly) {
+      const report = await makeReport();
+      return {
+        ok: true,
+        routed: 'report',
+        markdown: toMarkdown(report),
+        filename: reportFilename(changeset.url),
+      };
+    }
+
+    // Route decision — no model call. Needs the merged ToolSet (which connected backends expose a
+    // `task` tool), the server list (id/label for `target` matching), and the origin→repo map.
+    const [toolset, servers, originRepoMap] = await Promise.all([
+      mcpManager.toolsFor(),
+      listServers(),
+      getOriginRepoMap(),
+    ]);
+    const candidates = taskBackends(servers, Object.keys(toolset));
+    const route = routeHandoff({
+      url: changeset.url,
+      originRepoMap,
+      candidates,
+      target: opts.target,
+    });
+
+    // No connected backend / no repo mapped ⇒ fall back to a downloadable brief (with the reason).
+    if (route.kind === 'report') {
+      if (opts.source === 'changeset' && changeset.edits.length === 0) {
+        return { ok: false, error: 'Nothing to ship yet — make some edits first.' };
+      }
+      const report = await makeReport();
+      return {
+        ok: true,
+        routed: 'report',
+        markdown: toMarkdown(report),
+        filename: reportFilename(changeset.url),
+        reason: fallbackMessage(route.reason),
+      };
+    }
+
+    // Tasks route: build the source (authoring the brief for a report ship), validate the plan up
+    // front so an empty changeset surfaces in the RPC, then dispatch create+watch fire-and-forget.
+    const source: ShipSource =
+      opts.source === 'changeset'
+        ? { kind: 'changeset', changeset, title: opts.title }
+        : {
+            kind: 'report',
+            report: applyProblems(await makeReport(), opts.problems),
+            changeset,
+            multiTask: (opts.problems?.length ?? 0) > 0,
+            title: opts.title,
+          };
+    const target = { repo: route.repo, backend: route.backend.id };
+
+    let taskCount: number;
+    try {
+      taskCount = planTasks(source, target).length;
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+
+    const backend = createTaskBackend(
+      taskExecutor(toolset[route.backend.taskToolName], route.backend.taskToolName),
+    );
+    void ship(source, target, {
+      backend,
+      onStatus: (update) => postToPanel({ type: 'task-status', ...update }),
+    }).catch((err) =>
+      postToPanel({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+    );
+
+    return { ok: true, routed: 'tasks', taskCount };
+  }
+
   async function handle(msg: PanelToSw, _tabId?: number) {
     await migrated; // settings reads must see the migrated (named-secret) state
     await mcpReady; // mcp-* cases need the registry rehydrated from storage
@@ -388,7 +514,9 @@ export default defineBackground(() => {
           emit: postToPanel,
           // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
           tools: await mcpManager.toolsFor(),
-          approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
+          // Never auto-ship: any in-loop `handoff` tool stays denied — Ship is the user-triggered
+          // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
+          approveHandoff: () => false,
         })
           .then(async (outcome) => {
             // Only the still-current turn threads its result. A turn that was superseded (a
@@ -412,9 +540,28 @@ export default defineBackground(() => {
 
         return { ok: true };
       }
+      // Ship (user-triggered) — dispatch to a connected coding backend, else return an MD brief to
+      // download. Never auto-ships; `runHandoffRoute` streams per-task status over the port.
       case 'ship':
-        // TODO: assemble changeset -> open MCP client (src/mcp) -> task(create).
-        return { ok: true };
+        return runHandoffRoute({
+          source: msg.source,
+          target: msg.target,
+          mode: msg.mode,
+          problems: msg.problems,
+          title: msg.title,
+        });
+      // "Download report" / chat "make a report": always the agent-authored MD brief, never a dispatch.
+      case 'download-report':
+        return runHandoffRoute({ source: 'report', mode: msg.mode, downloadOnly: true });
+      // Chat "send this to <backend>": author + dispatch the brief to the named backend (falls back to
+      // a downloadable brief when the target isn't connected or the origin has no repo mapped).
+      case 'send-report':
+        return runHandoffRoute({
+          source: 'report',
+          target: msg.target,
+          mode: msg.mode,
+          problems: msg.problems,
+        });
 
       // User-driven element picker: forward the panel's start/stop to the target tab's content
       // script as a PickerCmd (the overlay lives in the DOM world). Distinct from the agent's
@@ -743,6 +890,46 @@ const chromeDeviceDriver: DeviceEmulationDriver = {
 // Adapt the AI SDK's `generateText` to the vision module's minimal injected shape (text out only),
 // so `runInspect` stays SDK-decoupled + testable and this SW glue owns the real call.
 const visionGenerate: GenerateVision = (args) => generateText(args).then((r) => ({ text: r.text }));
+
+// --- Ship / report handoff glue (slice 07) -------------------------------
+// Adapt the AI SDK's `generateObject` to the report pass's minimal injected shape (`GenerateReport`),
+// exactly as `visionGenerate` does for the vision module — the model call is SW-only, this glue owns it.
+const reportGenerate: GenerateReport = (args) =>
+  generateObject({
+    model: args.model,
+    schema: args.schema,
+    system: args.system,
+    messages: args.messages,
+    abortSignal: args.abortSignal,
+  }).then((result) => ({ object: result.object }));
+
+// A stable filename for a downloaded brief — per origin, no timestamp so a re-download overwrites
+// predictably. Sanitized to filename-safe chars.
+function reportFilename(url: string): string {
+  const host = originOf(url)?.replace(/[^a-z0-9.-]/gi, '-');
+  return `design-review-${host || 'page'}.md`;
+}
+
+// Override an authored report's problems with an explicit list (the panel/chat chooses which problems
+// become tasks); an empty/absent list leaves the authored problems intact.
+function applyProblems(report: Report, problems?: readonly string[]): Report {
+  return problems && problems.length > 0 ? { ...report, problems: [...problems] } : report;
+}
+
+// Adapt a connected backend's namespaced `task` tool (from the merged MCP ToolSet) to the injected
+// `TaskToolExecute` seam the Ship adapter drives. A tool with no `execute` (shouldn't happen for an
+// MCP tool) fails that task rather than throwing the whole fan-out.
+function taskExecutor(tool: Tool | undefined, name: string): TaskToolExecute {
+  return async (args, signal) => {
+    if (!tool?.execute) throw new Error(`MCP task tool "${name}" is not callable`);
+    return tool.execute(args, {
+      toolCallId: crypto.randomUUID(),
+      messages: [],
+      abortSignal: signal,
+      context: undefined,
+    });
+  };
+}
 
 // --- full-page screenshot (scroll-stitch) --------------------------------
 // Plan the scroll bands from the page's metrics (pure math in `planStitch`), grab the viewport at
