@@ -34,6 +34,7 @@ body {
   color: var(--dz-ink);
   font-family: $font-sans;
   font-optical-sizing: auto;
+  font-weight: 450; // bump from 400 on dark — halation thins strokes on #0a0a0f
   font-size: fluid(1rem, 1.0625rem);
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
