@@ -1,0 +1,32 @@
+@use '../../../../styles/tokens' as tokens;
+
+.dz-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: tokens.$dz-space-2;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  &__chip {
+    background: var(--dz-surface-overlay);
+    border: 1px solid var(--dz-border);
+    border-radius: 999px;
+    color: var(--dz-fg);
+    padding: tokens.$dz-space-2 tokens.$dz-space-4;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85em;
+
+    &:hover {
+      border-color: var(--dz-accent);
+      background: color-mix(in srgb, var(--dz-accent) 12%, var(--dz-surface-overlay));
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--dz-primary);
+      outline-offset: 2px;
+    }
+  }
+}

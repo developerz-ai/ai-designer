@@ -8,31 +8,4 @@
     color: var(--dz-status-error);
     font-size: 0.85em;
   }
-
-  &__compose {
-    display: flex;
-    gap: 8px;
-    padding: 8px;
-    border-top: 1px solid var(--dz-border);
-
-    input {
-      flex: 1;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--dz-border);
-      border-radius: var(--dz-radius);
-      color: var(--dz-fg);
-      padding: 8px 10px;
-      font: inherit;
-    }
-
-    button {
-      background: var(--dz-accent);
-      border: none;
-      border-radius: var(--dz-radius);
-      color: #1a1205;
-      padding: 0 14px;
-      cursor: pointer;
-      font: inherit;
-    }
-  }
 }

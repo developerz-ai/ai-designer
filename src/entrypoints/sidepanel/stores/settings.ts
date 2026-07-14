@@ -192,6 +192,19 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
   }
 }
 
+/** Composer's inline model quick-switch — persists immediately via the legacy
+ *  `set-model` RPC (background.ts keeps the rest of the saved config, see its handler)
+ *  rather than routing through the full `saveProvider` form flow. */
+export async function switchModel(model: string): Promise<void> {
+  const previous = settings.model;
+  set({ model, error: null });
+  try {
+    await request({ type: 'set-model', model }, OkResult);
+  } catch (e) {
+    set({ model: previous, error: errMsg(e) });
+  }
+}
+
 /** Forget the stored config + key entirely. */
 export async function clearProvider(): Promise<void> {
   try {
