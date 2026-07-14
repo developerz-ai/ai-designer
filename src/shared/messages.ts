@@ -935,6 +935,67 @@ export const PageMetricsResult = z.object({
 });
 export type PageMetricsResult = z.infer<typeof PageMetricsResult>;
 
+// --- page facts + MAIN-world bridge (slice 15) ----------------------------
+// Real apps are SPAs whose framework internals + chart-lib instances live ONLY in the page's own JS
+// world (MAIN). The isolated content world can't read them, so a MAIN-world content script
+// (`src/entrypoints/injected.content.ts`) exposes a NARROW, READ-ONLY RPC over `window.postMessage`,
+// guarded by an origin + per-request nonce check (`src/dom/bridge.ts`). It carries page facts + (a
+// later task) chart data only — NEVER a key or token: MAIN == the page's own world, untrusted
+// (CLAUDE.md "MV3 three worlds", docs/architecture/security.md). `PageFacts` is the detection result,
+// cached per URL in the content world (`src/dom/page-facts.ts`) and later fed to the agent as context
+// + `frameworkHints` on edits.
+export const PageFacts = z.object({
+  // Detected UI frameworks, most-specific/most-confident first (`next`, `nuxt`, `react`, `vue`,
+  // `svelte`, `angular`, `solid`, `preact`, ...). Bounded — a page rarely ships more than a few.
+  frameworks: z.array(z.string()).max(12),
+  // Detected chart / dataviz libs (`chartjs`, `echarts`, `highcharts`, `d3`, `plotly`, `recharts`,
+  // ...) so the chart reader (slice 15E) knows a data probe is worth trying before pixel-reading.
+  chartLibs: z.array(z.string()).max(12),
+  // Other notable runtime libs worth knowing when source-mapping an edit (`jquery`, `gsap`, `three`,
+  // `bootstrap`, `alpine`, ...).
+  libraries: z.array(z.string()).max(24),
+  // Client-rendered SPA (a framework + a mount root): the agent awaits hydration/quiescence and
+  // re-derives facts on client-side route changes (slice 15A) before acting.
+  spa: z.boolean(),
+  // The document URL these facts describe — the content-world cache key + a staleness check after a
+  // SPA route change.
+  url: z.string(),
+});
+export type PageFacts = z.infer<typeof PageFacts>;
+
+// The read-only methods the MAIN-world bridge answers. Only `page-facts` today; chart-data probes
+// join in a later slice-15 task. Anything not in this enum is rejected by the server.
+export const BridgeMethod = z.enum(['page-facts']);
+export type BridgeMethod = z.infer<typeof BridgeMethod>;
+
+// Namespaces our postMessage traffic off the page's own chatter (many sites postMessage heavily).
+export const BRIDGE_SOURCE = 'devz-designer-bridge';
+
+// Content world -> MAIN world. `nonce` is a fresh per-request token the server echoes back so the
+// client can correlate + reject a stale/spoofed reply; the origin + `source === window` checks on
+// both ends are the real guard (a cross-origin frame's message is dropped). Read-only: a `method`
+// name only, never a secret-bearing param.
+export const BridgeRequest = z.object({
+  source: z.literal(BRIDGE_SOURCE),
+  dir: z.literal('req'),
+  nonce: z.string(),
+  method: BridgeMethod,
+});
+export type BridgeRequest = z.infer<typeof BridgeRequest>;
+
+// MAIN world -> content world. Echoes the request `nonce`; `result` is the (non-secret) method
+// payload on success, else `error`. `result` stays `unknown` — the caller validates it with the
+// method's own schema (e.g. `PageFacts`).
+export const BridgeResponse = z.object({
+  source: z.literal(BRIDGE_SOURCE),
+  dir: z.literal('res'),
+  nonce: z.string(),
+  ok: z.boolean(),
+  result: z.unknown().optional(),
+  error: z.string().optional(),
+});
+export type BridgeResponse = z.infer<typeof BridgeResponse>;
+
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),
