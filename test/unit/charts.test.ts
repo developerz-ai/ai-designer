@@ -210,4 +210,21 @@ describe('createChartReader', () => {
 
     expect(result).toEqual({ text: 'Jan: 42' });
   });
+
+  it('restores hover state after reading — dispatches mouseout/mouseleave', async () => {
+    mount('<div id="chart"></div>');
+    const host = document.getElementById('chart') as HTMLElement;
+    const seen: string[] = [];
+    for (const type of ['mouseover', 'mousemove', 'mouseout', 'mouseleave']) {
+      host.addEventListener(type, () => seen.push(type));
+    }
+    const reader = createChartReader({
+      bridge: stubBridge(() => Promise.reject(new Error('n/a'))),
+    });
+
+    await reader.readTooltip('#chart');
+
+    // A read must leave no stuck :hover — the enter sequence is undone by mouseout + mouseleave.
+    expect(seen).toEqual(['mouseover', 'mousemove', 'mouseout', 'mouseleave']);
+  });
 });

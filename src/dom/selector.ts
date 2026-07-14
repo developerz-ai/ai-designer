@@ -299,7 +299,9 @@ function make(value: string, strategy: SelectorStrategy, fragile = false): Stabl
 }
 
 function cssValue(v: string): string {
-  return `"${v.replace(/"/g, '\\"')}"`;
+  // Escape the backslash FIRST (else escaping `"` would double-count the `\` it emits), then the
+  // quote — otherwise a value containing `\` yields a broken/invalid attribute selector.
+  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 // Serialize a string as a CSS identifier (CSSOM "serialize an identifier").

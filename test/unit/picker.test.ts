@@ -114,6 +114,20 @@ describe('hover highlight + pill', () => {
     expect(root.querySelector('.dz-badge')?.classList.contains('dz-hidden')).toBe(true);
   });
 
+  it('drops the hover outline on reflow when the hovered target left the DOM', () => {
+    document.body.innerHTML = '<button id="b" data-testid="cta">x</button>';
+    const { picker } = spawn();
+    picker.start();
+    const btn = byId('b');
+    over(btn);
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(false);
+
+    btn.remove(); // target removed while still tracked
+    document.dispatchEvent(new Event('scroll')); // reflow re-measures — must prune, not pin a 0×0 box
+
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
+  });
+
   it('shows the fragility badge for a brittle selector', () => {
     document.body.innerHTML = '<section id="s"><span></span><span></span></section>';
     const { picker } = spawn();
@@ -172,6 +186,37 @@ describe('selection', () => {
     expect(msgs.at(-1)).toMatchObject({ type: 'element-picked' });
     expect(values(msgs).at(-1)).toEqual([]);
     expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
+  });
+
+  it('reflow prunes a disconnected multi-selected target and re-emits the selector set', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    click(byId('b'), { shiftKey: true });
+    const before = byType(msgs, 'multi-select-changed').length;
+
+    byId('a').remove(); // a leaves the DOM while still selected
+    document.dispatchEvent(new Event('scroll')); // reflow prunes a
+
+    expect(byType(msgs, 'multi-select-changed')).toHaveLength(before + 1);
+    expect(values(msgs).at(-1)).toEqual(['#b']);
+    // stale outline is gone — only b's box remains
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
+  it('reflow does not re-emit when the multi-selection is unchanged', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    const before = byType(msgs, 'multi-select-changed').length;
+
+    document.dispatchEvent(new Event('scroll')); // a still connected — nothing to prune
+
+    expect(byType(msgs, 'multi-select-changed')).toHaveLength(before);
   });
 
   it('ignores non-primary clicks', () => {

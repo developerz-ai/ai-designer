@@ -351,7 +351,12 @@ export function createChartReader(deps: ChartReaderDeps): ChartReader {
     host.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true }));
     await Promise.resolve(); // let a synchronous tooltip render settle
     const tip = findTooltip(doc);
-    return tip ? { text: str(tip.textContent, 500) } : null;
+    const result = tip ? { text: str(tip.textContent, 500) } : null;
+    // Restore hover state — a nominally read-only call must not leave the chart stuck in :hover
+    // (mouseout bubbles like the enter events; mouseleave targets the host and does not bubble).
+    host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, cancelable: true }));
+    host.dispatchEvent(new MouseEvent('mouseleave', { bubbles: false, cancelable: true }));
+    return result;
   };
 
   return { read, readTooltip };

@@ -78,6 +78,19 @@ describe('createMutator setText / setAttr', () => {
     expect(el.textContent).toBe('before');
   });
 
+  it('setText round-trips child structure on undo (not just flattened text)', () => {
+    mount('<p id="t">Hello <b>world</b><i>!</i></p>');
+    const el = byId('t');
+    const mutation = createMutator(document).setText(el, 'replaced');
+
+    expect(el.textContent).toBe('replaced');
+    expect(el.children).toHaveLength(0); // visible text replaced
+    expect(mutation.before).toBe('Hello <b>world</b><i>!</i>'); // full markup captured, not lossy
+    mutation.undo();
+    expect(el.innerHTML).toBe('Hello <b>world</b><i>!</i>'); // structure restored, not collapsed
+    expect(el.querySelector('b')?.textContent).toBe('world');
+  });
+
   it('setAttr adds a new attribute and undo removes it', () => {
     mount('<a id="l">x</a>');
     const el = byId('l');
@@ -140,6 +153,44 @@ describe('createMutator structural edits', () => {
     expect(mutation.computed.html).toBe('<li>two</li>');
     mutation.undo();
     expect(ref.querySelectorAll('li')).toHaveLength(1);
+  });
+
+  it('insertNode inserts EVERY top-level node and undo removes them all', () => {
+    mount('<ul id="list"><li>one</li></ul>');
+    const ref = byId('list');
+    const mutation = createMutator(document).insertNode(
+      ref,
+      '<li>two</li><li>three</li>',
+      'beforeend',
+    );
+    expect(ref.querySelectorAll('li')).toHaveLength(3); // both siblings inserted, not just the first
+    expect(mutation.after).toBe('<li>two</li><li>three</li>'); // full set serialized
+    mutation.undo();
+    expect(ref.querySelectorAll('li')).toHaveLength(1);
+  });
+
+  it('insertNode inserts a bare text node without wrapping it in a span', () => {
+    mount('<p id="p">Hi </p>');
+    const ref = byId('p');
+    const mutation = createMutator(document).insertNode(ref, 'there', 'beforeend');
+    expect(ref.querySelector('span')).toBeNull(); // no phantom wrapper
+    expect(ref.textContent).toBe('Hi there');
+    mutation.undo();
+    expect(ref.textContent).toBe('Hi ');
+  });
+
+  it('insertNode strips inline on* handlers from imported markup (CSP-safe)', () => {
+    mount('<div id="host"></div>');
+    const ref = byId('host');
+    createMutator(document).insertNode(
+      ref,
+      '<img src="x" onerror="window.__pwned=1" onload="1">',
+      'beforeend',
+    );
+    const img = ref.querySelector('img');
+    expect(img?.hasAttribute('onerror')).toBe(false);
+    expect(img?.hasAttribute('onload')).toBe(false);
+    expect(img?.getAttribute('src')).toBe('x'); // resource attr preserved
   });
 
   it('moveNode relocates and undo restores the original position', () => {

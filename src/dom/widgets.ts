@@ -400,7 +400,8 @@ export function createWidgetDriver(deps: WidgetDeps = {}): WidgetDriver {
     } else {
       clickEl(input);
     }
-    input.setAttribute('aria-expanded', 'true');
+    // The app owns aria-expanded (it opens/closes the listbox in response to type/click); the driver
+    // never fakes it — a forced value would diverge from the page's own model and go unrecorded.
     steps.push(`type "${value}"`);
     if (aborted(signal)) return fail('aborted');
 
@@ -415,13 +416,13 @@ export function createWidgetDriver(deps: WidgetDeps = {}): WidgetDriver {
     if (!match) return fail(`No combobox option matches "${value}"`);
 
     // Actuate the real selection: click the app's option (fires its handler) and commit the chosen
-    // label to the field. The app owns aria-selected/aria-activedescendant — the driver never fakes it.
+    // label to the field. The app owns aria-selected / aria-activedescendant / aria-expanded — the
+    // driver never fakes any of it (a forced value diverges from the page's model and goes unrecorded).
     clickEl(match);
     steps.push(`choose option "${labelOf(match)}"`);
     if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
       setInputValue(input, labelOf(match));
     }
-    input.setAttribute('aria-expanded', 'false');
     return acted('combobox', true, steps, { value: labelOf(match) });
   }
 

@@ -215,14 +215,19 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     });
   }
 
-  function toggleMulti(target: Element): void {
-    if (selected.has(target)) selected.delete(target);
-    else selected.add(target);
-    renderSelected();
+  // Panel resync: the emitted selector set mirrors `selected`. Emit only after a mutation.
+  function emitMultiSelect(): void {
     emit({
       type: 'multi-select-changed',
       selectors: [...selected].map((s) => pickUnique(s, docOf(s))),
     });
+  }
+
+  function toggleMulti(target: Element): void {
+    if (selected.has(target)) selected.delete(target);
+    else selected.add(target);
+    renderSelected();
+    emitMultiSelect();
   }
 
   const onOver = (e: MouseEvent): void => {
@@ -251,10 +256,26 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     }
   };
 
-  // Outlines are viewport-fixed, so they must follow the page as it scrolls / resizes.
+  // Outlines are viewport-fixed, so they must follow the page as it scrolls / resizes. A removed
+  // target drops its outline (mirrors overlay.onReflow) rather than pinning a stale 0×0 box at origin.
   const onReflow = (): void => {
-    if (hovered) renderHover(hovered);
+    if (hovered) {
+      if (hovered.isConnected) renderHover(hovered);
+      else {
+        hideHover();
+        hovered = null;
+      }
+    }
+    let pruned = false;
+    for (const target of selected)
+      if (!target.isConnected) {
+        selected.delete(target);
+        pruned = true;
+      }
     renderSelected();
+    // Pruning changed the selector set — resync the panel so it drops selectors for elements
+    // that left the DOM. Stay silent when nothing was pruned.
+    if (pruned) emitMultiSelect();
   };
 
   function start(): void {
