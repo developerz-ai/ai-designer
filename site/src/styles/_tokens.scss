@@ -126,7 +126,7 @@ $elev-2: 0 4px 12px color.change($ink, $alpha: 0.1);
 $elev-3: 0 12px 32px color.change($ink, $alpha: 0.16);
 $elev-4: 0 24px 64px color.change($ink, $alpha: 0.24);
 
-$focus-ring: 0 0 0 3px color.change($brand-500, $alpha: 0.5);
+$focus-ring: 0 0 0 3px color.change($brand-500, $alpha: 0.9);
 
 // ─── Runtime custom properties (forced dark) ──────────────────────────────────
 @mixin root-vars {

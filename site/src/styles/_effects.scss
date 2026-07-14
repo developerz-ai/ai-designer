@@ -98,6 +98,7 @@
   font-size: fluid(0.9rem, 0.95rem);
   font-weight: 600;
   line-height: 1;
+  min-height: 2.75rem;
   color: var(--dz-ink);
   background: transparent;
   border: 1px solid transparent;
@@ -128,12 +129,17 @@
   &:active {
     transform: translateY(0);
   }
+
+  // Focus ring should hug the pill, not the global $radius-sm square.
+  &:focus-visible {
+    border-radius: $radius-pill;
+  }
 }
 
 // Primary = product orange (the hybrid accent).
 .dz-btn--primary {
   background: $grad-product;
-  color: $paper;
+  color: $ink;
   box-shadow:
     $elev-2,
     0 0 0 1px color.change($product, $alpha: 0.4);
