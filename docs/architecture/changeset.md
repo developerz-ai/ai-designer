@@ -1,6 +1,6 @@
 # Changeset
 
-The portable diff of a design session. The **only** durable output of live editing (page mutations are ephemeral). Built by the recorder; consumed by handoff. See [`../idea/live-edit.md`](../idea/live-edit.md) for the recorder UX.
+The portable diff of a design session. Page mutations are ephemeral — the changeset (plus, for debug sessions, an agent-authored `Report`) is the durable record, consumed by [handoff](handoff.md) either as an MCP task or a downloadable Markdown brief (`src/changeset/report-md.ts`). Built by the recorder; schema in `src/shared/changeset.ts`. See [`../idea/live-edit.md`](../idea/live-edit.md) for the recorder UX.
 
 ## Model
 
@@ -19,6 +19,7 @@ erDiagram
     EDIT {
         string intent
         string[] frameworkHints
+        string breakpoint "optional — device-emulation capture"
         int order
     }
     SELECTOR {
@@ -54,7 +55,7 @@ erDiagram
 }
 ```
 
-Schema is Zod in `src/shared/` and shared verbatim with the recorder, store, and serializer.
+Schema is Zod in `src/shared/changeset.ts` and shared verbatim with the recorder, store, and serializer. `ChangesetState` wraps the append-only edit log with a `redoStack` (`src/shared/changeset.ts`) so undo/redo is a pure pop/push, not a re-derivation.
 
 ## Selector resolution
 
@@ -67,6 +68,7 @@ Ordered strategies — first that uniquely matches wins. The chosen strategy and
 | 3 | ARIA role + accessible name | `aria` | no |
 | 4 | unique text content | `text` | low |
 | 5 | scoped CSS path | `css-path` | **yes** (flagged) |
+| 6 | shadow-DOM host path (`>>>`) | `shadow` | **yes** (flagged) — needed for web-component/complex-site targets (`src/dom/selector.ts`) |
 
 ## frameworkHints — the source-mapping bridge
 
@@ -82,8 +84,13 @@ Runtime CSS values don't tell the dev-agent *where in source* to edit. `framewor
 
 Without hints handoff still works (raw before/after CSS), but with them the resulting PR matches the repo's own conventions. See [handoff.md](handoff.md).
 
+## Markdown report — the fallback serialization
+
+`toMarkdown(report)` (`src/changeset/report-md.ts`) renders identity tokens plus per-breakpoint responsive findings/screenshots into a paste-ready Markdown brief. It is not just a fallback artifact — the **same** rendering is attached as the `brief` field on every MCP `task(action:'create')` spec (`src/mcp/handoff.ts`), and it's the whole payload when [`routeHandoff()`](handoff.md) has no backend/repo to dispatch to (`src/mcp/backend.ts`). Triggered from `ShipBar.tsx`'s Download action via the `download-report`/`send-report` SW RPCs.
+
 ## Lifecycle
 
-- Append-only event log → undo = pop + invert.
+- Append-only event log → undo = pop onto `redoStack`; redo = pop back. No re-derivation.
 - Lives in `chrome.storage.session`; cleared on tab close or "Clear session".
 - Reload of the page wipes the live edits but **not** the recorded changeset (until session ends).
+- On Ship/Download, the finished session (changeset + report + PR link if shipped) is retained in [history](../idea/ui.md#history) — up to the last 10 conversations, `chrome.storage.local`.

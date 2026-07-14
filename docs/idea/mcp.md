@@ -1,6 +1,6 @@
 # MCP
 
-Where work lands. The MCP management UI lets the user connect dev-agent backends; the extension dispatches the [handoff](handoff.md) there. The MCP client lives in the **service worker** (keys never touch the page).
+Where work lands — **optional**. The MCP management UI lets the user connect dev-agent backends; the extension dispatches the [handoff](handoff.md) there. Zero servers connected is a supported state: copy/debug still work end to end, Ship just becomes a downloadable Markdown report instead (see [handoff.md](handoff.md)). The MCP client lives in the **service worker** (keys never touch the page). Readiness never blocks Start on MCP — see [agent.md](agent.md#readiness--start).
 
 ## Supported backends
 
@@ -34,6 +34,10 @@ Mirrors ai-dev's auth model — three levels, checked in order by the backend:
 
 - **Handoff (write):** `task(action:'create')` / `watch` — the core path. See [handoff.md](handoff.md).
 - **Design-time (read, optional):** if the backend exposes `kb` / repo search, the [agent](agent.md) can consult it *while designing* — "what design tokens does this repo define?" — so edits already match the codebase. Less guesswork at handoff.
+
+## Ship needs a backend AND a mapped repo
+
+A backend exposing `task` isn't enough on its own — the current page's origin must also be mapped to a repo (step 3, above). Both conditions met → Ship dispatches `task(action:'create')`. Either missing → Ship falls back to a downloadable Markdown brief, with the missing piece named (`no-backend` / `no-repo`) so the user knows what to connect next. See [handoff.md](handoff.md).
 
 ## Namespacing
 

@@ -17,11 +17,12 @@ The gap: **the thing you see** (the rendered page) and **the thing you change** 
 
 | Step | Where | What happens |
 |------|-------|--------------|
-| 1. Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." |
-| 2. See | Live page | Agent mutates real DOM/CSS. Instant. You react, refine. |
-| 3. Accept | Diff review | Each change recorded as a structured changeset entry. |
-| 4. Ship | MCP handoff | Changeset → dev-agent → finds source → edits code → PR. |
-| 5. Verify | PR / CI | Real change, tested, reviewable. You merge. |
+| 0. Get ready | Header readiness pill | Provider + model + host permission checked; Start unlocks when green — MCP is optional. |
+| 1. Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." Or pick **copy** (match a reference site) / **debug** (find + fix a bug) mode. |
+| 2. See | Live page | Agent mutates real DOM/CSS across an autonomous multi-step run. Optional on-page overlay shows each step live. |
+| 3. Accept | Ship bar | Each change recorded as a structured changeset entry; per-entry undo. |
+| 4. Ship or report | MCP handoff **or** Markdown download | Changeset → connected dev-agent finds source → PR. No backend/repo mapped → downloadable MD brief instead. |
+| 5. Verify | PR / CI, or history | Real change, tested, reviewable — or the report sits in [history](ui.md) for you to paste elsewhere. |
 
 Design and implementation become one conversation. You never leave the page.
 
@@ -36,8 +37,8 @@ Design and implementation become one conversation. You never leave the page.
 
 ## Two halves of the extension
 
-- **Chat** — the design conversation. Vercel AI SDK loop, OpenRouter, BYOK. Has tools to read and mutate the live page.
-- **MCP management** — where work lands. Connect [ai-dev](mcp.md), GitHub, or developerz.ai; the agent dispatches the real implementation task there.
+- **Chat** — the design conversation. Vercel AI SDK `ToolLoopAgent`, any OpenAI-compatible endpoint (OpenRouter is a preset, not the only option), BYOK. Has tools to read and mutate the live page — see [agent.md](agent.md).
+- **MCP management** — where work lands, *optional*. Connect [ai-dev](mcp.md), GitHub, or developerz.ai; the agent dispatches the real implementation task there. No backend connected or no repo mapped for this origin → **Ship** becomes **Download report**, a Markdown brief you paste into any coding agent. See [handoff.md](handoff.md).
 
 ## Works on
 

@@ -1,10 +1,17 @@
 # Handoff
 
-How an accepted design session becomes a real PR. The changeset goes over [MCP](mcp.md) to a dev-agent backend ([ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai), which edits the actual source and opens a pull request. **The user clicks Ship — handoff is never automatic.**
+How an accepted design session becomes real code — **two output paths**, chosen automatically per session:
 
-## Input: the changeset
+| Path | When | Result |
+|------|------|--------|
+| **Ship (MCP)** | A connected backend exposes `task` **and** the page's origin is mapped to a repo | `task(action:'create')` → dev-agent edits source → PR, streamed status |
+| **Download report** | No backend connected, or no repo mapped for this origin | A pasteable Markdown brief (identity tokens, findings, before/after) — drop it into any coding agent |
 
-The ordered list of recorded edits from the design session (schema in [live-edit.md](live-edit.md)). The three fields that make source-mapping possible:
+Both paths consume the same recorded session (changeset and/or agent-authored `Report` for debug findings). **The user clicks Ship or Download — handoff is never automatic.** See [mcp.md](mcp.md) for the routing rule.
+
+## Input: the changeset (+ report for debug findings)
+
+The ordered list of recorded edits from the design session (schema in [live-edit.md](live-edit.md)); a debug-mode session also produces an agent-authored `Report` (findings, severity, root cause, screenshots) — see [../architecture/changeset.md](../architecture/changeset.md). Both render to the same Markdown brief either way (attached to every MCP task as its `brief` field, or downloaded standalone). The three changeset fields that make source-mapping possible:
 
 | Field | Why it matters to the dev-agent |
 |-------|---------------------------------|
@@ -12,7 +19,7 @@ The ordered list of recorded edits from the design session (schema in [live-edit
 | `selector` (+ strategy, fragile) | Anchors the runtime element; resolution strategy helps find it in source. |
 | `frameworkHints` | The bridge to source: Tailwind classes, CSS-module names, styled-components markers, framework markers. |
 
-## Sequence
+## Sequence (Ship / MCP path)
 
 ```
 user clicks Ship
@@ -71,7 +78,12 @@ The changeset is the task spec. Maps to ai-dev's domain tool:
 - Fragile selector flagged in the changeset → dev-agent treats it as low-confidence, prefers `frameworkHints`.
 - CI red → ai-dev's own loop fixes and re-pushes; the user just watches.
 
+## Report fallback (no backend / no repo)
+
+The same brief `task` would have received — identity tokens, per-edit intent/selector/before-after, debug findings, responsive screenshots — renders to Markdown and downloads as a file instead of dispatching. It's designed to be pasted straight into any coding agent (Claude Code, Cursor, Copilot) as a self-contained task description. Every finished session (shipped or downloaded) is retained in [history](ui.md#history) — the report is never lost even if you close the panel before pasting it.
+
 ## What we never do
 
-- Never write to the running site. The page edit was a preview; the only durable output is the PR.
+- Never write to the running site. The page edit was a preview; the only durable output is a PR or a downloaded report.
 - Never hold the user's publish/merge tokens. Shipping the merge is the human's call.
+- Never silently pick a backend/repo — routing between MCP and report is deterministic and explained (see [mcp.md](mcp.md)).
