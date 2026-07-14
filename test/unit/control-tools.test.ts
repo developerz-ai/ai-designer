@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ZodType } from 'zod';
+import { type ComplexSiteDispatch, createComplexSiteTools } from '@/agent/tools/complex-site';
 import {
   type ControlDispatch,
   createInteractTools,
@@ -123,6 +124,51 @@ describe('createInteractTools', () => {
     const schema = tools.waitFor.inputSchema as unknown as ZodType;
     expect(schema.safeParse({ selector: '.done', timeMs: 1000 }).success).toBe(true);
     expect(schema.safeParse({ timeMs: 99_999 }).success).toBe(false); // 30s hard cap enforced
+  });
+});
+
+describe('createComplexSiteTools', () => {
+  it('exposes pageFacts/readChart/chartTooltip/widgetAct, each with the ToolResult output schema', () => {
+    const { dispatch } = recorder();
+    const tools = createComplexSiteTools(dispatch as ComplexSiteDispatch);
+    expect(Object.keys(tools).sort()).toEqual(
+      ['pageFacts', 'readChart', 'chartTooltip', 'widgetAct'].sort(),
+    );
+    for (const t of Object.values(tools)) {
+      const out = t.outputSchema as unknown as ZodType;
+      expect(out.safeParse(RESULT).success).toBe(true);
+    }
+  });
+
+  it('reattaches the discriminant, forwards Target, and threads the abort signal', async () => {
+    const { calls, dispatch } = recorder();
+    const tools = createComplexSiteTools(dispatch as ComplexSiteDispatch);
+    const signal = new AbortController().signal;
+
+    const facts = await callExecute(tools.pageFacts.execute, { tabId: 2, frameId: 1 }, signal);
+    expect(calls[0]?.msg).toEqual({ type: 'pageFacts', tabId: 2, frameId: 1 });
+    expect(calls[0]?.signal).toBe(signal);
+    expect(facts).toBe(RESULT);
+
+    await callExecute(tools.readChart.execute, { selector: '.chart' }, signal);
+    expect(calls[1]?.msg).toEqual({ type: 'readChart', selector: '.chart' });
+
+    await callExecute(tools.chartTooltip.execute, { selector: '.chart' }, signal);
+    expect(calls[2]?.msg).toEqual({ type: 'chartTooltip', selector: '.chart' });
+
+    const recipe = { type: 'toggle', selector: '#dark-mode', on: true };
+    await callExecute(tools.widgetAct.execute, { recipe }, signal);
+    expect(calls[3]?.msg).toEqual({ type: 'widgetAct', recipe });
+    expect(ControlTool.safeParse(calls[3]?.msg).success).toBe(true);
+  });
+
+  it('drops the `type` discriminant from each inputSchema (readChart selector stays optional)', () => {
+    const tools = createComplexSiteTools(recorder().dispatch as ComplexSiteDispatch);
+    const pageFactsSchema = tools.pageFacts.inputSchema as unknown as ZodType;
+    expect(pageFactsSchema.safeParse({}).success).toBe(true);
+    const readChartSchema = tools.readChart.inputSchema as unknown as ZodType;
+    expect(readChartSchema.safeParse({}).success).toBe(true);
+    expect(readChartSchema.safeParse({ selector: '.chart' }).success).toBe(true);
   });
 });
 

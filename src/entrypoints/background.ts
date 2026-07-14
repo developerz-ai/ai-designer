@@ -54,12 +54,12 @@ import { initSentry } from '@/shared/sentry';
 // The preset the legacy OpenRouter-only RPCs (save-openrouter-key/set-model) map onto.
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
-// Content-routed tool transport: the slice-05 read/mutate `DomTool`s, the slice-13 page-driving
-// `ControlTool`s, and the slice-14 describe-family `DescribeCmd`s (`describe`'s text modes,
-// `extractIdentity`, `readImageContent`) all ride the same bus round-trip to the target frame's
-// content script, so one dispatch serves all three (assignable to `DomDispatch`,
-// `ControlDispatch`/`ReadImagesDispatch`, `IdentityDispatch`, and `DescribeDispatch`/
-// `ReadImageContentDispatch`).
+// Content-routed tool transport: the slice-05 read/mutate `DomTool`s, the slice-13 page-driving +
+// slice-15 complex-site `ControlTool`s, and the slice-14 describe-family `DescribeCmd`s
+// (`describe`'s text modes, `extractIdentity`, `readImageContent`) all ride the same bus
+// round-trip to the target frame's content script, so one dispatch serves all of them (assignable
+// to `DomDispatch`, `ControlDispatch`/`ReadImagesDispatch`/`ComplexSiteDispatch`,
+// `IdentityDispatch`, and `DescribeDispatch`/`ReadImageContentDispatch`).
 type ContentDispatch = (
   msg: DomTool | ControlTool | DescribeCmd,
   signal?: AbortSignal,
@@ -345,6 +345,9 @@ export default defineBackground(() => {
               ),
             readImageContent: content,
           },
+          // pageFacts/readChart/chartTooltip/widgetAct (slice 15) are content-routed exactly like
+          // interact.control — same `content` transport, no extra SW-side logic needed.
+          complexSite: content,
           emit: postToPanel,
           // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
           tools: await mcpManager.toolsFor(),

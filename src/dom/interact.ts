@@ -1,3 +1,4 @@
+import { waitForQuiescence } from '@/dom/quiescence';
 import { queryAll, queryOne } from '@/dom/read';
 import { pickUnique } from '@/dom/selector';
 import type { ControlTool, StableSelector, ToolResult, WaitCondition } from '@/shared/messages';
@@ -16,8 +17,13 @@ import type { ControlTool, StableSelector, ToolResult, WaitCondition } from '@/s
 // `win` is used only for the event `view`, scroll, timing, and dialog arming). Selector resolution
 // is best-effort: an unmatched selector is an error ToolResult, never a throw that kills the turn.
 
-/** Every ControlTool this engine drives — the union minus `readImages` (a read; src/dom/images.ts). */
-export type InteractTool = Exclude<ControlTool, { type: 'readImages' }>;
+/** Every ControlTool this engine drives — the union minus the reads/actions content.ts handles
+ *  directly: `readImages` (src/dom/images.ts), `readChart`/`chartTooltip` (src/dom/charts.ts),
+ *  `widgetAct` (src/dom/widgets.ts), and `pageFacts` (src/dom/page-facts.ts). */
+export type InteractTool = Exclude<
+  ControlTool,
+  { type: 'readImages' | 'readChart' | 'chartTooltip' | 'widgetAct' | 'pageFacts' }
+>;
 
 export interface InteractorDeps {
   /** The page document. Defaults to the live `document`; tests inject a jsdom one. */
@@ -246,8 +252,47 @@ function now(win: Window): number {
 function describeCondition(cond: WaitCondition): string {
   if (cond.selector) return `selector ${cond.selector}`;
   if (cond.text) return `text "${cond.text}"`;
+  if (cond.quiescent) return 'quiescent';
+  if (cond.hydrated) return 'hydrated';
   if (cond.networkIdle) return 'network idle';
   return 'delay';
+}
+
+// `hydrated`/`quiescent` delegate to the SPA-aware primitive (slice 15A `waitForQuiescence`)
+// instead of the plain selector/text/networkIdle observer below: it counts the quiet window only
+// once `document.readyState === 'complete'`, so async hydration mutations reset it rather than
+// resolving early. `quiescent` additionally waits out the settle window; `hydrated` alone still
+// waits for that same settle (a genuinely useful signal in itself — "stopped rendering") but the
+// distinct condition label tells the agent which it asked for. `signal` cancels the wait early,
+// same as the selector/text/networkIdle path.
+function waitForHydration(
+  cond: WaitCondition,
+  doc: Document,
+  win: Window,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
+  const started = now(win);
+  const settle = (met: boolean, elapsedMs: number): ToolResult =>
+    ok({ met, condition: describeCondition(cond), timedOut: !met, elapsedMs });
+
+  return new Promise<ToolResult>((resolve) => {
+    let done = false;
+    const finish = (result: ToolResult): void => {
+      if (done) return;
+      done = true;
+      signal?.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    const onAbort = (): void => finish(settle(false, Math.round(now(win) - started)));
+    if (signal?.aborted) {
+      finish(settle(false, 0));
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    void waitForQuiescence(win, doc, cond.timeMs !== undefined ? { timeoutMs: cond.timeMs } : {})
+      .then((result) => finish(settle(result.quiescent, result.elapsedMs)))
+      .catch(() => finish(settle(false, Math.round(now(win) - started))));
+  });
 }
 
 function conditionSatisfied(cond: WaitCondition, doc: Document): boolean {
@@ -266,6 +311,8 @@ function waitFor(
   win: Window,
   signal?: AbortSignal,
 ): Promise<ToolResult> {
+  if (cond.hydrated || cond.quiescent) return waitForHydration(cond, doc, win, signal);
+
   const timeout = cond.timeMs ?? DEFAULT_WAIT_MS;
   const wantsElement = Boolean(cond.selector || cond.text);
   const started = now(win);

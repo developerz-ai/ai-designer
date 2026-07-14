@@ -1,5 +1,6 @@
 import { defineContentScript } from '#imports';
 import { createBridge } from '@/dom/bridge';
+import { createChartReader } from '@/dom/charts';
 import { describePage } from '@/dom/describe';
 import { extractDesignRead } from '@/dom/design-read';
 import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
@@ -13,6 +14,7 @@ import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
+import { createWidgetDriver } from '@/dom/widgets';
 import {
   type CaptureRequest,
   CaptureResult,
@@ -57,6 +59,16 @@ export default defineContentScript({
     const executor = createDomExecutor({ mutator, recorder });
     const interactor = createInteractor();
     const picker = createPicker(emit);
+
+    // Complex-site reads/actions (slice 15, expose-to-agent): the MAIN-world bridge client
+    // (read-only, non-secret — see the top-frame lifecycle block below) backs both the page-facts
+    // cache and the chart data probe; the widget driver is pure DOM. Instantiated per-frame (not
+    // gated to the top document) so an agent addressing a specific iframe's `frameId` still gets a
+    // real chart/widget/page-facts read there.
+    const bridge = createBridge();
+    const pageFacts = createPageFacts({ bridge });
+    const chartReader = createChartReader({ bridge });
+    const widgetDriver = createWidgetDriver();
 
     // Chrome pins the top document to frameId 0; a child frame can't learn its own id, so the SW
     // stamps that from the frameId it routed to (later slice-13 SW task). Tag results from the top
@@ -116,18 +128,33 @@ export default defineContentScript({
       return Promise.resolve(executor.exec(tool));
     }
 
-    // Browser-control tools (slice 13): `readImages` is a pure read (src/dom/images.ts); the rest
-    // are page-driving actions handed to the interaction engine (src/dom/interact.ts). Both keep
-    // the entrypoint a thin wire — resolution + logic live in the jsdom-tested dom modules.
-    function handleControl(tool: ControlTool): Promise<ToolResult> {
+    // Browser-control tools (slice 13) + complex-site reads/actions (slice 15): `readImages` is a
+    // pure read (src/dom/images.ts); `pageFacts`/`readChart`/`chartTooltip`/`widgetAct` proxy to
+    // the slice-15 modules; the rest are page-driving actions handed to the interaction engine
+    // (src/dom/interact.ts). All keep the entrypoint a thin wire — resolution + logic live in the
+    // jsdom-tested dom modules.
+    async function handleControl(tool: ControlTool): Promise<ToolResult> {
       if (tool.type === 'readImages') {
         const scope = tool.selector ? queryOne(document, tool.selector) : document;
         if (tool.selector && !scope) {
           const error = `No element matches selector: ${tool.selector}`;
-          return Promise.resolve({ type: 'tool-result', ok: false, error });
+          return { type: 'tool-result', ok: false, error };
         }
         const data: ReadImagesResult = readImages(scope ?? document, window);
-        return Promise.resolve({ type: 'tool-result', ok: true, data });
+        return { type: 'tool-result', ok: true, data };
+      }
+      if (tool.type === 'pageFacts') {
+        return { type: 'tool-result', ok: true, data: await pageFacts.get() };
+      }
+      if (tool.type === 'readChart') {
+        return { type: 'tool-result', ok: true, data: await chartReader.read(tool.selector) };
+      }
+      if (tool.type === 'chartTooltip') {
+        const data = await chartReader.readTooltip(tool.selector);
+        return { type: 'tool-result', ok: true, data };
+      }
+      if (tool.type === 'widgetAct') {
+        return widgetDriver.run(tool.recipe);
       }
       return interactor.run(tool);
     }
@@ -230,13 +257,11 @@ export default defineContentScript({
       return; // no response for picker commands / foreign messages
     });
 
-    // Complex-site lifecycle (slice 15A/F): the MAIN-world bridge client + page-facts. Only the top
-    // frame runs the route/quiescence lifecycle — a page's SPA navigation + framework stack are
-    // top-document concerns. The bridge is read-only + non-secret (src/dom/bridge.ts): MAIN == the
-    // page's own world, so no key ever crosses; page-facts falls back to DOM-only when it's unreachable.
+    // Complex-site lifecycle (slice 15A/F): warm the page-facts cache + observe SPA route changes.
+    // Only the top frame runs this — a page's SPA navigation + framework stack are top-document
+    // concerns. The bridge is read-only + non-secret (src/dom/bridge.ts): MAIN == the page's own
+    // world, so no key ever crosses; page-facts falls back to DOM-only when it's unreachable.
     if (window.top === window.self) {
-      const bridge = createBridge();
-      const pageFacts = createPageFacts({ bridge });
       // Warm the per-URL facts cache once the SPA has hydrated + settled (first agent query is then
       // instant); re-derive on client-side route changes (pushState/popstate/hash) that never reload.
       const deriveFacts = (): void => {

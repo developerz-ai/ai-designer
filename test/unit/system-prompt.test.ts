@@ -109,6 +109,14 @@ describe('buildSystemPrompt: load-bearing content', () => {
   it('names the per-tool budget guards (vision/wait/nav) alongside the step/token budget', () => {
     expect(prompt).toMatch(/`inspectVisually`, `waitFor`, and navigation calls/);
   });
+
+  it('gives the complex-site doctrine: detect → hydrate → shadow/canvas → widgets → charts', () => {
+    expect(prompt).toMatch(/`pageFacts`.*first/i);
+    expect(prompt).toMatch(/`hydrated`.*`quiescent`/);
+    expect(prompt).toMatch(/closed shadow root/i);
+    expect(prompt).toMatch(/`widgetAct`/);
+    expect(prompt).toMatch(/`readChart`.*before spending a screenshot/i);
+  });
 });
 
 describe('buildSystemPrompt: addenda injection (modes-ready)', () => {

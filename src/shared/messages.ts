@@ -469,14 +469,19 @@ export const SelectOptionInput = z.object({
   value: z.string(),
   ...Target.shape,
 });
-// The condition `waitFor` blocks on: resolve as soon as `selector`/`text` appears or the network
-// goes idle, capped by `timeMs` (hard max 30s so a stuck page can't hang the turn — slice 13
-// guardrail). Given only `timeMs`, it is a plain bounded delay. Exported standalone for the tool
-// wrapper (`src/agent/tools/interact.ts`) and the content impl (`src/dom/interact.ts`).
+// The condition `waitFor` blocks on: resolve as soon as `selector`/`text` appears, the network
+// goes idle, the page hydrates (`hydrated` — SPA framework mounted + `document.readyState ===
+// 'complete'`), or the DOM goes quiet after that (`quiescent` — hydrated AND no mutation for a
+// settle window; slice 15A `waitForQuiescence`). Capped by `timeMs` (hard max 30s so a stuck page
+// can't hang the turn — slice 13 guardrail). Given only `timeMs`, it is a plain bounded delay.
+// Exported standalone for the tool wrapper (`src/agent/tools/interact.ts`) and the content impl
+// (`src/dom/interact.ts`).
 export const WaitCondition = z.object({
   selector: z.string().min(1).optional(),
   text: z.string().min(1).optional(),
   networkIdle: z.boolean().optional(),
+  hydrated: z.boolean().optional(),
+  quiescent: z.boolean().optional(),
   timeMs: z.number().int().positive().max(30_000).optional(),
 });
 export type WaitCondition = z.infer<typeof WaitCondition>;
@@ -504,21 +509,10 @@ export const ReadImagesInput = z.object({
 });
 export type ReadImagesInput = z.infer<typeof ReadImagesInput>;
 
-// The content-routed slice-13 driving tools as one discriminated union — `content.ts` parses it
-// beside `DomTool`, and `createControlTools` (slice 13) derives one `tool()` per member 1:1, the
-// same zero-drift contract `DomTool`/`createDomTools` hold.
-export const ControlTool = z.discriminatedUnion('type', [
-  ClickInput,
-  TypeInput,
-  PressKeyInput,
-  HoverInput,
-  ScrollToInput,
-  SelectOptionInput,
-  WaitForInput,
-  HandleDialogInput,
-  ReadImagesInput,
-]);
-export type ControlTool = z.infer<typeof ControlTool>;
+// `ControlTool` (the content-routed driving-tools union) is declared further below, once the
+// complex-site inputs it also carries (`ReadChartInput`/`ChartTooltipInput`/`WidgetActInput`/
+// `PageFactsInput`) exist — they reference `WidgetRecipe`/`ChartRead`/`PageFacts`, defined in the
+// slice-15 section near the bottom of this file.
 
 // One image the page renders — an `<img>` or a CSS background-image — resolved to a stable selector
 // so the agent can act on it. `broken` = failed load (naturalWidth 0); `oversized` = intrinsic
@@ -1138,6 +1132,60 @@ export const WidgetActed = z.object({
   state: z.record(z.string(), z.string()).optional(),
 });
 export type WidgetActed = z.infer<typeof WidgetActed>;
+
+// --- complex-site control tools (slice 15, expose-to-agent) ---------------
+// The remaining slice-15 content-routed inputs: read the page's detected stack (`pageFacts`), read
+// a chart's data or vision-fallback targets (`readChart`), hover one for its HTML tooltip
+// (`chartTooltip`), and drive an ARIA widget recipe (`widgetAct`). All route through content.ts
+// exactly like the rest of `ControlTool` (`Target`-addressed, frame/tab aware).
+export const ReadChartInput = z.object({
+  type: z.literal('readChart'),
+  // Scope to one chart host (e.g. a `readChart`'s prior `vision` target); omitted reads every
+  // chart the page-facts/data-probe/DOM pass can reach.
+  selector: z.string().optional(),
+  ...Target.shape,
+});
+export type ReadChartInput = z.infer<typeof ReadChartInput>;
+
+export const ChartTooltipInput = z.object({
+  type: z.literal('chartTooltip'),
+  // The chart host to hover — a `readChart` `vision` target's selector.
+  selector: z.string(),
+  ...Target.shape,
+});
+export type ChartTooltipInput = z.infer<typeof ChartTooltipInput>;
+
+export const WidgetActInput = z.object({
+  type: z.literal('widgetAct'),
+  // The widget's ARIA-anchored recipe — its own `selector` + `Target` address the element within
+  // the frame this message already routes to (see `WidgetRecipe` above).
+  recipe: WidgetRecipe,
+  ...Target.shape,
+});
+export type WidgetActInput = z.infer<typeof WidgetActInput>;
+
+export const PageFactsInput = z.object({ type: z.literal('pageFacts'), ...Target.shape });
+export type PageFactsInput = z.infer<typeof PageFactsInput>;
+
+// The content-routed slice-13/15 driving + complex-site tools as one discriminated union —
+// `content.ts` parses it beside `DomTool`, and `createInteractTools`/`createComplexSiteTools`
+// derive one `tool()` per member 1:1, the same zero-drift contract `DomTool`/`createDomTools` hold.
+export const ControlTool = z.discriminatedUnion('type', [
+  ClickInput,
+  TypeInput,
+  PressKeyInput,
+  HoverInput,
+  ScrollToInput,
+  SelectOptionInput,
+  WaitForInput,
+  HandleDialogInput,
+  ReadImagesInput,
+  ReadChartInput,
+  ChartTooltipInput,
+  WidgetActInput,
+  PageFactsInput,
+]);
+export type ControlTool = z.infer<typeof ControlTool>;
 
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
