@@ -201,8 +201,74 @@ function initSpotlight(): void {
   });
 }
 
+// ─── Nav: scroll-aware condense + scroll-spy active link ─────────────────────
+function initNavScroll(): void {
+  const nav = document.querySelector('.nav');
+  if (!nav) {
+    return;
+  }
+  let ticking = false;
+  const onScroll = () => {
+    if (ticking) {
+      return;
+    }
+    ticking = true;
+    requestAnimationFrame(() => {
+      nav.classList.toggle('is-scrolled', window.scrollY > 8);
+      ticking = false;
+    });
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+}
+
+function initNavActiveLink(): void {
+  const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('.nav__link'));
+  if (links.length === 0 || !('IntersectionObserver' in window)) {
+    return;
+  }
+  const map = new Map<string, HTMLAnchorElement>();
+  for (const link of links) {
+    const href = link.getAttribute('href');
+    if (href?.startsWith('#')) {
+      const section = document.querySelector(href);
+      if (section?.id) {
+        map.set(section.id, link);
+      }
+    }
+  }
+  if (map.size === 0) {
+    return;
+  }
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          continue;
+        }
+        for (const link of links) {
+          link.classList.remove('is-active');
+        }
+        const active = map.get(entry.target.id);
+        if (active) {
+          active.classList.add('is-active');
+        }
+      }
+    },
+    { rootMargin: '-45% 0px -50% 0px' },
+  );
+  for (const id of map.keys()) {
+    const section = document.getElementById(id);
+    if (section) {
+      observer.observe(section);
+    }
+  }
+}
+
 initSkeleton();
 initCountUp();
 initNotify();
 initReveal();
 initSpotlight();
+initNavScroll();
+initNavActiveLink();
