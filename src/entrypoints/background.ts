@@ -209,6 +209,12 @@ export default defineBackground(() => {
           approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
         })
           .then(async (outcome) => {
+            // Only the still-current turn threads its result. A turn that was superseded (a
+            // newer user-message) or Stopped already had `turnAbort` reassigned/cleared; its
+            // partial reply streamed to the panel (the scrollback source of truth), but
+            // appending it here would land *after* the newer user message and corrupt the
+            // resume thread — so a non-current turn persists nothing.
+            if (turnAbort !== controller) return;
             if (outcome.text) {
               await sessions.appendMessages(tabId, { role: 'assistant', content: outcome.text });
             }
