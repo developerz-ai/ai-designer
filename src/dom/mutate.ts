@@ -88,16 +88,29 @@ function insertAt(ref: Element, node: Node, position: InsertPosition): void {
   }
 }
 
-// Parse `html` into a single node to insert. Uses a <template> whose content is inert (no scripts
-// run, no remote code fetched — CSP-safe), then imports the first element into the live document.
-function nodeFromHtml(doc: Document, html: string): Node {
+// Parse `html` into its ordered top-level nodes. Uses a <template> whose content is inert (no scripts
+// run, no remote code fetched WHILE parsed), then imports the WHOLE fragment — every element AND text
+// node — into the live document, so multi-node and bare-text markup round-trips instead of collapsing
+// to the first element or getting wrapped in a span. Inline on*-handlers, which the <template> defers
+// but insertion would make live, are stripped first (see stripEventHandlers).
+function nodesFromHtml(doc: Document, html: string): Node[] {
   const tpl = doc.createElement('template');
   tpl.innerHTML = html;
-  const first = tpl.content.firstElementChild;
-  if (first) return doc.importNode(first, true);
-  const span = doc.createElement('span');
-  span.textContent = html;
-  return span;
+  stripEventHandlers(tpl.content);
+  const frag = doc.importNode(tpl.content, true);
+  return Array.from(frag.childNodes);
+}
+
+// Drop inline event-handler attributes (`onclick`, `onerror`, `onload`, …) from every imported
+// element. A <template> defers them, but insertion makes them live — stripping keeps agent-authored
+// markup from running page JS once inserted. Resource attrs (`src`/`href`) stay: a plain load is not
+// code execution and the markup is agent-authored, not remote.
+function stripEventHandlers(frag: DocumentFragment): void {
+  for (const el of frag.querySelectorAll('*')) {
+    for (const name of el.getAttributeNames()) {
+      if (name.toLowerCase().startsWith('on')) el.removeAttribute(name);
+    }
+  }
 }
 
 function serialize(node: Node): string {
@@ -191,7 +204,9 @@ export function createMutator(doc: Document = document): Mutator {
   }
 
   function setText(el: Element, value: string): ElementMutation<string> {
-    const before = el.textContent ?? '';
+    // Capture the element's full markup (innerHTML), not the flattened textContent: an element with
+    // child nodes must round-trip its structure on undo, and the recorded before-state stays lossless.
+    const before = el.innerHTML;
     el.textContent = value;
     return {
       kind: 'setText',
@@ -199,7 +214,7 @@ export function createMutator(doc: Document = document): Mutator {
       before,
       after: value,
       undo() {
-        el.textContent = before;
+        el.innerHTML = before;
       },
     };
   }
@@ -257,16 +272,20 @@ export function createMutator(doc: Document = document): Mutator {
     html: string,
     position: InsertPosition = 'beforeend',
   ): ElementMutation<{ html: string }> {
-    const node = nodeFromHtml(doc, html);
-    insertAt(ref, node, position);
-    const after = serialize(node);
+    // Keep a ref to EVERY inserted top-level node (a fragment can carry several elements + text
+    // nodes) so undo removes the whole set and `after` serializes all of it, not just the first.
+    const nodes = nodesFromHtml(doc, html);
+    const frag = doc.createDocumentFragment();
+    for (const node of nodes) frag.appendChild(node);
+    insertAt(ref, frag, position);
+    const after = nodes.map(serialize).join('');
     return {
       kind: 'insertNode',
       computed: { html: after },
       before: '',
       after,
       undo() {
-        node.parentNode?.removeChild(node);
+        for (const node of nodes) node.parentNode?.removeChild(node);
       },
     };
   }

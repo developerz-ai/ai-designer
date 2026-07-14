@@ -36,6 +36,10 @@ export interface Interactor {
   /** `signal` cancels a pending `waitFor` early (settles `met:false`, like a timeout); every other
    *  action is synchronous and ignores it. */
   run(tool: InteractTool, signal?: AbortSignal): Promise<ToolResult>;
+  /** Un-arm any native dialog override a `handleDialog` installed, restoring the page's own
+   *  `alert`/`confirm`/`prompt`. No-op if nothing was armed. Scopes the override so it never leaks
+   *  past the action it was armed for. */
+  restoreDialogs(): void;
 }
 
 // waitFor bounds: a plain `timeMs` delay defaults to 5s; the schema hard-caps it at 30s so a stuck
@@ -238,8 +242,11 @@ function selectOption(el: Element, value: string, doc: Document): ToolResult {
       (o) => o.textContent?.trim() === value || o.getAttribute('aria-label')?.trim() === value,
     );
   if (!match) return fail(`No listbox option matches "${value}"`);
-  for (const o of options) o.setAttribute('aria-selected', o === match ? 'true' : 'false');
+  // Actuate the real selection by clicking the app's option — its handler owns aria-selected /
+  // aria-activedescendant. The driver never fakes that app-owned state (it would diverge from and
+  // go unrecorded by the page's own model).
   if (match instanceof HTMLElement) match.click();
+  else fireMouse(match, 'click');
   return ok({ value }, pickUnique(el, doc));
 }
 
@@ -368,21 +375,38 @@ function waitFor(
 
 // --- native dialog arming (content world) ---------------------------------
 
-// Arm an auto-answer for native dialogs (`alert`/`confirm`/`prompt`) the agent's own actions
-// trigger, so a click/type that raises one doesn't stall the turn. Content scripts run in an
-// ISOLATED world, so this governs dialogs raised in the content world; page-world native dialogs
-// (and `beforeunload`) are answered by the service worker over the debugger protocol (a later
-// slice-13 SW task). Kept honest + typed here; the SW mirrors the same policy.
-function handleDialog(accept: boolean, promptText: string | undefined, win: Window): ToolResult {
-  win.alert = (): void => {};
-  win.confirm = (): boolean => accept;
-  win.prompt = (): string | null => (accept ? (promptText ?? '') : null);
-  return ok({ accept, ...(promptText !== undefined ? { promptText } : {}) });
-}
+// The native dialog fns to restore. Snapshot before the FIRST arm so re-arming never captures an
+// already-overridden fn as the "original"; null once restored (or never armed).
+type NativeDialogs = Pick<Window, 'alert' | 'confirm' | 'prompt'>;
 
 export function createInteractor(deps: InteractorDeps = {}): Interactor {
   const doc = deps.doc ?? document;
   const win = deps.win ?? doc.defaultView ?? window;
+
+  // Arm an auto-answer for native dialogs (`alert`/`confirm`/`prompt`) the agent's own actions
+  // trigger, so a click/type that raises one doesn't stall the turn. Content scripts run in an
+  // ISOLATED world, so this governs dialogs raised in the content world; page-world native dialogs
+  // (and `beforeunload`) are answered by the service worker over the debugger protocol (a later
+  // slice-13 SW task). Kept honest + typed here; the SW mirrors the same policy. The override is
+  // reversible via `restoreDialogs` so it never leaks past the action it was armed for.
+  let savedDialogs: NativeDialogs | null = null;
+
+  function handleDialog(accept: boolean, promptText: string | undefined): ToolResult {
+    if (!savedDialogs)
+      savedDialogs = { alert: win.alert, confirm: win.confirm, prompt: win.prompt };
+    win.alert = (): void => {};
+    win.confirm = (): boolean => accept;
+    win.prompt = (): string | null => (accept ? (promptText ?? '') : null);
+    return ok({ accept, ...(promptText !== undefined ? { promptText } : {}) });
+  }
+
+  function restoreDialogs(): void {
+    if (!savedDialogs) return;
+    win.alert = savedDialogs.alert;
+    win.confirm = savedDialogs.confirm;
+    win.prompt = savedDialogs.prompt;
+    savedDialogs = null;
+  }
 
   const withElement = (selector: string, apply: (el: Element) => ToolResult): ToolResult => {
     const el = queryOne(doc, selector);
@@ -412,9 +436,9 @@ export function createInteractor(deps: InteractorDeps = {}): Interactor {
       case 'waitFor':
         return waitFor(tool, doc, win, signal);
       case 'handleDialog':
-        return handleDialog(tool.accept, tool.promptText, win);
+        return handleDialog(tool.accept, tool.promptText);
     }
   }
 
-  return { run };
+  return { run, restoreDialogs };
 }

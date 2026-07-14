@@ -170,15 +170,34 @@ describe('selectOption', () => {
     expect((document.getElementById('s') as HTMLSelectElement).value).toBe('b');
   });
 
-  it('selects an ARIA listbox option by its text and marks aria-selected', async () => {
+  it('selects an ARIA listbox option by clicking it, letting the app own aria-selected', async () => {
+    mount(
+      '<ul id="lb" role="listbox">' + '<li role="option">One</li><li role="option">Two</li></ul>',
+    );
+    // A realistic listbox sets aria-selected on click; the driver clicks the option, never writes ARIA.
+    const options = document.querySelectorAll('#lb [role="option"]');
+    for (const o of options) {
+      o.addEventListener('click', () => {
+        for (const x of options) x.setAttribute('aria-selected', x === o ? 'true' : 'false');
+      });
+    }
+
+    const result = await interactor.run({ type: 'selectOption', selector: '#lb', value: 'Two' });
+
+    expect(result.ok).toBe(true);
+    expect(options[0]?.getAttribute('aria-selected')).toBe('false');
+    expect(options[1]?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('does not fake aria-selected when the app owns no click handler', async () => {
     mount(
       '<ul id="lb" role="listbox">' + '<li role="option">One</li><li role="option">Two</li></ul>',
     );
     const result = await interactor.run({ type: 'selectOption', selector: '#lb', value: 'Two' });
     const options = document.querySelectorAll('#lb [role="option"]');
     expect(result.ok).toBe(true);
-    expect(options[0]?.getAttribute('aria-selected')).toBe('false');
-    expect(options[1]?.getAttribute('aria-selected')).toBe('true');
+    // The driver actuates via a real click and leaves app-owned ARIA to the app — never forges it.
+    expect(options[1]?.hasAttribute('aria-selected')).toBe(false);
   });
 
   it('errors when no option matches', async () => {
@@ -266,7 +285,8 @@ describe('waitFor', () => {
 
 describe('handleDialog', () => {
   afterEach(() => {
-    // handleDialog reassigns window.confirm/alert/prompt; restore between cases.
+    // handleDialog reassigns window.confirm/alert/prompt; un-arm between cases so it never leaks.
+    interactor.restoreDialogs();
     vi.restoreAllMocks();
   });
 
@@ -285,5 +305,15 @@ describe('handleDialog', () => {
     await interactor.run({ type: 'handleDialog', accept: false });
     expect(window.confirm('sure?')).toBe(false);
     expect(window.prompt('name?')).toBeNull();
+  });
+
+  it('restoreDialogs puts back the native alert/confirm/prompt', async () => {
+    const original = window.confirm;
+    const scoped = createInteractor();
+    await scoped.run({ type: 'handleDialog', accept: true });
+    expect(window.confirm('sure?')).toBe(true); // armed override answers
+
+    scoped.restoreDialogs();
+    expect(window.confirm).toBe(original); // the page's own dialog fn is back — no leak
   });
 });

@@ -251,9 +251,17 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     }
   };
 
-  // Outlines are viewport-fixed, so they must follow the page as it scrolls / resizes.
+  // Outlines are viewport-fixed, so they must follow the page as it scrolls / resizes. A removed
+  // target drops its outline (mirrors overlay.onReflow) rather than pinning a stale 0×0 box at origin.
   const onReflow = (): void => {
-    if (hovered) renderHover(hovered);
+    if (hovered) {
+      if (hovered.isConnected) renderHover(hovered);
+      else {
+        hideHover();
+        hovered = null;
+      }
+    }
+    for (const target of selected) if (!target.isConnected) selected.delete(target);
     renderSelected();
   };
 

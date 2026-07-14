@@ -77,6 +77,15 @@ describe('resolveSelector', () => {
     }
   });
 
+  it('escapes both backslash and quote in a data-attr value, staying querySelector-valid', () => {
+    // A value containing a backslash used to emit `[data-testid="a\b"]` — broken, since a lone `\b`
+    // is a CSS escape. The backslash must be escaped BEFORE the quote.
+    const [top] = resolveSelector(el({ tagName: 'DIV', attrs: { 'data-testid': 'a\\b"c' } }));
+    expect(top?.strategy).toBe('data-attr');
+    expect(top?.value).toBe('[data-testid="a\\\\b\\"c"]');
+    expect(() => document.querySelector(top?.value ?? '')).not.toThrow();
+  });
+
   it('emits only querySelector-valid candidate values across every strategy', () => {
     const candidates = resolveSelector(
       el({

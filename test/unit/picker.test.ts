@@ -114,6 +114,20 @@ describe('hover highlight + pill', () => {
     expect(root.querySelector('.dz-badge')?.classList.contains('dz-hidden')).toBe(true);
   });
 
+  it('drops the hover outline on reflow when the hovered target left the DOM', () => {
+    document.body.innerHTML = '<button id="b" data-testid="cta">x</button>';
+    const { picker } = spawn();
+    picker.start();
+    const btn = byId('b');
+    over(btn);
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(false);
+
+    btn.remove(); // target removed while still tracked
+    document.dispatchEvent(new Event('scroll')); // reflow re-measures — must prune, not pin a 0×0 box
+
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
+  });
+
   it('shows the fragility badge for a brittle selector', () => {
     document.body.innerHTML = '<section id="s"><span></span><span></span></section>';
     const { picker } = spawn();

@@ -127,6 +127,18 @@ describe('combobox', () => {
     expect(acted(result).state?.value).toBe('Banana');
   });
 
+  it('never fakes app-owned aria-expanded — the app opens/closes the listbox itself', async () => {
+    mount(
+      `<input id="c" role="combobox" aria-controls="lb" />
+       <ul id="lb" role="listbox">
+         <li role="option">Apple</li><li role="option">Banana</li>
+       </ul>`,
+    );
+    // No app handler sets aria-expanded here, so the driver must leave it absent, not forge it.
+    await driver.run({ type: 'combobox', selector: '#c', value: 'Banana' });
+    expect(byId('c').hasAttribute('aria-expanded')).toBe(false);
+  });
+
   it('errors when no option matches', async () => {
     mount(
       `<input id="c" role="combobox" aria-controls="lb" />
