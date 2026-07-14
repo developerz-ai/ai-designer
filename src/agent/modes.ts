@@ -67,10 +67,15 @@ export function resolveMode(explicit: Mode | undefined, text: string): Mode | un
 // --- prompt addenda + tool emphasis ----------------------------------------
 
 const COPY_ADDENDUM = `**This turn is a copy/design task.** Read the reference's identity first —
-\`extractIdentity\` / \`describe\`, browsing it in a background tab (\`browse\`) when it's a live site —
-before touching the user's page. If the user has their own site, read it, then the reference, then
-reconcile the two and apply the palette/type/layout tastefully with \`setStyle\`/\`setText\`. Don't
-just imitate — call out what you improved and why.`;
+call \`extractIdentity\` on it (role-tagged palette + type scale + spacing/radius/shadow rhythm),
+browsing it in a background tab (\`browse\`) when it's a live site — before touching the user's page.
+Then **apply that identity's palette and type to the user's page**: reuse its color roles and font
+scale rather than inventing new ones. If the user has their own site, read it, then the reference,
+then reconcile the two and apply the palette/type/layout tastefully with \`setStyle\`/\`setText\`.
+Prefer \`describe\` over a \`screenshot\` for a text read of layout/content — reach for vision
+(\`screenshot\`, \`describe\`'s \`scene\` mode) only to verify a visual change, not to survey structure
+you could get from \`extractIdentity\`/\`describe\`/\`a11ySnapshot\` for free. Don't just imitate — call
+out what you improved and why.`;
 
 const DEBUG_ADDENDUM = `**This turn is a debug task.** Start diagnostics immediately: \`diagnostics\`
 (\`drain\` for buffered runtime/network signals, \`scan\` for a fresh a11y/layout pass) before you
@@ -80,7 +85,16 @@ Every finding you report needs repro steps and evidence — a hunch is not a dia
 
 /** Preferred tool-call order for a mode, surfaced to tests/callers as data (not an enforced
  *  filter — every tool stays available; this only informs the addendum's emphasis). */
-const COPY_TOOL_EMPHASIS = ['browse', 'query', 'getStyles', 'a11ySnapshot', 'setStyle', 'setText'];
+const COPY_TOOL_EMPHASIS = [
+  'browse',
+  'extractIdentity',
+  'describe',
+  'query',
+  'getStyles',
+  'a11ySnapshot',
+  'setStyle',
+  'setText',
+];
 const DEBUG_TOOL_EMPHASIS = ['diagnostics', 'a11ySnapshot', 'getStyles', 'screenshot', 'query'];
 
 export interface ModeGuidance {

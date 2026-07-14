@@ -59,8 +59,13 @@ describe('modeGuidance', () => {
     expect(addenda.modes).toHaveLength(1);
     expect(addenda.modes?.[0]).toMatch(/copy\/design task/i);
     expect(addenda.modes?.[0]).toContain('browse');
+    expect(addenda.modes?.[0]).toContain('extractIdentity');
+    expect(addenda.modes?.[0]).toMatch(/apply that identity's palette and type/i);
+    expect(addenda.modes?.[0]).toMatch(/prefer `describe` over a `screenshot`/i);
     expect(modeGuidance('copy').toolEmphasis).toEqual([
       'browse',
+      'extractIdentity',
+      'describe',
       'query',
       'getStyles',
       'a11ySnapshot',

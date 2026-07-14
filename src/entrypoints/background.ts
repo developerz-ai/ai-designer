@@ -17,7 +17,7 @@ import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
-import { type GenerateVision, runInspect } from '@/agent/vision';
+import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpConnectionSpec } from '@/mcp/client';
@@ -27,6 +27,7 @@ import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
   ControlTool,
+  DescribeCmd,
   DesignRead,
   DesignReadRequest,
   DomTool,
@@ -53,10 +54,16 @@ import { initSentry } from '@/shared/sentry';
 // The preset the legacy OpenRouter-only RPCs (save-openrouter-key/set-model) map onto.
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
-// Content-routed tool transport: both the slice-05 read/mutate `DomTool`s and the slice-13
-// page-driving `ControlTool`s ride the same bus round-trip to the target frame's content script,
-// so one dispatch serves both (assignable to `DomDispatch` and `ControlDispatch`/`ReadImagesDispatch`).
-type ContentDispatch = (msg: DomTool | ControlTool, signal?: AbortSignal) => Promise<ToolResult>;
+// Content-routed tool transport: the slice-05 read/mutate `DomTool`s, the slice-13 page-driving
+// `ControlTool`s, and the slice-14 describe-family `DescribeCmd`s (`describe`'s text modes,
+// `extractIdentity`, `readImageContent`) all ride the same bus round-trip to the target frame's
+// content script, so one dispatch serves all three (assignable to `DomDispatch`,
+// `ControlDispatch`/`ReadImagesDispatch`, `IdentityDispatch`, and `DescribeDispatch`/
+// `ReadImageContentDispatch`).
+type ContentDispatch = (
+  msg: DomTool | ControlTool | DescribeCmd,
+  signal?: AbortSignal,
+) => Promise<ToolResult>;
 
 // Let the page paint after a programmatic scroll before grabbing the viewport for a full-page stitch.
 const SCROLL_SETTLE_MS = 200;
@@ -322,6 +329,21 @@ export default defineBackground(() => {
                 msg,
                 signal,
               ),
+          },
+          // `extractIdentity` + `describe`'s text modes/`readImageContent` are cheap content
+          // round-trips (the same `content` transport as the DOM tools); `describe`'s `scene` mode
+          // is the one that costs a vision call, so it's the SW-orchestrated capture+generate path
+          // (mirrors `vision.inspect` above, reusing `runDescribeScene`).
+          identity: content,
+          describe: {
+            describe: content,
+            scene: (msg, signal) =>
+              runDescribeScene(
+                { model, generate: visionGenerate, capture: screenshot },
+                msg,
+                signal,
+              ),
+            readImageContent: content,
           },
           emit: postToPanel,
           // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.

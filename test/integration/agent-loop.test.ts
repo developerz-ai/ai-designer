@@ -8,13 +8,15 @@ import type {
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { runTurn } from '@/agent/loop';
+import type { DescribeToolDeps } from '@/agent/tools/describe';
 import type { DomDispatch } from '@/agent/tools/dom';
+import type { IdentityDispatch } from '@/agent/tools/identity';
 import type { InteractDeps } from '@/agent/tools/interact';
 import { createSessionTools } from '@/agent/tools/session';
 import type { VisionToolDeps } from '@/agent/tools/vision';
 import { ChangesetStore } from '@/changeset/store';
 import { emptyChangeset } from '@/shared/changeset';
-import type { ControlTool, DomTool, NavIntent, SwToPanel } from '@/shared/messages';
+import type { ControlTool, DescribeInput, DomTool, NavIntent, SwToPanel } from '@/shared/messages';
 
 // Integration: the slice-04 spine — a `user-message` turn runs the ToolLoopAgent in the SW
 // against a MOCKED model (no network), streams tokens + a tool-call to the panel sink, and
@@ -487,5 +489,150 @@ describe('integration: browser-control tools (interact/tabs/vision) wire in and 
 
     expect(outcome.stop).toBe('done');
     expect(outcome.usage).toMatchObject({ waitCalls: 0, navCalls: 0, visionCalls: 0 });
+  });
+});
+
+// Slice 14: `identity`/`describe` are optional RunTurnArgs deps (mirroring `vision`) that the loop
+// turns into the `extractIdentity`/`describe`/`readImageContent` tools — copy mode leans on
+// `extractIdentity` first, and `describe`'s `scene` mode is the one leg that must route to a
+// distinct (costlier) dispatch than its cheap `layout`/`content` DOM path.
+
+function fakeIdentity() {
+  const calls: unknown[] = [];
+  const dispatch: IdentityDispatch = async (input) => {
+    calls.push(input);
+    return {
+      type: 'tool-result',
+      ok: true,
+      data: {
+        palette: [{ hex: '#f97316', role: 'accent', count: 3 }],
+        type: { families: ['Inter'], sizes: [16], weights: [400] },
+        spacing: [8],
+        radius: [4],
+        shadows: [],
+      },
+    };
+  };
+  return { calls, dispatch };
+}
+
+function fakeDescribe() {
+  const textCalls: DescribeInput[] = [];
+  const sceneCalls: DescribeInput[] = [];
+  const deps: DescribeToolDeps = {
+    describe: async (input) => {
+      textCalls.push(input);
+      return { type: 'tool-result', ok: true, data: { mode: input.mode, text: 'nav/hero/footer' } };
+    },
+    scene: async (input) => {
+      sceneCalls.push(input);
+      return {
+        type: 'tool-result',
+        ok: true,
+        data: { mode: 'scene', text: 'dark hero, orange CTA' },
+      };
+    },
+    readImageContent: async () => ({
+      type: 'tool-result',
+      ok: true,
+      data: { description: 'a logo' },
+    }),
+  };
+  return { textCalls, sceneCalls, deps };
+}
+
+describe('integration: identity/describe tools (slice 14) wire in and route scene separately', () => {
+  it('offers extractIdentity and routes the call to the injected identity dispatch', async () => {
+    const { calls, dispatch } = fakeIdentity();
+    const { emit } = collectEmit();
+    const model = repeatedToolCallModel('extractIdentity', {}, 1);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'copy nvidia.com' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      identity: dispatch,
+    });
+
+    expect(calls).toEqual([{ type: 'extractIdentity' }]);
+    expect(outcome.stop).toBe('done');
+  });
+
+  it('routes describe layout/content to the cheap dispatch and scene to the vision dispatch', async () => {
+    const { textCalls, sceneCalls, deps } = fakeDescribe();
+    const { emit } = collectEmit();
+    const model = new MockLanguageModelV4({
+      doStream: [
+        stream([
+          { type: 'stream-start', warnings: [] },
+          {
+            type: 'tool-call',
+            toolCallId: 't1',
+            toolName: 'describe',
+            input: JSON.stringify({ mode: 'layout' }),
+          },
+          finish(usage(50, 10), 'tool-calls'),
+        ]),
+        stream([
+          { type: 'stream-start', warnings: [] },
+          {
+            type: 'tool-call',
+            toolCallId: 't2',
+            toolName: 'describe',
+            input: JSON.stringify({ mode: 'scene' }),
+          },
+          finish(usage(50, 10), 'tool-calls'),
+        ]),
+        stream([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'x' },
+          { type: 'text-delta', id: 'x', delta: 'Done.' },
+          { type: 'text-end', id: 'x' },
+          finish(usage(50, 10), 'stop'),
+        ]),
+      ],
+    });
+
+    await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'describe this page' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      describe: deps,
+    });
+
+    expect(textCalls).toEqual([{ type: 'describe', mode: 'layout' }]);
+    expect(sceneCalls).toEqual([{ type: 'describe', mode: 'scene' }]);
+  });
+
+  it('does not offer extractIdentity/describe/readImageContent when their deps are omitted', async () => {
+    const { emit } = collectEmit();
+    const model = new MockLanguageModelV4({
+      doStream: [
+        stream([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: '1' },
+          { type: 'text-delta', id: '1', delta: 'No identity/describe tools needed here.' },
+          { type: 'text-end', id: '1' },
+          finish(usage(10, 5), 'stop'),
+        ]),
+      ],
+    });
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'hi' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+    });
+
+    expect(outcome.stop).toBe('done');
   });
 });
