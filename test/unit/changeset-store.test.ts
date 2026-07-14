@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ChangesetStore } from '@/changeset/store';
-import { type Changeset, type Edit, emptyChangeset } from '@/shared/changeset';
+import {
+  ChangesetStore,
+  createSessionChangesetPersister,
+  type SessionStorageArea,
+} from '@/changeset/store';
+import { type Changeset, type ChangesetState, type Edit, emptyChangeset } from '@/shared/changeset';
 
 // changeset/store.ts unit: the session's live changeset with a linear undo/redo history. Pure and
 // chrome-free — no storage fake needed (the SessionStore owns durability; see session.test.ts).
@@ -94,5 +98,148 @@ describe('ChangesetStore undo/redo', () => {
     expect(store.canRedo).toBe(false);
     expect(intents(store.current)).toEqual(['a', 'c']);
     expect(store.redo()).toBeUndefined();
+  });
+});
+
+describe('ChangesetStore serialization (full undo/redo state)', () => {
+  it('snapshot captures the changeset AND the redo stack', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // b -> redo stack
+
+    const snap = store.snapshot();
+    expect(intents(snap.changeset)).toEqual(['a']);
+    expect(snap.redoStack.map((e) => e.intent)).toEqual(['b']);
+  });
+
+  it('fromState rehydrates undo/redo where it left off', () => {
+    const original = new ChangesetStore(seed());
+    original.record(edit('a'));
+    original.record(edit('b'));
+    original.undo(); // b undone, still redoable
+
+    const restored = ChangesetStore.fromState(original.snapshot());
+    expect(intents(restored.current)).toEqual(['a']);
+    expect(restored.canRedo).toBe(true);
+    expect(restored.redo()?.intent).toBe('b'); // the undone edit survived the round-trip
+    expect(intents(restored.current)).toEqual(['a', 'b']);
+  });
+
+  it('snapshot is a copy — later store mutations do not leak into a held snapshot', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.undo();
+    const snap = store.snapshot();
+    store.redo(); // drains the redo stack after the snapshot was taken
+
+    expect(snap.redoStack).toHaveLength(1); // held snapshot is unaffected
+  });
+});
+
+describe('ChangesetStore persist port', () => {
+  it('calls persist with the full state after every mutation', () => {
+    const states: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), {
+      persist: (s) => {
+        states.push(s);
+      },
+    });
+
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo();
+
+    expect(states).toHaveLength(3);
+    expect(states.at(-1)?.changeset.edits.map((e) => e.intent)).toEqual(['a']);
+    expect(states.at(-1)?.redoStack.map((e) => e.intent)).toEqual(['b']);
+  });
+
+  it('swallows a rejected async persist — the in-memory state stays authoritative', () => {
+    const store = new ChangesetStore(seed(), { persist: () => Promise.reject(new Error('quota')) });
+    expect(() => store.record(edit('a'))).not.toThrow();
+    expect(store.size).toBe(1);
+  });
+});
+
+// Minimal in-memory chrome.storage.session-shaped fake, round-tripping values through JSON to mirror
+// storage serialization (mirrors test/unit/session.test.ts's fake, scoped to the persister's surface).
+function fakeArea(): SessionStorageArea & { backing: Map<string, unknown> } {
+  const backing = new Map<string, unknown>();
+  return {
+    backing,
+    get(keys) {
+      const names = keys == null ? [...backing.keys()] : Array.isArray(keys) ? keys : [keys];
+      const out: Record<string, unknown> = {};
+      for (const name of names) if (backing.has(name)) out[name] = backing.get(name);
+      return Promise.resolve(out);
+    },
+    set(items) {
+      for (const [name, value] of Object.entries(items))
+        backing.set(name, JSON.parse(JSON.stringify(value)));
+      return Promise.resolve();
+    },
+    remove(keys) {
+      for (const k of Array.isArray(keys) ? keys : [keys]) backing.delete(k);
+      return Promise.resolve();
+    },
+  };
+}
+
+describe('createSessionChangesetPersister (chrome.storage.session)', () => {
+  it('save then load round-trips the full state, keyed by tab', async () => {
+    const area = fakeArea();
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo();
+
+    const persister = createSessionChangesetPersister(7, area);
+    await persister.save(store.snapshot());
+
+    expect([...area.backing.keys()]).toEqual(['changeset:7']);
+    const loaded = await persister.load();
+    expect(loaded?.changeset.edits.map((e) => e.intent)).toEqual(['a']);
+    expect(loaded?.redoStack.map((e) => e.intent)).toEqual(['b']);
+  });
+
+  it('wiring save as the store persist port mirrors each mutation to storage', async () => {
+    const area = fakeArea();
+    const persister = createSessionChangesetPersister(3, area);
+    const store = new ChangesetStore(seed(), { persist: persister.save });
+
+    store.record(edit('a'));
+    await Promise.resolve(); // let the fire-and-forget write settle
+
+    const loaded = await persister.load();
+    expect(loaded?.changeset.edits.map((e) => e.intent)).toEqual(['a']);
+  });
+
+  it('load returns undefined for an unknown tab', async () => {
+    expect(await createSessionChangesetPersister(99, fakeArea()).load()).toBeUndefined();
+  });
+
+  it('load tolerates a legacy bare-Changeset record (empty redo tail)', async () => {
+    const area = fakeArea();
+    const bare: Changeset = { ...seed(), edits: [edit('a')] };
+    area.backing.set('changeset:5', JSON.parse(JSON.stringify(bare)));
+
+    const loaded = await createSessionChangesetPersister(5, area).load();
+    expect(loaded?.changeset.edits.map((e) => e.intent)).toEqual(['a']);
+    expect(loaded?.redoStack).toEqual([]);
+  });
+
+  it('load drops a corrupt record rather than trusting it', async () => {
+    const area = fakeArea();
+    area.backing.set('changeset:1', { nope: true });
+    expect(await createSessionChangesetPersister(1, area).load()).toBeUndefined();
+  });
+
+  it('clear forgets the persisted state', async () => {
+    const area = fakeArea();
+    const persister = createSessionChangesetPersister(2, area);
+    await persister.save({ changeset: seed(), redoStack: [] });
+    await persister.clear();
+    expect(await persister.load()).toBeUndefined();
   });
 });

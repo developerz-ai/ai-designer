@@ -11,9 +11,12 @@
 
 import { z } from 'zod';
 import { clearAuth } from './auth';
+import type { OriginRepoMap } from './handoff';
 
 // One `storage.local` key holds the whole list (small, always read/written together).
 const SERVERS_KEY = 'mcp:servers';
+// The origin→repo map for one-click Ship (docs/idea/mcp.md "Connecting"); one small record.
+const ORIGIN_REPO_KEY = 'mcp:origin-repo';
 
 /** Transport to the backend. Only HTTP-streamable today (docs/idea/mcp.md); the enum leaves
  *  room for more (e.g. SSE) without a schema migration. */
@@ -78,4 +81,33 @@ export async function removeServer(id: string): Promise<void> {
     await chrome.storage.local.set({ [SERVERS_KEY]: next });
   }
   await clearAuth(id);
+}
+
+/** The persisted origin→repo map that backs one-click Ship (`src/mcp/handoff.ts` `resolveRepo`).
+ *  Non-string / empty entries are dropped on read so a corrupt write can't break repo resolution —
+ *  same defensive posture as `listServers`. */
+export async function getOriginRepoMap(): Promise<OriginRepoMap> {
+  const got = await chrome.storage.local.get(ORIGIN_REPO_KEY);
+  const raw = got[ORIGIN_REPO_KEY];
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const map: OriginRepoMap = {};
+  for (const [origin, repo] of Object.entries(raw as Record<string, unknown>)) {
+    if (origin && typeof repo === 'string' && repo) map[origin] = repo;
+  }
+  return map;
+}
+
+/** Map a page origin (`host[:port]`) to a repo slug (`owner/name`), replacing any prior mapping. */
+export async function setOriginRepo(origin: string, repo: string): Promise<void> {
+  const map = await getOriginRepoMap();
+  map[origin] = repo;
+  await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
+}
+
+/** Forget a page origin's repo mapping. No-op when the origin isn't mapped. */
+export async function clearOriginRepo(origin: string): Promise<void> {
+  const map = await getOriginRepoMap();
+  if (!(origin in map)) return;
+  delete map[origin];
+  await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
 }

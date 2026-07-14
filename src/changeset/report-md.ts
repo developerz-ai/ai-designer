@@ -21,6 +21,7 @@ import type {
   ResponsiveSeverity,
   ResponsiveShot,
 } from '@/shared/messages';
+import type { Report, ReportIdentity, ReportImage, ReportLink } from '@/shared/report';
 
 /** One breakpoint's `checkResponsive` result, labeled for the report — the shape a turn accumulates
  *  by calling `checkResponsive` once per breakpoint (after `setDevice`) across a debug/copy pass. */
@@ -146,4 +147,77 @@ export function renderResponsiveShots(shots: readonly ResponsiveShot[]): string 
   });
 
   return ['### Responsive captures', '', ...items].join('\n\n');
+}
+
+// --- the assembled report (slice 07 / PR12) ----------------------------------------------------
+
+/**
+ * Render a full agent-authored {@link Report} to a concise, paste-ready Markdown brief — the thing
+ * that downloads when no coding backend is connected, or dispatches as a task spec when one is
+ * (docs/idea/handoff.md). Reads like a senior dev's review: a summary, a design-tokens table, then
+ * findings / problems / pros / cons / recommendations as bullets, reference links, and the embedded
+ * before/after screenshots. Every section is omitted when its list is empty, so a sparse report
+ * never renders a bare heading. Deterministic (same `Report`, same Markdown) — the golden-file unit.
+ */
+export function toMarkdown(report: Report): string {
+  const sections: string[] = ['# Design review'];
+
+  const summary = report.summary.trim();
+  if (summary) sections.push(summary);
+
+  const tokens = renderReportTokens(report.identity);
+  if (tokens) sections.push(tokens);
+
+  for (const section of [
+    bulletSection('Findings', report.findings),
+    bulletSection('Problems', report.problems),
+    bulletSection('Pros', report.pros),
+    bulletSection('Cons', report.cons),
+    bulletSection('Recommendations', report.recommendations),
+    linkSection(report.links),
+    imageSection(report.images),
+  ]) {
+    if (section) sections.push(section);
+  }
+
+  return sections.join('\n\n');
+}
+
+/** The report's design identity as a compact `Token | Values` table — the code-fenced token lists
+ *  (`#hex (role)`, families, spacing) the brief speaks in. `''` when nothing was extracted. */
+function renderReportTokens(identity: ReportIdentity): string {
+  const rows: string[] = [];
+  const row = (label: string, values: readonly string[]): void => {
+    if (values.length > 0) rows.push(`| ${label} | ${values.map((v) => `\`${v}\``).join(', ')} |`);
+  };
+  row('Colors', identity.colors);
+  row('Fonts', identity.fonts);
+  row('Spacing', identity.spacing);
+  if (rows.length === 0) return '';
+  return ['## Design tokens', '', '| Token | Values |', '| --- | --- |', ...rows].join('\n');
+}
+
+/** A `## heading` + bullet list, or `''` for an empty list (no bare heading). */
+function bulletSection(heading: string, items: readonly string[]): string {
+  if (items.length === 0) return '';
+  return [`## ${heading}`, '', ...items.map((item) => `- ${item}`)].join('\n');
+}
+
+/** The `## References` bullets as Markdown links, or `''` when there are none. */
+function linkSection(links: readonly ReportLink[]): string {
+  if (links.length === 0) return '';
+  return ['## References', '', ...links.map((l) => `- [${l.label}](${l.url})`)].join('\n');
+}
+
+/** The `## Screenshots` section: each image embedded under its bold label + optional italic caption,
+ *  or `''` for an empty set. `src` is a `data:` or `http(s)` URL the Markdown viewer inlines. */
+function imageSection(images: readonly ReportImage[]): string {
+  if (images.length === 0) return '';
+  const items = images.map((img) => {
+    const lines = [`**${img.label}**`];
+    if (img.caption) lines.push('', `_${img.caption}_`);
+    lines.push('', `![${img.label}](${img.src})`);
+    return lines.join('\n');
+  });
+  return ['## Screenshots', ...items].join('\n\n');
 }

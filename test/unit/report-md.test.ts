@@ -4,8 +4,10 @@ import {
   renderIdentityTokens,
   renderResponsiveFindings,
   renderResponsiveShots,
+  toMarkdown,
 } from '@/changeset/report-md';
 import type { CheckResponsiveResult, IdentityResult, ResponsiveShot } from '@/shared/messages';
+import type { Report } from '@/shared/report';
 
 // report-md.ts unit (slice 14/16 hooks for PR12's report): `renderIdentityTokens` turns an
 // extracted `IdentityResult` into a Markdown tokens table + typography/spacing sections;
@@ -155,5 +157,138 @@ describe('renderResponsiveShots', () => {
 
   it('returns an empty string for an empty shot set', () => {
     expect(renderResponsiveShots([])).toBe('');
+  });
+});
+
+// toMarkdown: the full Report → paste-ready brief (slice 07 / PR12). Golden-file: a complete sample
+// report renders to an exact, deterministic Markdown document; the omission cases prove a sparse
+// report never emits a bare heading.
+
+const FULL_REPORT: Report = {
+  summary: 'Refreshed the pricing hero: warmer accent, tighter vertical rhythm.',
+  findings: ['CTA restyled to the brand accent', 'Hero heading bumped to 32px'],
+  problems: ['Nav overflows the viewport at 375px'],
+  pros: ['Consistent 8px spacing scale'],
+  cons: ['Accent contrast is borderline on white'],
+  recommendations: ['Add a hover state to the CTA'],
+  identity: {
+    colors: ['#ffffff (background)', '#111827 (foreground)', '#f97316 (accent)'],
+    fonts: ['Inter', 'sans-serif'],
+    spacing: ['8px', '16px', '24px'],
+  },
+  links: [
+    { label: 'Edited page', url: 'https://shop.example.com/pricing' },
+    { label: 'Reference', url: 'https://stripe.com/pricing' },
+  ],
+  images: [
+    { label: 'Hero — before', src: 'data:image/png;base64,BEFORE' },
+    { label: 'Hero — after', src: 'data:image/png;base64,AFTER', caption: 'Accent applied' },
+  ],
+};
+
+const GOLDEN = `
+# Design review
+
+Refreshed the pricing hero: warmer accent, tighter vertical rhythm.
+
+## Design tokens
+
+| Token | Values |
+| --- | --- |
+| Colors | \`#ffffff (background)\`, \`#111827 (foreground)\`, \`#f97316 (accent)\` |
+| Fonts | \`Inter\`, \`sans-serif\` |
+| Spacing | \`8px\`, \`16px\`, \`24px\` |
+
+## Findings
+
+- CTA restyled to the brand accent
+- Hero heading bumped to 32px
+
+## Problems
+
+- Nav overflows the viewport at 375px
+
+## Pros
+
+- Consistent 8px spacing scale
+
+## Cons
+
+- Accent contrast is borderline on white
+
+## Recommendations
+
+- Add a hover state to the CTA
+
+## References
+
+- [Edited page](https://shop.example.com/pricing)
+- [Reference](https://stripe.com/pricing)
+
+## Screenshots
+
+**Hero — before**
+
+![Hero — before](data:image/png;base64,BEFORE)
+
+**Hero — after**
+
+_Accent applied_
+
+![Hero — after](data:image/png;base64,AFTER)
+`.trim();
+
+const EMPTY_REPORT: Report = {
+  summary: '',
+  findings: [],
+  problems: [],
+  pros: [],
+  cons: [],
+  recommendations: [],
+  identity: { colors: [], fonts: [], spacing: [] },
+  links: [],
+  images: [],
+};
+
+describe('toMarkdown', () => {
+  it('renders a full report to the exact golden Markdown brief', () => {
+    expect(toMarkdown(FULL_REPORT)).toBe(GOLDEN);
+  });
+
+  it('degrades to just the title when the report is empty (no bare headings)', () => {
+    const md = toMarkdown(EMPTY_REPORT);
+    expect(md).toBe('# Design review');
+    expect(md).not.toContain('##');
+  });
+
+  it('omits a section whose list is empty rather than emitting a bare heading', () => {
+    const md = toMarkdown({ ...EMPTY_REPORT, summary: 'x', problems: ['Overflow at 375px'] });
+    expect(md).toContain('## Problems');
+    expect(md).not.toContain('## Findings');
+    expect(md).not.toContain('## Design tokens');
+    expect(md).not.toContain('## Screenshots');
+  });
+
+  it('embeds each screenshot under its label, with the caption only when present', () => {
+    const md = toMarkdown({
+      ...EMPTY_REPORT,
+      images: [
+        { label: 'After', src: 'data:image/png;base64,ZZ', caption: 'note' },
+        { label: 'Plain', src: 'https://cdn/x.png' },
+      ],
+    });
+    expect(md).toContain('**After**\n\n_note_\n\n![After](data:image/png;base64,ZZ)');
+    expect(md).toContain('**Plain**\n\n![Plain](https://cdn/x.png)');
+  });
+
+  it('renders only the token rows that have values', () => {
+    const md = toMarkdown({
+      ...EMPTY_REPORT,
+      identity: { colors: [], fonts: ['Inter'], spacing: [] },
+    });
+    expect(md).toContain('## Design tokens');
+    expect(md).toContain('| Fonts | `Inter` |');
+    expect(md).not.toContain('| Colors |');
+    expect(md).not.toContain('| Spacing |');
   });
 });

@@ -37,10 +37,47 @@ export const UserMessage = z.object({
   mode: Mode.optional(),
 });
 
+// User-triggered Ship (slice 07) — hand the accepted design session to a connected coding backend,
+// or fall back to a downloadable brief. NEVER auto-ships: only the panel's Ship button / a chat
+// command emits this (docs/idea/principles.md). The SW routes it (`src/mcp/backend.ts`
+// `routeHandoff`): a connected backend exposing a `task` tool + a repo mapped to this page's origin
+// ⇒ dispatch `task(create)` (one per `problems[]` entry when decomposed, else a single task);
+// otherwise the agent-authored Markdown brief comes back for download.
 export const ShipRequest = z.object({
   type: z.literal('ship'),
-  backend: z.string(), // configured MCP connection id
-  summary: z.string(),
+  // Which produced artifact to hand off. 'report' (default) runs the summarization pass and ships
+  // the brief; 'changeset' hands off the raw recorded edits.
+  source: z.enum(['changeset', 'report']).default('report'),
+  // Named coding backend to dispatch through — an MCP connection id or its label. Omitted ⇒ the SW
+  // picks the first connected backend that exposes a `task` tool. The repo (origin→repo map) is what
+  // actually routes; an unmapped origin falls back to a downloadable report.
+  target: z.string().optional(),
+  // Copy/debug framing for the report pass (slice 06). Absent ⇒ a neutral review.
+  mode: Mode.optional(),
+  // Non-empty ⇒ decompose the handoff into one `task(create)` per problem (multi-task fan-out);
+  // absent/empty ⇒ a single task carrying the whole brief.
+  problems: z.array(z.string().max(600)).max(40).optional(),
+  // Optional headline override for a single-task ship.
+  title: z.string().max(300).optional(),
+});
+export type ShipRequest = z.infer<typeof ShipRequest>;
+
+// Panel "Download report" / chat "make a report" (slice 07): run the agent summarization pass and
+// return the Markdown brief for the panel to save via a blob URL (own origin, CSP-clean). Never
+// dispatches — download is always available, even with no backend connected.
+export const DownloadReport = z.object({
+  type: z.literal('download-report'),
+  mode: Mode.optional(),
+});
+
+// Chat "send this to <backend>" (slice 07): author the brief and dispatch it to the named backend as
+// `task(create)`, streaming `task-status`. Falls back to a downloadable brief when `target` isn't a
+// connected backend or the origin has no repo mapped. `target` names the backend (id or label).
+export const SendReport = z.object({
+  type: z.literal('send-report'),
+  target: z.string().min(1),
+  mode: Mode.optional(),
+  problems: z.array(z.string().max(600)).max(40).optional(),
 });
 
 // Settings / BYOK (panel -> service worker). The OpenRouter key is entered in the
@@ -195,6 +232,8 @@ export const SessionStop = z.object({ type: z.literal('session-stop') });
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
+  DownloadReport,
+  SendReport,
   SaveProvider,
   GetProvider,
   SaveKey,
@@ -281,6 +320,23 @@ export type McpListResult = z.infer<typeof McpListResult>;
 // `ok` is always true here; the field is kept for the bus's shared response shape.
 export const ReadinessResult = z.object({ ok: z.boolean(), state: ReadinessState });
 export type ReadinessResult = z.infer<typeof ReadinessResult>;
+
+// RPC response for `ship` / `send-report` / `download-report` (slice 07). `routed` says what
+// happened: 'tasks' = dispatched to a connected backend (per-task progress then streams as
+// `task-status`); 'report' = no backend/repo, so `markdown` (+ a suggested `filename`) is the
+// agent-authored brief the panel saves via a blob URL. Only the rendered Markdown crosses the bus —
+// not the full `Report` with its embedded base64 shots — so a screenshot-heavy brief can't bloat the
+// reply. `reason` explains a fallback; `taskCount` is set on the tasks route.
+export const HandoffResult = z.object({
+  ok: z.boolean(),
+  routed: z.enum(['tasks', 'report']).optional(),
+  taskCount: z.number().int().nonnegative().optional(),
+  markdown: z.string().optional(),
+  filename: z.string().optional(),
+  reason: z.string().optional(),
+  error: z.string().optional(),
+});
+export type HandoffResult = z.infer<typeof HandoffResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
@@ -1337,7 +1393,20 @@ export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('tool-call'), tool: z.string() }),
   z.object({ type: z.literal('edit-recorded'), edit: Edit }),
   z.object({ type: z.literal('changeset'), changeset: Changeset }),
-  z.object({ type: z.literal('task-status'), status: z.string(), prUrl: z.string().optional() }),
+  // One task's live status on the Ship timeline (slice 07). A multi-task fan-out streams several,
+  // each tagged with its own `taskId`/`title` and `index`/`total` so the panel drives one timeline
+  // per task; `status` is an open string (`queued → working → pr_open → ci_green/ci_red`, or
+  // `error`, with `error` carrying the failure reason).
+  z.object({
+    type: z.literal('task-status'),
+    taskId: z.string(),
+    title: z.string(),
+    index: z.number().int().nonnegative(),
+    total: z.number().int().positive(),
+    status: z.string(),
+    prUrl: z.string().optional(),
+    error: z.string().optional(),
+  }),
   z.object({ type: z.literal('error'), message: z.string() }),
   // SW relays of ContentToSw picker events.
   z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),

@@ -4,7 +4,15 @@ import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { hasSecret } from '@/agent/key-store';
 import { mcpSecretNames, saveApiKey } from '@/mcp/auth';
-import { getServer, listServers, removeServer, saveServer } from '@/mcp/store';
+import {
+  clearOriginRepo,
+  getOriginRepoMap,
+  getServer,
+  listServers,
+  removeServer,
+  saveServer,
+  setOriginRepo,
+} from '@/mcp/store';
 
 // mcp/store persistence round-trip: a real (fake) IDB + in-memory chrome.storage.local so the
 // plaintext record split and the secret-purge-on-remove are actually exercised (secrets go
@@ -98,5 +106,31 @@ describe('mcp/store', () => {
     await expect(saveServer({ id: 'x', label: 'X', url: 'not-a-url' })).rejects.toThrow();
     expect(await getServer('missing')).toBeNull();
     await expect(removeServer('missing')).resolves.toBeUndefined();
+  });
+});
+
+describe('mcp/store origin→repo map', () => {
+  it('round-trips an origin→repo mapping', async () => {
+    expect(await getOriginRepoMap()).toEqual({});
+    await setOriginRepo('localhost:3000', 'acme/storefront');
+    expect(await getOriginRepoMap()).toEqual({ 'localhost:3000': 'acme/storefront' });
+  });
+
+  it('upserts by origin and clears a single mapping', async () => {
+    await setOriginRepo('a', 'x/1');
+    await setOriginRepo('b', 'y/2');
+    await setOriginRepo('a', 'x/2'); // upsert, not duplicate
+    expect(await getOriginRepoMap()).toEqual({ a: 'x/2', b: 'y/2' });
+
+    await clearOriginRepo('a');
+    expect(await getOriginRepoMap()).toEqual({ b: 'y/2' });
+    await expect(clearOriginRepo('missing')).resolves.toBeUndefined();
+  });
+
+  it('drops corrupt/empty entries on read', async () => {
+    await chrome.storage.local.set({
+      'mcp:origin-repo': { good: 'o/r', bad: 42, '': 'x/y', blank: '' },
+    });
+    expect(await getOriginRepoMap()).toEqual({ good: 'o/r' });
   });
 });

@@ -1,0 +1,82 @@
+@use '../../../styles/tokens' as tokens;
+
+.dz-tasktimeline {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  &__item {
+    display: flex;
+    align-items: flex-start;
+    gap: tokens.$dz-space-3;
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    background: var(--dz-surface-overlay);
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+  }
+
+  &__stage {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    margin-top: 2px;
+    color: var(--dz-muted);
+
+    &.is-accent {
+      color: var(--dz-accent);
+    }
+
+    &.is-success {
+      color: var(--dz-status-connected);
+    }
+
+    &.is-danger {
+      color: var(--dz-status-error);
+    }
+  }
+
+  &__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  &__title {
+    color: var(--dz-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__status {
+    color: var(--dz-muted);
+    text-transform: capitalize;
+    font-size: 12px;
+  }
+
+  &__error {
+    color: tokens.$dz-danger;
+    font-size: 12px;
+  }
+
+  &__pr {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    flex: none;
+    color: var(--dz-accent);
+    text-decoration: none;
+    font-size: 12px;
+    white-space: nowrap;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
