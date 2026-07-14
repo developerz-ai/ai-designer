@@ -33,6 +33,8 @@ import {
 export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_idle',
+  allFrames: true,
+  matchAboutBlank: true,
   main() {
     // Push picker/recorder events to the SW (fire-and-forget). relay.ts maps them to the panel;
     // the SW folds recorder events into the changeset (slice 07). A dropped push (SW evicted
