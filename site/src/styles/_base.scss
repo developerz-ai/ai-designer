@@ -136,6 +136,11 @@ h4 {
   border-radius: $radius-pill;
   background: $grad-brand;
   box-shadow: 0 0 0 4px color.change($brand-500, $alpha: 0.15);
+  animation: dot-pulse 2.4s $ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 }
 
 code {

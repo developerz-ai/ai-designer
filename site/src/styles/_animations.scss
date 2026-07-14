@@ -1,5 +1,7 @@
 // Keyframes. Usage + gating lives in the component partials (all motion is
 // opt-in via prefers-reduced-motion in _base.scss).
+@use 'sass:color';
+@use 'tokens' as *;
 
 @keyframes fade-up {
   from {
@@ -48,5 +50,29 @@
 @keyframes aurora-drift {
   to {
     transform: translate3d(-3%, 2%, 0) scale(1.04);
+  }
+}
+
+@keyframes gradient-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px color.change($brand-500, $alpha: 0.15);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px color.change($brand-500, $alpha: 0.08);
+    transform: scale(1.12);
   }
 }

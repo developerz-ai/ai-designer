@@ -23,6 +23,28 @@
   display: grid;
   gap: $space-5;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+
+  // Bento at lg: Talk + See side by side, Ship as a wide horizontal feature.
+  @media (min-width: $bp-lg) {
+    grid-template-columns: repeat(6, 1fr);
+
+    .how__card:nth-child(1),
+    .how__card:nth-child(2) {
+      grid-column: span 3;
+    }
+
+    .how__card:nth-child(3) {
+      grid-column: span 6;
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: $space-5;
+
+      .how__text {
+        flex: 1 1 24rem;
+      }
+    }
+  }
 }
 
 .how__card {
