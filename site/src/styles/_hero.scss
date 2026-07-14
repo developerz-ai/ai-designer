@@ -19,11 +19,6 @@
     filter: blur(120px);
     border-radius: 50%;
     pointer-events: none;
-    animation: pulse-glow 8s $ease-in-out infinite;
-
-    @media (prefers-reduced-motion: reduce) {
-      animation: none;
-    }
   }
 
   &__grid {

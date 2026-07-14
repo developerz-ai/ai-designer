@@ -26,8 +26,9 @@
   opacity: 0;
 }
 
-// Content entrance once revealed (plays when display is restored).
-[data-skel-host] > :not([data-skeleton]) {
+// Content entrance once revealed (plays when display is restored). Excludes the
+// decorative hero glow — animating its opacity would flash it to full brightness.
+[data-skel-host] > :not([data-skeleton]):not(.hero__glow) {
   animation: skel-reveal 0.4s $ease-out;
 }
 
