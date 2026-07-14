@@ -1,15 +1,18 @@
 // @vitest-environment node
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { hasSecret } from '@/agent/key-store';
-import { mcpSecretNames, saveApiKey } from '@/mcp/auth';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { hasSecret, setSecret } from '@/agent/key-store';
+import { getAccessToken, mcpSecretNames, saveApiKey } from '@/mcp/auth';
 import {
   clearOriginRepo,
+  getOAuthConfigs,
   getOriginRepoMap,
   getServer,
   listServers,
+  removeOAuthConfig,
   removeServer,
+  saveOAuthConfig,
   saveServer,
   setOriginRepo,
 } from '@/mcp/store';
@@ -132,5 +135,63 @@ describe('mcp/store origin→repo map', () => {
       'mcp:origin-repo': { good: 'o/r', bad: 42, '': 'x/y', blank: '' },
     });
     expect(await getOriginRepoMap()).toEqual({ good: 'o/r' });
+  });
+});
+
+describe('mcp/store OAuth endpoint config (non-secret, rehydrated after SW eviction)', () => {
+  const OAUTH = {
+    authorizationEndpoint: 'https://auth.example.com/authorize',
+    tokenEndpoint: 'https://auth.example.com/token',
+    clientId: 'client-123',
+    scope: 'mcp.read',
+  };
+
+  it('round-trips + upserts an endpoint config; removeOAuthConfig forgets it', async () => {
+    expect(await getOAuthConfigs()).toEqual({});
+    await saveOAuthConfig('srv', OAUTH);
+    expect(await getOAuthConfigs()).toEqual({ srv: OAUTH });
+
+    await saveOAuthConfig('srv', { ...OAUTH, clientId: 'client-456' }); // upsert
+    expect((await getOAuthConfigs()).srv?.clientId).toBe('client-456');
+
+    await removeOAuthConfig('srv');
+    expect(await getOAuthConfigs()).toEqual({});
+    await expect(removeOAuthConfig('missing')).resolves.toBeUndefined();
+  });
+
+  it('removeServer purges the persisted endpoint config alongside the record', async () => {
+    await saveServer({ id: 's', label: 'S', url: 'https://s/mcp', authKind: 'oauth' });
+    await saveOAuthConfig('s', OAUTH);
+    await removeServer('s');
+    expect(await getOAuthConfigs()).toEqual({});
+  });
+
+  it('a woken SW rehydrates the endpoint config so a stored token still refreshes (no forced re-auth)', async () => {
+    // Simulate the restart-with-token path: the encrypted refresh token survives eviction, and the
+    // NON-secret endpoint config is read back from storage — together they let `getAccessToken`
+    // refresh an expired token instead of skipping refresh (which forced re-auth before B2).
+    await saveOAuthConfig('srv', OAUTH);
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'old', refreshToken: 'r1', expiresAt: 500 }),
+    );
+
+    const rehydrated = (await getOAuthConfigs()).srv; // what mcpReady puts back in `oauthConfigs`
+    expect(rehydrated).toEqual(OAUTH);
+
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: 'fresh', expires_in: 3600 }),
+      text: async () => '',
+    }) as unknown as typeof globalThis.fetch;
+
+    const token = await getAccessToken('srv', rehydrated, { fetch, now: () => 1_000_000 });
+    expect(token).toBe('fresh'); // refreshed — the rehydrated config made it possible
+  });
+
+  it('reads a corrupt record back as an empty map', async () => {
+    await chrome.storage.local.set({ 'mcp:oauth-configs': { srv: { clientId: 'x' } } }); // missing endpoints
+    expect(await getOAuthConfigs()).toEqual({});
   });
 });

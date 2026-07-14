@@ -10,13 +10,18 @@
 // SW-ONLY: never import this from content.ts. See docs/architecture/security.md.
 
 import { z } from 'zod';
-import { clearAuth } from './auth';
+import { clearAuth, OAuthConfig } from './auth';
 import type { OriginRepoMap } from './handoff';
 
 // One `storage.local` key holds the whole list (small, always read/written together).
 const SERVERS_KEY = 'mcp:servers';
 // The origin→repo map for one-click Ship (docs/idea/mcp.md "Connecting"); one small record.
 const ORIGIN_REPO_KEY = 'mcp:origin-repo';
+// Per-server OAuth endpoint config (NON-secret: endpoints + public client id, never the token).
+// Persisted so the SW can rehydrate the refresh config after eviction — without it, a valid stored
+// refresh token can't be exchanged and the user is forced to re-authorize (see `src/mcp/auth.ts`
+// `getAccessToken`). One small record keyed by server id.
+const OAUTH_CONFIG_KEY = 'mcp:oauth-configs';
 
 /** Transport to the backend. Only HTTP-streamable today (docs/idea/mcp.md); the enum leaves
  *  room for more (e.g. SSE) without a schema migration. */
@@ -73,7 +78,7 @@ export async function saveServer(server: StoredServerInput): Promise<StoredServe
 }
 
 /** Forget a server and purge its stored credentials. No-op record write when the id is
- *  unknown, but its secrets are cleared regardless (defensive). */
+ *  unknown, but its secrets (and non-secret OAuth config) are cleared regardless (defensive). */
 export async function removeServer(id: string): Promise<void> {
   const list = await listServers();
   const next = list.filter((s) => s.id !== id);
@@ -81,6 +86,35 @@ export async function removeServer(id: string): Promise<void> {
     await chrome.storage.local.set({ [SERVERS_KEY]: next });
   }
   await clearAuth(id);
+  await removeOAuthConfig(id);
+}
+
+// --- OAuth endpoint config (non-secret; rehydrated after SW eviction) ----------------------
+
+const StoredOAuthConfigs = z.record(z.string(), OAuthConfig);
+
+/** Every persisted server's OAuth endpoint config, keyed by server id. Corrupt records read as an
+ *  empty map (same defensive posture as `listServers`). Secrets are NOT here — tokens live in the
+ *  encrypted key-store (see `src/mcp/auth.ts`). */
+export async function getOAuthConfigs(): Promise<Record<string, OAuthConfig>> {
+  const got = await chrome.storage.local.get(OAUTH_CONFIG_KEY);
+  const parsed = StoredOAuthConfigs.safeParse(got[OAUTH_CONFIG_KEY]);
+  return parsed.success ? parsed.data : {};
+}
+
+/** Persist one server's OAuth endpoint config, replacing any prior one for that id. */
+export async function saveOAuthConfig(id: string, config: OAuthConfig): Promise<void> {
+  const map = await getOAuthConfigs();
+  map[id] = OAuthConfig.parse(config);
+  await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
+}
+
+/** Forget one server's OAuth endpoint config. No-op when the id isn't stored. */
+export async function removeOAuthConfig(id: string): Promise<void> {
+  const map = await getOAuthConfigs();
+  if (!(id in map)) return;
+  delete map[id];
+  await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
 }
 
 /** The persisted origin→repo map that backs one-click Ship (`src/mcp/handoff.ts` `resolveRepo`).

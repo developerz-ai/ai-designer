@@ -77,6 +77,22 @@ describe('computeReadiness', () => {
     expect(state.ready).toBe(false);
   });
 
+  it('is ready with a keyless-but-configured provider (local llama.cpp): provider ok, ready true', async () => {
+    // A keyless local openai-compatible endpoint is a SUPPORTED setup — provider readiness keys off
+    // a valid stored config (baseURL + model), NOT the presence of an apiKey. Requiring a key here
+    // would permanently block Start for llama.cpp & friends.
+    installChromeFakes({ grantedOrigins: ['http://localhost/*'] });
+    await saveProviderConfig({
+      baseURL: 'http://localhost:8080/v1',
+      model: 'local-model',
+      // no apiKey
+    });
+    const state = await computeReadiness(mcpSource([]));
+    expect(state.provider).toBe('ok');
+    expect(state.model).toBe('ok');
+    expect(state.ready).toBe(true);
+  });
+
   it('is ready once provider (key+baseURL) and model are both configured', async () => {
     installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
     await saveProviderConfig({

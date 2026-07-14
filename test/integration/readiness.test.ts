@@ -108,6 +108,24 @@ describe('integration: readiness reflects config-store + MCP state through the b
     expect(rpcResult.state).toEqual(pushed.state);
   });
 
+  it('flips to ready for a keyless-but-configured provider (local llama.cpp), no apiKey persisted', async () => {
+    // Regression: a keyless local openai-compatible endpoint is supported — provider readiness must
+    // key off the stored config (baseURL + model), not an apiKey, or Start stays blocked forever.
+    installChromeFakes({ grantedOrigins: ['http://localhost/*'] });
+    const mcpManager = new McpManager();
+
+    await saveProviderConfig({ baseURL: 'http://localhost:8080/v1', model: 'local-model' });
+
+    const state = await computeReadiness(mcpManager);
+    expect(state).toEqual({
+      provider: 'ok',
+      model: 'ok',
+      hostPermission: 'granted',
+      mcp: { connected: 0, total: 0 },
+      ready: true,
+    });
+  });
+
   it('session-start/session-stop round-trip through the bus schema', () => {
     const start: PanelToSw = PanelToSwSchema.parse({ type: 'session-start' });
     const stop: PanelToSw = PanelToSwSchema.parse({ type: 'session-stop' });

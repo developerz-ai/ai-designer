@@ -28,10 +28,12 @@ async function hostPermissionCheck(
 }
 
 /** Compute the current `ReadinessState`. Never throws: a missing/corrupt config reads as
- *  `provider: 'missing'`, an unreachable host as `hostPermission: 'needed'`. */
+ *  `provider: 'missing'`, an unreachable host as `hostPermission: 'needed'`. Provider readiness
+ *  keys off a valid stored config (baseURL), NOT the key: a keyless local openai-compatible
+ *  endpoint (llama.cpp) is a supported setup — requiring a key would permanently block Start for it. */
 export async function computeReadiness(mcpManager: McpHealthSource): Promise<ReadinessState> {
   const cfg = await getProviderConfig();
-  const provider: ReadinessState['provider'] = cfg?.apiKey ? 'ok' : 'missing';
+  const provider: ReadinessState['provider'] = cfg?.baseURL ? 'ok' : 'missing';
   const model: ReadinessState['model'] = cfg?.model ? 'ok' : 'missing';
   const hostPermission = await hostPermissionCheck(cfg?.baseURL);
 
