@@ -7,6 +7,7 @@ import {
   faChevronDown,
   faCircleDot,
   faCopy,
+  faDownload,
   faEye,
   faGear,
   faPaperPlane,
@@ -43,6 +44,7 @@ const REGISTRY = {
   eye: faEye,
   agent: faWandMagicSparkles,
   status: faCircleDot,
+  download: faDownload,
 } as const satisfies Record<string, IconDefinition>;
 
 /**
