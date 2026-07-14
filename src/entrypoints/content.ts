@@ -2,6 +2,8 @@ import { defineContentScript } from '#imports';
 import { extractDesignRead } from '@/dom/design-read';
 import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
 import { createDomExecutor } from '@/dom/execute';
+import { readImages } from '@/dom/images';
+import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
 import { queryOne, screenshotRect } from '@/dom/read';
@@ -10,11 +12,13 @@ import {
   type CaptureRequest,
   CaptureResult,
   type ContentToSw,
+  ControlTool,
   DesignReadRequest,
   type DesignReadResult,
   type DiagnosticsInput,
   DomTool,
   PickerCmd,
+  type ReadImagesResult,
   type ToolResult,
 } from '@/shared/messages';
 
@@ -38,7 +42,17 @@ export default defineContentScript({
     const mutator = createMutator();
     const recorder = createRecorder(emit);
     const executor = createDomExecutor({ mutator, recorder });
+    const interactor = createInteractor();
     const picker = createPicker(emit);
+
+    // Chrome pins the top document to frameId 0; a child frame can't learn its own id, so the SW
+    // stamps that from the frameId it routed to (later slice-13 SW task). Tag results from the top
+    // frame so `query`/`screenshot`/`readImages` carry their frame; absent already means top.
+    const selfFrameId = window.top === window.self ? 0 : undefined;
+    const tagFrame = (result: ToolResult): ToolResult =>
+      selfFrameId !== undefined && result.frameId === undefined
+        ? { ...result, frameId: selfFrameId }
+        : result;
 
     // Debug engine, content half (slice 06): buffer runtime/network signals for the whole page
     // lifetime and push each one to the SW as it's captured — a debug-mode turn observes as the
@@ -89,9 +103,25 @@ export default defineContentScript({
       return Promise.resolve(executor.exec(tool));
     }
 
-    // The SW addresses this tab with two message kinds: agent DomTool calls (reply with a
-    // ToolResult) and user-driven PickerCmds (start/stop the overlay, no reply). Parse each with
-    // its own schema; anything else is a foreign message and is ignored.
+    // Browser-control tools (slice 13): `readImages` is a pure read (src/dom/images.ts); the rest
+    // are page-driving actions handed to the interaction engine (src/dom/interact.ts). Both keep
+    // the entrypoint a thin wire — resolution + logic live in the jsdom-tested dom modules.
+    function handleControl(tool: ControlTool): Promise<ToolResult> {
+      if (tool.type === 'readImages') {
+        const scope = tool.selector ? queryOne(document, tool.selector) : document;
+        if (tool.selector && !scope) {
+          const error = `No element matches selector: ${tool.selector}`;
+          return Promise.resolve({ type: 'tool-result', ok: false, error });
+        }
+        const data: ReadImagesResult = readImages(scope ?? document, window);
+        return Promise.resolve({ type: 'tool-result', ok: true, data });
+      }
+      return interactor.run(tool);
+    }
+
+    // The SW addresses this tab with three message kinds: agent DomTool + ControlTool calls (reply
+    // with a frame-tagged ToolResult) and user-driven PickerCmds (start/stop the overlay, no
+    // reply). Parse each with its own schema; anything else is a foreign message and is ignored.
     chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       // Cross-site browse (slice 06): the SW opened this page in a background tab and wants its
       // compact design identity. Pure DOM read (src/dom/design-read.ts); reply with a typed result
@@ -107,15 +137,22 @@ export default defineContentScript({
         return; // responded synchronously
       }
 
-      const tool = DomTool.safeParse(raw);
-      if (tool.success) {
-        // Always answer: a rejected round-trip (e.g. the SW evicted mid-screenshot) degrades to
-        // an error ToolResult the agent can react to, never a dropped response / unhandled reject.
-        handleTool(tool.data)
-          .then(sendResponse)
+      // Always answer a tool call: a rejected round-trip (e.g. the SW evicted mid-screenshot)
+      // degrades to an error ToolResult the agent reacts to, never a dropped response / unhandled
+      // reject. Replies are frame-tagged so the SW can compose iframe coordinates.
+      const answer = (run: Promise<ToolResult>): true => {
+        run
+          .then((result) => sendResponse(tagFrame(result)))
           .catch((err) => sendResponse({ type: 'tool-result', ok: false, error: String(err) }));
         return true; // async ToolResult
-      }
+      };
+
+      const tool = DomTool.safeParse(raw);
+      if (tool.success) return answer(handleTool(tool.data));
+
+      const control = ControlTool.safeParse(raw);
+      if (control.success) return answer(handleControl(control.data));
+
       const cmd = PickerCmd.safeParse(raw);
       if (cmd.success) {
         if (cmd.data.type === 'picker-start') picker.start();
