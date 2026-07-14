@@ -35,6 +35,17 @@ function setup(html: string): {
       const data: ReadImagesResult = readImages(scope ?? document, window);
       return tagFrame({ type: 'tool-result', ok: true, data });
     }
+    // The slice-15 complex-site reads/actions (pageFacts/readChart/chartTooltip/widgetAct) route
+    // through their own src/dom modules in the real content.ts, not the interaction engine — out
+    // of scope for this slice-13 harness (covered separately, see src/dom's own test suites).
+    if (
+      tool.type === 'pageFacts' ||
+      tool.type === 'readChart' ||
+      tool.type === 'chartTooltip' ||
+      tool.type === 'widgetAct'
+    ) {
+      return tagFrame({ type: 'tool-result', ok: false, error: 'not covered by this harness' });
+    }
     return tagFrame(await interactor.run(tool, signal));
   };
   return { dispatch };

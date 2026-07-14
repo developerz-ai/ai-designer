@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { type ElementLike, pickUnique, resolveSelector } from '@/dom/selector';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  type ElementLike,
+  pickUnique,
+  resolveSelector,
+  resolveShadowSelector,
+  SHADOW_COMBINATOR,
+} from '@/dom/selector';
 
 function el(over: Partial<ElementLike> & { attrs?: Record<string, string> }): ElementLike {
   const attrs = over.attrs ?? {};
@@ -206,5 +212,121 @@ describe('pickUnique', () => {
 
     expect(() => document.querySelector(picked.value)).not.toThrow();
     expect(document.querySelector(picked.value)).toBe(target);
+  });
+});
+
+describe('shadow-aware selectors', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function q(selector: string): Element {
+    const found = document.querySelector(selector);
+    if (!found) throw new Error(`fixture missing: ${selector}`);
+    return found;
+  }
+  function inShadow(root: ShadowRoot, selector: string): Element {
+    const found = root.querySelector(selector);
+    if (!found) throw new Error(`shadow fixture missing: ${selector}`);
+    return found;
+  }
+
+  it('emits a host-path `shadow` selector for an element in an OPEN shadow root', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const root = q('#host').attachShadow({ mode: 'open' });
+    root.innerHTML = '<button data-testid="ok">OK</button>';
+    const btn = inShadow(root, 'button');
+
+    const picked = pickUnique(btn, document);
+
+    expect(picked.strategy).toBe('shadow');
+    expect(picked.value).toBe(`#host${SHADOW_COMBINATOR}[data-testid="ok"]`);
+    expect(picked.fragile).toBe(false);
+    expect(resolveShadowSelector(document, picked.value)).toBe(btn);
+  });
+
+  it('crosses nested OPEN roots with one `>>>` per boundary and replays to the target', () => {
+    document.body.innerHTML = '<div id="outer"></div>';
+    const outerRoot = q('#outer').attachShadow({ mode: 'open' });
+    outerRoot.innerHTML = '<section id="mid"></section>';
+    const midRoot = inShadow(outerRoot, '#mid').attachShadow({ mode: 'open' });
+    midRoot.innerHTML = '<a data-testid="deep">deep</a>';
+    const deep = inShadow(midRoot, 'a');
+
+    const picked = pickUnique(deep, document);
+
+    expect(picked.strategy).toBe('shadow');
+    expect(picked.value.split(SHADOW_COMBINATOR)).toEqual([
+      '#outer',
+      '#mid',
+      '[data-testid="deep"]',
+    ]);
+    expect(resolveShadowSelector(document, picked.value)).toBe(deep);
+  });
+
+  it('resolves an anonymous shadow element via a scoped css-path, to the right sibling', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const root = q('#host').attachShadow({ mode: 'open' });
+    root.innerHTML = '<ul><li></li><li></li></ul>';
+    const [first, second] = Array.from(root.querySelectorAll('li'));
+    if (!first || !second) throw new Error('fixture missing siblings');
+
+    const picked = pickUnique(second, document);
+
+    expect(picked.strategy).toBe('shadow');
+    expect(picked.value.startsWith(`#host${SHADOW_COMBINATOR}`)).toBe(true);
+    expect(resolveShadowSelector(document, picked.value)).toBe(second);
+    expect(resolveShadowSelector(document, picked.value)).not.toBe(first);
+  });
+
+  it('flags a CLOSED shadow root fragile and falls back to the host (coordinate/vision anchor)', () => {
+    document.body.innerHTML = '<div id="widget"></div>';
+    const root = q('#widget').attachShadow({ mode: 'closed' });
+    root.innerHTML = '<input data-testid="field" />';
+    const field = inShadow(root, 'input');
+
+    const picked = pickUnique(field, document);
+
+    expect(picked.strategy).toBe('shadow');
+    expect(picked.fragile).toBe(true);
+    // A closed root can't be pierced from outside — the deepest resolvable target is the host.
+    expect(picked.value).toBe('#widget');
+    expect(resolveShadowSelector(document, picked.value)).toBe(q('#widget'));
+  });
+
+  it('ranks resolveSelector shadow candidates most-stable-first, each host-path prefixed', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const root = q('#host').attachShadow({ mode: 'open' });
+    root.innerHTML =
+      '<button data-testid="cta" id="buy" role="button" aria-label="Buy">Buy</button>';
+    const btn = inShadow(root, 'button');
+
+    const candidates = resolveSelector(btn);
+
+    expect(candidates.every((c) => c.strategy === 'shadow')).toBe(true);
+    expect(candidates.every((c) => c.value.startsWith(`#host${SHADOW_COMBINATOR}`))).toBe(true);
+    expect(candidates[0]?.value).toBe(`#host${SHADOW_COMBINATOR}[data-testid="cta"]`);
+  });
+
+  it('leaves a light-DOM element on plain-CSS strategies (never a shadow path)', () => {
+    document.body.innerHTML = '<main><button id="go">Go</button></main>';
+    const btn = q('#go');
+
+    const picked = pickUnique(btn, document);
+
+    expect(picked.strategy).not.toBe('shadow');
+    expect(picked.value).not.toContain('>>>');
+    for (const c of resolveSelector(btn)) {
+      expect(c.strategy).not.toBe('shadow');
+    }
+  });
+
+  it('resolveShadowSelector returns null when a path cannot be pierced or is malformed', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    q('#host').attachShadow({ mode: 'closed' });
+
+    expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}button`)).toBe(null);
+    expect(resolveShadowSelector(document, `#nope${SHADOW_COMBINATOR}button`)).toBe(null);
+    expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}`)).toBe(null);
   });
 });

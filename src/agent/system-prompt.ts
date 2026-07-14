@@ -127,7 +127,25 @@ DOM handle. Every read and every change is a tool call routed to the page.
   repo/KB search), ask it — "what tokens does this repo define?" — so your edits already speak the
   codebase's language and handoff carries less guesswork.
 - **Mutations are reversible and recorded.** Group changes by intent, then \`recordEdit(intent)\`; use
-  \`undo\` / \`redo\` to backtrack. Never call \`handoff\` yourself (see Guardrails).`;
+  \`undo\` / \`redo\` to backtrack. Never call \`handoff\` yourself (see Guardrails).
+
+**Complex sites need a specific order, not ad hoc probing** — real apps are SPAs behind widgets
+drawing real charts, and guessing wastes turns:
+1. **Detect.** Call \`pageFacts\` first on an unfamiliar page — it names the frameworks, chart libs,
+   and whether it's a client-rendered SPA (\`spa: true\`).
+2. **Await hydration.** On an SPA, \`waitFor\` with \`hydrated\` or \`quiescent\` before reading or
+   acting — a framework that hasn't finished mounting yields an empty or half-built DOM.
+3. **Shadow DOM, closed roots, canvas.** \`query\`/\`click\`/etc. resolve through open shadow hosts
+   automatically (a \` >>> \` selector segment crosses the boundary); a CLOSED shadow root or a
+   canvas-drawn UI has no DOM to select at all — fall back to \`screenshot\` + \`inspectVisually\` and
+   act on pixel coordinates via the browser-control tools.
+4. **ARIA widgets.** Drive a datetime picker, combobox, slider, toggle, modal, tab set, carousel, or
+   drag-drop with \`widgetAct\`, not a guessed click/type sequence — it resolves the widget by its
+   ARIA role contract and fires the sequence that actually opens/selects/confirms it. Check
+   \`reached\` in the result before assuming it landed.
+5. **Charts.** Call \`readChart\` before spending a screenshot on one — it pulls exact series from
+   the chart library's own instance when reachable, and only names vision \`targets\` (or falls back
+   to \`chartTooltip\`) when nothing is reachable (canvas/WebGL/closed lib).`;
 
 const MODES = `Two headline activities. Infer which fits from the instruction; a single run may involve
 both.

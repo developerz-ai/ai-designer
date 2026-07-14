@@ -225,6 +225,43 @@ describe('waitFor', () => {
     const result = await interactor.run({ type: 'waitFor', timeMs: 15 });
     expect(data<{ met: boolean }>(result).met).toBe(true);
   });
+
+  // `hydrated`/`quiescent` delegate to `waitForQuiescence` (slice 15A) instead of the plain
+  // selector/text/networkIdle observer above — jsdom's `document.readyState` is already
+  // 'complete', so the quiet window starts immediately and resolves once nothing mutates for it.
+  it('resolves met:true for `quiescent` once the DOM stops mutating', async () => {
+    mount('<div id="root"></div>');
+    const result = await interactor.run({ type: 'waitFor', quiescent: true, timeMs: 2000 });
+    expect(result.ok).toBe(true);
+    const payload = data<{ met: boolean; condition: string; timedOut: boolean }>(result);
+    expect(payload.met).toBe(true);
+    expect(payload.condition).toBe('quiescent');
+    expect(payload.timedOut).toBe(false);
+  });
+
+  it('resolves met:true for `hydrated`, labeling the condition distinctly from `quiescent`', async () => {
+    mount('<div id="root"></div>');
+    const result = await interactor.run({ type: 'waitFor', hydrated: true, timeMs: 2000 });
+    expect(data<{ met: boolean; condition: string }>(result)).toMatchObject({
+      met: true,
+      condition: 'hydrated',
+    });
+  });
+
+  it('cancels an in-flight `quiescent` wait early on abort (met:false)', async () => {
+    mount('<div id="root"></div>');
+    const controller = new AbortController();
+    const pending = interactor.run(
+      { type: 'waitFor', quiescent: true, timeMs: 10_000 },
+      controller.signal,
+    );
+    controller.abort();
+    const result = await pending;
+    expect(data<{ met: boolean; timedOut: boolean }>(result)).toMatchObject({
+      met: false,
+      timedOut: true,
+    });
+  });
 });
 
 describe('handleDialog', () => {

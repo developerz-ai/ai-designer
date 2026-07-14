@@ -469,14 +469,19 @@ export const SelectOptionInput = z.object({
   value: z.string(),
   ...Target.shape,
 });
-// The condition `waitFor` blocks on: resolve as soon as `selector`/`text` appears or the network
-// goes idle, capped by `timeMs` (hard max 30s so a stuck page can't hang the turn — slice 13
-// guardrail). Given only `timeMs`, it is a plain bounded delay. Exported standalone for the tool
-// wrapper (`src/agent/tools/interact.ts`) and the content impl (`src/dom/interact.ts`).
+// The condition `waitFor` blocks on: resolve as soon as `selector`/`text` appears, the network
+// goes idle, the page hydrates (`hydrated` — SPA framework mounted + `document.readyState ===
+// 'complete'`), or the DOM goes quiet after that (`quiescent` — hydrated AND no mutation for a
+// settle window; slice 15A `waitForQuiescence`). Capped by `timeMs` (hard max 30s so a stuck page
+// can't hang the turn — slice 13 guardrail). Given only `timeMs`, it is a plain bounded delay.
+// Exported standalone for the tool wrapper (`src/agent/tools/interact.ts`) and the content impl
+// (`src/dom/interact.ts`).
 export const WaitCondition = z.object({
   selector: z.string().min(1).optional(),
   text: z.string().min(1).optional(),
   networkIdle: z.boolean().optional(),
+  hydrated: z.boolean().optional(),
+  quiescent: z.boolean().optional(),
   timeMs: z.number().int().positive().max(30_000).optional(),
 });
 export type WaitCondition = z.infer<typeof WaitCondition>;
@@ -504,21 +509,10 @@ export const ReadImagesInput = z.object({
 });
 export type ReadImagesInput = z.infer<typeof ReadImagesInput>;
 
-// The content-routed slice-13 driving tools as one discriminated union — `content.ts` parses it
-// beside `DomTool`, and `createControlTools` (slice 13) derives one `tool()` per member 1:1, the
-// same zero-drift contract `DomTool`/`createDomTools` hold.
-export const ControlTool = z.discriminatedUnion('type', [
-  ClickInput,
-  TypeInput,
-  PressKeyInput,
-  HoverInput,
-  ScrollToInput,
-  SelectOptionInput,
-  WaitForInput,
-  HandleDialogInput,
-  ReadImagesInput,
-]);
-export type ControlTool = z.infer<typeof ControlTool>;
+// `ControlTool` (the content-routed driving-tools union) is declared further below, once the
+// complex-site inputs it also carries (`ReadChartInput`/`ChartTooltipInput`/`WidgetActInput`/
+// `PageFactsInput`) exist — they reference `WidgetRecipe`/`ChartRead`/`PageFacts`, defined in the
+// slice-15 section near the bottom of this file.
 
 // One image the page renders — an `<img>` or a CSS background-image — resolved to a stable selector
 // so the agent can act on it. `broken` = failed load (naturalWidth 0); `oversized` = intrinsic
@@ -934,6 +928,264 @@ export const PageMetricsResult = z.object({
   error: z.string().optional(),
 });
 export type PageMetricsResult = z.infer<typeof PageMetricsResult>;
+
+// --- page facts + MAIN-world bridge (slice 15) ----------------------------
+// Real apps are SPAs whose framework internals + chart-lib instances live ONLY in the page's own JS
+// world (MAIN). The isolated content world can't read them, so a MAIN-world content script
+// (`src/entrypoints/injected.content.ts`) exposes a NARROW, READ-ONLY RPC over `window.postMessage`,
+// guarded by an origin + per-request nonce check (`src/dom/bridge.ts`). It carries page facts + (a
+// later task) chart data only — NEVER a key or token: MAIN == the page's own world, untrusted
+// (CLAUDE.md "MV3 three worlds", docs/architecture/security.md). `PageFacts` is the detection result,
+// cached per URL in the content world (`src/dom/page-facts.ts`) and later fed to the agent as context
+// + `frameworkHints` on edits.
+export const PageFacts = z.object({
+  // Detected UI frameworks, most-specific/most-confident first (`next`, `nuxt`, `react`, `vue`,
+  // `svelte`, `angular`, `solid`, `preact`, ...). Bounded — a page rarely ships more than a few.
+  frameworks: z.array(z.string()).max(12),
+  // Detected chart / dataviz libs (`chartjs`, `echarts`, `highcharts`, `d3`, `plotly`, `recharts`,
+  // ...) so the chart reader (slice 15E) knows a data probe is worth trying before pixel-reading.
+  chartLibs: z.array(z.string()).max(12),
+  // Other notable runtime libs worth knowing when source-mapping an edit (`jquery`, `gsap`, `three`,
+  // `bootstrap`, `alpine`, ...).
+  libraries: z.array(z.string()).max(24),
+  // Client-rendered SPA (a framework + a mount root): the agent awaits hydration/quiescence and
+  // re-derives facts on client-side route changes (slice 15A) before acting.
+  spa: z.boolean(),
+  // The document URL these facts describe — the content-world cache key + a staleness check after a
+  // SPA route change.
+  url: z.string(),
+});
+export type PageFacts = z.infer<typeof PageFacts>;
+
+// The read-only methods the MAIN-world bridge answers: framework/lib detection (`page-facts`) + a
+// chart-data probe (`chart-data`, extracts series from the page's own chart-lib instances — slice
+// 15E). Both are non-secret page reads; anything not in this enum is rejected by the server.
+export const BridgeMethod = z.enum(['page-facts', 'chart-data']);
+export type BridgeMethod = z.infer<typeof BridgeMethod>;
+
+// Namespaces our postMessage traffic off the page's own chatter (many sites postMessage heavily).
+export const BRIDGE_SOURCE = 'devz-designer-bridge';
+
+// Content world -> MAIN world. `nonce` is a fresh per-request token the server echoes back so the
+// client can correlate + reject a stale/spoofed reply; the origin + `source === window` checks on
+// both ends are the real guard (a cross-origin frame's message is dropped). Read-only: a `method`
+// name only, never a secret-bearing param.
+export const BridgeRequest = z.object({
+  source: z.literal(BRIDGE_SOURCE),
+  dir: z.literal('req'),
+  nonce: z.string(),
+  method: BridgeMethod,
+});
+export type BridgeRequest = z.infer<typeof BridgeRequest>;
+
+// MAIN world -> content world. Echoes the request `nonce`; `result` is the (non-secret) method
+// payload on success, else `error`. `result` stays `unknown` — the caller validates it with the
+// method's own schema (e.g. `PageFacts`).
+export const BridgeResponse = z.object({
+  source: z.literal(BRIDGE_SOURCE),
+  dir: z.literal('res'),
+  nonce: z.string(),
+  ok: z.boolean(),
+  result: z.unknown().optional(),
+  error: z.string().optional(),
+});
+export type BridgeResponse = z.infer<typeof BridgeResponse>;
+
+// --- widget recipes + chart reading (slice 15D/E) -------------------------
+// Real apps hide data behind web-component widgets (datetime/combobox/slider/modal/…) and draw real
+// charts on <canvas>/WebGL/SVG that have no element-per-datum. Two capabilities close the gap:
+//   • WidgetRecipe — an ARIA-anchored interaction sequence the agent invokes to DRIVE a widget;
+//     content resolves it by its `role` contract (robust to styling) and fires realistic events.
+//     Built on the slice-13 control primitives; result data = `WidgetActed`.
+//   • ChartRead — the agent READS a chart: first a guarded MAIN-world data probe (`chart-data`
+//     bridge method — pulls series from the chart lib's own instances), else a vision fallback
+//     (screenshot the host + describe). Read-only in the page world — never leaks a secret.
+
+// One data series pulled from a chart instance. `values` keeps `null` gaps (a chart's missing points)
+// so it stays index-aligned with the chart's shared `labels`. Bounded so a dataset can't blow the budget.
+export const ChartSeries = z.object({
+  name: z.string().max(160).optional(),
+  values: z.array(z.number().nullable()).max(500),
+});
+export type ChartSeries = z.infer<typeof ChartSeries>;
+
+// One chart's extracted data: the lib that drew it, its kind (bar/line/pie/…), title, axis titles, a
+// CSS locator back to the host element (so the agent can screenshot/hover it), the shared category-axis
+// labels, and the series. Labels are hoisted here (not repeated per series) so N series over one axis
+// don't multiply the payload. Every field beyond `lib`/`series` is best-effort — a lib that doesn't
+// expose it just omits it.
+export const ChartData = z.object({
+  lib: z.string().max(40),
+  kind: z.string().max(40).optional(),
+  title: z.string().max(200).optional(),
+  selector: z.string().max(1024).optional(),
+  axes: z
+    .object({ x: z.string().max(160).optional(), y: z.string().max(160).optional() })
+    .optional(),
+  // Shared category/x-axis labels, index-aligned with every series' `values`. Absent for label-less
+  // charts (scatter/pie).
+  labels: z.array(z.string().max(160)).max(500).optional(),
+  series: z.array(ChartSeries).max(24),
+});
+export type ChartData = z.infer<typeof ChartData>;
+
+// The `chart-data` bridge method's payload (MAIN -> content): every chart the page-world extractor
+// could reach. Bounded — a page rarely draws more than a handful.
+export const ChartDataResult = z.object({ charts: z.array(ChartData).max(12) });
+export type ChartDataResult = z.infer<typeof ChartDataResult>;
+
+// The chart reader's result (`src/dom/charts.ts`). `source:'data'` = numeric series were extracted
+// (via the bridge or a DOM-only pass); `source:'vision'` = nothing reachable, so `targets` names the
+// host selectors the agent screenshots + describes instead (canvas/WebGL/closed lib). `reason` says why.
+export const ChartRead = z.object({
+  source: z.enum(['data', 'vision']),
+  charts: z.array(ChartData).max(12).default([]),
+  targets: z.array(z.string().max(1024)).max(12).default([]),
+  reason: z.string().max(200).optional(),
+});
+export type ChartRead = z.infer<typeof ChartRead>;
+
+// Each recipe is a `type` discriminant + the target selector + the desired end state. Content resolves
+// the widget by its ARIA role (`role=combobox/listbox/slider/dialog/tab/…`) and fires a realistic
+// event sequence, so a recipe survives restyling. All spread `Target` for frame/tab addressing, like
+// the slice-13 control tools they build on.
+export const DatetimeRecipe = z.object({
+  type: z.literal('datetime'),
+  // The trigger/input that opens the calendar.
+  selector: z.string(),
+  // Target day as ISO `YYYY-MM-DD`.
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ...Target.shape,
+});
+export const ComboboxRecipe = z.object({
+  type: z.literal('combobox'),
+  // The combobox input (`role=combobox`, or an `<input>` with an attached listbox).
+  selector: z.string(),
+  // The option to choose, matched against each option's visible text / `aria-label`.
+  value: z.string(),
+  ...Target.shape,
+});
+export const SliderRecipe = z.object({
+  type: z.literal('slider'),
+  // A `role=slider` element or an `<input type=range>`.
+  selector: z.string(),
+  value: z.number(),
+  ...Target.shape,
+});
+export const ToggleRecipe = z.object({
+  type: z.literal('toggle'),
+  // A `role=switch`/`checkbox`, `[aria-pressed]` button, or an `<input type=checkbox>`.
+  selector: z.string(),
+  on: z.boolean(),
+  ...Target.shape,
+});
+export const ModalRecipe = z.object({
+  type: z.literal('modal'),
+  // For `open`, the trigger; for `confirm`/`dismiss`, the dialog (`role=dialog`/`alertdialog`).
+  selector: z.string(),
+  action: z.enum(['open', 'confirm', 'dismiss']),
+  ...Target.shape,
+});
+export const TabsRecipe = z.object({
+  type: z.literal('tabs'),
+  // The tablist / accordion container (or a single tab).
+  selector: z.string(),
+  // The tab to select — its visible label / `aria-label`, or a 0-based index as a string.
+  value: z.string(),
+  ...Target.shape,
+});
+export const CarouselRecipe = z.object({
+  type: z.literal('carousel'),
+  // The carousel region (`aria-roledescription=carousel` or a `.carousel`-like root).
+  selector: z.string(),
+  direction: z.enum(['next', 'prev']),
+  // How many slides to advance (default 1), bounded so a stuck control can't loop forever.
+  times: z.number().int().positive().max(50).optional(),
+  ...Target.shape,
+});
+export const DragDropRecipe = z.object({
+  type: z.literal('dragDrop'),
+  // The element to pick up.
+  selector: z.string(),
+  // The drop target.
+  to: z.string(),
+  ...Target.shape,
+});
+export const WidgetRecipe = z.discriminatedUnion('type', [
+  DatetimeRecipe,
+  ComboboxRecipe,
+  SliderRecipe,
+  ToggleRecipe,
+  ModalRecipe,
+  TabsRecipe,
+  CarouselRecipe,
+  DragDropRecipe,
+]);
+export type WidgetRecipe = z.infer<typeof WidgetRecipe>;
+
+// A widget recipe's `ToolResult.data`: which widget ran, whether it reached its goal, a bounded trace
+// of the steps it fired (the agent reads what happened), and the widget's final observed ARIA state.
+export const WidgetActed = z.object({
+  widget: z.string().max(40),
+  reached: z.boolean(),
+  steps: z.array(z.string().max(160)).max(64),
+  state: z.record(z.string(), z.string()).optional(),
+});
+export type WidgetActed = z.infer<typeof WidgetActed>;
+
+// --- complex-site control tools (slice 15, expose-to-agent) ---------------
+// The remaining slice-15 content-routed inputs: read the page's detected stack (`pageFacts`), read
+// a chart's data or vision-fallback targets (`readChart`), hover one for its HTML tooltip
+// (`chartTooltip`), and drive an ARIA widget recipe (`widgetAct`). All route through content.ts
+// exactly like the rest of `ControlTool` (`Target`-addressed, frame/tab aware).
+export const ReadChartInput = z.object({
+  type: z.literal('readChart'),
+  // Scope to one chart host (e.g. a `readChart`'s prior `vision` target); omitted reads every
+  // chart the page-facts/data-probe/DOM pass can reach.
+  selector: z.string().optional(),
+  ...Target.shape,
+});
+export type ReadChartInput = z.infer<typeof ReadChartInput>;
+
+export const ChartTooltipInput = z.object({
+  type: z.literal('chartTooltip'),
+  // The chart host to hover — a `readChart` `vision` target's selector.
+  selector: z.string(),
+  ...Target.shape,
+});
+export type ChartTooltipInput = z.infer<typeof ChartTooltipInput>;
+
+export const WidgetActInput = z.object({
+  type: z.literal('widgetAct'),
+  // The widget's ARIA-anchored recipe — its own `selector` + `Target` address the element within
+  // the frame this message already routes to (see `WidgetRecipe` above).
+  recipe: WidgetRecipe,
+  ...Target.shape,
+});
+export type WidgetActInput = z.infer<typeof WidgetActInput>;
+
+export const PageFactsInput = z.object({ type: z.literal('pageFacts'), ...Target.shape });
+export type PageFactsInput = z.infer<typeof PageFactsInput>;
+
+// The content-routed slice-13/15 driving + complex-site tools as one discriminated union —
+// `content.ts` parses it beside `DomTool`, and `createInteractTools`/`createComplexSiteTools`
+// derive one `tool()` per member 1:1, the same zero-drift contract `DomTool`/`createDomTools` hold.
+export const ControlTool = z.discriminatedUnion('type', [
+  ClickInput,
+  TypeInput,
+  PressKeyInput,
+  HoverInput,
+  ScrollToInput,
+  SelectOptionInput,
+  WaitForInput,
+  HandleDialogInput,
+  ReadImagesInput,
+  ReadChartInput,
+  ChartTooltipInput,
+  WidgetActInput,
+  PageFactsInput,
+]);
+export type ControlTool = z.infer<typeof ControlTool>;
 
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [

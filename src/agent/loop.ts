@@ -20,6 +20,7 @@ import {
 } from './budget';
 import type { ChatMessage } from './session';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
+import { type ComplexSiteDispatch, createComplexSiteTools } from './tools/complex-site';
 import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
 import { createIdentityTool, type IdentityDispatch } from './tools/identity';
@@ -78,6 +79,9 @@ export interface RunTurnArgs {
    *  14). Absent ⇒ neither tool is offered this turn. `describe` is the cheap text-first read the
    *  system prompt asks the model to prefer over a screenshot when vision isn't warranted. */
   readonly describe?: DescribeToolDeps;
+  /** `pageFacts`/`readChart`/`chartTooltip`/`widgetAct` dispatch (slice 15) — same content-routed
+   *  transport as `interact.control`. Absent ⇒ none of the complex-site tools are offered this turn. */
+  readonly complexSite?: ComplexSiteDispatch;
   /** Sink for stream events → the side-panel port (`postToPanel`). */
   readonly emit: (event: SwToPanel) => void;
   /** Extra tools merged after the built-ins: connected MCP tools (02), session/recorder (07). */
@@ -192,7 +196,14 @@ export type ModelToolOutput =
  *  need the whole turn's args (messages, model, emit, …) to assemble the ToolSet. */
 type ToolDeps = Pick<
   RunTurnArgs,
-  'browse' | 'interact' | 'tabsFrames' | 'vision' | 'identity' | 'describe' | 'tools'
+  | 'browse'
+  | 'interact'
+  | 'tabsFrames'
+  | 'vision'
+  | 'identity'
+  | 'describe'
+  | 'complexSite'
+  | 'tools'
 >;
 
 /** Build the turn's ToolSet: DOM tools, the cross-site `browse` tool, browser-control
@@ -213,6 +224,7 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
   const vision = deps.vision ? createVisionTools(guardVisionDeps(deps.vision, budget)) : {};
   const identity = deps.identity ? createIdentityTool(deps.identity) : {};
   const describeTools = deps.describe ? createDescribeTools(deps.describe) : {};
+  const complexSite = deps.complexSite ? createComplexSiteTools(deps.complexSite) : {};
 
   const merged: ToolSet = {
     ...dom,
@@ -222,6 +234,7 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     ...vision,
     ...identity,
     ...describeTools,
+    ...complexSite,
   };
   const base = merged.screenshot;
   const screenshot = base ? { ...base, toModelOutput: screenshotToModelOutput } : undefined;
