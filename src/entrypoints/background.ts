@@ -7,16 +7,19 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
-import { listModels, validateProvider } from '@/agent/provider';
+import { runTurn } from '@/agent/loop';
+import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
+import { SessionStore } from '@/agent/session';
+import { buildSystemPrompt } from '@/agent/system-prompt';
+import type { DomDispatch } from '@/agent/tools/dom';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpConnectionSpec } from '@/mcp/client';
 import { McpManager } from '@/mcp/manager';
 import { getServer, listServers, removeServer, type StoredServer, saveServer } from '@/mcp/store';
-import { type Changeset, emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
-import type { McpOAuthConfig, McpServer, SwToPanel } from '@/shared/messages';
-import { ContentToSw, PanelToSw } from '@/shared/messages';
+import type { DomTool, McpOAuthConfig, McpServer, SwToPanel } from '@/shared/messages';
+import { ContentToSw, PanelToSw, ToolResult } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import { initSentry } from '@/shared/sentry';
@@ -38,8 +41,9 @@ export default defineBackground(() => {
     // re-enter it). Swallow so it never rejects an unrelated settings RPC.
   });
 
-  // Per-tab design session changeset. Rehydrated from chrome.storage.session on wake.
-  const sessions = new Map<number, Changeset>();
+  // Per-tab design sessions: in-flight turn thread + accumulated changeset, mirrored to
+  // chrome.storage.session so an SW eviction mid-turn resumes with context (src/agent/session).
+  const sessions = new SessionStore();
 
   // MCP registry (slice 02). OAuth endpoint configs aren't persisted (mcp/store.ts's
   // StoredServer is intentionally non-secret + config-free) — cached here for the SW's
@@ -102,6 +106,9 @@ export default defineBackground(() => {
     for (const s of stored) mcpManager.register(mcpSpec(s));
   });
 
+  // Rehydrate persisted design sessions before any user-message turn reads them (SW wake).
+  const sessionsReady = sessions.hydrate();
+
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== PORT_NAME) return;
@@ -134,14 +141,86 @@ export default defineBackground(() => {
     return true; // async response
   });
 
+  // The page the user is designing = the active tab of the last-focused normal window. The
+  // side panel isn't a tab, so a panel RPC's `sender.tab` is undefined — resolve the target here.
+  async function resolveTargetTab(): Promise<chrome.tabs.Tab | undefined> {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab;
+  }
+
+  // Turn-scoped DOM-tool transport: reassembled DomTool → the tab's content script → typed
+  // ToolResult. The content script is the only DOM world; a send failure degrades to an error
+  // ToolResult the model can react to rather than throwing the turn.
+  function domDispatchFor(tabId: number): DomDispatch {
+    return async (message: DomTool, signal) => {
+      if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+      try {
+        const raw = await chrome.tabs.sendMessage(tabId, message);
+        const parsed = ToolResult.safeParse(raw);
+        return parsed.success
+          ? parsed.data
+          : { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+      } catch (err) {
+        return { type: 'tool-result', ok: false, error: String(err) };
+      }
+    };
+  }
+
   async function handle(msg: PanelToSw, _tabId?: number) {
     await migrated; // settings reads must see the migrated (named-secret) state
     await mcpReady; // mcp-* cases need the registry rehydrated from storage
+    await sessionsReady; // user-message resumes any persisted session thread
     switch (msg.type) {
-      case 'user-message':
-        // TODO: run the Vercel AI SDK loop (src/agent), stream tokens + tool calls
-        // to the panel, dispatch DomTool messages to the content script.
+      case 'user-message': {
+        // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
+        // route DOM tools to the content script, persist the thread/changeset for resume (04).
+        const tab = await resolveTargetTab();
+        if (tab?.id === undefined || !tab.url) {
+          postToPanel({ type: 'error', message: 'Open a web page to start designing.' });
+          return { ok: true };
+        }
+        const cfg = await getProviderConfig();
+        if (!cfg) {
+          postToPanel({ type: 'error', message: 'Add a model provider in Settings to start.' });
+          return { ok: true };
+        }
+        const tabId = tab.id;
+
+        // Supersede any in-flight turn, then run this one under a fresh abort controller (Stop /
+        // a newer instruction aborts it). Session-start/-stop share `turnAbort` (slice 03).
+        turnAbort?.abort();
+        const controller = new AbortController();
+        turnAbort = controller;
+
+        await sessions.ensure(tabId, tab.url, crypto.randomUUID());
+        const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
+
+        // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
+        // (unblocking the panel). Completion persists spend + threads the assistant reply.
+        void runTurn({
+          tabId,
+          messages: session.messages,
+          signal: controller.signal,
+          model: createProvider(cfg),
+          instructions: buildSystemPrompt(),
+          dispatch: domDispatchFor(tabId),
+          emit: postToPanel,
+          tools: await mcpManager.toolsFor(),
+          approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
+        })
+          .then(async (outcome) => {
+            if (outcome.text) {
+              await sessions.appendMessages(tabId, { role: 'assistant', content: outcome.text });
+            }
+            await sessions.patch(tabId, { usage: outcome.usage });
+          })
+          .catch((err) => postToPanel({ type: 'error', message: String(err) }))
+          .finally(() => {
+            if (turnAbort === controller) turnAbort = null;
+          });
+
         return { ok: true };
+      }
       case 'ship':
         // TODO: assemble changeset -> open MCP client (src/mcp) -> task(create).
         return { ok: true };
@@ -316,7 +395,4 @@ export default defineBackground(() => {
     const out = relayToPanel(parsed.data);
     if (out) postToPanel(out);
   });
-
-  void sessions;
-  void emptyChangeset;
 });
