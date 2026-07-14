@@ -1,8 +1,14 @@
 import type { SelectorStrategy, StableSelector } from '@/shared/changeset';
 
-// Resilient selector resolution — never brittle nth-child chains.
-// See docs/idea/live-edit.md "Stable selectors". Pure + testable: pass a
+// Resilient selector resolution — never brittle nth-child chains, and shadow-DOM aware.
+// See docs/idea/live-edit.md "Stable selectors" + plan 15 (complex sites). Pure + testable: pass a
 // minimal element-like shape so it runs under jsdom and in unit tests.
+//
+// Shadow model (plan 15B): CSS `querySelector` cannot cross a shadow boundary, so a shadow-nested
+// element is emitted as an ordered HOST-PATH — `hostSelector >>> innerSelector`, one `>>>` per crossed
+// root — and re-selected by REPLAYING the path (root -> host -> host.shadowRoot -> …) via
+// {@link resolveShadowSelector}. Open roots pierce; a closed root (`host.shadowRoot === null`) can't be
+// pierced, so the path stops at the closed host — a coordinate/vision anchor — flagged `fragile`.
 
 export interface ElementLike {
   getAttribute(name: string): string | null;
@@ -13,11 +19,20 @@ export interface ElementLike {
   // fakes omit them, so the css-path generator degrades to a bare tag when absent.
   readonly parentElement?: ElementLike | null;
   readonly previousElementSibling?: ElementLike | null;
+  // Shadow traversal (real Elements only). The minimal fakes omit it, so shadow host-path composition
+  // is skipped for them — they model light DOM. Real values narrow to `ShadowRoot`/`Document` and drive
+  // host-path building; nothing here queries or mutates.
+  getRootNode?(options?: { composed?: boolean }): unknown;
 }
 
 const STABLE_DATA_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
 // Generated ids (hashed / framework) are not stable enough to ship.
 const GENERATED_ID = /[0-9a-f]{6,}|:r[0-9a-z]+:|^css-|^sc-/i;
+
+// Separates two shadow-boundary segments in a `shadow`-strategy value. Always spaced, so it never
+// collides with the css-path child combinator (` > `) nor with an unspaced `>>>` inside a quoted
+// attribute value — `split`/`join` on this exact literal are round-trip safe.
+export const SHADOW_COMBINATOR = ' >>> ';
 
 function attr(el: ElementLike, name: string): string | null {
   const v = el.getAttribute(name);
@@ -25,20 +40,13 @@ function attr(el: ElementLike, name: string): string | null {
 }
 
 /**
- * Resolve an element to an ordered list of stable selector *candidates*, most
- * stable first: data-attr -> id -> aria -> text -> css-path. Every candidate's
- * `value` is a syntactically valid `document.querySelector` string (no Playwright
- * `:has-text()` pseudo). The returned array IS the emitted heuristics: each
- * candidate carries the `strategy` that produced it, and fragile ones are flagged.
- *
- * Pure — element-like in, candidates out. Never takes a `document` and never runs a
- * query; it reads only the element and its own ancestor/sibling links. The
- * structural fallback is a scoped `nth-of-type` css-path (see {@link cssPath}), which
- * uniquely re-selects the element wherever the DOM allows it. Identity-checked
- * uniqueness against a live document is {@link pickUnique}'s job — the one function
- * that takes a `doc`. Always returns at least one candidate (the structural fallback).
+ * The ranked LOCAL selector candidates for `el` within its OWN root — most stable first: data-attr ->
+ * id -> aria -> text -> css-path. Every `value` is a syntactically valid `querySelector` string (no
+ * Playwright `:has-text()` pseudo) and never crosses a shadow boundary. Always returns at least one
+ * candidate (the structural fallback). This is the shadow-agnostic core reused per boundary when
+ * composing a host-path.
  */
-export function resolveSelector(el: ElementLike): StableSelector[] {
+function localCandidates(el: ElementLike): StableSelector[] {
   const candidates: StableSelector[] = [];
   const tag = el.tagName.toLowerCase();
 
@@ -71,16 +79,37 @@ export function resolveSelector(el: ElementLike): StableSelector[] {
 }
 
 /**
- * Pick the single stable selector that resolves to *exactly* `el` within `doc`.
- * Walks {@link resolveSelector}'s ranked candidates and returns the first one whose
- * value selects this and only this element — `hits.length === 1 && hits[0] === el`.
- * A bare count check is a bug: a different single element can match, so a candidate
- * that resolves to one *wrong* element is rejected. When nothing uniquely resolves,
- * degrades to the scoped css-path flagged `fragile` rather than throwing. The one and
- * only function here that takes a `doc`.
+ * Resolve an element to an ordered list of stable selector *candidates*, most stable first. For a
+ * light-DOM element this is {@link localCandidates} (data-attr -> id -> aria -> text -> css-path). For
+ * an element nested in one or more shadow roots, every candidate is a HOST-PATH (`hostSelector >>>
+ * innerSelector`) carrying the `shadow` strategy — the target's local candidates prefixed by the
+ * heuristic best selector of each ancestor host, so the ranking (data-attr-in-shadow above
+ * css-path-in-shadow) is preserved and {@link pickUnique} can verify each by replay.
+ *
+ * Pure — element-like in, candidates out. Reads only the element's own tree links (incl. `getRootNode`
+ * for the host chain); never takes a `document` and never runs a query. The verified, uniqueness-checked
+ * winner is {@link pickUnique}'s job. Always returns at least one candidate.
+ */
+export function resolveSelector(el: ElementLike): StableSelector[] {
+  if (isElement(el)) {
+    const hosts = hostChain(el, el.ownerDocument);
+    if (hosts.length > 0) return shadowCandidates(el, hosts);
+  }
+  return localCandidates(el);
+}
+
+/**
+ * Pick the single stable selector that resolves to *exactly* `el` within `doc`. For a light-DOM element,
+ * walks {@link localCandidates}' ranked list and returns the first whose value selects this and only this
+ * element (`hits.length === 1 && hits[0] === el`) — identity, not count. For a shadow-nested element it
+ * composes + verifies a host-path (see {@link pickShadow}). When nothing uniquely resolves, degrades to
+ * the scoped css-path flagged `fragile` rather than throwing. The one and only function that takes a `doc`.
  */
 export function pickUnique(el: Element, doc: ParentNode): StableSelector {
-  for (const candidate of resolveSelector(el)) {
+  const hosts = hostChain(el, doc);
+  if (hosts.length > 0) return pickShadow(el, hosts);
+
+  for (const candidate of localCandidates(el)) {
     if (resolvesToExactly(doc, candidate.value, el)) return candidate;
   }
   // The loop's guard rejects an unparseable candidate; this fallback bypasses it, so
@@ -89,6 +118,124 @@ export function pickUnique(el: Element, doc: ParentNode): StableSelector {
   const path = cssPath(el);
   if (parsesAsSelector(doc, path)) return make(path, 'css-path', true);
   return make(el.tagName.toLowerCase(), 'css-path', true);
+}
+
+/**
+ * Replay a `shadow`-strategy host-path against `root`, returning the element it selects (or `null`).
+ * CSS can't cross a shadow boundary, so each ` >>> ` segment is resolved with `querySelector` in the
+ * previous hop's *shadow root*: `root.querySelector(seg0)` -> `.shadowRoot.querySelector(seg1)` -> …
+ * A single-segment value is a plain `querySelector`. A closed root (`shadowRoot === null`) stops the
+ * walk and yields `null` — the caller then uses coordinates/vision on the last resolvable host. Also
+ * the resolver a downstream consumer uses to turn any `shadow` selector back into a live element.
+ */
+export function resolveShadowSelector(root: ParentNode, value: string): Element | null {
+  const segments = value.split(SHADOW_COMBINATOR);
+  let scope: ParentNode | null = root;
+  let found: Element | null = null;
+  for (let i = 0; i < segments.length; i += 1) {
+    const seg = segments[i]?.trim();
+    if (!scope || !seg) return null;
+    let hit: Element | null;
+    try {
+      hit = scope.querySelector(seg);
+    } catch {
+      return null; // a segment this engine rejects never resolves
+    }
+    if (!hit) return null;
+    found = hit;
+    scope = i < segments.length - 1 ? hit.shadowRoot : null;
+  }
+  return found;
+}
+
+// --- shadow traversal -----------------------------------------------------
+
+function isElement(node: ElementLike): node is ElementLike & Element {
+  return typeof Element !== 'undefined' && node instanceof Element;
+}
+
+// The nearest root of `el`, narrowed to a shadow root — `null` for a light-DOM element (whose root is
+// the Document) or an environment without Shadow DOM.
+function shadowRootOf(el: Element): ShadowRoot | null {
+  const root = el.getRootNode();
+  return typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot ? root : null;
+}
+
+// The ordered shadow hosts between `el` and `stop` (the resolution scope), outermost first. Empty when
+// `el` lives directly in `stop`'s tree — i.e., no shadow boundary is crossed relative to the scope, so
+// resolution stays plain-CSS (the light-DOM path). `stop` clamps the climb so a scoped
+// `pickUnique(el, shadowRoot)` never over-qualifies above its own root.
+function hostChain(el: Element, stop: ParentNode): Element[] {
+  const hosts: Element[] = [];
+  let cur: Element = el;
+  const seen = new Set<Element>();
+  for (;;) {
+    if (cur.getRootNode() === stop) break; // reached the resolution scope — stop climbing
+    const root = shadowRootOf(cur);
+    if (!root) break; // light DOM (root is a Document) — no more boundaries
+    const host = root.host;
+    if (seen.has(host)) break; // cycle guard (paranoia)
+    seen.add(host);
+    hosts.unshift(host);
+    cur = host;
+  }
+  return hosts;
+}
+
+// Heuristic shadow candidates (ranked, may not be unique) for the ranked-alternates list. The verified,
+// uniqueness-checked winner is `pickShadow`'s job. Each host contributes its single best local value as
+// a fixed prefix; the target's own ranked locals become the varying tail.
+function shadowCandidates(el: Element, hosts: Element[]): StableSelector[] {
+  const prefix = hosts.map((h) => bestLocalValue(h)).join(SHADOW_COMBINATOR);
+  const closed = hosts.some((h) => h.shadowRoot === null); // a closed crossing can't be pierced
+  return localCandidates(el).map((c) =>
+    make(`${prefix}${SHADOW_COMBINATOR}${c.value}`, 'shadow', c.fragile || closed),
+  );
+}
+
+function bestLocalValue(el: Element): string {
+  const [best] = localCandidates(el);
+  return best?.value ?? el.tagName.toLowerCase();
+}
+
+// Compose + verify the winning host-path for a shadow-nested element. Each boundary (every host, then
+// the target) is resolved to a selector unique WITHIN its own root; the segments join with ` >>> `. A
+// closed root stops the walk at the closed host — the deepest resolvable target (a coordinate/vision
+// anchor) — flagged `fragile`. Uniqueness-per-hop makes the composed path replay to exactly `el`.
+function pickShadow(el: Element, hosts: Element[]): StableSelector {
+  const chain: Element[] = [...hosts, el];
+  const parts: string[] = [];
+  let fragile = false;
+  for (let i = 0; i < chain.length; i += 1) {
+    const node = chain[i];
+    if (!node) break;
+    const scope: ParentNode | null =
+      i === 0 ? ownerScopeOf(node) : (chain[i - 1]?.shadowRoot ?? null);
+    if (!scope) {
+      // The previous boundary is a CLOSED shadow root — unreachable from outside. Stop at the closed
+      // host: the agent uses screenshot + click-at-point there instead of a DOM selector.
+      fragile = true;
+      break;
+    }
+    const local = pickLocal(node, scope);
+    parts.push(local.value);
+    if (local.fragile) fragile = true;
+  }
+  return make(parts.join(SHADOW_COMBINATOR), 'shadow', fragile);
+}
+
+// The ParentNode `el` is queried from — its own root node (a Document or an open ShadowRoot).
+function ownerScopeOf(el: Element): ParentNode {
+  return el.getRootNode() as ParentNode;
+}
+
+// The selector that resolves to exactly `el` WITHIN `scope` (never crossing a boundary): the first
+// ranked local candidate that uniquely + identity-matches, else a fragile scoped css-path.
+function pickLocal(el: Element, scope: ParentNode): StableSelector {
+  for (const candidate of localCandidates(el)) {
+    if (resolvesToExactly(scope, candidate.value, el)) return candidate;
+  }
+  return make(cssPath(el), 'css-path', true);
 }
 
 function parsesAsSelector(doc: ParentNode, value: string): boolean {
@@ -113,10 +260,11 @@ function resolvesToExactly(doc: ParentNode, value: string, el: Element): boolean
 }
 
 /**
- * Build a scoped `nth-of-type` css-path that uniquely re-selects `el`. Walks up the
- * ancestor chain emitting `tag:nth-of-type(n)` per level, anchoring at the nearest
- * ancestor with a stable id (`#id > ...`) for a shorter, more resilient scope, else
- * up to the root. Degrades to a bare tag when the element-like exposes no tree.
+ * Build a scoped `nth-of-type` css-path that uniquely re-selects `el` WITHIN its own root. Walks up the
+ * ancestor chain emitting `tag:nth-of-type(n)` per level, anchoring at the nearest ancestor with a stable
+ * id (`#id > ...`) for a shorter, more resilient scope, else up to the root (the top of a shadow tree, or
+ * the document). Degrades to a bare tag when the element-like exposes no tree. Never crosses a shadow
+ * boundary — {@link pickShadow} composes across boundaries by calling this per root.
  */
 function cssPath(el: ElementLike): string {
   const segments: string[] = [];

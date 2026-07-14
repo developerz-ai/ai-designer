@@ -4,7 +4,12 @@ import { z } from 'zod';
 // A design session's accepted edits, portable enough for the dev-agent to
 // map back to source during MCP handoff (see docs/idea/handoff.md).
 
-export const SelectorStrategy = z.enum(['data-attr', 'id', 'aria', 'text', 'css-path']);
+// `shadow` = a host-path selector (`hostSelector >>> innerSelector`, one `>>>` per shadow boundary):
+// CSS `querySelector` can't cross a shadow root, so a shadow-nested element is re-selected by replaying
+// the path root->host->shadowRoot->… (see `resolveShadowSelector` in src/dom/selector.ts). Open roots
+// pierce; a closed root can't be pierced, so its selector is flagged `fragile` and the agent falls back
+// to coordinate/vision interaction on the host.
+export const SelectorStrategy = z.enum(['data-attr', 'id', 'aria', 'text', 'css-path', 'shadow']);
 export type SelectorStrategy = z.infer<typeof SelectorStrategy>;
 
 export const StableSelector = z.object({
