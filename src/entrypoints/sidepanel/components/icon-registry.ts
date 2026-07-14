@@ -4,10 +4,12 @@ import {
   faArrowLeft,
   faArrowPointer,
   faArrowUpRightFromSquare,
+  faBug,
   faCheck,
   faChevronDown,
   faCircleDot,
   faClockRotateLeft,
+  faCodeBranch,
   faCopy,
   faDownload,
   faEye,
@@ -53,6 +55,8 @@ const REGISTRY = {
   back: faArrowLeft,
   site: faGlobe,
   report: faFileLines,
+  repo: faCodeBranch,
+  bug: faBug,
 } as const satisfies Record<string, IconDefinition>;
 
 /**
