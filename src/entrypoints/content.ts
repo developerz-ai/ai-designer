@@ -6,7 +6,7 @@ import { readImages } from '@/dom/images';
 import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
-import { queryOne, screenshotRect } from '@/dom/read';
+import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import {
   type CaptureRequest,
@@ -17,6 +17,8 @@ import {
   type DesignReadResult,
   type DiagnosticsInput,
   DomTool,
+  PageMetricsRequest,
+  type PageMetricsResult,
   PickerCmd,
   type ReadImagesResult,
   type ToolResult,
@@ -133,6 +135,23 @@ export default defineContentScript({
           sendResponse({ type: 'design-read-result', ok: true, read } satisfies DesignReadResult);
         } catch (err) {
           sendResponse({ type: 'design-read-result', ok: false, error: String(err) });
+        }
+        return; // responded synchronously
+      }
+
+      // Full-page capture (slice 13): the SW scroll-stitches viewport grabs (only it has
+      // captureVisibleTab + OffscreenCanvas) and needs this frame's scroll/viewport geometry to plan
+      // the bands. Pure DOM read (src/dom/read.ts); a failure degrades to an error the SW surfaces.
+      const metrics = PageMetricsRequest.safeParse(raw);
+      if (metrics.success) {
+        try {
+          sendResponse({
+            type: 'page-metrics-result',
+            ok: true,
+            metrics: pageMetrics(document, window),
+          } satisfies PageMetricsResult);
+        } catch (err) {
+          sendResponse({ type: 'page-metrics-result', ok: false, error: String(err) });
         }
         return; // responded synchronously
       }

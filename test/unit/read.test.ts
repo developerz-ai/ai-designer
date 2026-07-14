@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { a11ySnapshot, cropBox, getStyles, query, queryOne, screenshotRect } from '@/dom/read';
+import {
+  a11ySnapshot,
+  cropBox,
+  getStyles,
+  pageMetrics,
+  planStitch,
+  query,
+  queryOne,
+  screenshotRect,
+} from '@/dom/read';
+import type { PageMetrics } from '@/shared/messages';
 
 function mount(html: string): void {
   document.head.innerHTML = '';
@@ -141,5 +151,75 @@ describe('cropBox', () => {
 
   it('returns null when the rect starts past the image edge', () => {
     expect(cropBox({ x: 900, y: 0, width: 100, height: 100 }, 1, 800, 600)).toBeNull();
+  });
+});
+
+// --- full-page scroll-stitch geometry ------------------------------------
+
+const metrics = (over: Partial<PageMetrics> = {}): PageMetrics => ({
+  scrollWidth: 1000,
+  scrollHeight: 1000,
+  viewportWidth: 1000,
+  viewportHeight: 1000,
+  devicePixelRatio: 1,
+  scrollX: 0,
+  scrollY: 0,
+  ...over,
+});
+
+describe('planStitch', () => {
+  it('a page that fits the viewport is a single band, no scroll, no overlap', () => {
+    const plan = planStitch(metrics({ scrollHeight: 800, viewportHeight: 1000 }));
+    expect(plan.bands).toEqual([{ scrollY: 0, srcY: 0, destY: 0, height: 800 }]);
+    expect(plan).toMatchObject({ canvasWidth: 1000, canvasHeight: 800 });
+  });
+
+  it('tiles a tall page into viewport-height bands and clamps the last scroll to the page bottom', () => {
+    // 2500 tall, 1000 viewport → bands at y=0, 1000, and a clamped last at 1500 (not 2000).
+    const plan = planStitch(metrics({ scrollHeight: 2500, viewportHeight: 1000 }));
+    expect(plan.canvasHeight).toBe(2500);
+    expect(plan.bands.map((b) => b.scrollY)).toEqual([0, 1000, 1500]);
+    // The clamped last band starts copying below its top (its top rows overlap band 2 → skipped).
+    const last = plan.bands.at(-1);
+    expect(last).toEqual({ scrollY: 1500, srcY: 500, destY: 2000, height: 500 });
+  });
+
+  it('scales every band by devicePixelRatio (canvas + copy rects are device px)', () => {
+    const plan = planStitch(
+      metrics({ scrollHeight: 1500, viewportHeight: 1000, devicePixelRatio: 2 }),
+    );
+    expect(plan.canvasWidth).toBe(2000);
+    expect(plan.canvasHeight).toBe(3000);
+    expect(plan.bands[0]).toEqual({ scrollY: 0, srcY: 0, destY: 0, height: 2000 });
+    // Second band clamps scroll to 500, so srcY = (1000-500)*2 = 1000, height covers the remainder.
+    expect(plan.bands[1]).toEqual({ scrollY: 500, srcY: 1000, destY: 2000, height: 1000 });
+  });
+
+  it('bounds a very tall page by maxBands (no unbounded capture)', () => {
+    const plan = planStitch(metrics({ scrollHeight: 1_000_000, viewportHeight: 1000 }), {
+      maxBands: 3,
+      maxHeightCss: 20_000,
+    });
+    expect(plan.bands).toHaveLength(3);
+    expect(plan.canvasHeight).toBe(3000); // 3 bands × 1000 css × dpr 1
+  });
+
+  it('the stitched bands compose to a contiguous, gap-free canvas', () => {
+    const plan = planStitch(metrics({ scrollHeight: 2300, viewportHeight: 1000 }));
+    let cursor = 0;
+    for (const band of plan.bands) {
+      expect(band.destY).toBe(cursor); // each band starts where the previous ended
+      cursor += band.height;
+    }
+    expect(cursor).toBe(plan.canvasHeight); // fully covered, no gap or overrun
+  });
+});
+
+describe('pageMetrics', () => {
+  it('reports at least one viewport for a short page', () => {
+    const m = pageMetrics(document, window);
+    expect(m.scrollHeight).toBeGreaterThanOrEqual(m.viewportHeight);
+    expect(m.viewportWidth).toBeGreaterThan(0);
+    expect(m.devicePixelRatio).toBeGreaterThan(0);
   });
 });

@@ -319,6 +319,7 @@ export const ScreenshotInput = z.object({
   fullPage: z.boolean().optional(),
   ...Target.shape,
 });
+export type ScreenshotInput = z.infer<typeof ScreenshotInput>;
 export const SetStyleInput = z.object({
   type: z.literal('setStyle'),
   selector: z.string(),
@@ -501,6 +502,7 @@ export const ReadImagesInput = z.object({
   selector: z.string().optional(),
   ...Target.shape,
 });
+export type ReadImagesInput = z.infer<typeof ReadImagesInput>;
 
 // The content-routed slice-13 driving tools as one discriminated union — `content.ts` parses it
 // beside `DomTool`, and `createControlTools` (slice 13) derives one `tool()` per member 1:1, the
@@ -795,6 +797,38 @@ export const CaptureResult = z.object({
   error: z.string().optional(),
 });
 export type CaptureResult = z.infer<typeof CaptureResult>;
+
+// --- full-page capture: page metrics (SW -> content, request/response) -----
+// A full-page `screenshot` scroll-stitches viewport grabs in the SW (only it has
+// `captureVisibleTab` + OffscreenCanvas). To plan the scroll bands the SW needs the page's
+// scroll + viewport geometry, which only the DOM world knows — so it asks the content script for
+// it here (mirroring `DesignReadRequest`). NOT a `DomTool`/`ControlTool`: it is an internal step of
+// the full-page capture, never an agent-facing tool. `Target.frameId` addresses the frame to read
+// (full-page capture uses the top document, frameId 0).
+export const PageMetricsRequest = z.object({ type: z.literal('page-metrics'), ...Target.shape });
+export type PageMetricsRequest = z.infer<typeof PageMetricsRequest>;
+
+// The page's scroll + viewport geometry in CSS px (+ `devicePixelRatio`). The SW turns this into a
+// stitch plan (`src/dom/read.ts` `planStitch`): how far to scroll for each band and where each band
+// lands on the device-px canvas.
+export const PageMetrics = z.object({
+  scrollWidth: z.number().nonnegative(),
+  scrollHeight: z.number().nonnegative(),
+  viewportWidth: z.number().positive(),
+  viewportHeight: z.number().positive(),
+  devicePixelRatio: z.number().positive(),
+  scrollX: z.number(),
+  scrollY: z.number(),
+});
+export type PageMetrics = z.infer<typeof PageMetrics>;
+
+export const PageMetricsResult = z.object({
+  type: z.literal('page-metrics-result'),
+  ok: z.boolean(),
+  metrics: PageMetrics.optional(),
+  error: z.string().optional(),
+});
+export type PageMetricsResult = z.infer<typeof PageMetricsResult>;
 
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [

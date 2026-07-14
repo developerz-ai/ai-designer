@@ -1,5 +1,7 @@
+import { generateText } from 'ai';
 import { defineBackground } from '#imports';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
+import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
 import {
   clearProviderConfig,
   getProviderConfig,
@@ -8,14 +10,17 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
-import { runTurn } from '@/agent/loop';
+import { runTurn, screenshotToModelOutput } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
 import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
-import type { DomDispatch } from '@/agent/tools/dom';
-import { cropBox } from '@/dom/read';
+import { createInteractTools } from '@/agent/tools/interact';
+import { createTabsTools } from '@/agent/tools/tabs';
+import { createVisionTools, type ScreenshotDispatch } from '@/agent/tools/vision';
+import { type GenerateVision, runInspect } from '@/agent/vision';
+import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpConnectionSpec } from '@/mcp/client';
 import { McpManager } from '@/mcp/manager';
@@ -23,11 +28,14 @@ import { getServer, listServers, removeServer, type StoredServer, saveServer } f
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
+  ControlTool,
   DesignRead,
   DesignReadRequest,
   DomTool,
   McpOAuthConfig,
   McpServer,
+  PageMetrics,
+  PageMetricsRequest,
   PickerCmd,
   Rect,
   SwToPanel,
@@ -36,6 +44,7 @@ import {
   CaptureRequest,
   ContentToSw,
   DesignReadResult,
+  PageMetricsResult,
   PanelToSw,
   ToolResult,
 } from '@/shared/messages';
@@ -45,6 +54,14 @@ import { initSentry } from '@/shared/sentry';
 
 // The preset the legacy OpenRouter-only RPCs (save-openrouter-key/set-model) map onto.
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+// Content-routed tool transport: both the slice-05 read/mutate `DomTool`s and the slice-13
+// page-driving `ControlTool`s ride the same bus round-trip to the target frame's content script,
+// so one dispatch serves both (assignable to `DomDispatch` and `ControlDispatch`/`ReadImagesDispatch`).
+type ContentDispatch = (msg: DomTool | ControlTool, signal?: AbortSignal) => Promise<ToolResult>;
+
+// Let the page paint after a programmatic scroll before grabbing the viewport for a full-page stitch.
+const SCROLL_SETTLE_MS = 200;
 
 // Service worker — the brain. Holds keys, runs the agent loop, owns MCP clients
 // and the changeset store. NEVER expose the OpenRouter key to the content script
@@ -167,18 +184,56 @@ export default defineBackground(() => {
     return tab;
   }
 
-  // Turn-scoped DOM-tool transport: reassembled DomTool → the tab's content script → typed
-  // ToolResult. The content script is the only DOM world; a send failure degrades to an error
-  // ToolResult the model can react to rather than throwing the turn.
-  function domDispatchFor(tabId: number): DomDispatch {
-    return async (message: DomTool, signal) => {
+  // Turn-scoped content-tool transport: reassembled DomTool/ControlTool → the target frame's content
+  // script → typed ToolResult. Frame-aware (slice 13): `Target.frameId` routes via the sendMessage
+  // `{ frameId }` option (default 0 = top document), and `Target.tabId` re-addresses another tab
+  // (copy = user tab + reference tab). A child frame can't learn its own id, so the SW stamps the
+  // frame it routed to onto a result that left it off. The content script is the only DOM world; a
+  // send failure degrades to an error ToolResult the model reacts to rather than throwing the turn.
+  function contentDispatchFor(defaultTabId: number): ContentDispatch {
+    return async (message, signal) => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+      const tabId = message.tabId ?? defaultTabId;
+      const frameId = message.frameId ?? 0;
       try {
-        const raw = await chrome.tabs.sendMessage(tabId, message);
+        const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
         const parsed = ToolResult.safeParse(raw);
-        return parsed.success
-          ? parsed.data
-          : { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+        if (!parsed.success) {
+          return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+        }
+        return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
+      } catch (err) {
+        return { type: 'tool-result', ok: false, error: String(err) };
+      }
+    };
+  }
+
+  // `screenshot` transport (slice 13). An element/viewport crop routes to content (it computes the
+  // rect, the SW crops — the slice-05 path); a `fullPage` capture is SW-owned scroll-stitch of the
+  // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`).
+  function screenshotDispatchFor(defaultTabId: number): ScreenshotDispatch {
+    const content = contentDispatchFor(defaultTabId);
+    return async (input, signal) => {
+      if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+      if (!input.fullPage || input.selector) {
+        return content(
+          {
+            type: 'screenshot',
+            selector: input.selector,
+            tabId: input.tabId,
+            frameId: input.frameId,
+          },
+          signal,
+        );
+      }
+      const tabId = input.tabId ?? defaultTabId;
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        return {
+          type: 'tool-result',
+          ok: true,
+          data: await captureFullPage(tabId, tab.windowId, signal),
+        };
       } catch (err) {
         return { type: 'tool-result', ok: false, error: String(err) };
       }
@@ -218,18 +273,64 @@ export default defineBackground(() => {
         // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
         const mode = resolveMode(msg.mode, msg.text);
 
+        // Browser-control + vision tools (slice 13), assembled per turn like the MCP tools and
+        // merged into the loop's tool extension point. `content` drives the page (DOM + interaction)
+        // in the target frame; nav/tabs/frames run SW-side against `chromeBrowserDriver`; vision
+        // captures + inspects. The vision `screenshot` carries the image→model hook so a returned PNG
+        // is fed back as an image part, and it overrides the DOM `screenshot` (adds `fullPage`).
+        const model = createProvider(cfg);
+        const content = contentDispatchFor(tabId);
+        const screenshot = screenshotDispatchFor(tabId);
+        const vision = createVisionTools({
+          screenshot,
+          readImages: content,
+          inspect: (msg, signal) =>
+            runInspect(
+              {
+                model,
+                generate: visionGenerate,
+                capture: (i, sig) =>
+                  screenshot(
+                    {
+                      type: 'screenshot',
+                      selector: i.selector,
+                      fullPage: i.fullPage,
+                      tabId: i.tabId,
+                      frameId: i.frameId,
+                    },
+                    sig,
+                  ),
+              },
+              msg,
+              signal,
+            ),
+        });
+        const browserTools = {
+          ...createInteractTools({
+            control: content,
+            nav: (msg, signal) => runNav(chromeBrowserDriver, msg, tabId, signal),
+          }),
+          ...createTabsTools({
+            tabs: (msg) => runTabs(chromeBrowserDriver, msg),
+            frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
+          }),
+          ...vision,
+          screenshot: { ...vision.screenshot, toModelOutput: screenshotToModelOutput },
+        };
+
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
         void runTurn({
           tabId,
           messages: session.messages,
           signal: controller.signal,
-          model: createProvider(cfg),
+          model,
           instructions: buildSystemPrompt({ addenda: modeGuidance(mode).addenda }),
-          dispatch: domDispatchFor(tabId),
+          dispatch: content,
           browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
           emit: postToPanel,
-          tools: await mcpManager.toolsFor(),
+          // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
+          tools: { ...browserTools, ...(await mcpManager.toolsFor()) },
           approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
         })
           .then(async (outcome) => {
@@ -481,6 +582,109 @@ async function cropDataUrl(dataUrl: string, rect: Rect, dpr: number): Promise<st
   } catch {
     return dataUrl;
   }
+}
+
+// --- browser control: navigation / tabs / frames (slice 13) --------------
+// Chrome implementation of the SW-orchestration primitives. The tested decision logic lives in
+// `src/agent/browser-control.ts`; this is only the chrome glue (coverage-excluded, like the browse
+// driver). `waitForLoad` reuses the browse tab-load wait. Frame enumeration needs the `webNavigation`
+// permission (added to the manifest in a later slice-13 task) — without it the call rejects and
+// surfaces as an error ToolResult the agent reads.
+const chromeBrowserDriver: BrowserControlDriver = {
+  navigate: async (tabId, url) => {
+    await chrome.tabs.update(tabId, { url });
+  },
+  goBack: (tabId) => chrome.tabs.goBack(tabId),
+  reload: (tabId) => chrome.tabs.reload(tabId),
+  waitForLoad: (tabId, signal) => waitForTabComplete(tabId, signal),
+  getTab: (tabId) => chrome.tabs.get(tabId),
+  listTabs: () => chrome.tabs.query({}),
+  openTab: (url) => chrome.tabs.create({ url, active: true }),
+  activateTab: async (tabId) =>
+    (await chrome.tabs.update(tabId, { active: true })) ?? { id: tabId },
+  closeTab: (tabId) => chrome.tabs.remove(tabId),
+  listFrames: async (tabId) => {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    return (frames ?? []).map((f) => ({
+      frameId: f.frameId,
+      url: f.url,
+      parentFrameId: f.parentFrameId,
+    }));
+  },
+};
+
+// Adapt the AI SDK's `generateText` to the vision module's minimal injected shape (text out only),
+// so `runInspect` stays SDK-decoupled + testable and this SW glue owns the real call.
+const visionGenerate: GenerateVision = (args) => generateText(args).then((r) => ({ text: r.text }));
+
+// --- full-page screenshot (scroll-stitch) --------------------------------
+// Plan the scroll bands from the page's metrics (pure math in `planStitch`), grab the viewport at
+// each band (captureVisibleTab is SW-only), and stitch them into one PNG. The user's scroll is
+// restored even if a grab fails midway. captureVisibleTab is rate-limited without a broad host
+// grant, so a very tall page can exceed the quota — that degrades to an error the agent can retry
+// or fall back from (viewport shot / a11y).
+async function captureFullPage(
+  tabId: number,
+  windowId: number | undefined,
+  signal?: AbortSignal,
+): Promise<string> {
+  const metrics = await requestPageMetrics(tabId);
+  const plan = planStitch(metrics);
+  if (plan.bands.length === 0) throw new Error('The page has no visible area to capture.');
+  const frames: string[] = [];
+  try {
+    for (const band of plan.bands) {
+      if (signal?.aborted) throw new Error('aborted');
+      await sendScrollTo(tabId, band.scrollY);
+      await browseDelay(SCROLL_SETTLE_MS, signal);
+      frames.push(
+        await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, {
+          format: 'png',
+        }),
+      );
+    }
+  } finally {
+    // Best-effort restore — never let a failed grab strand the user scrolled to the page bottom.
+    await sendScrollTo(tabId, metrics.scrollY).catch(() => {});
+  }
+  return stitchFrames(plan, frames);
+}
+
+// Ask the top document for its scroll + viewport geometry (SW -> content), the input to the stitch.
+async function requestPageMetrics(tabId: number, frameId = 0): Promise<PageMetrics> {
+  const request: PageMetricsRequest = { type: 'page-metrics' };
+  const parsed = PageMetricsResult.safeParse(
+    await chrome.tabs.sendMessage(tabId, request, { frameId }),
+  );
+  if (!parsed.success) throw new Error('Malformed page metrics from the page.');
+  if (!parsed.data.ok || !parsed.data.metrics) {
+    throw new Error(parsed.data.error ?? 'The page did not report its metrics.');
+  }
+  return parsed.data.metrics;
+}
+
+// Scroll the target frame to an absolute page offset (reuses the content interaction engine).
+async function sendScrollTo(tabId: number, y: number, frameId = 0): Promise<void> {
+  const message: ControlTool = { type: 'scrollTo', y };
+  await chrome.tabs.sendMessage(tabId, message, { frameId });
+}
+
+// Compose the band grabs onto one device-px canvas per the plan's src/dest rects, then encode a
+// single PNG. OffscreenCanvas is the SW's only imaging surface (as in cropDataUrl).
+async function stitchFrames(plan: StitchPlan, frames: string[]): Promise<string> {
+  const canvas = new OffscreenCanvas(plan.canvasWidth, plan.canvasHeight);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No 2D canvas context for stitching.');
+  for (let i = 0; i < plan.bands.length; i++) {
+    const band = plan.bands[i];
+    const frame = frames[i];
+    if (!band || !frame) continue;
+    const bitmap = await createImageBitmap(await (await fetch(frame)).blob());
+    const width = Math.min(bitmap.width, plan.canvasWidth);
+    ctx.drawImage(bitmap, 0, band.srcY, width, band.height, 0, band.destY, width, band.height);
+    bitmap.close();
+  }
+  return blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
 }
 
 // Blob -> `data:` URL without FileReader (not reliably present in the SW). btoa over the raw bytes
