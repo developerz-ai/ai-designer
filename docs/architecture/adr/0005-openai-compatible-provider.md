@@ -22,5 +22,5 @@ Initially the agent used OpenRouter exclusively (ADR-0003), a fine provider but 
 ## Related
 
 - [ADR 0003](0003-openrouter-byok.md) — originally provider-specific; this generalizes it.
-- [Stack in CLAUDE.md](../../CLAUDE.md) — `@ai-sdk/openai-compatible`, runtime config.
-- [`docs/reference/agent-sdk.md`](../agent-sdk.md) — provider setup examples.
+- [Stack in CLAUDE.md](../../../CLAUDE.md) — `@ai-sdk/openai-compatible`, runtime config.
+- [`docs/reference/agent-sdk.md`](../../reference/agent-sdk.md) — provider setup examples.

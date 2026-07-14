@@ -93,4 +93,4 @@ Without hints handoff still works (raw before/after CSS), but with them the resu
 - Append-only event log → undo = pop onto `redoStack`; redo = pop back. No re-derivation.
 - Lives in `chrome.storage.session`; cleared on tab close or "Clear session".
 - Reload of the page wipes the live edits but **not** the recorded changeset (until session ends).
-- On Ship/Download, the finished session (changeset + report + PR link if shipped) is retained in [history](../idea/ui.md#history) — up to the last 10 conversations, `chrome.storage.local`.
+- On Ship/Download, the finished session (changeset + report + PR link if shipped) is retained in [history](../idea/ui.md#side-panel-tabs) — up to the last 10 conversations, `chrome.storage.local`.

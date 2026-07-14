@@ -80,7 +80,7 @@ The changeset ([changeset.md](changeset.md)) plus framing, mapped onto the backe
 
 ## Report fallback in detail
 
-`toMarkdown()` (`src/changeset/report-md.ts`) is a complete renderer, not a stub — identity tokens, per-edit intent/selector/before-after, debug findings with severity/root-cause, and per-breakpoint responsive screenshots all render to one pasteable brief. `ShipBar.tsx`'s Download action triggers `download-report`; both `download-report` and `send-report` SW RPCs (`src/entrypoints/background.ts`) call the same renderer. The rendered report is retained in [history](../idea/ui.md#history) so it isn't lost if the panel closes before the user pastes it elsewhere.
+`toMarkdown()` (`src/changeset/report-md.ts`) is a complete renderer, not a stub — identity tokens, per-edit intent/selector/before-after, debug findings with severity/root-cause, and per-breakpoint responsive screenshots all render to one pasteable brief. `ShipBar.tsx`'s Download action triggers `download-report`; both `download-report` and `send-report` SW RPCs (`src/entrypoints/background.ts`) call the same renderer. The rendered report is retained in [history](../idea/ui.md#side-panel-tabs) so it isn't lost if the panel closes before the user pastes it elsewhere.
 
 ## Backend-agnostic
 

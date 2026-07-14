@@ -48,7 +48,7 @@ const model = openrouter(modelId, {
 ```
 
 - Key lives **only** in the service worker. Never in the content script (shares the page world) — see [mv3-worlds](../architecture/mv3-worlds.md).
-- `baseURL` is configured at runtime via [ProviderConfig](../idea/agent.md#settings-and-provider-selection).
+- `baseURL` is configured at runtime via [ProviderConfig](../idea/agent.md#provider--byok-any-endpoint).
 - The callable form `provider(id)` is the pattern ai-dev uses in prod.
 
 ## Agent loop — our case

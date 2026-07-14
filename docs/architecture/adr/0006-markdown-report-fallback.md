@@ -26,6 +26,6 @@ Both are generated from the same `Report` schema; the `.md` is also attached as 
 ## Related
 
 - [ADR 0004](0004-mcp-handoff.md) — MCP primary, this adds the fallback.
-- [`src/changeset/report-md.ts`](../../src/changeset/report-md.ts) — Markdown renderer.
-- [`src/mcp/handoff.ts`](../../src/mcp/handoff.ts) — routing logic (MCP or fallback).
+- [`src/changeset/report-md.ts`](../../../src/changeset/report-md.ts) — Markdown renderer.
+- [`src/mcp/handoff.ts`](../../../src/mcp/handoff.ts) — routing logic (MCP or fallback).
 - [`docs/architecture/handoff.md`](../handoff.md) — full routing flowchart.
