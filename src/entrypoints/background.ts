@@ -13,13 +13,22 @@ import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import type { DomDispatch } from '@/agent/tools/dom';
+import { cropBox } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpConnectionSpec } from '@/mcp/client';
 import { McpManager } from '@/mcp/manager';
 import { getServer, listServers, removeServer, type StoredServer, saveServer } from '@/mcp/store';
 import { ensureHostAccess } from '@/shared/host-permissions';
-import type { DomTool, McpOAuthConfig, McpServer, SwToPanel } from '@/shared/messages';
-import { ContentToSw, PanelToSw, ToolResult } from '@/shared/messages';
+import type {
+  CaptureResult,
+  DomTool,
+  McpOAuthConfig,
+  McpServer,
+  PickerCmd,
+  Rect,
+  SwToPanel,
+} from '@/shared/messages';
+import { CaptureRequest, ContentToSw, PanelToSw, ToolResult } from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import { initSentry } from '@/shared/sentry';
@@ -231,6 +240,21 @@ export default defineBackground(() => {
         // TODO: assemble changeset -> open MCP client (src/mcp) -> task(create).
         return { ok: true };
 
+      // User-driven element picker: forward the panel's start/stop to the target tab's content
+      // script as a PickerCmd (the overlay lives in the DOM world). Distinct from the agent's
+      // DomTool calls — the picker is never agent-run. A missing/uninjectable tab is a no-op.
+      case 'start-picker':
+      case 'stop-picker': {
+        const tab = await resolveTargetTab();
+        if (tab?.id !== undefined) {
+          const cmd: PickerCmd = {
+            type: msg.type === 'start-picker' ? 'picker-start' : 'picker-stop',
+          };
+          await chrome.tabs.sendMessage(tab.id, cmd).catch(() => {});
+        }
+        return { ok: true };
+      }
+
       // --- settings / BYOK: key custody + provider network are SW-only ---
       // Persist any openai-compatible provider. A custom host needs a runtime grant first
       // (CORS); a denial is surfaced without persisting. We persist before validating so an
@@ -397,8 +421,60 @@ export default defineBackground(() => {
     if (!parsed.success) return; // PanelToSw RPC handled by the listener above
 
     // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
-    // coverage-excluded). null = no panel consumer for this event yet.
+    // coverage-excluded). null = the event carries nothing to forward.
     const out = relayToPanel(parsed.data);
     if (out) postToPanel(out);
   });
+
+  // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the
+  // content script computes the crop rect and asks here. Capture the visible tab, crop to the
+  // rect, and reply with a base64 PNG data URL. Any failure degrades to an error CaptureResult
+  // the content script surfaces as an error ToolResult (the agent can retry / fall back to a11y).
+  chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
+    const parsed = CaptureRequest.safeParse(raw);
+    if (!parsed.success) return; // not a capture request
+    captureVisibleTab(parsed.data, sender.tab?.windowId)
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl } satisfies CaptureResult))
+      .catch((err) => sendResponse({ ok: false, error: String(err) } satisfies CaptureResult));
+    return true; // async response
+  });
 });
+
+// Capture the visible tab as PNG, then crop to the requested (page-CSS-px) rect. `windowId` comes
+// from the requesting content script's tab; falls back to the current window.
+async function captureVisibleTab(req: CaptureRequest, windowId?: number): Promise<string> {
+  const full = await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, {
+    format: 'png',
+  });
+  return cropDataUrl(full, req.rect, req.devicePixelRatio);
+}
+
+// Crop a PNG data URL to `rect` (scaled from CSS px to device px by `dpr`) via OffscreenCanvas —
+// the SW's only imaging surface. The pure box math is `src/dom/read.ts` `cropBox` (tested);
+// `null` (empty or whole-frame crop) and any decode/draw failure return the full frame unchanged,
+// which still serves the agent's vision.
+async function cropDataUrl(dataUrl: string, rect: Rect, dpr: number): Promise<string> {
+  try {
+    const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    const box = cropBox(rect, dpr, bitmap.width, bitmap.height);
+    if (!box) return dataUrl;
+    const canvas = new OffscreenCanvas(box.sw, box.sh);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.drawImage(bitmap, box.sx, box.sy, box.sw, box.sh, 0, 0, box.sw, box.sh);
+    return await blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
+  } catch {
+    return dataUrl;
+  }
+}
+
+// Blob -> `data:` URL without FileReader (not reliably present in the SW). btoa over the raw bytes
+// is safe here: the input is binary PNG, chunked so a large frame can't blow the call stack.
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:image/png;base64,${btoa(binary)}`;
+}

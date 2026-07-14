@@ -23,13 +23,25 @@ describe('relayToPanel', () => {
     });
   });
 
-  it('has no panel consumer yet for multi-select-changed and recorder-event', () => {
-    expect(relayToPanel({ type: 'multi-select-changed', selectors: [selector] })).toBeNull();
-    expect(
-      relayToPanel({
-        type: 'recorder-event',
-        event: { kind: 'setStyle', selector, before: '', after: 'x', ts: 0 },
-      }),
-    ).toBeNull();
+  it('maps multi-select-changed to a multi-select stream event', () => {
+    expect(relayToPanel({ type: 'multi-select-changed', selectors: [selector] })).toEqual({
+      type: 'multi-select',
+      selectors: [selector],
+    });
+  });
+
+  it('passes an empty multi-selection through (clears the panel highlight)', () => {
+    expect(relayToPanel({ type: 'multi-select-changed', selectors: [] })).toEqual({
+      type: 'multi-select',
+      selectors: [],
+    });
+  });
+
+  it('mirrors recorder-event to the panel stream', () => {
+    const event = { kind: 'setStyle' as const, selector, before: '', after: 'x', ts: 0 };
+    expect(relayToPanel({ type: 'recorder-event', event })).toEqual({
+      type: 'recorder-event',
+      event,
+    });
   });
 });

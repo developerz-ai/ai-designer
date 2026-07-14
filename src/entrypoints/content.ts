@@ -1,61 +1,89 @@
 import { defineContentScript } from '#imports';
-import { DomTool, type ToolResult } from '@/shared/messages';
+import { createDomExecutor } from '@/dom/execute';
+import { createMutator } from '@/dom/mutate';
+import { createPicker } from '@/dom/picker';
+import { queryOne, screenshotRect } from '@/dom/read';
+import { createRecorder } from '@/dom/recorder';
+import {
+  type CaptureRequest,
+  CaptureResult,
+  type ContentToSw,
+  DomTool,
+  PickerCmd,
+  type ToolResult,
+} from '@/shared/messages';
 
-// Content script — the only world with DOM access. Executes DomTool calls from
-// the service worker, runs the element picker overlay, and records accepted
-// edits. All page mutations are EPHEMERAL and reversible (docs/idea/live-edit.md).
+// Content script — the only world with DOM access. It stays a THIN wire: Zod-gate inbound
+// messages, hand them to the testable src/dom modules (executor + picker + recorder), and forward
+// their ContentToSw events to the service worker. All logic lives in src/dom (jsdom-testable,
+// coverage-counted); this entrypoint is coverage-excluded, so keep it minimal. Page mutations are
+// EPHEMERAL + reversible (docs/idea/live-edit.md); the only durable output is the changeset (07).
 
 export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_idle',
   main() {
-    // Injected stylesheet for reversible setStyle (never inline styles).
-    let sheet: HTMLStyleElement | null = null;
+    // Push picker/recorder events to the SW (fire-and-forget). relay.ts maps them to the panel;
+    // the SW folds recorder events into the changeset (slice 07). A dropped push (SW evicted
+    // mid-session) is recoverable, so swallow the rejection rather than spam the page console.
+    const emit = (msg: ContentToSw): void => {
+      void chrome.runtime.sendMessage(msg).catch(() => {});
+    };
 
+    const mutator = createMutator();
+    const recorder = createRecorder(emit);
+    const executor = createDomExecutor({ mutator, recorder });
+    const picker = createPicker(emit);
+
+    // Screenshot is split across worlds: content computes the crop rect (read.ts), the SW captures
+    // + crops (only it has chrome.tabs.captureVisibleTab). Returns a base64 PNG data URL as
+    // ToolResult.data for the agent's vision self-correction (slice 04).
+    async function screenshot(selector?: string): Promise<ToolResult> {
+      const el = selector ? queryOne(document, selector) : null;
+      if (selector && !el) {
+        return {
+          type: 'tool-result',
+          ok: false,
+          error: `No element matches selector: ${selector}`,
+        };
+      }
+      const { rect, devicePixelRatio } = screenshotRect(el);
+      const request: CaptureRequest = { type: 'capture-visible-tab', rect, devicePixelRatio };
+      const parsed = CaptureResult.safeParse(await chrome.runtime.sendMessage(request));
+      if (!parsed.success) {
+        return { type: 'tool-result', ok: false, error: 'Malformed capture result from the SW' };
+      }
+      const { ok, dataUrl, error } = parsed.data;
+      return ok && dataUrl
+        ? { type: 'tool-result', ok: true, data: dataUrl }
+        : { type: 'tool-result', ok: false, error: error ?? 'Screenshot capture failed' };
+    }
+
+    function handleTool(tool: DomTool): Promise<ToolResult> {
+      return tool.type === 'screenshot'
+        ? screenshot(tool.selector)
+        : Promise.resolve(executor.exec(tool));
+    }
+
+    // The SW addresses this tab with two message kinds: agent DomTool calls (reply with a
+    // ToolResult) and user-driven PickerCmds (start/stop the overlay, no reply). Parse each with
+    // its own schema; anything else is a foreign message and is ignored.
     chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
-      const parsed = DomTool.safeParse(raw);
-      if (!parsed.success) return;
-      sendResponse(exec(parsed.data));
-      return true;
+      const tool = DomTool.safeParse(raw);
+      if (tool.success) {
+        // Always answer: a rejected round-trip (e.g. the SW evicted mid-screenshot) degrades to
+        // an error ToolResult the agent can react to, never a dropped response / unhandled reject.
+        handleTool(tool.data)
+          .then(sendResponse)
+          .catch((err) => sendResponse({ type: 'tool-result', ok: false, error: String(err) }));
+        return true; // async ToolResult
+      }
+      const cmd = PickerCmd.safeParse(raw);
+      if (cmd.success) {
+        if (cmd.data.type === 'picker-start') picker.start();
+        else picker.stop();
+      }
+      return; // no response for picker commands / foreign messages
     });
-
-    function exec(tool: DomTool): ToolResult {
-      switch (tool.type) {
-        case 'query':
-          // TODO: resolve elements + stable selectors (src/dom/selector.ts).
-          return { type: 'tool-result', ok: true, data: [] };
-        case 'getStyles':
-          // TODO: return the changed subset of getComputedStyle.
-          return { type: 'tool-result', ok: true, data: {} };
-        case 'screenshot':
-          // TODO: crop via chrome.tabs.captureVisibleTab (proxied through SW).
-          return { type: 'tool-result', ok: true };
-        case 'a11ySnapshot':
-          // TODO: build the role/name tree (A11yResult). Stub keeps the DomTool
-          // switch exhaustive now that a11ySnapshot is a member (#55 schema).
-          return { type: 'tool-result', ok: true };
-        case 'setStyle':
-          // TODO: write rules into `sheet`, record edit to changeset recorder.
-          ensureSheet();
-          return { type: 'tool-result', ok: true };
-        case 'setText':
-          return { type: 'tool-result', ok: true };
-        case 'undo':
-          // TODO: pop + invert the recorder event log.
-          return { type: 'tool-result', ok: true };
-      }
-    }
-
-    function ensureSheet() {
-      if (!sheet) {
-        sheet = document.createElement('style');
-        sheet.id = 'dz-designer-overrides';
-        document.head.appendChild(sheet);
-      }
-      return sheet;
-    }
-
-    // TODO: element picker overlay (hover highlight + click to focus).
-    // TODO: changeset recorder (event log -> undo/redo).
   },
 });

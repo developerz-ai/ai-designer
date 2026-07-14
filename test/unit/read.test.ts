@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { a11ySnapshot, getStyles, query, queryOne, screenshotRect } from '@/dom/read';
+import { a11ySnapshot, cropBox, getStyles, query, queryOne, screenshotRect } from '@/dom/read';
 
 function mount(html: string): void {
   document.head.innerHTML = '';
@@ -112,5 +112,34 @@ describe('screenshotRect', () => {
     const shot = screenshotRect();
     expect(shot.rect.width).toBe(window.innerWidth);
     expect(shot.rect.height).toBe(window.innerHeight);
+  });
+});
+
+describe('cropBox', () => {
+  it('scales a CSS-px rect to device px and clamps to the image', () => {
+    // rect 10,20 100x50 @2x → 20,40 200x100, clamped inside a 800x600 frame.
+    expect(cropBox({ x: 10, y: 20, width: 100, height: 50 }, 2, 800, 600)).toEqual({
+      sx: 20,
+      sy: 40,
+      sw: 200,
+      sh: 100,
+    });
+  });
+
+  it('clamps width/height that would overflow the frame', () => {
+    const box = cropBox({ x: 700, y: 500, width: 400, height: 400 }, 1, 800, 600);
+    expect(box).toEqual({ sx: 700, sy: 500, sw: 100, sh: 100 });
+  });
+
+  it('returns null for an empty rect (keeps the full frame)', () => {
+    expect(cropBox({ x: 0, y: 0, width: 0, height: 100 }, 2, 800, 600)).toBeNull();
+  });
+
+  it('returns null when the crop already spans the whole frame (no re-encode)', () => {
+    expect(cropBox({ x: 0, y: 0, width: 400, height: 300 }, 2, 800, 600)).toBeNull();
+  });
+
+  it('returns null when the rect starts past the image edge', () => {
+    expect(cropBox({ x: 900, y: 0, width: 100, height: 100 }, 1, 800, 600)).toBeNull();
   });
 });

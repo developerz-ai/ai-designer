@@ -223,3 +223,33 @@ export function screenshotRect(el?: Element | null): ScreenshotRect {
   const r = el.getBoundingClientRect();
   return { rect: { x: r.x, y: r.y, width: r.width, height: r.height }, devicePixelRatio };
 }
+
+// Source sub-rectangle (device px) of a full-viewport capture. `captureVisibleTab` returns the
+// viewport at `dpr` scale, so an element's CSS-px `rect` maps to `rect * dpr`, clamped to the
+// image bounds.
+export interface CropBox {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+/** The crop box for `rect` (CSS px) within a `imgWidth x imgHeight` device-px capture, scaled by
+ *  `dpr`. Returns `null` when the crop is empty or already covers the whole frame — the SW then
+ *  keeps the full capture instead of re-encoding it. Pure math so the SW's OffscreenCanvas glue
+ *  (background.ts) has no untested branches. */
+export function cropBox(
+  rect: Rect,
+  dpr: number,
+  imgWidth: number,
+  imgHeight: number,
+): CropBox | null {
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const sx = Math.max(0, Math.round(rect.x * dpr));
+  const sy = Math.max(0, Math.round(rect.y * dpr));
+  const sw = Math.min(imgWidth - sx, Math.round(rect.width * dpr));
+  const sh = Math.min(imgHeight - sy, Math.round(rect.height * dpr));
+  if (sw <= 0 || sh <= 0) return null;
+  if (sx === 0 && sy === 0 && sw >= imgWidth && sh >= imgHeight) return null; // whole frame
+  return { sx, sy, sw, sh };
+}

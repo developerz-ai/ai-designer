@@ -402,6 +402,28 @@ export const ContentToSw = z.discriminatedUnion('type', [
 ]);
 export type ContentToSw = z.infer<typeof ContentToSw>;
 
+// --- content -> service worker (screenshot capture, request/response) -----
+// The content script can't call `chrome.tabs.captureVisibleTab` (the page's world has no `tabs`
+// capture); it computes the crop rect (`src/dom/read.ts` `screenshotRect`) and asks the SW here.
+// The SW grabs the visible tab, crops to `rect` (page CSS px, scaled by `devicePixelRatio`), and
+// replies with a base64 PNG data URL for the agent's vision self-correction (slice 04). This is
+// NOT a `ContentToSw` member: that union is push-only (relayed to the panel), whereas capture is
+// a request/response, so it rides its own listener in `background.ts`.
+export const CaptureRequest = z.object({
+  type: z.literal('capture-visible-tab'),
+  rect: Rect,
+  devicePixelRatio: z.number().positive(),
+});
+export type CaptureRequest = z.infer<typeof CaptureRequest>;
+
+export const CaptureResult = z.object({
+  ok: z.boolean(),
+  // A `data:image/png;base64,...` URL of the (cropped) capture. Absent when `ok` is false.
+  dataUrl: z.string().optional(),
+  error: z.string().optional(),
+});
+export type CaptureResult = z.infer<typeof CaptureResult>;
+
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),
@@ -413,6 +435,14 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // SW relays of ContentToSw picker events.
   z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
+  // Picker shift-click multi-selection relayed from content: the panel highlights the set /
+  // shows a count; an empty list clears it. Consumer: the on-page overlay reuses the picker
+  // highlight (slice 09). Named for the panel's view (the current selection), not the event.
+  z.object({ type: z.literal('multi-select'), selectors: z.array(StableSelector) }),
+  // A live recorded page mutation relayed from content — the panel can show an edit chip as it
+  // lands. Distinct from `edit-recorded`, which carries a finalized, intent-tagged `Edit`: this
+  // is the raw reversible primitive. The SW also folds these into the session Changeset (07).
+  z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
   // Live connection-health push for one MCP server (add/connect/auth/remove, or an
   // explicit mcp-status refresh request) — the panel's mcpStore reflects this stream.
   z.object({ type: z.literal('mcp-status'), server: McpServer }),

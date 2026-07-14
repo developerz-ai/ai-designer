@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   A11yResult,
   A11ySnapshotInput,
+  CaptureRequest,
+  CaptureResult,
   ContentToSw,
   DomTool,
   GetProviderResult,
@@ -313,6 +315,27 @@ describe('ContentToSw (content -> SW push: picker + recorder)', () => {
   });
 });
 
+describe('CaptureRequest / CaptureResult (content <-> SW screenshot round-trip)', () => {
+  it('accepts a capture request with a rect and a positive devicePixelRatio', () => {
+    expect(
+      CaptureRequest.safeParse({ type: 'capture-visible-tab', rect, devicePixelRatio: 2 }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a non-positive devicePixelRatio', () => {
+    expect(
+      CaptureRequest.safeParse({ type: 'capture-visible-tab', rect, devicePixelRatio: 0 }).success,
+    ).toBe(false);
+  });
+
+  it('accepts both an ok result with a data URL and an error result', () => {
+    expect(
+      CaptureResult.safeParse({ ok: true, dataUrl: 'data:image/png;base64,AAAA' }).success,
+    ).toBe(true);
+    expect(CaptureResult.safeParse({ ok: false, error: 'capture failed' }).success).toBe(true);
+  });
+});
+
 describe('typed tool result payloads (ToolResult.data envelope stays unknown)', () => {
   it('parses QueryResult / GetStylesResult / A11yResult', () => {
     expect(QueryResult.safeParse({ matches: [selector] }).success).toBe(true);
@@ -392,6 +415,23 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
 
     expect(discs).toContain('focus');
     expect(discs).toContain('picker-state');
+  });
+
+  it('relays multi-select (empty or populated) and recorder-event to the panel', () => {
+    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [selector] }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [] }).success).toBe(true);
+    expect(
+      SwToPanel.safeParse({
+        type: 'recorder-event',
+        event: { kind: 'setStyle', selector, before: '', after: 'x', ts: 1 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a recorder-event wrapping a malformed MutationEvent', () => {
+    expect(
+      SwToPanel.safeParse({ type: 'recorder-event', event: { kind: 'nope', selector } }).success,
+    ).toBe(false);
   });
 
   it('accepts an mcp-status push carrying a full McpServer record', () => {
