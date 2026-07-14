@@ -1,5 +1,6 @@
 import { defineContentScript } from '#imports';
 import { extractDesignRead } from '@/dom/design-read';
+import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
@@ -11,6 +12,7 @@ import {
   type ContentToSw,
   DesignReadRequest,
   type DesignReadResult,
+  type DiagnosticsInput,
   DomTool,
   PickerCmd,
   type ToolResult,
@@ -38,6 +40,25 @@ export default defineContentScript({
     const executor = createDomExecutor({ mutator, recorder });
     const picker = createPicker(emit);
 
+    // Debug engine, content half (slice 06): buffer runtime/network signals for the whole page
+    // lifetime and push each one to the SW as it's captured — a debug-mode turn observes as the
+    // user drives the page rather than waiting for an explicit `drain`. The SW aggregates these
+    // (src/agent/diagnostics.ts); this collector never touches the page's own behavior beyond its
+    // (fully restorable) hooks.
+    const diagnostics = createDiagnosticsCollector({
+      onSignal: (signal) => emit({ type: 'diagnostics-signal', signal }),
+    });
+
+    // `diagnostics` DomTool: `drain` hands back + clears the buffered runtime/network signals;
+    // `scan` runs a fresh point-in-time a11y + layout pass (not buffered — always current).
+    function runDiagnostics(action: DiagnosticsInput['action']): ToolResult {
+      const signals =
+        action === 'drain'
+          ? diagnostics.drain()
+          : [...scanA11y(document, window), ...scanLayout(document, window)];
+      return { type: 'tool-result', ok: true, data: { signals } };
+    }
+
     // Screenshot is split across worlds: content computes the crop rect (read.ts), the SW captures
     // + crops (only it has chrome.tabs.captureVisibleTab). Returns a base64 PNG data URL as
     // ToolResult.data for the agent's vision self-correction (slice 04).
@@ -63,9 +84,9 @@ export default defineContentScript({
     }
 
     function handleTool(tool: DomTool): Promise<ToolResult> {
-      return tool.type === 'screenshot'
-        ? screenshot(tool.selector)
-        : Promise.resolve(executor.exec(tool));
+      if (tool.type === 'screenshot') return screenshot(tool.selector);
+      if (tool.type === 'diagnostics') return Promise.resolve(runDiagnostics(tool.action));
+      return Promise.resolve(executor.exec(tool));
     }
 
     // The SW addresses this tab with two message kinds: agent DomTool calls (reply with a

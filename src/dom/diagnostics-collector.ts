@@ -62,6 +62,11 @@ export interface CollectorOptions {
   /** A successful request slower than this is buffered as a perf signal (default
    *  {@link SLOW_REQUEST_MS}). Faster successes are dropped — only problems are kept. */
   slowMs?: number;
+  /** Called synchronously with each signal as it's captured, in addition to buffering it — lets
+   *  the content entrypoint push it to the SW in real time (`ContentToSw` `diagnostics-signal`)
+   *  without polling `snapshot`/`drain`. A throwing callback is swallowed (page-world-safe, same
+   *  as every other hook here). */
+  onSignal?: (signal: CollectorSignal) => void;
 }
 
 export interface CollectorHandle {
@@ -94,6 +99,11 @@ export function createDiagnosticsCollector(opts: CollectorOptions = {}): Collect
     if (disposed) return;
     buffer.push(signal);
     if (buffer.length > maxBuffer) buffer.splice(0, buffer.length - maxBuffer); // evict oldest
+    try {
+      opts.onSignal?.(signal);
+    } catch {
+      // A subscriber that throws must not break buffering — best-effort push.
+    }
   };
 
   restores.push(

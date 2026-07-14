@@ -6,14 +6,17 @@ import type { DomTool, StableSelector, ToolResult } from '@/shared/messages';
 
 // Synchronous DOM-tool executor — the content script's dispatch core. Routes a validated DomTool
 // to the reversible mutators (src/dom/mutate.ts) + readers (src/dom/read.ts), recording every
-// mutation through the changeset recorder. `screenshot` is excluded here: it needs an async SW
-// capture round-trip (chrome.tabs.captureVisibleTab), which the entrypoint owns. Selector ->
-// element resolution is best-effort: an unmatched selector returns an error ToolResult the model
-// can react to, never a throw that would kill the turn. Pure DOM + injected deps → jsdom-testable
-// (the content entrypoint stays a thin wire). See src/agent/tools/dom.ts + docs/idea/live-edit.md.
+// mutation through the changeset recorder. `screenshot` and `diagnostics` are excluded here:
+// `screenshot` needs an async SW capture round-trip (chrome.tabs.captureVisibleTab), and
+// `diagnostics` reads the collector/scan surface (src/dom/diagnostics-collector.ts) rather than a
+// selector-targeted element — both are handled directly in the entrypoint. Selector -> element
+// resolution is best-effort: an unmatched selector returns an error ToolResult the model can react
+// to, never a throw that would kill the turn. Pure DOM + injected deps → jsdom-testable (the
+// content entrypoint stays a thin wire). See src/agent/tools/dom.ts + docs/idea/live-edit.md.
 
-/** Every DomTool except `screenshot` — the calls resolvable synchronously in the content world. */
-export type SyncDomTool = Exclude<DomTool, { type: 'screenshot' }>;
+/** Every DomTool the executor resolves synchronously in the content world — everything except
+ *  `screenshot` (async SW capture) and `diagnostics` (collector/scan, no selector). */
+export type SyncDomTool = Exclude<DomTool, { type: 'screenshot' } | { type: 'diagnostics' }>;
 
 export interface DomExecutorDeps {
   mutator: Mutator;

@@ -9,6 +9,7 @@ import {
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
+import { modeGuidance, resolveMode } from '@/agent/modes';
 import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
@@ -213,6 +214,10 @@ export default defineBackground(() => {
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
         const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
 
+        // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction —
+        // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
+        const mode = resolveMode(msg.mode, msg.text);
+
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
         void runTurn({
@@ -220,7 +225,7 @@ export default defineBackground(() => {
           messages: session.messages,
           signal: controller.signal,
           model: createProvider(cfg),
-          instructions: buildSystemPrompt(),
+          instructions: buildSystemPrompt({ addenda: modeGuidance(mode).addenda }),
           dispatch: domDispatchFor(tabId),
           browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
           emit: postToPanel,

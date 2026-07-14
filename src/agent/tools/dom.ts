@@ -14,6 +14,7 @@
 import { tool } from 'ai';
 import {
   A11ySnapshotInput,
+  DiagnosticsInput,
   type DomTool,
   GetStylesInput,
   QueryInput,
@@ -100,6 +101,17 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: UndoInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (_input, { abortSignal }) => dispatch({ type: 'undo' }, abortSignal),
+    }),
+    diagnostics: tool({
+      description:
+        '`drain` returns (and clears) the runtime/network signals buffered since the last ' +
+        'drain — console errors/warnings, uncaught exceptions, failed/slow requests. `scan` ' +
+        'runs a fresh accessibility + layout pass. ToolResult.data = { signals: CollectorSignal[] }. ' +
+        'Debug-mode first move: observe before you reproduce.',
+      inputSchema: DiagnosticsInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: ({ action }, { abortSignal }) =>
+        dispatch({ type: 'diagnostics', action }, abortSignal),
     }),
   };
 }

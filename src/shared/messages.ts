@@ -1,9 +1,19 @@
 import { z } from 'zod';
 import { Changeset, Edit, StableSelector } from './changeset';
+import { CollectorSignal } from './diagnostics';
 
 // StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
 // it so panel/content consumers import the selector type from the message-schema hub.
-export { StableSelector };
+// Likewise for CollectorSignal (src/shared/diagnostics.ts): the debug engine's domain shapes
+// live there, but DomTool/ContentToSw below need it as part of the bus transport.
+export { CollectorSignal, StableSelector };
+
+// The two headline agent activities (plan 06 `agent/modes.ts`). Optional on `UserMessage`: an
+// explicit choice (e.g. a composer affordance) wins; when absent, `agent/modes.ts` `resolveMode`
+// infers it from the instruction text so a bare "debug my checkout flow" still gets the right
+// prompt addendum + tool emphasis with no forced UI step.
+export const Mode = z.enum(['copy', 'debug']);
+export type Mode = z.infer<typeof Mode>;
 
 // Typed message bus across the three MV3 worlds: panel <-> service worker <-> content.
 // Every payload is Zod-validated at the boundary. See docs/architecture/mv3-worlds.md.
@@ -22,6 +32,9 @@ export type Rect = z.infer<typeof Rect>;
 export const UserMessage = z.object({
   type: z.literal('user-message'),
   text: z.string(),
+  // Explicit copy/debug choice, when the composer offers one (see 06/11). Absent ⇒
+  // `agent/modes.ts` `resolveMode` infers it from `text`.
+  mode: Mode.optional(),
 });
 
 export const ShipRequest = z.object({
@@ -296,6 +309,17 @@ export const A11ySnapshotInput = z.object({
 });
 export const UndoInput = z.object({ type: z.literal('undo') });
 
+// The debug engine's content-side pull (slice 06, complements the `diagnostics-signal` PUSH
+// below): `drain` returns everything the collector has buffered since the last drain (runtime +
+// network signals) and clears it; `scan` runs a fresh point-in-time a11y + layout scan. Neither
+// targets a selector — both read the whole page — so, unlike the other DomTools, there's no
+// `selector` field.
+export const DiagnosticsInput = z.object({
+  type: z.literal('diagnostics'),
+  action: z.enum(['drain', 'scan']),
+});
+export type DiagnosticsInput = z.infer<typeof DiagnosticsInput>;
+
 export const DomTool = z.discriminatedUnion('type', [
   QueryInput,
   GetStylesInput,
@@ -304,8 +328,15 @@ export const DomTool = z.discriminatedUnion('type', [
   SetTextInput,
   A11ySnapshotInput,
   UndoInput,
+  DiagnosticsInput,
 ]);
 export type DomTool = z.infer<typeof DomTool>;
+
+// The `diagnostics` DomTool's `ToolResult.data` shape — bounded the same way `CollectorSignal`'s
+// own fields are (src/shared/diagnostics.ts), so a `drain`/`scan` round-trip can't blow the
+// agent's token budget on a hostile or chatty page.
+export const DiagnosticsToolResult = z.object({ signals: z.array(CollectorSignal).max(300) });
+export type DiagnosticsToolResult = z.infer<typeof DiagnosticsToolResult>;
 
 // Element-picker commands (SW -> content). Deliberately NOT part of DomTool: the
 // picker is user-driven, so #11 wraps DomTool 1:1 as agent tools with no exclusions.
@@ -474,6 +505,13 @@ export const ContentToSw = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multi-select-changed'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
+  // The debug engine's real-time half (slice 06, complements the `diagnostics` DomTool pull
+  // above): the content collector (src/dom/diagnostics-collector.ts) pushes each runtime/network
+  // signal as it's captured, so a debug-mode turn can observe as the user drives the page instead
+  // of waiting for an explicit `drain`. The SW folds these into the turn's diagnostics buffer
+  // (src/agent/diagnostics.ts `aggregate`/`correlate`); relay.ts intentionally does not forward
+  // this one to the panel (it's an engine input, not a user-facing event).
+  z.object({ type: z.literal('diagnostics-signal'), signal: CollectorSignal }),
 ]);
 export type ContentToSw = z.infer<typeof ContentToSw>;
 
