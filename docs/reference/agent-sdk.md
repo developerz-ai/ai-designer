@@ -1,6 +1,6 @@
-# Reference — Agent SDK (Vercel AI SDK 7 + OpenRouter + MCP)
+# Reference — Agent SDK (Vercel AI SDK 7 + OpenAI-compatible providers + MCP)
 
-The design agent runs on the **Vercel AI SDK** (`ai` v7) in the MV3 service worker, talks to models via **OpenRouter** (BYOK), and mounts **MCP** backend tools (ai-dev) for handoff. This doc pins the *current* API — the SDK renamed core pieces across v4→v5→v6→v7, so old examples mislead.
+The design agent runs on the **Vercel AI SDK** (`ai` v7) in the MV3 service worker, talks to models via any **OpenAI-compatible provider** (BYOK), and mounts **MCP** backend tools (ai-dev) for handoff. This doc pins the *current* API — the SDK renamed core pieces across v4→v5→v6→v7, so old examples mislead.
 
 Cross-refs: [docs/idea/agent.md](../idea/agent.md) (loop + tool catalog), [docs/idea/mcp.md](../idea/mcp.md) (backends + auth), [docs/idea/handoff.md](../idea/handoff.md).
 
@@ -10,28 +10,46 @@ Cross-refs: [docs/idea/agent.md](../idea/agent.md) (loop + tool catalog), [docs/
 |---------|------|---------|
 | `ai` | Core — `streamText`, `generateText`, `tool`, `ToolLoopAgent`, `isStepCount`, `wrapLanguageModel`, `Output` | **7.x** |
 | `@ai-sdk/mcp` | MCP client — `createMCPClient`, transports | 2.x |
-| `@openrouter/ai-sdk-provider` | OpenRouter provider (community) | 3.x (peer: `ai@^7`) |
+| `@ai-sdk/openai-compatible` | Generalized OpenAI-compatible provider (default) | 1.x (peer: `ai@^7`) |
+| `@openrouter/ai-sdk-provider` | OpenRouter provider (community alternative) | 3.x (peer: `ai@^7`) |
 | `zod` | Tool input/output schemas | 4.x |
 
-Why OpenRouter: one key, every model, per-token pricing, automatic failover, immediate access to new models — model-agnostic by design (see [principles.md](../idea/principles.md)). It's the same provider Tesote ai-dev's workers use.
+Why OpenAI-compatible: the provider is generalized to any `/v1` endpoint (OpenRouter, OpenAI, local llama.cpp, custom…) — one package, no vendor lock-in (see [principles.md](../idea/principles.md)). Endpoints are configured at runtime via ProviderConfig (see [agent.md](../idea/agent.md), Stack in [../../CLAUDE.md](../../CLAUDE.md)). OpenRouter is a sensible preset with automatic failover + immediate access to new models. Same pattern Tesote ai-dev's workers use.
 
-## Provider setup (OpenRouter, BYOK)
+## Provider setup (OpenAI-compatible, BYOK)
+
+**Generalized default** — any `/v1` endpoint:
+
+```ts
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+
+const provider = createOpenAICompatible({
+  name: 'my-endpoint',
+  baseURL: 'https://api.openrouter.ai/api/v1', // or OpenAI, local llama.cpp, etc.
+  apiKey,                                        // from chrome.storage.local, SW only
+  includeUsage: true,                            // else streamed token counts can come back 0
+});
+
+const model = provider(modelId);
+```
+
+**OpenRouter preset** (if using OpenRouter):
 
 ```ts
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 
-const openrouter = createOpenRouter({ apiKey }); // apiKey from chrome.storage.local, SW only
-
+const openrouter = createOpenRouter({ apiKey });
 const model = openrouter(modelId, {
-  usage: { include: true }, // OpenRouter usage accounting — else token counts can come back 0
+  usage: { include: true },
   extraBody: {
-    plugins: [{ id: 'context-compression', enabled: true }], // middle-out compress oversized prompts
+    plugins: [{ id: 'context-compression', enabled: true }], // middle-out compress
   },
 });
 ```
 
 - Key lives **only** in the service worker. Never in the content script (shares the page world) — see [mv3-worlds](../architecture/mv3-worlds.md).
-- `openrouter(id, opts)` (callable) or `openrouter.chat(id)`. The callable form is what ai-dev uses in prod.
+- `baseURL` is configured at runtime via [ProviderConfig](../idea/agent.md#provider--byok-any-endpoint).
+- The callable form `provider(id)` is the pattern ai-dev uses in prod.
 
 ## Agent loop — our case
 
