@@ -30,6 +30,7 @@ export default defineConfig({
       'tabs',
       'identity',
       'webNavigation',
+      'debugger',
     ],
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
