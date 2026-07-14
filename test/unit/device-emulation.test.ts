@@ -136,6 +136,20 @@ describe('runSetDevice', () => {
     expect(names(calls)).toEqual(['applyViewport']);
   });
 
+  it('reports the viewport mechanism even when the resize itself throws (bounds outside the screen)', async () => {
+    const { driver } = harness({
+      cdp: false,
+      over: {
+        applyViewport: async () => {
+          throw new Error('Bounds must be at least 50% within visible screen space.');
+        },
+      },
+    });
+    const r = await runSetDevice(driver, setDeviceInput({ preset: 'iphone-15' }), 1);
+    expect(r.ok).toBe(true);
+    expect((r.data as SetDeviceResult).mechanism).toBe('viewport');
+  });
+
   it('reset clears both paths and carries no metrics', async () => {
     const { calls, driver } = harness();
     const r = await runSetDevice(driver, setDeviceInput({ reset: true }), 1);
@@ -181,6 +195,29 @@ describe('runResponsiveCapture', () => {
     const shots = (r.data as ResponsiveCaptureResult).shots;
     expect(shots).toHaveLength(2);
     expect(shots.every((s) => s.error === 'quota')).toBe(true);
+  });
+
+  it('keeps sweeping other breakpoints when a resize throws on one of them', async () => {
+    const { driver } = harness({
+      cdp: false,
+      over: {
+        applyViewport: async (_tabId, device) => {
+          if (device.label === 'iPhone 15') throw new Error('bounds outside the screen');
+        },
+      },
+    });
+    const r = await runResponsiveCapture(
+      driver,
+      okCapture,
+      settle,
+      captureInput({ breakpoints: [{ preset: 'iphone-15' }, { preset: 'desktop' }] }),
+      1,
+    );
+    const shots = (r.data as ResponsiveCaptureResult).shots;
+    expect(shots.map((s) => s.label)).toEqual(['iPhone 15', 'Desktop']);
+    // The failed resize didn't turn into a per-shot error — both breakpoints still capture at
+    // whatever size the page ended up (the whole point of a best-effort fallback).
+    expect(shots.every((s) => s.image !== undefined)).toBe(true);
   });
 
   it('flags an invalid breakpoint but still restores', async () => {

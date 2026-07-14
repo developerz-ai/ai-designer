@@ -33,6 +33,7 @@ import {
   QueryResult,
   ReadImagesResult,
   ResponsiveCaptureInput,
+  ResponsiveFinding,
   SaveKeyResult,
   SaveProviderResult,
   ScreenshotInput,
@@ -134,6 +135,42 @@ describe('responsive / device-emulation schemas (slice 16)', () => {
       ],
     });
     expect(r.success).toBe(true);
+  });
+
+  it('rejects a ResponsiveFinding with an unknown category or severity', () => {
+    const base = { detail: 'scrolls sideways', selector };
+    expect(
+      ResponsiveFinding.safeParse({ ...base, category: 'bogus', severity: 'serious' }).success,
+    ).toBe(false);
+    expect(
+      ResponsiveFinding.safeParse({ ...base, category: 'overflow', severity: 'catastrophic' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects a ResponsiveFinding missing its selector', () => {
+    expect(
+      ResponsiveFinding.safeParse({
+        category: 'tap-target',
+        severity: 'moderate',
+        detail: 'too small',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a CheckResponsiveResult with a negative viewport width or an oversized findings list', () => {
+    expect(CheckResponsiveResult.safeParse({ viewportWidth: -1, findings: [] }).success).toBe(
+      false,
+    );
+    const tooMany = Array.from({ length: 81 }, () => ({
+      category: 'overflow' as const,
+      severity: 'minor' as const,
+      detail: 'x',
+      selector,
+    }));
+    expect(CheckResponsiveResult.safeParse({ viewportWidth: 375, findings: tooMany }).success).toBe(
+      false,
+    );
   });
 });
 

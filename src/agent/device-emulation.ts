@@ -182,7 +182,10 @@ const fail = (error: string): ToolResult => ({ type: 'tool-result', ok: false, e
 
 // Apply one device the best way available: CDP if usable, else the viewport fallback. A CDP failure
 // (permission just revoked, target not attachable) silently degrades to the fallback so the agent
-// still gets an approximate layout instead of an error.
+// still gets an approximate layout instead of an error. The fallback itself can also fail (e.g. the
+// requested size doesn't fit the screen — `chrome.windows.update` rejects rather than clamping), so
+// that's swallowed too: the agent still gets *a* layout (the page's current size) instead of the
+// whole sweep/turn aborting over a resize that was only ever an approximation to begin with.
 async function applyDevice(
   driver: DeviceEmulationDriver,
   tabId: number,
@@ -196,7 +199,12 @@ async function applyDevice(
       // Attach/override failed — fall through to the resize fallback rather than failing the tool.
     }
   }
-  await driver.applyViewport(tabId, device);
+  try {
+    await driver.applyViewport(tabId, device);
+  } catch {
+    // Couldn't resize (e.g. bounds outside the visible screen) — proceed at whatever size the
+    // page already is rather than failing the caller.
+  }
   return { mechanism: 'viewport', banner: false };
 }
 
