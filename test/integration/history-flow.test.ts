@@ -7,6 +7,7 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { HistoryStore } from '@/agent/history-store';
 import { runTurn } from '@/agent/loop';
+import { SessionStore } from '@/agent/session';
 import type { DomDispatch } from '@/agent/tools/dom';
 import { ChangesetStore } from '@/changeset/store';
 import { type ShipDeps, type ShipSource, ship, type TaskBackend } from '@/mcp/handoff';
@@ -258,5 +259,70 @@ describe('history flow: delete removes the entry', () => {
     const revived = new HistoryStore();
     await revived.hydrate();
     expect(revived.size).toBe(0);
+  });
+});
+
+// B8: `runHandoffRoute`'s session-less fallback must reuse the tab's session id, not mint a fresh
+// random one — otherwise `setReport` targets a conversation `appendTurn` never created and the brief
+// silently goes unrecorded (idempotency breaks). Reproduces the resolution `background.ts` performs.
+describe('handoff route: the download-report fallback changeset reuses the tab session id', () => {
+  // storage.local (history) + storage.session (sessions), both needed here.
+  function installBothStorageFakes(): void {
+    const local = new Map<string, unknown>();
+    const session = new Map<string, unknown>();
+    const api = (store: Map<string, unknown>) => ({
+      get(keys?: string | string[] | null): Promise<Record<string, unknown>> {
+        const names = keys == null ? [...store.keys()] : Array.isArray(keys) ? keys : [keys];
+        const out: Record<string, unknown> = {};
+        for (const name of names) if (store.has(name)) out[name] = store.get(name);
+        return Promise.resolve(out);
+      },
+      set(items: Record<string, unknown>): Promise<void> {
+        for (const [name, value] of Object.entries(items))
+          store.set(name, JSON.parse(JSON.stringify(value)));
+        return Promise.resolve();
+      },
+      remove(keys: string | string[]): Promise<void> {
+        for (const k of Array.isArray(keys) ? keys : [keys]) store.delete(k);
+        return Promise.resolve();
+      },
+    });
+    (globalThis as { chrome?: unknown }).chrome = {
+      storage: { local: api(local), session: api(session) },
+    };
+  }
+
+  it('lets a download-report brief attach to the turn history entry it belongs to', async () => {
+    installBothStorageFakes();
+    const tabId = 42;
+    const sessions = new SessionStore({ now: () => 1000 });
+    const history = new HistoryStore({ now: () => 1000 });
+
+    // A turn ran: it ensured this tab's session and appended a history entry keyed by the session id.
+    const session = await sessions.ensure(tabId, URL, SESSION_ID);
+    await history.appendTurn({
+      id: session.changeset.sessionId,
+      title: 'Redesign',
+      url: URL,
+      messages: [],
+    });
+
+    // download-report resolves its changeset by RE-ensuring the tab's session (returns the SAME id),
+    // NOT a fresh random-UUID changeset — so setReport targets the conversation the turn created.
+    const changeset = (await sessions.ensure(tabId, URL, crypto.randomUUID())).changeset;
+    expect(changeset.sessionId).toBe(SESSION_ID);
+    await history.setReport(changeset.sessionId, '# Design review');
+
+    expect(history.get(SESSION_ID)?.report).toBe('# Design review');
+    expect(history.list()[0]).toMatchObject({ hasReport: true });
+  });
+
+  it('the old bug — a fresh random sessionId — targets an id appendTurn never created and throws', async () => {
+    installBothStorageFakes();
+    const history = new HistoryStore({ now: () => 1000 });
+    await history.appendTurn({ id: SESSION_ID, title: 'Redesign', url: URL, messages: [] });
+
+    const stray = emptyChangeset(URL, new Date(1000).toISOString(), crypto.randomUUID());
+    await expect(history.setReport(stray.sessionId, '# brief')).rejects.toThrow(/No conversation/);
   });
 });

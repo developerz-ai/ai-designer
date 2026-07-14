@@ -198,13 +198,37 @@ export function boundValue(value: unknown): unknown {
  *  {@link HISTORY_MAX_MESSAGES}, then strip/truncate oversized string payloads throughout (see
  *  {@link boundValue}). Re-validated against `modelMessageSchema` — a message that somehow fails to
  *  parse after bounding is dropped rather than persisting something the schema would reject on the
- *  next `hydrate()`. */
+ *  next `hydrate()`. Validation happens in coherent units (an assistant message plus the `tool`
+ *  result messages that answer it), so re-validation can never keep a tool-result while dropping
+ *  the tool-call it belongs to — an orphaned half breaks replay/display. Tool-result messages left
+ *  dangling by the window slice (their tool-call fell outside the most-recent window) are dropped
+ *  for the same reason. */
 export function boundMessages(messages: readonly ChatMessage[]): ChatMessage[] {
   const recent = messages.slice(-HISTORY_MAX_MESSAGES);
   const bounded: ChatMessage[] = [];
-  for (const message of recent) {
-    const parsed = modelMessageSchema.safeParse(boundValue(message));
-    if (parsed.success) bounded.push(parsed.data);
+  for (const unit of toolUnits(recent)) {
+    const validated = unit.map((m) => modelMessageSchema.safeParse(boundValue(m)));
+    // Keep or drop the whole unit: a partial keep would orphan a tool-call/tool-result pair.
+    if (validated.every((p) => p.success)) {
+      for (const p of validated) if (p.success) bounded.push(p.data);
+    }
   }
   return bounded;
+}
+
+/** Group a thread into coherent units: each non-`tool` message (user/assistant/system) plus the
+ *  `tool` result messages that immediately follow it. A leading `tool` message — orphaned by the
+ *  window slice, with no preceding message to attach to — is dropped rather than opening the thread
+ *  with a dangling tool-result. */
+function toolUnits(messages: readonly ChatMessage[]): ChatMessage[][] {
+  const units: ChatMessage[][] = [];
+  for (const message of messages) {
+    const last = units.at(-1);
+    if (message.role === 'tool') {
+      last?.push(message);
+    } else {
+      units.push([message]);
+    }
+  }
+  return units;
 }

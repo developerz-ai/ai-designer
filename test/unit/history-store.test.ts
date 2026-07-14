@@ -213,3 +213,38 @@ describe('boundMessages: size-bounding', () => {
     expect(bounded.at(-1)).toEqual(msg('user', 'turn 249'));
   });
 });
+
+describe('boundMessages: coherent tool-call/tool-result units', () => {
+  const assistantToolCall: ChatMessage = {
+    role: 'assistant',
+    content: [
+      { type: 'tool-call', toolCallId: 't1', toolName: 'setStyle', input: { selector: '#x' } },
+    ],
+  };
+  const toolResult: ChatMessage = {
+    role: 'tool',
+    content: [
+      {
+        type: 'tool-result',
+        toolCallId: 't1',
+        toolName: 'setStyle',
+        output: { type: 'text', value: 'ok' },
+      },
+    ],
+  };
+
+  it('drops a tool-result orphaned by the window slice (no preceding tool-call) rather than opening the thread with a dangling result', () => {
+    // The slice can start on a `tool` message whose tool-call fell outside the window — keeping it
+    // in isolation orphans the pair. A coherent bounding drops the dangling leading result.
+    const bounded = boundMessages([toolResult, msg('user', 'hi')]);
+    expect(bounded).toEqual([msg('user', 'hi')]);
+    expect(bounded.some((m) => m.role === 'tool')).toBe(false);
+  });
+
+  it('keeps an assistant tool-call together with its answering tool-result', () => {
+    const bounded = boundMessages([msg('user', 'go'), assistantToolCall, toolResult]);
+    expect(bounded).toHaveLength(3);
+    expect(bounded[1]).toEqual(assistantToolCall);
+    expect(bounded[2]).toEqual(toolResult);
+  });
+});

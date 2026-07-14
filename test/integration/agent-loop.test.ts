@@ -163,6 +163,42 @@ describe('integration: agent turn streams tokens + tool-calls and drives the DOM
     expect(tokensOf(events).toLowerCase()).toContain('budget');
   });
 
+  it('does NOT relabel a naturally-finished turn whose final tokens merely cross the ceiling', async () => {
+    // Boundary: the model finishes on its own (finishReason `stop`, no tool call) in a single step,
+    // but that step's usage (250) crosses `maxTokens` (100). The loop stopped because the model was
+    // done, NOT because a stopWhen ceiling fired — so it must stay `done` with no spurious budget
+    // notice appended. (Regression: the old code inferred `budget` from post-hoc `budget.exhausted`.)
+    const { dispatch } = fakeContent();
+    const { events, emit } = collectEmit();
+    const model = new MockLanguageModelV4({
+      doStream: [
+        stream([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: '1' },
+          { type: 'text-delta', id: '1', delta: 'All done.' },
+          { type: 'text-end', id: '1' },
+          finish(usage(200, 50), 'stop'),
+        ]),
+      ],
+    });
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'tweak the heading' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch,
+      emit,
+      limits: { maxSteps: 24, maxTokens: 100 },
+    });
+
+    expect(outcome.stop).toBe('done');
+    expect(outcome.budgetReason).toBeNull();
+    expect(outcome.text).toBe('All done.'); // no "reached the budget" notice appended
+    expect(tokensOf(events).toLowerCase()).not.toContain('budget');
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+  });
+
   it('reports an aborted turn without emitting an error', async () => {
     const { dispatch } = fakeContent();
     const { events, emit } = collectEmit();

@@ -15,6 +15,11 @@ import {
   runResponsiveCapture,
   runSetDevice,
 } from '@/agent/device-emulation';
+import {
+  EmulationRegistry,
+  type EmulationTeardown,
+  type SavedWindow,
+} from '@/agent/emulation-registry';
 import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
@@ -42,14 +47,15 @@ import type { McpConnectionSpec } from '@/mcp/client';
 import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
 import {
+  getOAuthConfigs,
   getOriginRepoMap,
   getServer,
   listServers,
   removeServer,
   type StoredServer,
+  saveOAuthConfig,
   saveServer,
 } from '@/mcp/store';
-import { emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -106,6 +112,13 @@ const SCROLL_SETTLE_MS = 200;
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
 
+// Device-emulation teardown state, persisted to chrome.storage.session so an SW eviction
+// mid-emulation can be reconciled on wake (slice 16 / SW-resilience). `chromeDeviceDriver` records
+// attach/resize here; `activeEmulationOwner` is the id of the turn currently applying emulation, so
+// a superseded turn's teardown can be scoped to its own emulation (see the user-message `.finally`).
+const emulation = new EmulationRegistry();
+let activeEmulationOwner = '';
+
 // Service worker — the brain. Holds keys, runs the agent loop, owns MCP clients
 // and the changeset store. NEVER expose the OpenRouter key to the content script
 // (it shares the page's world). See docs/architecture/{components,security}.md.
@@ -130,11 +143,10 @@ export default defineBackground(() => {
   // a turn finishes, and outlives the tab/session that produced it.
   const historyStore = new HistoryStore();
 
-  // MCP registry (slice 02). OAuth endpoint configs aren't persisted (mcp/store.ts's
-  // StoredServer is intentionally non-secret + config-free) — cached here for the SW's
-  // lifetime so a refresh can re-derive headers without the panel resupplying them each
-  // open; lost on SW restart, which just degrades `getAccessToken` to the stale token
-  // (see mcp/auth.ts) until the user re-authorizes.
+  // MCP registry (slice 02). OAuth endpoint configs (endpoints + public client id — NON-secret)
+  // are persisted via mcp/store.ts and rehydrated into this in-memory Map in `mcpReady`, so a
+  // refresh after SW eviction can still re-derive headers + refresh a stored token rather than
+  // forcing the user to re-authorize. The token itself stays in the encrypted key-store.
   const mcpManager = new McpManager();
   const oauthConfigs = new Map<string, McpOAuthConfig>();
 
@@ -185,25 +197,42 @@ export default defineBackground(() => {
     postToPanel({ type: 'session-state', state: sessionState });
   }
 
-  // Rehydrate the registry from the persisted server list before any RPC is served.
-  // Registration is cheap/lazy (client.ts doesn't open until `tools()`/`connect()`).
-  const mcpReady = listServers().then((stored) => {
-    for (const s of stored) mcpManager.register(mcpSpec(s));
-  });
+  // Rehydrate the registry from the persisted server list before any RPC is served — after
+  // rehydrating the persisted OAuth endpoint configs, so `mcpSpec`'s header resolver captures the
+  // refresh config (otherwise a woken SW builds `oauth: undefined` and skips token refresh).
+  // Registration is cheap/lazy (client.ts doesn't open until `tools()`/`connect()`). `.catch`
+  // degrades to an empty registry rather than memoizing a rejection that would brick every future
+  // RPC awaiting `mcpReady` (the awaited startup promises must never reject — see `handle`).
+  const mcpReady = Promise.all([listServers(), getOAuthConfigs()])
+    .then(([stored, oauth]) => {
+      for (const [id, cfg] of Object.entries(oauth)) oauthConfigs.set(id, cfg);
+      for (const s of stored) mcpManager.register(mcpSpec(s));
+    })
+    .catch(() => {});
 
   // Rehydrate persisted design sessions before any user-message turn reads them (SW wake).
-  const sessionsReady = sessions.hydrate();
+  // `.catch` degrades to an empty cache rather than bricking every RPC that awaits it.
+  const sessionsReady = sessions.hydrate().catch(() => {});
 
   // Rehydrate persisted history before any history-* RPC or turn-done append reads it (SW wake).
-  const historyReady = historyStore.hydrate();
+  const historyReady = historyStore.hydrate().catch(() => {});
+
+  // Device-emulation teardown state (slice 16): rehydrate + reconcile any emulation orphaned by a
+  // prior SW eviction (detach the debugger / restore the window) so the user isn't left mid-emulation.
+  const emulationReady = emulation
+    .hydrate()
+    .then(() => emulation.reconcile(emulationTeardown))
+    .catch(() => {});
 
   // On-page agent-decision overlay opt-in (slice 09): a plain persisted boolean
   // (src/shared/overlay-prefs.ts), mirrored in memory so a turn's tool-call stream can check it
   // synchronously per-event without an async storage read on every tool call.
   let overlayEnabled = false;
-  const overlayReady = readOverlayEnabled().then((v) => {
-    overlayEnabled = v;
-  });
+  const overlayReady = readOverlayEnabled()
+    .then((v) => {
+      overlayEnabled = v;
+    })
+    .catch(() => {});
 
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
@@ -322,9 +351,13 @@ export default defineBackground(() => {
     const cfg = await getProviderConfig();
     if (!cfg) return { ok: false, error: 'Add a model provider in Settings first.' };
 
-    const session = sessions.get(tab.id);
-    const changeset =
-      session?.changeset ?? emptyChangeset(tab.url, new Date().toISOString(), crypto.randomUUID());
+    // Reuse (or ensure) this tab's design session so the changeset carries the SAME sessionId a
+    // turn's `appendTurn` keyed history under — minting a fresh random id here would target a
+    // history entry that never existed (`setReport` throws, swallowed → the brief goes unrecorded)
+    // and break handoff idempotency. A session-less tab (report before any turn) still gets a
+    // stable id via `ensure`.
+    const session = await sessions.ensure(tab.id, tab.url, crypto.randomUUID());
+    const changeset = session.changeset;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
     // guess) — best-effort: a page the content script can't reach (e.g. a chrome:// tab) just
     // ships without a tokens section rather than failing the whole handoff.
@@ -429,6 +462,7 @@ export default defineBackground(() => {
     await sessionsReady; // user-message resumes any persisted session thread
     await historyReady; // history-* RPCs and turn-done append need the persisted ring buffer
     await overlayReady; // user-message/get-overlay-enabled need the hydrated in-memory flag
+    await emulationReady; // any orphaned emulation is reconciled before a new turn emulates again
     switch (msg.type) {
       case 'user-message': {
         // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
@@ -450,6 +484,12 @@ export default defineBackground(() => {
         turnAbort?.abort();
         const controller = new AbortController();
         turnAbort = controller;
+
+        // This turn's device-emulation owner: the driver stamps it on any attach/resize so a
+        // superseded turn's teardown (below) only clears the emulation IT applied, never one a
+        // newer concurrent same-tab turn has since taken over.
+        const emulationOwner = crypto.randomUUID();
+        activeEmulationOwner = emulationOwner;
 
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
         const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
@@ -647,9 +687,12 @@ export default defineBackground(() => {
             // the one in flight.
             const wasCurrent = turnAbort === controller;
             if (wasCurrent) turnAbort = null;
-            // Tear down any device emulation this turn applied (detach the debugger / restore the
-            // window) so the user's page + the "being debugged" banner don't outlast the turn.
-            void restoreDevice(chromeDeviceDriver, tabId);
+            // Tear down device emulation ONLY if this turn still owns it (detach the debugger /
+            // restore the window) so the user's page + the "being debugged" banner don't outlast the
+            // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
+            if (emulation.owns(tabId, emulationOwner)) {
+              void restoreDevice(chromeDeviceDriver, tabId).catch(() => {});
+            }
             if (wasCurrent) postToPanel({ type: 'turn-done' });
           });
 
@@ -703,7 +746,7 @@ export default defineBackground(() => {
         await saveProviderConfig(msg.config);
         const saved = await getProviderConfig(); // includes the decrypted key (new or kept)
         const result = saved ? await validateProvider(saved) : { ok: false, error: undefined };
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true, valid: result.ok, error: result.error };
       }
       // Presence + non-secret config only — never the key value (apiKey is stripped here).
@@ -735,7 +778,7 @@ export default defineBackground(() => {
           apiKey: msg.text,
         });
         if (valid) await setOpenRouterKey(msg.text); // shared `provider:default:key` slot
-        if (valid) void pushReadiness();
+        if (valid) void pushReadiness().catch(() => {});
         return { ok: true, valid, error };
       }
       case 'set-model': {
@@ -747,7 +790,7 @@ export default defineBackground(() => {
           label: cfg?.label,
           model: msg.model,
         });
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true };
       }
       case 'key-status': {
@@ -756,7 +799,7 @@ export default defineBackground(() => {
       }
       case 'clear-openrouter-key':
         await clearProviderConfig();
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true };
 
       // --- MCP servers: registry + auth are SW-only (tokens/headers never reach content) ---
@@ -775,7 +818,7 @@ export default defineBackground(() => {
         });
         mcpManager.register(mcpSpec(stored));
         pushMcpStatus(stored);
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true, server: toBusServer(stored) };
       }
       // Tear down the connection and purge the persisted record + both credential slots
@@ -784,7 +827,7 @@ export default defineBackground(() => {
         await mcpManager.unregister(msg.id);
         oauthConfigs.delete(msg.id);
         await removeServer(msg.id);
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true };
       }
       case 'mcp-list': {
@@ -799,7 +842,7 @@ export default defineBackground(() => {
         if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(stored));
         await mcpManager.connect(msg.id);
         pushMcpStatus(stored);
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true, server: toBusServer(stored) };
       }
       // Submit the chosen auth kind's credential, then reconnect so the new header takes
@@ -813,6 +856,9 @@ export default defineBackground(() => {
             await saveApiKey(msg.id, msg.apiKey);
           } else {
             oauthConfigs.set(msg.id, msg.oauth);
+            // Persist the NON-secret endpoint config (never the token) so a woken SW can still
+            // refresh the stored token instead of forcing re-auth (see mcpReady rehydration).
+            await saveOAuthConfig(msg.id, msg.oauth);
             await startOAuth(msg.id, msg.oauth);
           }
         } catch (err) {
@@ -822,7 +868,7 @@ export default defineBackground(() => {
         mcpManager.register(mcpSpec(next));
         await mcpManager.connect(msg.id);
         pushMcpStatus(next);
-        void pushReadiness();
+        void pushReadiness().catch(() => {});
         return { ok: true, server: toBusServer(next) };
       }
       // Manual refresh: republish every registered server's current health on the
@@ -975,19 +1021,19 @@ const chromeBrowserDriver: BrowserControlDriver = {
 // sweep, restore) lives in `src/agent/device-emulation.ts`; this is only the chrome glue
 // (coverage-excluded, like the browse/browser drivers). Emulation is torn down on turn end.
 const CDP_VERSION = '1.3';
-// Tabs we've attached the debugger to + windows we've resized, so attach stays idempotent and
-// restore returns each window to the exact bounds it had before this session emulated a device.
-const cdpAttached = new Set<number>();
-const savedWindowSize = new Map<number, { windowId: number; width?: number; height?: number }>();
+// Which tabs have the debugger attached + which windows we've resized is tracked in the persisted
+// `emulation` registry (survives SW eviction) rather than a bare in-memory Set/Map, and keyed by the
+// owning turn so attach stays idempotent, restore returns each window to its pre-emulation bounds,
+// and a woken SW can reconcile emulation orphaned by an eviction (see `emulationReady`).
 
 const chromeDeviceDriver: DeviceEmulationDriver = {
   // `chrome.debugger` exists only when the `debugger` permission is declared + granted; otherwise the
   // runner takes the viewport fallback. (Permission is added in the following slice-16 task.)
   cdpAvailable: () => typeof chrome.debugger !== 'undefined',
   applyCdp: async (tabId, device) => {
-    if (!cdpAttached.has(tabId)) {
+    if (!emulation.isAttached(tabId)) {
       await chrome.debugger.attach({ tabId }, CDP_VERSION);
-      cdpAttached.add(tabId);
+      await emulation.recordAttach(tabId, activeEmulationOwner);
     }
     await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
       width: device.width,
@@ -1006,17 +1052,21 @@ const chromeDeviceDriver: DeviceEmulationDriver = {
     });
   },
   clearCdp: async (tabId) => {
-    if (!cdpAttached.has(tabId)) return;
-    cdpAttached.delete(tabId);
+    if (!emulation.isAttached(tabId)) return;
+    await emulation.clearAttach(tabId);
     // Detaching drops every override in one call; best-effort (the tab may already be gone).
     await chrome.debugger.detach({ tabId }).catch(() => {});
   },
   applyViewport: async (tabId, device) => {
     const tab = await chrome.tabs.get(tabId);
     if (tab.windowId === undefined) throw new Error('The tab has no window to resize.');
-    if (!savedWindowSize.has(tabId)) {
+    if (!emulation.savedWindow(tabId)) {
       const win = await chrome.windows.get(tab.windowId);
-      savedWindowSize.set(tabId, { windowId: tab.windowId, width: win.width, height: win.height });
+      await emulation.recordWindow(tabId, activeEmulationOwner, {
+        windowId: tab.windowId,
+        width: win.width,
+        height: win.height,
+      });
     }
     await chrome.windows.update(tab.windowId, {
       state: 'normal',
@@ -1025,13 +1075,24 @@ const chromeDeviceDriver: DeviceEmulationDriver = {
     });
   },
   clearViewport: async (tabId) => {
-    const saved = savedWindowSize.get(tabId);
+    const saved = emulation.savedWindow(tabId);
     if (!saved) return;
-    savedWindowSize.delete(tabId);
+    await emulation.clearWindow(tabId);
     await chrome.windows
       .update(saved.windowId, { width: saved.width, height: saved.height })
       .catch(() => {});
   },
+};
+
+// The raw debugger/window teardown the wake reconcile drives to undo emulation orphaned by an SW
+// eviction — kept separate from the driver above (which also mutates the registry) so `reconcile`
+// can restore persisted state without re-reading a registry it's about to clear.
+const emulationTeardown: EmulationTeardown = {
+  detach: (tabId) => chrome.debugger.detach({ tabId }),
+  restoreWindow: (saved: SavedWindow) =>
+    chrome.windows
+      .update(saved.windowId, { width: saved.width, height: saved.height })
+      .then(() => {}),
 };
 
 // Adapt the AI SDK's `generateText` to the vision module's minimal injected shape (text out only),

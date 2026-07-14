@@ -117,15 +117,32 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
   const { messages, signal, model, instructions, dispatch, emit } = args;
   const budget = new TurnBudget(args.limits);
   const tools = buildTools(dispatch, budget, args);
+  // Did the loop actually terminate on one of our stopWhen ceilings? The SDK only evaluates
+  // `stopWhen` when a step has tool calls it could continue from — a naturally-finished turn
+  // (finishReason `stop`) never consults it. So we can't infer "force-stopped on budget" from
+  // `budget.exhausted` alone: a turn that completes on its own but whose final tokens happen to
+  // cross the ceiling would be mislabeled `budget` with a spurious "reached the budget" notice.
+  // Tracking which stopWhen fired distinguishes the two.
+  let ceilingHit = false;
+  const stepCeiling = isStepCount(budget.limits.maxSteps);
   const agent = new ToolLoopAgent({
     model,
     instructions,
     tools,
     // Two ceilings: native step cap + a token cap computed from each step's usage. Either stops
-    // the loop after the current step; `budget` (fed by `onStepFinish`) reports which fired.
+    // the loop after the current step; `ceilingHit` records that it was a ceiling (not a natural
+    // finish) that ended the loop, and `budget` (fed by `onStepFinish`) reports which fired.
     stopWhen: [
-      isStepCount(budget.limits.maxSteps),
-      ({ steps }) => usageOf(steps).tokens >= budget.limits.maxTokens,
+      (opts) => {
+        const hit = stepCeiling(opts);
+        if (hit) ceilingHit = true;
+        return hit;
+      },
+      ({ steps }) => {
+        const hit = usageOf(steps).tokens >= budget.limits.maxTokens;
+        if (hit) ceilingHit = true;
+        return hit;
+      },
     ],
     // Gate `handoff` on the user's Ship click — never auto-ship. Only wired when a handoff tool
     // is present (slice 07); the key is a plain string on the widened ToolSet until then.
@@ -182,8 +199,11 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     return { text, usage: budget.usage, stop: 'error', budgetReason: budget.reason };
   }
 
-  // Force-stopped on budget: stream the stop-and-summarize notice so the user sees why it ended.
-  if (stop === 'done' && budget.exhausted) {
+  // Force-stopped on a budget ceiling: stream the stop-and-summarize notice so the user sees why
+  // it ended. Gated on `ceilingHit` (a stopWhen actually fired), not `budget.exhausted` — a turn
+  // that finished on its own must not be relabeled/annotated just because its final tokens crossed
+  // the line.
+  if (stop === 'done' && ceilingHit) {
     stop = 'budget';
     const notice = budget.notice();
     if (notice) {
@@ -193,7 +213,12 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     }
   }
 
-  return { text, usage: budget.usage, stop, budgetReason: budget.reason };
+  return {
+    text,
+    usage: budget.usage,
+    stop,
+    budgetReason: stop === 'budget' ? budget.reason : null,
+  };
 }
 
 // A minimal structural view of the tool output the model sees — a superset-safe subset of the
