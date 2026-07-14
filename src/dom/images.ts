@@ -1,6 +1,6 @@
-import { queryAll } from '@/dom/read';
+import { queryAll, queryOne } from '@/dom/read';
 import { pickUnique } from '@/dom/selector';
-import type { ImageInfo, ReadImagesResult } from '@/shared/messages';
+import type { ImageInfo, ReadImagesResult, StableSelector } from '@/shared/messages';
 
 // Image enumeration — the content script's "see what's on screen" read (slice 13 vision half).
 // Walks `<img>` elements + CSS `background-image` under a scope, resolving each to a stable
@@ -106,6 +106,39 @@ function describeImg(el: HTMLImageElement, doc: ParentNode, dpr: number): ImageI
     broken,
     oversized: !broken && isOversized(naturalWidth, naturalHeight, rect.width, rect.height, dpr),
   };
+}
+
+// The DOM leg of the `readImageContent` tool (slice 14): one image resolved to its stable selector,
+// source URL, and alt text so the SW can add a vision prose description (the alt is the cheap
+// non-vision fallback). An `<img>` yields its rendered `src` + `alt`; any other element is treated as
+// a CSS-background image (its `background-image` URL + `aria-label`/`alt`). Bounds match `readImages`.
+export interface ImageContent {
+  readonly selector: StableSelector;
+  readonly src: string;
+  readonly alt?: string;
+}
+
+/** Resolve the single element matching `selector` under `root` to its {@link ImageContent}, or `null`
+ *  when nothing matches. Pure DOM (no chrome.*), so it runs under jsdom and keeps content a thin wire. */
+export function imageContent(
+  root: ParentNode,
+  selector: string,
+  win: Window = window,
+): ImageContent | null {
+  const el = queryOne(root, selector);
+  if (!el) return null;
+  const doc = documentOf(root);
+  const sel = pickUnique(el, doc);
+
+  if (el instanceof HTMLImageElement) {
+    const src = (el.currentSrc || el.src || el.getAttribute('src') || '').slice(0, MAX_SRC);
+    const alt = el.getAttribute('alt');
+    return { selector: sel, src, ...(alt !== null ? { alt: alt.slice(0, MAX_ALT) } : {}) };
+  }
+
+  const bg = backgroundUrl(el, win) ?? '';
+  const label = el.getAttribute('aria-label') ?? el.getAttribute('alt');
+  return { selector: sel, src: bg, ...(label ? { alt: label.slice(0, MAX_ALT) } : {}) };
 }
 
 function describeBackground(el: Element, src: string, doc: ParentNode): ImageInfo {
