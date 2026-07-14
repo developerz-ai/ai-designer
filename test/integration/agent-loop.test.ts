@@ -1,12 +1,17 @@
 import type {
   LanguageModelV4,
+  LanguageModelV4Prompt,
   LanguageModelV4StreamPart,
+  LanguageModelV4ToolResultOutput,
   LanguageModelV4Usage,
 } from '@ai-sdk/provider';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { runTurn } from '@/agent/loop';
 import type { DomDispatch } from '@/agent/tools/dom';
+import { createSessionTools } from '@/agent/tools/session';
+import { ChangesetStore } from '@/changeset/store';
+import { emptyChangeset } from '@/shared/changeset';
 import type { DomTool, SwToPanel } from '@/shared/messages';
 
 // Integration: the slice-04 spine — a `user-message` turn runs the ToolLoopAgent in the SW
@@ -186,5 +191,121 @@ describe('integration: agent turn streams tokens + tool-calls and drives the DOM
 
     expect(outcome.stop).toBe('error');
     expect(events).toContainEqual({ type: 'error', message: 'provider exploded' });
+  });
+});
+
+// The `handoff` guardrail: docs/idea/principles.md — the agent never ships on its own. The loop
+// gates `handoff` behind `args.approveHandoff` (a `toolApproval` entry, see loop.ts); this proves
+// the gate actually reaches the model, not just that the option is wired.
+
+// A model that calls `handoff` on step one, then wraps up on step two once it sees whether the
+// call was approved or denied — mirrors the shape of `twoStepModel` above.
+function handoffModel(): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doStream: [
+      stream([
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 't1',
+          toolName: 'handoff',
+          input: JSON.stringify({ summary: 'Recolor the CTA' }),
+        },
+        finish(usage(100, 10), 'tool-calls'),
+      ]),
+      stream([
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: '2' },
+        { type: 'text-delta', id: '2', delta: 'Noted.' },
+        { type: 'text-end', id: '2' },
+        finish(usage(50, 5), 'stop'),
+      ]),
+    ],
+  });
+}
+
+function fakeSessionTools() {
+  const store = new ChangesetStore(
+    emptyChangeset('https://example.com/', '2026-07-13T00:00:00Z', 's1'),
+  );
+  return createSessionTools({ store, persist: () => undefined, emit: () => undefined });
+}
+
+// What the model was shown for the `handoff` tool call in its second turn — the loop's only
+// observable proof the gate fired one way or the other, since `emit` surfaces just the tool name.
+function handoffResultShownToModel(model: MockLanguageModelV4): LanguageModelV4ToolResultOutput {
+  const prompt = model.doStreamCalls[1]?.prompt as LanguageModelV4Prompt | undefined;
+  const last = prompt?.[prompt.length - 1];
+  if (last?.role !== 'tool') throw new Error('expected a tool-result message');
+  const [part] = last.content;
+  if (part?.type !== 'tool-result') throw new Error('expected a tool-result part');
+  return part.output;
+}
+
+describe('integration: the handoff tool is gated by approveHandoff — never ships on its own', () => {
+  it('denies the call when approveHandoff resolves false; handoff.execute never runs', async () => {
+    const { events, emit } = collectEmit();
+    const model = handoffModel();
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'ship it' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      tools: fakeSessionTools(),
+      approveHandoff: () => false,
+    });
+
+    // The model still sees the call happen (chip surfaces either way) …
+    expect(events).toContainEqual({ type: 'tool-call', tool: 'handoff' });
+    // … but the SDK reports the execution itself was denied — `handoff.execute` never ran, so
+    // the model never received a fabricated "shipped" result to act on.
+    expect(handoffResultShownToModel(model)).toEqual({ type: 'execution-denied' });
+    expect(outcome.stop).toBe('done');
+  });
+
+  it('approves the call when approveHandoff resolves true; execute runs and reports the proposal', async () => {
+    const model = handoffModel();
+    const { emit } = collectEmit();
+
+    await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'ship it' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      tools: fakeSessionTools(),
+      approveHandoff: () => true,
+    });
+
+    const output = handoffResultShownToModel(model);
+    expect(output.type).toBe('json');
+    if (output.type !== 'json') throw new Error('unreachable');
+    expect(output.value).toMatchObject({
+      type: 'tool-result',
+      ok: true,
+      data: { summary: 'Recolor the CTA' },
+    });
+  });
+
+  it('defaults to denied when no approveHandoff callback is given', async () => {
+    const model = handoffModel();
+    const { emit } = collectEmit();
+
+    await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'ship it' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch: fakeContent().dispatch,
+      emit,
+      tools: fakeSessionTools(),
+      // no approveHandoff — background.ts always passes one, but the loop must fail closed.
+    });
+
+    expect(handoffResultShownToModel(model)).toEqual({ type: 'execution-denied' });
   });
 });
