@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>developerz.ai Designer — Design in the live page. Ship the real code.</title>
+    <title>developerz.ai Designer, Design in the live page. Ship the real code.</title>
     <meta
       name="description"
       content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP. Coming soon to Chrome."
@@ -12,7 +12,7 @@
     <meta name="color-scheme" content="dark" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="developerz.ai Designer — Design in the live page. Ship the real code." />
+    <meta property="og:title" content="developerz.ai Designer, Design in the live page. Ship the real code." />
     <meta
       property="og:description"
       content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP."
@@ -26,6 +26,43 @@
 
     <link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/inter-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
+
+    <script>
+      document.documentElement.classList.add('js');
+    </script>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      html {
+        background: #0a0a0f;
+      }
+      body {
+        background: #0a0a0f;
+        color: #f8fafc;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        font-size: 16px;
+        line-height: 1.65;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        -webkit-font-smoothing: antialiased;
+      }
+      img,
+      svg {
+        display: block;
+        max-width: 100%;
+      }
+      .js [data-reveal] {
+        opacity: 0;
+      }
+    </style>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -59,7 +96,7 @@
               <span class="dz-gradient-text">Ship the real code.</span>
             </h1>
             <p class="lead">
-              Open any page — your prod app or <code>localhost</code> — tell the agent what to change,
+              Open any page, your prod app or <code>localhost</code>, tell the agent what to change,
               and watch it redesign the live DOM in real time. When it looks right, click
               <strong>Ship</strong>: a structured changeset goes over MCP to your dev agent, which edits
               the source and opens a reviewable PR.
@@ -82,7 +119,7 @@
               </div>
               <div class="chat">
                 <div class="chat__bubble chat__bubble--user">Make the hero full-bleed and the CTA orange.</div>
-                <div class="chat__bubble chat__bubble--agent">Done — applied to the live page. Recording a changeset.</div>
+                <div class="chat__bubble chat__bubble--agent">Done, applied to the live page. Recording a changeset.</div>
               </div>
               <pre class="diff"><code><span class="diff__file">components/hero.tsx</span>
 <span class="diff__add">+ min-height: 100vh;</span>
@@ -119,7 +156,7 @@
               </span>
               <h3 class="how__title">Talk</h3>
               <p class="how__text">
-                Open the side panel on any page and describe the change in plain English —
+                Open the side panel on any page and describe the change in plain English,
                 "make the hero full-bleed, tighten the nav, CTA orange."
               </p>
             </li>
@@ -145,7 +182,7 @@
               </span>
               <h3 class="how__title">Ship</h3>
               <p class="how__text">
-                Click Ship. A structured changeset — selectors, styles, intent — goes over MCP to your
+                Click Ship. A structured changeset, selectors, styles, intent, goes over MCP to your
                 dev agent, which edits the source and opens a tested, reviewable PR.
               </p>
             </li>
@@ -160,7 +197,7 @@
           <p class="eyebrow">Coming soon</p>
           <h2 class="section__title">Be first to try <span class="dz-gradient-text">Designer</span>.</h2>
           <p class="lead">
-            We'll email you when Designer hits the Chrome Web Store. No spam — one message at launch.
+            We'll email you when Designer hits the Chrome Web Store. No spam, one message at launch.
           </p>
 
           <form class="notify__form" id="notify-form" novalidate>
@@ -182,7 +219,7 @@
           </form>
 
           <p class="notify__success" id="notify-success" role="status" hidden>
-            You're on the list — we'll email you at launch.
+            You're on the list, we'll email you at launch.
           </p>
           <p class="notify__count">
             Join <strong id="waitlist-count">0</strong> developers on the waitlist.
@@ -217,7 +254,7 @@
         </nav>
       </div>
       <div class="container footer__bottom">
-        <p>&copy; 2026 developerz.ai. Designer is a preview — not yet shipped.</p>
+        <p>&copy; 2026 developerz.ai. Designer is a preview, not yet shipped.</p>
         <p class="footer__bot">An agent-driven tool · built by developerz.ai</p>
       </div>
     </footer>

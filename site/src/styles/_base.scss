@@ -179,7 +179,9 @@ strong {
 }
 
 // ─── Scroll-reveal base (IntersectionObserver toggles .is-visible in main.ts) ──
-[data-reveal] {
+// Hidden only when JS is active (inline head script adds .js). Without JS the
+// content is visible, so a slow/failed script never leaves the page blank.
+.js [data-reveal] {
   opacity: 0;
   transform: translateY(1.25rem);
   transition:
@@ -205,7 +207,7 @@ strong {
     transition-duration: 0.001ms !important;
   }
 
-  [data-reveal] {
+  .js [data-reveal] {
     opacity: 1;
     transform: none;
   }
