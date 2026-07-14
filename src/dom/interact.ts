@@ -27,7 +27,9 @@ export interface InteractorDeps {
 }
 
 export interface Interactor {
-  run(tool: InteractTool): Promise<ToolResult>;
+  /** `signal` cancels a pending `waitFor` early (settles `met:false`, like a timeout); every other
+   *  action is synchronous and ignores it. */
+  run(tool: InteractTool, signal?: AbortSignal): Promise<ToolResult>;
 }
 
 // waitFor bounds: a plain `timeMs` delay defaults to 5s; the schema hard-caps it at 30s so a stuck
@@ -340,7 +342,7 @@ export function createInteractor(deps: InteractorDeps = {}): Interactor {
     return el ? apply(el) : notFound(selector);
   };
 
-  async function run(tool: InteractTool): Promise<ToolResult> {
+  async function run(tool: InteractTool, signal?: AbortSignal): Promise<ToolResult> {
     switch (tool.type) {
       case 'click':
         return withElement(tool.selector, (el) => {
@@ -361,7 +363,7 @@ export function createInteractor(deps: InteractorDeps = {}): Interactor {
       case 'selectOption':
         return withElement(tool.selector, (el) => selectOption(el, tool.value, doc));
       case 'waitFor':
-        return waitFor(tool, doc, win);
+        return waitFor(tool, doc, win, signal);
       case 'handleDialog':
         return handleDialog(tool.accept, tool.promptText, win);
     }
