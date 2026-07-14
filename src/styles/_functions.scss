@@ -1,0 +1,9 @@
+@use 'sass:math';
+
+// px → rem against the 16px root default. Single responsibility: unit
+// conversion so every surface stays in scalable, accessible units. Accepts a
+// unitless number or a px value; visual no-op at the browser-default 16px root.
+@function rem($px, $base: 16) {
+  $n: if(math.is-unitless($px), $px, math.div($px, 1px));
+  @return math.div($n, $base) * 1rem;
+}

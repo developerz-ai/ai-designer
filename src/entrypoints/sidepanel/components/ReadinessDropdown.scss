@@ -18,7 +18,7 @@
     padding: tokens.$dz-space-1 tokens.$dz-space-3;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
 
     &.is-ready {
       color: var(--dz-status-connected);
@@ -50,7 +50,7 @@
     padding: tokens.$dz-space-1 tokens.$dz-space-4;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     font-weight: 600;
 
     &:disabled {
@@ -67,7 +67,7 @@
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
-    min-width: 240px;
+    min-width: tokens.rem(240);
     background: var(--dz-surface);
     border: 1px solid var(--dz-border);
     border-radius: var(--dz-radius);
@@ -102,7 +102,7 @@
     padding: tokens.$dz-space-1 tokens.$dz-space-2;
     cursor: pointer;
     font: inherit;
-    font-size: 11px;
+    font-size: tokens.$dz-font-xs;
 
     &:hover {
       background: var(--dz-surface-overlay);
@@ -114,7 +114,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     color: tokens.$dz-danger;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     margin: 0;
   }
 }

@@ -24,7 +24,7 @@
     align-items: center;
     justify-content: center;
     flex: none;
-    margin-top: 2px;
+    margin-top: tokens.rem(2);
     color: var(--dz-muted);
 
     &.is-accent {
@@ -43,7 +43,7 @@
   &__meta {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: tokens.rem(2);
     min-width: 0;
     flex: 1;
   }
@@ -58,12 +58,12 @@
   &__status {
     color: var(--dz-muted);
     text-transform: capitalize;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
   }
 
   &__error {
     color: tokens.$dz-danger;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
   }
 
   &__pr {
@@ -73,7 +73,7 @@
     flex: none;
     color: var(--dz-accent);
     text-decoration: none;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     white-space: nowrap;
 
     &:hover {

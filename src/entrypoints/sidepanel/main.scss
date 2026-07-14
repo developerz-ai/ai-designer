@@ -20,5 +20,5 @@ body {
   background: var(--dz-bg);
   color: var(--dz-fg);
   font-family: var(--dz-font);
-  font-size: 14px;
+  font-size: tokens.$dz-font-base;
 }

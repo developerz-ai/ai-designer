@@ -10,8 +10,8 @@
   align-items: center;
   justify-content: center;
   padding: t.$dz-space-2; // 8px padding → 40px total with Icon.md (24px default)
-  min-width: 44px;
-  min-height: 44px;
+  min-width: t.rem(44);
+  min-height: t.rem(44);
   background-color: transparent;
   border: none;
   border-radius: t.$dz-radius;
@@ -50,8 +50,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
+  width: t.rem(12);
+  height: t.rem(12);
   border-radius: 50%;
   border: 2px solid currentColor;
   flex: none;

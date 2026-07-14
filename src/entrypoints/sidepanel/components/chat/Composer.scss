@@ -9,8 +9,8 @@
 
   &__input {
     resize: none;
-    min-height: 36px;
-    max-height: 140px;
+    min-height: tokens.rem(36);
+    max-height: tokens.rem(140);
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--dz-border);
     border-radius: var(--dz-radius);
@@ -42,8 +42,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: tokens.rem(28);
+    height: tokens.rem(28);
     background: transparent;
     border: 1px solid var(--dz-border);
     border-radius: var(--dz-radius);
@@ -78,7 +78,7 @@
     cursor: pointer;
     font: inherit;
     font-size: 0.8em;
-    max-width: 160px;
+    max-width: tokens.rem(160);
 
     &:disabled {
       opacity: 0.5;
@@ -103,9 +103,9 @@
     z-index: 10;
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    min-width: 180px;
-    max-height: 220px;
+    gap: tokens.rem(2);
+    min-width: tokens.rem(180);
+    max-height: tokens.rem(220);
     overflow-y: auto;
     margin: 0;
     padding: tokens.$dz-space-1;
@@ -120,7 +120,7 @@
       text-align: left;
       background: transparent;
       border: none;
-      border-radius: 4px;
+      border-radius: tokens.rem(4);
       color: var(--dz-fg);
       padding: tokens.$dz-space-1 tokens.$dz-space-2;
       cursor: pointer;
@@ -143,7 +143,7 @@
     border: none;
     border-radius: var(--dz-radius);
     color: var(--dz-accent-fg);
-    height: 28px;
+    height: tokens.rem(28);
     padding: 0 tokens.$dz-space-4;
     cursor: pointer;
     font: inherit;

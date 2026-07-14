@@ -3,6 +3,11 @@
 // properties that components consume. Values match the existing surfaces so this
 // extraction is visually a no-op.
 
+// rem() unit primitive — anchors every length token to the 16px root default.
+@use './functions' as fn;
+// Re-export so components that `@use '.../tokens'` can call `tokens.rem(N)`.
+@forward './functions';
+
 // Brand palette — developerz.ai primary identity
 $dz-primary: #f97316;
 $dz-accent: #f97316; // same as primary
@@ -24,20 +29,26 @@ $dz-status-error: #ff6b6b; // red — error state (same as danger)
 $dz-status-warning: #fbbf24; // yellow — warning state
 $dz-status-muted: $dz-muted; // gray — muted/inactive state
 
-// Icon sizes (pixel values for direct use in layouts)
-$dz-icon-size-sm: 16px;
-$dz-icon-size-md: 24px;
-$dz-icon-size-lg: 32px;
+// Icon sizes (rem against the 16px root — scalable, accessible units)
+$dz-icon-size-sm: fn.rem(16);
+$dz-icon-size-md: fn.rem(24);
+$dz-icon-size-lg: fn.rem(32);
 
 // radius
-$dz-radius: 8px;
+$dz-radius: fn.rem(8);
 
 // spacing
-$dz-space-1: 4px;
-$dz-space-2: 8px;
-$dz-space-3: 10px;
-$dz-space-4: 12px;
-$dz-space-5: 14px;
+$dz-space-1: fn.rem(4);
+$dz-space-2: fn.rem(8);
+$dz-space-3: fn.rem(10);
+$dz-space-4: fn.rem(12);
+$dz-space-5: fn.rem(14);
+
+// font-size scale (rem)
+$dz-font-xs: fn.rem(11);
+$dz-font-sm: fn.rem(12);
+$dz-font-md: fn.rem(13);
+$dz-font-base: fn.rem(14);
 
 $dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
 

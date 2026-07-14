@@ -20,7 +20,7 @@
     padding: 0;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
 
     &:hover {
       color: var(--dz-fg);
@@ -64,7 +64,7 @@
     background: var(--dz-surface-overlay);
     border: 1px solid var(--dz-border);
     text-transform: capitalize;
-    font-size: 11px;
+    font-size: tokens.$dz-font-xs;
 
     &.is-copy {
       color: var(--dz-accent);
@@ -81,7 +81,7 @@
     gap: tokens.$dz-space-1;
     margin-left: auto;
     color: var(--dz-muted);
-    font-size: 11px;
+    font-size: tokens.$dz-font-xs;
   }
 
   &__thread {
@@ -98,7 +98,7 @@
   &__line {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: tokens.rem(2);
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
     border-radius: var(--dz-radius);
     background: var(--dz-surface-overlay);
@@ -116,7 +116,7 @@
   }
 
   &__role {
-    font-size: 11px;
+    font-size: tokens.$dz-font-xs;
     text-transform: uppercase;
     letter-spacing: 0.02em;
     color: var(--dz-muted);
@@ -146,7 +146,7 @@
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     text-decoration: none;
   }
 }

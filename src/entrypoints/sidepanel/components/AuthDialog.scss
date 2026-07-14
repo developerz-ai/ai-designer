@@ -21,7 +21,7 @@
 
 .dz-authdialog {
   position: relative;
-  width: min(320px, calc(100% - #{tokens.$dz-space-4} * 2));
+  width: min(tokens.rem(320), calc(100% - #{tokens.$dz-space-4} * 2));
   background: var(--dz-surface);
   border: 1px solid var(--dz-border);
   border-radius: var(--dz-radius);
@@ -39,8 +39,8 @@
 
   &__close {
     @include mixins.icon-button;
-    min-width: 32px;
-    min-height: 32px;
+    min-width: tokens.$dz-icon-size-lg;
+    min-height: tokens.$dz-icon-size-lg;
   }
 
   &__tabs {
@@ -73,7 +73,7 @@
 
   &__label {
     color: var(--dz-muted);
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
   }
 
   input {
@@ -110,7 +110,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     color: tokens.$dz-danger;
-    font-size: 12px;
+    font-size: tokens.$dz-font-sm;
     margin: 0;
   }
 }
