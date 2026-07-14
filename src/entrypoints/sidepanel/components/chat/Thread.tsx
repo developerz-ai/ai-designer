@@ -1,4 +1,4 @@
-import { createEffect, For } from 'solid-js';
+import { createEffect, Index } from 'solid-js';
 import type { ChatMessage } from '../../stores/chat';
 import { Message } from './Message';
 import './Thread.scss';
@@ -30,18 +30,23 @@ export function Thread(props: ThreadProps) {
 
   return (
     <ul class="dz-thread" ref={logEl}>
-      <For each={props.messages}>
+      {/* `Index` (keyed by position, not object identity) keeps each row's subtree mounted while
+          its `ChatMessage` is replaced wholesale every stream fold (`stores/chat.ts` returns a new
+          last-message object per token). A keyed `<For>` would dispose+remount the streaming row on
+          every token — re-parsing markdown and resetting ToolChip expand state. The thread is
+          append-only (rows never reorder), so position keying is exact. */}
+      <Index each={props.messages}>
         {(m) => (
           <Message
-            role={m.role}
-            text={m.text}
-            streaming={m.streaming}
-            error={m.error}
-            toolCalls={m.toolCalls}
-            edits={m.edits}
+            role={m().role}
+            text={m().text}
+            streaming={m().streaming}
+            error={m().error}
+            toolCalls={m().toolCalls}
+            edits={m().edits}
           />
         )}
-      </For>
+      </Index>
     </ul>
   );
 }

@@ -6,6 +6,7 @@ import {
   PRESETS,
   type ProviderPreset,
   pickModel,
+  type SaveStatus,
   saveProvider,
   selectPreset,
   setCustomBaseURL,
@@ -13,6 +14,13 @@ import {
 } from '../stores/settings';
 import { AboutSection } from './AboutSection';
 import './SettingsPanel.scss';
+
+/** Wipe the key input only after a validated save. A host-permission denial or a rejected config
+ *  leaves `saveStatus` at `invalid`/`saving`, so the typed key survives for a retry instead of
+ *  forcing a re-type. Pure so the clear-on-success rule is unit-testable. */
+export function clearKeyOnSave(saveStatus: SaveStatus): boolean {
+  return saveStatus === 'valid';
+}
 
 // Render + dispatch only — no fetch, no crypto, no chrome.*. All logic lives in
 // ../stores/settings (which talks to the service worker). The key input is never
@@ -120,7 +128,7 @@ export function SettingsPanel() {
           disabled={settings.saveStatus === 'saving' || !settings.model}
           onClick={() => {
             void saveProvider(keyInput.value, settings.model ?? '').then(() => {
-              keyInput.value = '';
+              if (clearKeyOnSave(settings.saveStatus)) keyInput.value = '';
             });
           }}
         >

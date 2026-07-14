@@ -81,11 +81,9 @@ describe('changeset fold-back: recorder mutation -> SW ChangesetStore -> panel s
     if (recorderEvent?.type !== 'recorder-event') throw new Error('expected a recorder-event');
     expect(recorderEvent.event.kind).toBe('setStyle');
 
-    // The raw recorder-event is RELAYED to the panel as a display chip (relay.ts) — real projection.
-    expect(relayToPanel(recorderEvent)).toEqual({
-      type: 'recorder-event',
-      event: recorderEvent.event,
-    });
+    // The raw recorder-event is NOT relayed to the panel (relay.ts) — no panel store consumes it;
+    // the fold-back reaches the panel as an intent-tagged `edit-recorded` via `recordEdit` below.
+    expect(relayToPanel(recorderEvent)).toBeNull();
 
     // 2) The accepted change is recorded as an intent-tagged Edit, GROUNDED in the recorder-event's
     // real selector, through the REAL recordEdit tool into the real ChangesetStore.

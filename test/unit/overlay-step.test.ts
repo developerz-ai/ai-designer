@@ -13,6 +13,14 @@ describe('classifyTool', () => {
     });
   });
 
+  it('classifies the real driving tool names pressKey/selectOption as "act"', () => {
+    expect(classifyTool('pressKey', { key: 'Enter' })).toEqual({ kind: 'act' });
+    expect(classifyTool('selectOption', { selector: '#country', value: 'US' })).toEqual({
+      selector: '#country',
+      kind: 'act',
+    });
+  });
+
   it('classifies a non-mutating tool with a selector as "read"', () => {
     expect(classifyTool('query', { selector: '.hero' })).toEqual({
       selector: '.hero',

@@ -13,6 +13,7 @@ import {
 } from '../stores/readiness';
 import {
   initSessionStore,
+  type SessionState,
   error as sessionError,
   sessionState,
   startSession,
@@ -29,6 +30,18 @@ export type DeepLinkTab = 'settings' | 'mcp';
 
 export interface ReadinessDropdownProps {
   onNavigate: (tab: DeepLinkTab) => void;
+}
+
+export type SessionAction = 'start' | 'stop';
+
+/** The Start/Stop toggle's semantics for a given session state. `running` is the only state that
+ *  Stops; `idle` (pre-Start) and `stopped` (Stop hit mid-turn — the session stays open) both
+ *  (re)Start, so a stopped session is resumable rather than dead-ending on a no-op re-abort. Pure
+ *  so the three-state mapping is unit-testable without mounting Solid. */
+export function sessionButton(state: SessionState): { label: string; action: SessionAction } {
+  return state === 'running'
+    ? { label: 'Stop', action: 'stop' }
+    : { label: 'Start', action: 'start' };
 }
 
 interface CheckRow {
@@ -90,8 +103,8 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
   });
 
   async function toggleSession(): Promise<void> {
-    if (sessionState() === 'idle') await startSession();
-    else await stopSession();
+    if (sessionButton(sessionState()).action === 'stop') await stopSession();
+    else await startSession();
   }
 
   function navigate(tab: DeepLinkTab): void {
@@ -116,10 +129,10 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
       <button
         type="button"
         class="dz-readiness__toggle"
-        disabled={sessionState() === 'idle' && (!ready() || readinessLoading())}
+        disabled={!running() && (!ready() || readinessLoading())}
         onClick={() => void toggleSession()}
       >
-        {sessionState() === 'idle' ? 'Start' : 'Stop'}
+        {sessionButton(sessionState()).label}
       </button>
 
       <Show when={open()}>

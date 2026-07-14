@@ -541,20 +541,18 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
     expect(discs).toContain('picker-state');
   });
 
-  it('relays multi-select (empty or populated) and recorder-event to the panel', () => {
-    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [selector] }).success).toBe(true);
-    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [] }).success).toBe(true);
+  it('does not carry multi-select / recorder-event — no panel store consumes them', () => {
+    const discs = SwToPanel.options.map((s) => s.shape.type.value);
+    expect(discs).not.toContain('multi-select');
+    expect(discs).not.toContain('recorder-event');
+    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [selector] }).success).toBe(
+      false,
+    );
     expect(
       SwToPanel.safeParse({
         type: 'recorder-event',
         event: { kind: 'setStyle', selector, before: '', after: 'x', ts: 1 },
       }).success,
-    ).toBe(true);
-  });
-
-  it('rejects a recorder-event wrapping a malformed MutationEvent', () => {
-    expect(
-      SwToPanel.safeParse({ type: 'recorder-event', event: { kind: 'nope', selector } }).success,
     ).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { createStore, reconcile } from 'solid-js/store';
 import type {
   AuthKind,
   McpOAuthConfig,
@@ -50,7 +50,9 @@ export function initMcpStore(): void {
   connectPort();
   subscribeToSw((msg) => {
     if (msg.type !== 'mcp-status') return;
-    setServers(reduceServers(servers, msg));
+    // reconcile (keyed by `id`) so only the changed server's fields re-render — a plain array
+    // replace hands every row a wire-fresh object, remounting keyed `<For>` rows in McpPanel.
+    setServers(reconcile(reduceServers(servers, msg), { key: 'id' }));
   });
 }
 
@@ -157,7 +159,7 @@ async function runAuth(
 }
 
 function upsertLocal(server: McpServer): void {
-  setServers(reduceServers(servers, { type: 'mcp-status', server }));
+  setServers(reconcile(reduceServers(servers, { type: 'mcp-status', server }), { key: 'id' }));
 }
 
 function errMsg(e: unknown): string {
