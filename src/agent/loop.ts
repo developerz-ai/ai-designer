@@ -19,6 +19,7 @@ import {
   usageOf,
 } from './budget';
 import type { ChatMessage } from './session';
+import { type BrowseDispatch, createBrowseTool } from './tools/browse';
 import { createDomTools, type DomDispatch } from './tools/dom';
 
 // Shown alongside a screenshot fed back to the model, so it reads the image as its own result
@@ -51,6 +52,9 @@ export interface RunTurnArgs {
   readonly instructions: string;
   /** Bus round-trip that runs a DOM tool in the tab's content script (slice 05). */
   readonly dispatch: DomDispatch;
+  /** Opens a reference site in a background tab and returns its compact design read (slice 06).
+   *  Absent ⇒ the `browse` tool isn't offered this turn (e.g. a context with no tab access). */
+  readonly browse?: BrowseDispatch;
   /** Sink for stream events → the side-panel port (`postToPanel`). */
   readonly emit: (event: SwToPanel) => void;
   /** Extra tools merged after the DOM tools: connected MCP tools (02), session/recorder (07). */
@@ -72,7 +76,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
   const { messages, signal, model, instructions, dispatch, emit } = args;
   const limits = args.limits ?? undefined;
   const budget = new TurnBudget(limits);
-  const tools = buildTools(dispatch, args.tools);
+  const tools = buildTools(dispatch, args.browse, args.tools);
   const agent = new ToolLoopAgent({
     model,
     instructions,
@@ -161,12 +165,14 @@ export type ModelToolOutput =
       >;
     };
 
-/** Build the turn's ToolSet: DOM tools (with the screenshot vision hook) + any injected extras
- *  (MCP, session). Extras win on a name clash — a backend can't be shadowed by a DOM tool. */
-function buildTools(dispatch: DomDispatch, extra?: ToolSet): ToolSet {
+/** Build the turn's ToolSet: DOM tools (with the screenshot vision hook), the cross-site
+ *  `browse` tool when a dispatch is injected, + any injected extras (MCP, session). Extras win
+ *  on a name clash — a backend can't be shadowed by a built-in tool. */
+function buildTools(dispatch: DomDispatch, browse?: BrowseDispatch, extra?: ToolSet): ToolSet {
   const dom = createDomTools(dispatch);
   const screenshot = { ...dom.screenshot, toModelOutput: screenshotToModelOutput };
-  return { ...dom, screenshot, ...(extra ?? {}) };
+  const cross = browse ? createBrowseTool(browse) : {};
+  return { ...dom, screenshot, ...cross, ...(extra ?? {}) };
 }
 
 // Present a successful `screenshot` result to the model as a PNG image part (vision

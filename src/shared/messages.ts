@@ -355,6 +355,81 @@ export type A11yNode = z.infer<typeof A11yNode>;
 export const A11yResult = z.object({ tree: A11yNode });
 export type A11yResult = z.infer<typeof A11yResult>;
 
+// --- cross-site browse (agent tool, service-worker-orchestrated) ----------
+// `browse(url)` is an agent tool like the DOM tools, but it is deliberately NOT a `DomTool`:
+// a DomTool is routed to the *active* tab's content script, whereas browse opens its OWN
+// inactive background tab, snapshots it, and closes it — never hijacking the user's page
+// (`src/entrypoints/background.ts` `runBrowse`). So it rides its own input schema + tool
+// module (`src/agent/tools/browse.ts`), never the DomTool union or content's DomTool listener.
+// A per-origin `optional_host_permissions` grant is requested at call time; a denial surfaces
+// as an error `ToolResult` the agent relays to the user.
+export const BrowseInput = z.object({
+  type: z.literal('browse'),
+  url: z.string().url(),
+});
+export type BrowseInput = z.infer<typeof BrowseInput>;
+
+// SW -> browse-tab content: compute a compact, token-bounded "design read" of the loaded page
+// (its visual identity). Content replies with a `DesignReadResult`. Distinct from `DomTool`:
+// it targets the browse tab, not the user's active tab. `maxColors` bounds the palette size.
+export const DesignReadRequest = z.object({
+  type: z.literal('design-read'),
+  maxColors: z.number().int().positive().optional(),
+});
+export type DesignReadRequest = z.infer<typeof DesignReadRequest>;
+
+// One palette entry: a normalized `#rrggbb`, the dominant role it plays (text / background /
+// border), and how many elements use it that way — so the agent can copy a palette by weight.
+export const PaletteColor = z.object({
+  hex: z.string(),
+  role: z.enum(['text', 'background', 'border']),
+  count: z.number().int().nonnegative(),
+});
+export type PaletteColor = z.infer<typeof PaletteColor>;
+
+// The type system in use: font families ordered by usage, the distinct font-size scale
+// (descending px), and the body's base size — the reference's typographic identity in text.
+export const Typography = z.object({
+  families: z.array(z.string().max(120)).max(16),
+  scale: z.array(z.number().int().positive()).max(32),
+  baseSize: z.number().int().positive().optional(),
+});
+export type Typography = z.infer<typeof Typography>;
+
+// A layout landmark (banner / navigation / main / complementary / contentinfo / ...) with its
+// accessible name — the reference's structural regions.
+export const DesignRegion = z.object({ role: z.string(), name: z.string() });
+export type DesignRegion = z.infer<typeof DesignRegion>;
+
+// A recurring UI building block (buttons / links / inputs / headings / images / ...) and how
+// many the page has — the reference's component vocabulary.
+export const DesignComponent = z.object({ kind: z.string(), count: z.number().int().positive() });
+export type DesignComponent = z.infer<typeof DesignComponent>;
+
+// The compact, token-bounded design read `browse` returns as `ToolResult.data`: a site's
+// visual identity in text (palette + typography + regions + components) — cheaper than a
+// screenshot and reusable, so the agent can capture a reference once, then copy it.
+// Bounds are defense-in-depth: the extractor already caps every list (src/dom/design-read.ts
+// MAX_*), but the SW treats the content-world reply as untrusted, so a compromised page can't
+// return an unbounded blob that blows the agent's token budget. Caps sit above the extractor's.
+export const DesignRead = z.object({
+  url: z.string().max(2048),
+  title: z.string().max(300),
+  palette: z.array(PaletteColor).max(64),
+  typography: Typography,
+  regions: z.array(DesignRegion).max(64),
+  components: z.array(DesignComponent).max(48),
+});
+export type DesignRead = z.infer<typeof DesignRead>;
+
+export const DesignReadResult = z.object({
+  type: z.literal('design-read-result'),
+  ok: z.boolean(),
+  read: DesignRead.optional(),
+  error: z.string().optional(),
+});
+export type DesignReadResult = z.infer<typeof DesignReadResult>;
+
 // --- recorder events (shared) --------------------------------------------
 // The reversible, element-targeting mutation primitives that emit a recorder
 // event (docs/idea/live-edit.md). Page-level ops (injectCss, setViewport) have no

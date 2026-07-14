@@ -1,4 +1,5 @@
 import { defineContentScript } from '#imports';
+import { extractDesignRead } from '@/dom/design-read';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
@@ -8,6 +9,8 @@ import {
   type CaptureRequest,
   CaptureResult,
   type ContentToSw,
+  DesignReadRequest,
+  type DesignReadResult,
   DomTool,
   PickerCmd,
   type ToolResult,
@@ -69,6 +72,20 @@ export default defineContentScript({
     // ToolResult) and user-driven PickerCmds (start/stop the overlay, no reply). Parse each with
     // its own schema; anything else is a foreign message and is ignored.
     chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+      // Cross-site browse (slice 06): the SW opened this page in a background tab and wants its
+      // compact design identity. Pure DOM read (src/dom/design-read.ts); reply with a typed result
+      // (an extraction failure degrades to an error the SW surfaces, never a dropped response).
+      const design = DesignReadRequest.safeParse(raw);
+      if (design.success) {
+        try {
+          const read = extractDesignRead(document, window, { maxColors: design.data.maxColors });
+          sendResponse({ type: 'design-read-result', ok: true, read } satisfies DesignReadResult);
+        } catch (err) {
+          sendResponse({ type: 'design-read-result', ok: false, error: String(err) });
+        }
+        return; // responded synchronously
+      }
+
       const tool = DomTool.safeParse(raw);
       if (tool.success) {
         // Always answer: a rejected round-trip (e.g. the SW evicted mid-screenshot) degrades to
