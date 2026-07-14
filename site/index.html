@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark" class="js">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -27,6 +27,11 @@
     <link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/inter-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
 
+    <!-- Adds .is-loading before first paint. main.ts removes it once ready.
+         No JS = no .is-loading = content shows, skeletons stay hidden. -->
+    <script>
+      document.documentElement.classList.add('is-loading');
+    </script>
     <style>
       *,
       *::before,
@@ -41,7 +46,6 @@
         background: #0a0a0f;
       }
       body {
-        opacity: 0;
         background: #0a0a0f;
         color: #f8fafc;
         font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -55,20 +59,57 @@
         display: block;
         max-width: 100%;
       }
-    </style>
-    <noscript>
-      <style>
-        body {
-          opacity: 1;
+
+      /* skeleton toggle + primitive (inlined so skeletons render pre-stylesheet) */
+      [data-skeleton] {
+        display: none;
+      }
+      .is-loading [data-skel-host] > :not([data-skeleton]) {
+        display: none;
+      }
+      .is-loading [data-skeleton] {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .skel {
+        display: block;
+        height: 1em;
+        background: rgba(248, 250, 252, 0.05);
+        border-radius: 0.5rem;
+        position: relative;
+        overflow: hidden;
+      }
+      .skel::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, rgba(248, 250, 252, 0.07), transparent);
+        animation: skel-shimmer 1.5s infinite;
+      }
+      @keyframes skel-shimmer {
+        100% {
+          transform: translateX(100%);
         }
-      </style>
-    </noscript>
+      }
+    </style>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <!-- ───────────────────────── nav ───────────────────────── -->
-    <header class="nav">
+    <header class="nav" data-skel-host>
+      <div class="skel-nav container" data-skeleton aria-hidden="true">
+        <div class="skel-nav__group">
+          <span class="skel skel--circle-sm"></span>
+          <span class="skel skel--line skel--w8"></span>
+        </div>
+        <div class="skel-nav__group">
+          <span class="skel skel--line skel--w4"></span>
+          <span class="skel skel--pill skel--w4"></span>
+        </div>
+      </div>
       <div class="container nav__inner">
         <a class="nav__brand" href="#main" aria-label="developerz.ai Designer home">
           <img class="nav__logo" src="/logo.png" alt="" width="302" height="302" />
@@ -83,7 +124,22 @@
 
     <main id="main">
       <!-- ─────────────────────── hero ─────────────────────── -->
-      <section class="hero">
+      <section class="hero" data-skel-host>
+        <div class="skel-hero container" data-skeleton aria-hidden="true">
+          <div class="skel-hero__copy">
+            <span class="skel skel--line skel--w6"></span>
+            <span class="skel skel--title skel--w100"></span>
+            <span class="skel skel--title skel--w70"></span>
+            <span class="skel skel--lead skel--w100"></span>
+            <span class="skel skel--lead skel--w100"></span>
+            <span class="skel skel--lead skel--w50"></span>
+            <div class="skel-hero__row">
+              <span class="skel skel--pill skel--w8"></span>
+              <span class="skel skel--pill skel--w6"></span>
+            </div>
+          </div>
+          <div class="skel-hero__visual skel"></div>
+        </div>
         <div class="hero__glow" aria-hidden="true"></div>
         <div class="container hero__grid">
           <div class="hero__copy">
@@ -139,7 +195,37 @@
       </section>
 
       <!-- ─────────────────────── how it works ─────────────────────── -->
-      <section class="how section" id="how" data-reveal>
+      <section class="how section" id="how" data-skel-host>
+        <div class="skel-how container" data-skeleton aria-hidden="true">
+          <div class="skel-how__head">
+            <span class="skel skel--line skel--w4"></span>
+            <span class="skel skel--title skel--w50"></span>
+            <span class="skel skel--lead skel--w70"></span>
+          </div>
+          <div class="skel-how__grid">
+            <div class="skel-how__card">
+              <span class="skel skel--circle"></span>
+              <span class="skel skel--title skel--w50"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w70"></span>
+            </div>
+            <div class="skel-how__card">
+              <span class="skel skel--circle"></span>
+              <span class="skel skel--title skel--w50"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w70"></span>
+            </div>
+            <div class="skel-how__card">
+              <span class="skel skel--circle"></span>
+              <span class="skel skel--title skel--w50"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w100"></span>
+              <span class="skel skel--lead skel--w70"></span>
+            </div>
+          </div>
+        </div>
         <div class="container">
           <header class="section__head">
             <p class="eyebrow">The loop</p>
@@ -148,7 +234,7 @@
           </header>
 
           <ol class="how__grid">
-            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+            <li class="dz-glass dz-card dz-lift how__card">
               <span class="how__bar" aria-hidden="true"></span>
               <span class="how__step">01</span>
               <span class="icon-chip">
@@ -161,7 +247,7 @@
               </p>
             </li>
 
-            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+            <li class="dz-glass dz-card dz-lift how__card">
               <span class="how__bar" aria-hidden="true"></span>
               <span class="how__step">02</span>
               <span class="icon-chip">
@@ -174,7 +260,7 @@
               </p>
             </li>
 
-            <li class="dz-glass dz-card dz-lift how__card" data-reveal>
+            <li class="dz-glass dz-card dz-lift how__card">
               <span class="how__bar" aria-hidden="true"></span>
               <span class="how__step">03</span>
               <span class="icon-chip">
@@ -191,7 +277,17 @@
       </section>
 
       <!-- ─────────────────────── notify / waitlist ─────────────────────── -->
-      <section class="notify section" id="notify" data-reveal>
+      <section class="notify section" id="notify" data-skel-host>
+        <div class="skel-notify container container--narrow" data-skeleton aria-hidden="true">
+          <span class="skel skel--line skel--w4"></span>
+          <span class="skel skel--title skel--w50"></span>
+          <span class="skel skel--lead skel--w70"></span>
+          <div class="skel-notify__row">
+            <span class="skel skel--pill skel--grow"></span>
+            <span class="skel skel--pill skel--w6"></span>
+          </div>
+          <span class="skel skel--line skel--w6"></span>
+        </div>
         <div class="container container--narrow notify__inner dz-glass">
           <div class="notify__glow" aria-hidden="true"></div>
           <p class="eyebrow">Coming soon</p>
@@ -229,7 +325,31 @@
     </main>
 
     <!-- ───────────────────────── footer ───────────────────────── -->
-    <footer class="footer">
+    <footer class="footer" data-skel-host>
+      <div class="skel-footer container" data-skeleton aria-hidden="true">
+        <div class="skel-footer__grid">
+          <div class="skel-footer__brand">
+            <div class="skel-nav__group">
+              <span class="skel skel--circle-sm"></span>
+              <span class="skel skel--line skel--w8"></span>
+            </div>
+            <span class="skel skel--lead skel--w100"></span>
+            <span class="skel skel--lead skel--w70"></span>
+          </div>
+          <div class="skel-footer__col">
+            <span class="skel skel--line skel--w4"></span>
+            <span class="skel skel--lead skel--w70"></span>
+            <span class="skel skel--lead skel--w70"></span>
+            <span class="skel skel--lead skel--w70"></span>
+          </div>
+          <div class="skel-footer__col">
+            <span class="skel skel--line skel--w4"></span>
+            <span class="skel skel--lead skel--w70"></span>
+            <span class="skel skel--lead skel--w70"></span>
+            <span class="skel skel--lead skel--w70"></span>
+          </div>
+        </div>
+      </div>
       <div class="container footer__grid">
         <div class="footer__brand">
           <a class="footer__lockup" href="#main">

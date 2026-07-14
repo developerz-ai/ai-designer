@@ -4,29 +4,38 @@ import './styles/main.scss';
 
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// ─── Scroll reveal ─────────────────────────────────────────────────────────────
-function initReveal(): void {
-  const els = document.querySelectorAll<HTMLElement>('[data-reveal]');
-  if (prefersReducedMotion || !('IntersectionObserver' in window)) {
-    for (const el of els) {
-      el.classList.add('is-visible');
-    }
+// ─── Skeleton → content reveal ────────────────────────────────────────────────
+// The inline head script adds .is-loading before paint (hides content, shows
+// skeletons). Once the page is loaded we wait a short dwell so the skeletons
+// are perceived, fade them out (.is-leaving), then drop .is-loading so the real
+// content appears (with the skel-reveal entrance from _skeleton.scss).
+function initSkeleton(): void {
+  const html = document.documentElement;
+  if (!html.classList.contains('is-loading')) {
     return;
   }
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('is-visible');
-          observer.unobserve(entry.target);
-        }
-      }
-    },
-    { threshold: 0.12, rootMargin: '0px 0px -10% 0px' },
-  );
-  for (const el of els) {
-    observer.observe(el);
+
+  let revealed = false;
+  const reveal = () => {
+    if (revealed) {
+      return;
+    }
+    revealed = true;
+    html.classList.add('is-leaving');
+    window.setTimeout(() => {
+      html.classList.remove('is-loading');
+      html.classList.remove('is-leaving');
+    }, 180);
+  };
+
+  const dwell = prefersReducedMotion ? 0 : 450;
+  if (document.readyState === 'complete') {
+    window.setTimeout(reveal, dwell);
+  } else {
+    window.addEventListener('load', () => window.setTimeout(reveal, dwell), { once: true });
   }
+  // Fallback in case the load event is delayed or never fires.
+  window.setTimeout(reveal, dwell + 2000);
 }
 
 // ─── Waitlist count-up (no-backend demo) ───────────────────────────────────────
@@ -61,20 +70,28 @@ function animateCount(el: HTMLElement, to: number): void {
     const progress = Math.min((now - start) / duration, 1);
     const eased = 1 - (1 - progress) ** 3; // easeOutCubic
     el.textContent = String(Math.round(to * eased));
-    if (progress < 1) requestAnimationFrame(tick);
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+    }
   };
   requestAnimationFrame(tick);
 }
 
 function initCountUp(): void {
   const el = document.getElementById('waitlist-count');
-  if (!(el instanceof HTMLElement)) return;
+  if (!(el instanceof HTMLElement)) {
+    return;
+  }
 
   const target = WAITLIST_SEED + readSubmitted();
-  const reveal = el.closest('[data-reveal]');
   const run = () => animateCount(el, target);
 
-  if (prefersReducedMotion || !reveal) {
+  if (prefersReducedMotion || !('IntersectionObserver' in window)) {
+    run();
+    return;
+  }
+  const section = document.getElementById('notify');
+  if (!section) {
     run();
     return;
   }
@@ -87,15 +104,17 @@ function initCountUp(): void {
         }
       }
     },
-    { threshold: 0.5 },
+    { threshold: 0.4 },
   );
-  observer.observe(reveal);
+  observer.observe(section);
 }
 
 // ─── Notify form (no-backend stub → success state) ─────────────────────────────
 function initNotify(): void {
   const form = document.getElementById('notify-form');
-  if (!(form instanceof HTMLFormElement)) return;
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
 
   const success = document.getElementById('notify-success');
   const field = form.querySelector<HTMLInputElement>('input[name="email"]');
@@ -113,13 +132,17 @@ function initNotify(): void {
     writeSubmitted(next);
 
     form.hidden = true;
-    if (success instanceof HTMLElement) success.hidden = false;
+    if (success instanceof HTMLElement) {
+      success.hidden = false;
+    }
 
     const count = document.getElementById('waitlist-count');
-    if (count instanceof HTMLElement) count.textContent = String(WAITLIST_SEED + next);
+    if (count instanceof HTMLElement) {
+      count.textContent = String(WAITLIST_SEED + next);
+    }
   });
 }
 
-initReveal();
+initSkeleton();
 initCountUp();
 initNotify();

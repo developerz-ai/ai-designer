@@ -1,0 +1,274 @@
+// Skeleton loading placeholders. Toggled by .is-loading on <html> (added by an
+// inline head script, removed by main.ts once ready). The toggle + the .skel
+// primitive are ALSO inlined in index.html <head> so skeletons render before
+// main.scss loads — otherwise the content would flash unstyled (FOUC).
+@use 'sass:color';
+@use 'tokens' as *;
+
+// ─── toggle ───────────────────────────────────────────────────────────────────
+// Default (loaded, or no JS): skeleton hidden, content visible.
+[data-skeleton] {
+  display: none;
+  transition: opacity 0.18s $ease-out;
+}
+
+// Loading: hide each host's real children, show its skeleton.
+.is-loading [data-skel-host] > :not([data-skeleton]) {
+  display: none;
+}
+
+.is-loading [data-skeleton] {
+  display: flex;
+}
+
+// Reveal handoff: fade skeletons out, then main.ts drops .is-loading.
+.is-loading.is-leaving [data-skeleton] {
+  opacity: 0;
+}
+
+// Content entrance once revealed (plays when display is restored).
+[data-skel-host] > :not([data-skeleton]) {
+  animation: skel-reveal 0.4s $ease-out;
+}
+
+@keyframes skel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+// ─── primitive ────────────────────────────────────────────────────────────────
+.skel {
+  display: block;
+  background: color.change($paper, $alpha: 0.05);
+  border-radius: $radius;
+  position: relative;
+  overflow: hidden;
+}
+
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color.change($paper, $alpha: 0.07), transparent);
+  animation: skel-shimmer 1.5s $ease-in-out infinite;
+}
+
+@keyframes skel-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+// shapes (height / proportions)
+.skel--line {
+  height: 0.9em;
+  border-radius: $radius-sm;
+}
+
+.skel--lead {
+  height: 1.05rem;
+  border-radius: $radius-sm;
+}
+
+.skel--title {
+  height: 2.2rem;
+  border-radius: $radius-sm;
+}
+
+.skel--pill {
+  height: 2.6rem;
+  border-radius: $radius-pill;
+}
+
+.skel--circle {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.skel--circle-sm {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+// widths
+.skel--w4 {
+  width: 4rem;
+}
+
+.skel--w6 {
+  width: 6rem;
+}
+
+.skel--w8 {
+  width: 8rem;
+}
+
+.skel--w50 {
+  width: 50%;
+}
+
+.skel--w70 {
+  width: 70%;
+}
+
+.skel--w100 {
+  width: 100%;
+}
+
+.skel--grow {
+  flex: 1 1 auto;
+}
+
+// ─── per-host layouts ─────────────────────────────────────────────────────────
+.skel-nav {
+  align-items: center;
+  justify-content: space-between;
+  height: var(--nav-h);
+
+  &__group {
+    display: flex;
+    align-items: center;
+    gap: $space-3;
+  }
+}
+
+.skel-hero {
+  flex-direction: column;
+  gap: $space-5;
+  padding-block: clamp(3rem, 9vw, 7rem);
+
+  &__copy {
+    display: flex;
+    flex-direction: column;
+    gap: $space-4;
+    max-width: 40rem;
+  }
+
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-3;
+  }
+
+  &__visual {
+    height: 22rem;
+    border: 1px solid var(--dz-border);
+    border-radius: $radius-lg;
+  }
+
+  @media (min-width: $bp-lg) {
+    flex-direction: row;
+    align-items: center;
+
+    &__copy {
+      flex: 1.05;
+    }
+
+    &__visual {
+      flex: 0.95;
+      height: 26rem;
+    }
+  }
+}
+
+.skel-how {
+  flex-direction: column;
+  gap: $space-8;
+
+  &__head {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+    max-width: 48rem;
+  }
+
+  &__grid {
+    display: grid;
+    gap: $space-5;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  }
+
+  &__card {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+    padding: $space-6;
+    border: 1px solid var(--dz-border);
+    border-radius: $radius-lg;
+    background: color.change($paper, $alpha: 0.02);
+  }
+}
+
+.skel-notify {
+  flex-direction: column;
+  align-items: center;
+  gap: $space-4;
+  max-width: $container-narrow;
+  padding: clamp(2rem, 6vw, 4rem);
+  border: 1px solid var(--dz-border);
+  border-radius: $radius-lg;
+
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: $space-2;
+    width: 100%;
+    max-width: 30rem;
+  }
+}
+
+.skel-footer {
+  flex-direction: column;
+  gap: $space-8;
+
+  &__grid {
+    display: grid;
+    gap: $space-6;
+    grid-template-columns: 1fr;
+
+    @media (min-width: $bp-md) {
+      grid-template-columns: 2fr 1fr 1fr;
+    }
+  }
+
+  &__brand {
+    display: flex;
+    flex-direction: column;
+    gap: $space-3;
+    max-width: 24rem;
+  }
+
+  &__col {
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  [data-skeleton] {
+    transition: none;
+  }
+
+  [data-skel-host] > :not([data-skeleton]) {
+    animation: none;
+  }
+}
