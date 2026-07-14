@@ -7,18 +7,41 @@
   padding-block: clamp(3rem, 9vw, 7rem);
   overflow: hidden;
 
+  // Mesh aurora: layered brand/accent/product radials fused by blur, plus a
+  // faint conic sheen. Decorative (aria-hidden). Paints behind .hero__grid via
+  // DOM order (it precedes the grid and both are positioned). Slow drift only.
   &__glow {
     position: absolute;
-    top: -12rem;
-    left: 50%;
-    translate: -50% 0;
-    width: 60rem;
-    height: 40rem;
-    background: $grad-brand;
-    opacity: 0.14;
-    filter: blur(120px);
-    border-radius: 50%;
+    inset: -15% -8% 0;
     pointer-events: none;
+    background:
+      radial-gradient(40rem 30rem at 72% 16%,
+        color.change($brand-600, $alpha: 0.22), transparent 65%),
+      radial-gradient(32rem 24rem at 20% 32%,
+        color.change($accent-500, $alpha: 0.13), transparent 60%),
+      radial-gradient(28rem 22rem at 58% 92%,
+        color.change($product, $alpha: 0.1), transparent 62%);
+    filter: blur(40px);
+    opacity: 0.92;
+    animation: aurora-drift 20s $ease-in-out infinite alternate;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: conic-gradient(
+        from 200deg at 50% 0%,
+        transparent 0deg,
+        color.change($brand-500, $alpha: 0.06) 90deg,
+        color.change($accent-500, $alpha: 0.05) 180deg,
+        transparent 360deg
+      );
+      mix-blend-mode: screen;
+    }
   }
 
   &__grid {

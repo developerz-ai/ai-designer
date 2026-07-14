@@ -44,3 +44,9 @@
     transform: translateX(100%);
   }
 }
+
+@keyframes aurora-drift {
+  to {
+    transform: translate3d(-3%, 2%, 0) scale(1.04);
+  }
+}
