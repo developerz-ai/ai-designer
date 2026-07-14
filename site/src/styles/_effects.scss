@@ -150,11 +150,32 @@
 
 // Primary = product orange (the hybrid accent).
 .dz-btn--primary {
+  position: relative;
+  overflow: hidden;
   background: $grad-product;
   color: $ink;
   box-shadow:
     $elev-2,
     0 0 0 1px color.change($product, $alpha: 0.4);
+
+  // Shine sweep on hover (reuses @keyframes sheen).
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-120%);
+    background: linear-gradient(
+      105deg,
+      transparent 30%,
+      color.change($paper, $alpha: 0.28) 50%,
+      transparent 70%
+    );
+    pointer-events: none;
+  }
+
+  &:hover::after {
+    animation: sheen $dur-3 $ease-out;
+  }
 
   &:hover {
     background: linear-gradient(135deg, $product 0%, $product-600 100%);
@@ -165,6 +186,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    &::after {
+      display: none;
+    }
+
     &:hover {
       transform: none;
     }

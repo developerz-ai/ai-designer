@@ -143,6 +143,66 @@ function initNotify(): void {
   });
 }
 
+// ─── Scroll reveal (IO fallback; native animation-timeline handles the rest) ──
+function initReveal(): void {
+  const targets = document.querySelectorAll<HTMLElement>('[data-reveal]');
+  if (targets.length === 0) {
+    return;
+  }
+  // Native scroll-driven animations (Chrome/Safari) handle these in CSS.
+  if (CSS.supports('animation-timeline: view()')) {
+    return;
+  }
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach((el) => {
+      el.classList.add('is-visible');
+    });
+    return;
+  }
+  const observer = new IntersectionObserver(
+    (entries, obs) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          obs.unobserve(entry.target);
+        }
+      }
+    },
+    { threshold: 0.15, rootMargin: '0px 0px -8% 0px' },
+  );
+  targets.forEach((el) => {
+    observer.observe(el);
+  });
+}
+
+// ─── Card cursor-spotlight (brand radial follows the pointer) ─────────────────
+function initSpotlight(): void {
+  if (prefersReducedMotion) {
+    return;
+  }
+  const cards = document.querySelectorAll<HTMLElement>('.how__card');
+  cards.forEach((card) => {
+    let rafId = 0;
+    card.addEventListener('pointermove', (event) => {
+      if (rafId) {
+        return;
+      }
+      rafId = requestAnimationFrame(() => {
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty('--mx', `${((event.clientX - rect.left) / rect.width) * 100}%`);
+        card.style.setProperty('--my', `${((event.clientY - rect.top) / rect.height) * 100}%`);
+        rafId = 0;
+      });
+    });
+    card.addEventListener('pointerleave', () => {
+      card.style.removeProperty('--mx');
+      card.style.removeProperty('--my');
+    });
+  });
+}
+
 initSkeleton();
 initCountUp();
 initNotify();
+initReveal();
+initSpotlight();
