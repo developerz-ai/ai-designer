@@ -1,0 +1,122 @@
+@use '../../../../styles/tokens' as tokens;
+
+.dz-message {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-1;
+  padding: tokens.$dz-space-2 tokens.$dz-space-3;
+  border-radius: var(--dz-radius);
+  max-width: 85%;
+
+  &--user {
+    align-self: flex-end;
+    background: var(--dz-accent);
+    color: var(--dz-accent-fg);
+  }
+
+  &--assistant {
+    align-self: flex-start;
+    background: var(--dz-surface-overlay);
+  }
+
+  &--system {
+    align-self: center;
+    background: transparent;
+    color: var(--dz-muted);
+    font-size: 0.85em;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  &--streaming {
+    opacity: 0.85;
+  }
+
+  &__text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__tools {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-1;
+    margin: tokens.$dz-space-1 0 0;
+    padding: 0;
+  }
+
+  &__edits,
+  &__error {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    margin: tokens.$dz-space-1 0 0;
+    font-size: 0.85em;
+  }
+
+  &__edits {
+    color: var(--dz-status-connected);
+  }
+
+  &__error {
+    color: var(--dz-status-error);
+  }
+}
+
+// Bundled markdown rendering (MarkdownView) — scoped here since it only ever appears inside a
+// message bubble.
+.dz-markdown {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-2;
+
+  > :first-child {
+    margin-top: 0;
+  }
+
+  > :last-child {
+    margin-bottom: 0;
+  }
+
+  p,
+  h2,
+  h3,
+  h4,
+  ul,
+  ol {
+    margin: 0;
+    word-break: break-word;
+  }
+
+  ul,
+  ol {
+    padding-left: 1.2em;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  &__code {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.25);
+    font-family: ui-monospace, 'SF Mono', monospace;
+  }
+
+  &__code-block {
+    margin: 0;
+    padding: tokens.$dz-space-2;
+    border-radius: var(--dz-radius);
+    background: rgba(0, 0, 0, 0.3);
+    overflow-x: auto;
+
+    code {
+      font-family: ui-monospace, 'SF Mono', monospace;
+      white-space: pre;
+    }
+  }
+}

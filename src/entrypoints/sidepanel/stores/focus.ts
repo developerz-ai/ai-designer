@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
-import type { Rect, StableSelector, SwToPanel } from '@/shared/messages';
+import { OkResult, type Rect, type StableSelector, type SwToPanel } from '@/shared/messages';
+import { request } from './bus';
 import { connectPort, subscribeToSw } from './sw-stream';
 
 // Focus store: tracks the picker's target element + activation state for the
@@ -60,4 +61,19 @@ export function clearFocus(): void {
   setSelector(null);
   setRect(null);
   setPickerActive(false);
+}
+
+/** Composer's "attach" affordance: ask the content script (via the SW) to start the
+ *  Cursor-style element picker on the active tab. The resulting `focus`/`picker-state`
+ *  pushes fold in through `initFocusStore` above — this only fires the request. */
+export async function startPicker(): Promise<void> {
+  await request({ type: 'start-picker' }, OkResult);
+}
+
+/** Cancel an in-flight pick (ContextChip's dismiss while `pickerActive`). Clears local
+ *  state immediately rather than waiting on the `picker-state` push, so the chip closes
+ *  without a round-trip flicker. */
+export async function stopPicker(): Promise<void> {
+  clearFocus();
+  await request({ type: 'stop-picker' }, OkResult);
 }

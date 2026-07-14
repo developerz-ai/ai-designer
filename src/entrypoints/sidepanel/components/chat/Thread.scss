@@ -1,0 +1,13 @@
+@use '../../../../styles/tokens' as tokens;
+
+.dz-thread {
+  flex: 1;
+  min-height: 0;
+  list-style: none;
+  margin: 0;
+  padding: tokens.$dz-space-4;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-2;
+}

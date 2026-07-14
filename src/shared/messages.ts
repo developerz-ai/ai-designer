@@ -1543,5 +1543,10 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // `stopped` (session-stop aborted the in-flight turn; session stays open for the next
   // message). See `SessionStart`/`SessionStop` above.
   z.object({ type: z.literal('session-state'), state: z.enum(['idle', 'running', 'stopped']) }),
+  // Marks the end of one agent turn's stream (background.ts's `user-message` handler, emitted
+  // once the turn settles — success or error — and was not superseded by a newer message). The
+  // panel's chat store (11) uses this to close out the in-flight assistant bubble and flip its
+  // `streaming` flag; token/tool-call/edit-recorded/error carry the content, this just marks done.
+  z.object({ type: z.literal('turn-done') }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;

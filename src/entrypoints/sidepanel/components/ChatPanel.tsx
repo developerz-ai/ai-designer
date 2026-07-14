@@ -1,50 +1,51 @@
-import { createSignal, For } from 'solid-js';
+import { createMemo, onMount, Show } from 'solid-js';
+import { error, initChatStore, messages, send as sendMessage } from '../stores/chat';
+import { initFocusStore } from '../stores/focus';
+import { initReadinessStore } from '../stores/readiness';
 import './ChatPanel.scss';
+import { Composer } from './chat/Composer';
+import { EmptyState } from './chat/EmptyState';
+import type { Suggestion } from './chat/SuggestionChips';
+import { Thread } from './chat/Thread';
+import { ShipBar } from './ShipBar';
+import { TaskTimeline } from './TaskTimeline';
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  text: string;
-}
-
-// The design conversation. Sends user messages to the service worker, renders
-// the streamed reply + recorded edits, and surfaces the Ship action.
-// Wiring to the SW message bus is TODO — see docs/idea/agent.md.
+// The design conversation — pure composition, no business logic (CLAUDE.md "SolidJS + SRP").
+// Wires the three stores its subtree renders: `stores/chat.ts` (thread + streaming, this
+// component's own `messages`/`error`), `stores/focus.ts` (the picker pin `Composer`/`ContextChip`
+// read) and `stores/readiness.ts` (the provider/model/MCP state `Composer`'s model picker and
+// `ShipBar`'s "Send to…" reflect) — all three `init*` calls are idempotent, so wiring them here
+// too keeps ChatPanel self-sufficient regardless of what else happens to be mounted (header,
+// composer) rather than relying on a sibling to have called them first.
+// Before any turn has run this session, `EmptyState` (with its `SuggestionChips`) takes the
+// Thread's place; once a thread exists, `ShipBar` + `TaskTimeline` (07) sit at its foot — Download
+// brief is always available once there's something to report, Ship/Send to… only act once a
+// backend is connected (ShipBar's own gate). `Composer` owns the input, model quick-switch, and
+// picker-attach affordance.
 export function ChatPanel() {
-  const [messages, setMessages] = createSignal<ChatMessage[]>([]);
-  const [draft, setDraft] = createSignal('');
+  onMount(() => {
+    initChatStore();
+    initFocusStore();
+    initReadinessStore();
+  });
 
-  function send() {
-    const text = draft().trim();
-    if (!text) return;
-    setMessages((m) => [...m, { role: 'user', text }]);
-    setDraft('');
-    // TODO: chrome.runtime.sendMessage({ type: 'user-message', text })
-    //       and stream SwToPanel tokens back into `messages`.
+  const hasThread = createMemo(() => messages().length > 0);
+
+  function selectSuggestion(suggestion: Suggestion): void {
+    void sendMessage(suggestion.prompt, suggestion.mode);
   }
 
   return (
     <div class="dz-chat">
-      <ul class="dz-chat__log">
-        <For each={messages()}>
-          {(m) => <li classList={{ [`is-${m.role}`]: true }}>{m.text}</li>}
-        </For>
-      </ul>
+      <Show when={hasThread()} fallback={<EmptyState onSelectSuggestion={selectSuggestion} />}>
+        <Thread messages={messages()} />
+        <TaskTimeline />
+        <ShipBar />
+      </Show>
 
-      <form
-        class="dz-chat__compose"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <input
-          type="text"
-          placeholder="Tell the agent what to change…"
-          value={draft()}
-          onInput={(e) => setDraft(e.currentTarget.value)}
-        />
-        <button type="submit">Send</button>
-      </form>
+      <Show when={error()}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>
+
+      <Composer />
     </div>
   );
 }

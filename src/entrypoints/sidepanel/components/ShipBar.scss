@@ -2,6 +2,7 @@
 
 .dz-shipbar {
   display: flex;
+  flex: none;
   flex-direction: column;
   gap: tokens.$dz-space-2;
   padding: tokens.$dz-space-3;
