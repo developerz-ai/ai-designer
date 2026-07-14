@@ -23,9 +23,11 @@ import { computeReadiness } from '@/agent/readiness';
 import { generateReport as authorReport, type GenerateReport } from '@/agent/report';
 import { SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
+import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { toMarkdown } from '@/changeset/report-md';
+import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import {
@@ -70,6 +72,7 @@ import {
   CaptureRequest,
   ContentToSw,
   DesignReadResult,
+  IdentityResult,
   PageMetricsResult,
   PanelToSw,
   ToolResult,
@@ -301,10 +304,14 @@ export default defineBackground(() => {
     const session = sessions.get(tab.id);
     const changeset =
       session?.changeset ?? emptyChangeset(tab.url, new Date().toISOString(), crypto.randomUUID());
+    // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
+    // guess) — best-effort: a page the content script can't reach (e.g. a chrome:// tab) just
+    // ships without a tokens section rather than failing the whole handoff.
+    const identity = await reportIdentity(contentDispatchFor(tab.id));
 
     const model = createProvider(cfg);
     const makeReport = (): Promise<Report> =>
-      authorReport({ model, generate: reportGenerate }, { changeset, mode: opts.mode });
+      authorReport({ model, generate: reportGenerate }, { changeset, identity, mode: opts.mode });
 
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
     if (opts.downloadOnly) {
@@ -424,6 +431,30 @@ export default defineBackground(() => {
         const content = contentDispatchFor(tabId);
         const screenshot = screenshotDispatchFor(tabId);
 
+        // The session/recorder tools (slice 07): `recordEdit`/`undo`/`redo` mutate this tab's
+        // changeset, `handoff` only proposes (gated below — never auto-ships). Rehydrate the
+        // undo/redo-capable store from its own `chrome.storage.session` record (falling back to
+        // the resume-context changeset `sessions.ensure` above just loaded/created), and mirror
+        // every mutation to BOTH: the redo-capable record (`changesetPersister`, this store's own
+        // durability) and `SessionStore` (`sessions.setChangeset`, so `runHandoffRoute`'s Ship/
+        // report reads see the edit immediately, without waiting for the turn to finish).
+        const changesetPersister = createSessionChangesetPersister(tabId);
+        const priorChangesetState = await changesetPersister.load();
+        const changesetStore = new ChangesetStore(
+          priorChangesetState?.changeset ?? session.changeset,
+          {
+            redoStack: priorChangesetState?.redoStack,
+          },
+        );
+        const sessionTools = createSessionTools({
+          store: changesetStore,
+          persist: async () => {
+            await changesetPersister.save(changesetStore.snapshot());
+            await sessions.setChangeset(tabId, changesetStore.current);
+          },
+          emit: postToPanel,
+        });
+
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
         void runTurn({
@@ -512,9 +543,10 @@ export default defineBackground(() => {
             check: content,
           },
           emit: postToPanel,
-          // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
-          tools: await mcpManager.toolsFor(),
-          // Never auto-ship: any in-loop `handoff` tool stays denied — Ship is the user-triggered
+          // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
+          // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
+          tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
+          // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
           // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
           approveHandoff: () => false,
         })
@@ -902,6 +934,18 @@ const reportGenerate: GenerateReport = (args) =>
     messages: args.messages,
     abortSignal: args.abortSignal,
   }).then((result) => ({ object: result.object }));
+
+// Re-extract the page's design identity for the handoff brief's tokens table, independent of
+// whether the turn itself ever called `extractIdentity` (a Ship right after a plain edit turn
+// should still speak in tokens). Reuses the same content round-trip the agent tool drives (`content`
+// = `contentDispatchFor(tabId)`, in scope only inside `defineBackground`); any failure (unreachable
+// tab, malformed reply) degrades to no tokens section rather than blocking Ship.
+async function reportIdentity(content: ContentDispatch): Promise<IdentityResult | undefined> {
+  const result = await content({ type: 'extractIdentity' }).catch(() => undefined);
+  if (!result?.ok) return undefined;
+  const parsed = IdentityResult.safeParse(result.data);
+  return parsed.success ? parsed.data : undefined;
+}
 
 // A stable filename for a downloaded brief — per origin, no timestamp so a re-download overwrites
 // predictably. Sanitized to filename-safe chars.

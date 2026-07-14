@@ -5,13 +5,16 @@ import { toMarkdown } from '@/changeset/report-md';
 import { createTaskBackend, routeHandoff, type TaskToolExecute, taskBackends } from '@/mcp/backend';
 import { type ShipSource, ship, type TaskStatusUpdate } from '@/mcp/handoff';
 import { type Changeset, emptyChangeset } from '@/shared/changeset';
+import type { IdentityResult } from '@/shared/messages';
 import type { Report } from '@/shared/report';
 
 // handoff-route integration: the SW `ship`/`send-report`/`download-report` route composed from its
-// real parts — `taskBackends` + `routeHandoff` decide, the real `generateReport` (fake model) authors
-// the brief, and either `ship` fans `task(create)` out through the `createTaskBackend` adapter (fake
-// `task` tool, no MCP transport) or `toMarkdown` renders a downloadable brief. Exercises the exact
-// wiring `background.ts` `runHandoffRoute` performs, which is itself coverage-excluded.
+// real parts — `taskBackends` + `routeHandoff` decide, the real `generateReport` (fake model, plus a
+// re-extracted page `identity` — `background.ts` `reportIdentity`'s `extractIdentity` round-trip)
+// authors the brief, and either `ship` fans `task(create)` out through the `createTaskBackend`
+// adapter (fake `task` tool, no MCP transport) or `toMarkdown` renders a downloadable brief.
+// Exercises the exact wiring `background.ts` `runHandoffRoute` performs, which is itself
+// coverage-excluded.
 
 const URL = 'http://localhost:3000/pricing';
 const SESSION_ID = '00000000-0000-0000-0000-000000000000';
@@ -42,8 +45,18 @@ const generate: GenerateReport = async () => ({
   },
 });
 
+// Stands in for `background.ts` `reportIdentity`'s re-extracted `extractIdentity` result — the real
+// SW round-trips this from the content script independent of what the turn itself already did.
+const identity: IdentityResult = {
+  palette: [{ hex: '#f97316', role: 'accent', count: 8 }],
+  type: { families: ['Inter'], sizes: [16], weights: [400] },
+  spacing: [8, 16],
+  radius: [],
+  shadows: [],
+};
+
 const makeReport = (): Promise<Report> =>
-  generateReport({ model, generate }, { changeset: changeset() });
+  generateReport({ model, generate }, { changeset: changeset(), identity });
 
 // A fake MCP `task` tool: create returns a queued handle keyed by title; watch settles ci_green with a
 // PR url. Records every call so we can assert the create args + fan-out.
@@ -109,6 +122,10 @@ describe('ship route — connected coding backend', () => {
     expect(firstSpec.problem).toBe('Nav overflows at 375px');
     expect(firstSpec.brief).toContain('Nav overflows at 375px');
     expect(firstSpec.brief).not.toContain('CTA contrast too low');
+    // The re-extracted page identity grounds every per-problem brief's tokens table — not just
+    // the model's prose.
+    expect(firstSpec.brief).toContain('#f97316 (accent)');
+    expect(firstSpec.brief).toContain('`Inter`');
 
     // Every streamed update is tagged total=2 and its own task identity.
     expect(updates.every((u) => u.total === 2)).toBe(true);
@@ -162,6 +179,9 @@ describe('ship route — no connected backend / no repo', () => {
     expect(markdown).toContain('# Design review');
     expect(markdown).toContain('Pricing hero refresh.');
     expect(markdown).toContain('Nav overflows at 375px');
+    // The downloadable brief speaks in tokens even when nothing ships as a task.
+    expect(markdown).toContain('## Design tokens');
+    expect(markdown).toContain('#f97316 (accent)');
   });
 
   it('falls back to a report when the origin has no repo mapped', () => {
