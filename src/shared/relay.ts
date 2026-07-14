@@ -12,13 +12,9 @@ export function relayToPanel(msg: ContentToSw): SwToPanel | null {
     }
     case 'picker-state':
       return { type: 'picker-state', active: msg.active };
-    case 'multi-select-changed':
-      // The picker's shift-click set → the panel's multi-select highlight (empty list clears it).
-      return { type: 'multi-select', selectors: msg.selectors };
-    case 'recorder-event':
-      // A live reversible mutation → the panel (edit chip). The SW separately folds these into
-      // the session Changeset (slice 07); relay only mirrors the stream to the panel.
-      return { type: 'recorder-event', event: msg.event };
+    // `multi-select-changed` + `recorder-event` are consumed SW-side only (the on-page overlay
+    // highlight and the session Changeset fold, respectively) — no panel store reflects them, so
+    // there is nothing to relay to the panel here.
     default:
       return null;
   }

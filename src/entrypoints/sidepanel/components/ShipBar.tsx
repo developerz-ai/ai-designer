@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import {
   downloadReport,
   error,
@@ -26,7 +26,7 @@ export function ShipBar() {
     void hydrateMcp();
   });
 
-  const connected = () => servers.filter((s) => s.status === 'connected');
+  const connected = createMemo(() => servers.filter((s) => s.status === 'connected'));
 
   async function handleSend(target: string): Promise<void> {
     setSendOpen(false);

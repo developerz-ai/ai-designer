@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { createStore, reconcile } from 'solid-js/store';
 import type { Changeset } from '@/shared/changeset';
 import type { Mode, SwToPanel } from '@/shared/messages';
 import { HandoffResult, type ShipRequest } from '@/shared/messages';
@@ -58,7 +58,10 @@ export function initChangesetStore(): void {
   connectPort();
   subscribeToSw((msg) => {
     if (msg.type === 'changeset') setChangeset(reduceChangeset(changeset(), msg));
-    else if (msg.type === 'task-status') setTasks(reduceTasks(tasks, msg));
+    // reconcile (keyed by `taskId`) so a status push updates only the changed task's fields —
+    // a plain array replace remounts every keyed `<For>` row in TaskTimeline.
+    else if (msg.type === 'task-status')
+      setTasks(reconcile(reduceTasks(tasks, msg), { key: 'taskId' }));
   });
 }
 
