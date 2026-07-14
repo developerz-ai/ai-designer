@@ -1,9 +1,19 @@
 import { z } from 'zod';
 import { Changeset, Edit, StableSelector } from './changeset';
+import { CollectorSignal } from './diagnostics';
 
 // StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
 // it so panel/content consumers import the selector type from the message-schema hub.
-export { StableSelector };
+// Likewise for CollectorSignal (src/shared/diagnostics.ts): the debug engine's domain shapes
+// live there, but DomTool/ContentToSw below need it as part of the bus transport.
+export { CollectorSignal, StableSelector };
+
+// The two headline agent activities (plan 06 `agent/modes.ts`). Optional on `UserMessage`: an
+// explicit choice (e.g. a composer affordance) wins; when absent, `agent/modes.ts` `resolveMode`
+// infers it from the instruction text so a bare "debug my checkout flow" still gets the right
+// prompt addendum + tool emphasis with no forced UI step.
+export const Mode = z.enum(['copy', 'debug']);
+export type Mode = z.infer<typeof Mode>;
 
 // Typed message bus across the three MV3 worlds: panel <-> service worker <-> content.
 // Every payload is Zod-validated at the boundary. See docs/architecture/mv3-worlds.md.
@@ -22,6 +32,9 @@ export type Rect = z.infer<typeof Rect>;
 export const UserMessage = z.object({
   type: z.literal('user-message'),
   text: z.string(),
+  // Explicit copy/debug choice, when the composer offers one (see 06/11). Absent ⇒
+  // `agent/modes.ts` `resolveMode` infers it from `text`.
+  mode: Mode.optional(),
 });
 
 export const ShipRequest = z.object({
@@ -296,6 +309,17 @@ export const A11ySnapshotInput = z.object({
 });
 export const UndoInput = z.object({ type: z.literal('undo') });
 
+// The debug engine's content-side pull (slice 06, complements the `diagnostics-signal` PUSH
+// below): `drain` returns everything the collector has buffered since the last drain (runtime +
+// network signals) and clears it; `scan` runs a fresh point-in-time a11y + layout scan. Neither
+// targets a selector — both read the whole page — so, unlike the other DomTools, there's no
+// `selector` field.
+export const DiagnosticsInput = z.object({
+  type: z.literal('diagnostics'),
+  action: z.enum(['drain', 'scan']),
+});
+export type DiagnosticsInput = z.infer<typeof DiagnosticsInput>;
+
 export const DomTool = z.discriminatedUnion('type', [
   QueryInput,
   GetStylesInput,
@@ -304,8 +328,15 @@ export const DomTool = z.discriminatedUnion('type', [
   SetTextInput,
   A11ySnapshotInput,
   UndoInput,
+  DiagnosticsInput,
 ]);
 export type DomTool = z.infer<typeof DomTool>;
+
+// The `diagnostics` DomTool's `ToolResult.data` shape — bounded the same way `CollectorSignal`'s
+// own fields are (src/shared/diagnostics.ts), so a `drain`/`scan` round-trip can't blow the
+// agent's token budget on a hostile or chatty page.
+export const DiagnosticsToolResult = z.object({ signals: z.array(CollectorSignal).max(300) });
+export type DiagnosticsToolResult = z.infer<typeof DiagnosticsToolResult>;
 
 // Element-picker commands (SW -> content). Deliberately NOT part of DomTool: the
 // picker is user-driven, so #11 wraps DomTool 1:1 as agent tools with no exclusions.
@@ -355,6 +386,81 @@ export type A11yNode = z.infer<typeof A11yNode>;
 export const A11yResult = z.object({ tree: A11yNode });
 export type A11yResult = z.infer<typeof A11yResult>;
 
+// --- cross-site browse (agent tool, service-worker-orchestrated) ----------
+// `browse(url)` is an agent tool like the DOM tools, but it is deliberately NOT a `DomTool`:
+// a DomTool is routed to the *active* tab's content script, whereas browse opens its OWN
+// inactive background tab, snapshots it, and closes it — never hijacking the user's page
+// (`src/entrypoints/background.ts` `runBrowse`). So it rides its own input schema + tool
+// module (`src/agent/tools/browse.ts`), never the DomTool union or content's DomTool listener.
+// A per-origin `optional_host_permissions` grant is requested at call time; a denial surfaces
+// as an error `ToolResult` the agent relays to the user.
+export const BrowseInput = z.object({
+  type: z.literal('browse'),
+  url: z.string().url(),
+});
+export type BrowseInput = z.infer<typeof BrowseInput>;
+
+// SW -> browse-tab content: compute a compact, token-bounded "design read" of the loaded page
+// (its visual identity). Content replies with a `DesignReadResult`. Distinct from `DomTool`:
+// it targets the browse tab, not the user's active tab. `maxColors` bounds the palette size.
+export const DesignReadRequest = z.object({
+  type: z.literal('design-read'),
+  maxColors: z.number().int().positive().optional(),
+});
+export type DesignReadRequest = z.infer<typeof DesignReadRequest>;
+
+// One palette entry: a normalized `#rrggbb`, the dominant role it plays (text / background /
+// border), and how many elements use it that way — so the agent can copy a palette by weight.
+export const PaletteColor = z.object({
+  hex: z.string(),
+  role: z.enum(['text', 'background', 'border']),
+  count: z.number().int().nonnegative(),
+});
+export type PaletteColor = z.infer<typeof PaletteColor>;
+
+// The type system in use: font families ordered by usage, the distinct font-size scale
+// (descending px), and the body's base size — the reference's typographic identity in text.
+export const Typography = z.object({
+  families: z.array(z.string().max(120)).max(16),
+  scale: z.array(z.number().int().positive()).max(32),
+  baseSize: z.number().int().positive().optional(),
+});
+export type Typography = z.infer<typeof Typography>;
+
+// A layout landmark (banner / navigation / main / complementary / contentinfo / ...) with its
+// accessible name — the reference's structural regions.
+export const DesignRegion = z.object({ role: z.string(), name: z.string() });
+export type DesignRegion = z.infer<typeof DesignRegion>;
+
+// A recurring UI building block (buttons / links / inputs / headings / images / ...) and how
+// many the page has — the reference's component vocabulary.
+export const DesignComponent = z.object({ kind: z.string(), count: z.number().int().positive() });
+export type DesignComponent = z.infer<typeof DesignComponent>;
+
+// The compact, token-bounded design read `browse` returns as `ToolResult.data`: a site's
+// visual identity in text (palette + typography + regions + components) — cheaper than a
+// screenshot and reusable, so the agent can capture a reference once, then copy it.
+// Bounds are defense-in-depth: the extractor already caps every list (src/dom/design-read.ts
+// MAX_*), but the SW treats the content-world reply as untrusted, so a compromised page can't
+// return an unbounded blob that blows the agent's token budget. Caps sit above the extractor's.
+export const DesignRead = z.object({
+  url: z.string().max(2048),
+  title: z.string().max(300),
+  palette: z.array(PaletteColor).max(64),
+  typography: Typography,
+  regions: z.array(DesignRegion).max(64),
+  components: z.array(DesignComponent).max(48),
+});
+export type DesignRead = z.infer<typeof DesignRead>;
+
+export const DesignReadResult = z.object({
+  type: z.literal('design-read-result'),
+  ok: z.boolean(),
+  read: DesignRead.optional(),
+  error: z.string().optional(),
+});
+export type DesignReadResult = z.infer<typeof DesignReadResult>;
+
 // --- recorder events (shared) --------------------------------------------
 // The reversible, element-targeting mutation primitives that emit a recorder
 // event (docs/idea/live-edit.md). Page-level ops (injectCss, setViewport) have no
@@ -399,6 +505,13 @@ export const ContentToSw = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multi-select-changed'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
+  // The debug engine's real-time half (slice 06, complements the `diagnostics` DomTool pull
+  // above): the content collector (src/dom/diagnostics-collector.ts) pushes each runtime/network
+  // signal as it's captured, so a debug-mode turn can observe as the user drives the page instead
+  // of waiting for an explicit `drain`. The SW folds these into the turn's diagnostics buffer
+  // (src/agent/diagnostics.ts `aggregate`/`correlate`); relay.ts intentionally does not forward
+  // this one to the panel (it's an engine input, not a user-facing event).
+  z.object({ type: z.literal('diagnostics-signal'), signal: CollectorSignal }),
 ]);
 export type ContentToSw = z.infer<typeof ContentToSw>;
 

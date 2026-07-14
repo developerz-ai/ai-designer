@@ -1,4 +1,6 @@
 import { defineContentScript } from '#imports';
+import { extractDesignRead } from '@/dom/design-read';
+import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
 import { createPicker } from '@/dom/picker';
@@ -8,6 +10,9 @@ import {
   type CaptureRequest,
   CaptureResult,
   type ContentToSw,
+  DesignReadRequest,
+  type DesignReadResult,
+  type DiagnosticsInput,
   DomTool,
   PickerCmd,
   type ToolResult,
@@ -35,6 +40,25 @@ export default defineContentScript({
     const executor = createDomExecutor({ mutator, recorder });
     const picker = createPicker(emit);
 
+    // Debug engine, content half (slice 06): buffer runtime/network signals for the whole page
+    // lifetime and push each one to the SW as it's captured — a debug-mode turn observes as the
+    // user drives the page rather than waiting for an explicit `drain`. The SW aggregates these
+    // (src/agent/diagnostics.ts); this collector never touches the page's own behavior beyond its
+    // (fully restorable) hooks.
+    const diagnostics = createDiagnosticsCollector({
+      onSignal: (signal) => emit({ type: 'diagnostics-signal', signal }),
+    });
+
+    // `diagnostics` DomTool: `drain` hands back + clears the buffered runtime/network signals;
+    // `scan` runs a fresh point-in-time a11y + layout pass (not buffered — always current).
+    function runDiagnostics(action: DiagnosticsInput['action']): ToolResult {
+      const signals =
+        action === 'drain'
+          ? diagnostics.drain()
+          : [...scanA11y(document, window), ...scanLayout(document, window)];
+      return { type: 'tool-result', ok: true, data: { signals } };
+    }
+
     // Screenshot is split across worlds: content computes the crop rect (read.ts), the SW captures
     // + crops (only it has chrome.tabs.captureVisibleTab). Returns a base64 PNG data URL as
     // ToolResult.data for the agent's vision self-correction (slice 04).
@@ -60,15 +84,29 @@ export default defineContentScript({
     }
 
     function handleTool(tool: DomTool): Promise<ToolResult> {
-      return tool.type === 'screenshot'
-        ? screenshot(tool.selector)
-        : Promise.resolve(executor.exec(tool));
+      if (tool.type === 'screenshot') return screenshot(tool.selector);
+      if (tool.type === 'diagnostics') return Promise.resolve(runDiagnostics(tool.action));
+      return Promise.resolve(executor.exec(tool));
     }
 
     // The SW addresses this tab with two message kinds: agent DomTool calls (reply with a
     // ToolResult) and user-driven PickerCmds (start/stop the overlay, no reply). Parse each with
     // its own schema; anything else is a foreign message and is ignored.
     chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+      // Cross-site browse (slice 06): the SW opened this page in a background tab and wants its
+      // compact design identity. Pure DOM read (src/dom/design-read.ts); reply with a typed result
+      // (an extraction failure degrades to an error the SW surfaces, never a dropped response).
+      const design = DesignReadRequest.safeParse(raw);
+      if (design.success) {
+        try {
+          const read = extractDesignRead(document, window, { maxColors: design.data.maxColors });
+          sendResponse({ type: 'design-read-result', ok: true, read } satisfies DesignReadResult);
+        } catch (err) {
+          sendResponse({ type: 'design-read-result', ok: false, error: String(err) });
+        }
+        return; // responded synchronously
+      }
+
       const tool = DomTool.safeParse(raw);
       if (tool.success) {
         // Always answer: a rejected round-trip (e.g. the SW evicted mid-screenshot) degrades to

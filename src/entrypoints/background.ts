@@ -1,4 +1,5 @@
 import { defineBackground } from '#imports';
+import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import {
   clearProviderConfig,
   getProviderConfig,
@@ -8,6 +9,7 @@ import {
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
+import { modeGuidance, resolveMode } from '@/agent/modes';
 import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { SessionStore } from '@/agent/session';
@@ -21,6 +23,8 @@ import { getServer, listServers, removeServer, type StoredServer, saveServer } f
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
+  DesignRead,
+  DesignReadRequest,
   DomTool,
   McpOAuthConfig,
   McpServer,
@@ -28,7 +32,13 @@ import type {
   Rect,
   SwToPanel,
 } from '@/shared/messages';
-import { CaptureRequest, ContentToSw, PanelToSw, ToolResult } from '@/shared/messages';
+import {
+  CaptureRequest,
+  ContentToSw,
+  DesignReadResult,
+  PanelToSw,
+  ToolResult,
+} from '@/shared/messages';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import { initSentry } from '@/shared/sentry';
@@ -204,6 +214,10 @@ export default defineBackground(() => {
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
         const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
 
+        // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction —
+        // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
+        const mode = resolveMode(msg.mode, msg.text);
+
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
         void runTurn({
@@ -211,8 +225,9 @@ export default defineBackground(() => {
           messages: session.messages,
           signal: controller.signal,
           model: createProvider(cfg),
-          instructions: buildSystemPrompt(),
+          instructions: buildSystemPrompt({ addenda: modeGuidance(mode).addenda }),
           dispatch: domDispatchFor(tabId),
+          browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
           emit: postToPanel,
           tools: await mcpManager.toolsFor(),
           approveHandoff: () => false, // never auto-ship; real Ship approval lands in slice 07
@@ -477,4 +492,117 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   return `data:image/png;base64,${btoa(binary)}`;
+}
+
+// --- cross-site browse (slice 06) ----------------------------------------
+// `browse(url)`: open a reference site in an INACTIVE background tab, read its compact design
+// identity via the tab's content script, and close it — never hijacking the tab the user is on.
+// The decision logic (permission gate, always-close, abort handling) lives in
+// `src/agent/browse-tab.ts` (unit-tested) and the pure design-read in `src/dom/design-read.ts`
+// (jsdom-tested); this is only the chrome glue that implements the orchestration's primitives
+// (coverage-excluded, like the screenshot capture).
+const BROWSE_LOAD_TIMEOUT_MS = 15_000; // snapshot whatever rendered if the site hangs past this
+const BROWSE_READY_RETRIES = 20; // wait for the declared content script to start listening
+const BROWSE_READY_DELAY_MS = 150;
+
+/** Chrome implementation of the browse orchestration's primitives (host grant + tab lifecycle).
+ *  Injected into the loop as `RunTurnArgs.browse` via `runBrowse(chromeBrowseDriver, …)`. The
+ *  per-origin host grant can't be prompted here (no user gesture in an agent turn), so a
+ *  not-yet-granted origin surfaces as a denial the agent relays — the grant comes from the panel. */
+const chromeBrowseDriver: BrowseTabDriver = {
+  hostAccess: (url) => ensureHostAccess(url),
+  open: async (url) => (await chrome.tabs.create({ url, active: false })).id,
+  waitForLoad: (tabId, signal) => waitForTabComplete(tabId, signal),
+  readDesign: (tabId, signal) => requestDesignRead(tabId, signal),
+  close: (tabId) => chrome.tabs.remove(tabId),
+};
+
+// Resolve when the background tab finishes loading, or when the load times out (we still snapshot
+// whatever rendered). Rejects if the tab is closed underneath us or the turn aborts.
+function waitForTabComplete(tabId: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, BROWSE_LOAD_TIMEOUT_MS);
+    const onUpdated = (id: number, info: { status?: string }): void => {
+      if (id === tabId && info.status === 'complete') {
+        cleanup();
+        resolve();
+      }
+    };
+    const onRemoved = (id: number): void => {
+      if (id === tabId) {
+        cleanup();
+        reject(new Error('The browse tab was closed before it loaded.'));
+      }
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(new Error('aborted'));
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    // Fast path: the tab may already be 'complete' by the time the listeners attached.
+    chrome.tabs
+      .get(tabId)
+      .then((tab) => {
+        if (tab.status === 'complete') {
+          cleanup();
+          resolve();
+        }
+      })
+      .catch(() => {});
+  });
+}
+
+// Poll the background tab's content script for its design read. The declared content script
+// injects at document_idle once the origin permission is held; until it's listening, sendMessage
+// rejects ("Receiving end does not exist"), so retry briefly. Once it answers, the result is
+// terminal — a content-side failure isn't retried.
+async function requestDesignRead(tabId: number, signal?: AbortSignal): Promise<DesignRead> {
+  const request: DesignReadRequest = { type: 'design-read' };
+  let lastError = 'the page did not respond';
+  for (let attempt = 0; attempt < BROWSE_READY_RETRIES; attempt++) {
+    if (signal?.aborted) throw new Error('aborted');
+    let raw: unknown;
+    try {
+      raw = await chrome.tabs.sendMessage(tabId, request);
+    } catch (err) {
+      lastError = String(err); // content script not listening yet → retry after a short delay
+      await browseDelay(BROWSE_READY_DELAY_MS, signal);
+      continue;
+    }
+    const parsed = DesignReadResult.safeParse(raw);
+    if (parsed.success && parsed.data.ok && parsed.data.read) return parsed.data.read;
+    throw new Error(
+      parsed.success
+        ? (parsed.data.error ?? 'the page could not produce a design read')
+        : 'malformed design read from the page',
+    );
+  }
+  throw new Error(lastError);
+}
+
+// setTimeout as an abortable promise (the SW's only timer): resolves after `ms`, or rejects early
+// if the turn aborts so the retry loop stops promptly.
+function browseDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
