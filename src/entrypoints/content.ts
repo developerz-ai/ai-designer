@@ -1,4 +1,5 @@
 import { defineContentScript } from '#imports';
+import { createBridge } from '@/dom/bridge';
 import { describePage } from '@/dom/describe';
 import { extractDesignRead } from '@/dom/design-read';
 import { createDiagnosticsCollector, scanA11y, scanLayout } from '@/dom/diagnostics-collector';
@@ -7,7 +8,9 @@ import { extractIdentity } from '@/dom/identity';
 import { imageContent, readImages } from '@/dom/images';
 import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
+import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
+import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import {
@@ -226,5 +229,32 @@ export default defineContentScript({
       }
       return; // no response for picker commands / foreign messages
     });
+
+    // Complex-site lifecycle (slice 15A/F): the MAIN-world bridge client + page-facts. Only the top
+    // frame runs the route/quiescence lifecycle — a page's SPA navigation + framework stack are
+    // top-document concerns. The bridge is read-only + non-secret (src/dom/bridge.ts): MAIN == the
+    // page's own world, so no key ever crosses; page-facts falls back to DOM-only when it's unreachable.
+    if (window.top === window.self) {
+      const bridge = createBridge();
+      const pageFacts = createPageFacts({ bridge });
+      // Warm the per-URL facts cache once the SPA has hydrated + settled (first agent query is then
+      // instant); re-derive on client-side route changes (pushState/popstate/hash) that never reload.
+      const deriveFacts = (): void => {
+        void waitForQuiescence(window, document).then(() => pageFacts.get());
+      };
+      deriveFacts();
+      const routes = createRouteObserver(() => {
+        pageFacts.invalidate();
+        deriveFacts();
+      });
+      window.addEventListener(
+        'pagehide',
+        () => {
+          routes.dispose();
+          bridge.dispose();
+        },
+        { once: true },
+      );
+    }
   },
 });
