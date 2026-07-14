@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from 'solid-js';
+import { createSignal, onMount, Show } from 'solid-js';
 import {
   error,
   initChatStore,
@@ -8,12 +8,13 @@ import {
   streaming,
 } from '../stores/chat';
 import './ChatPanel.scss';
+import { Thread } from './chat/Thread';
 
 // The design conversation. Sends user messages to the service worker over `stores/chat.ts` and
-// renders the streamed reply (tokens/tool chips/recorded edits) as it assembles — the SW is the
-// only source of truth for what the agent did, this component just renders + dispatches (CLAUDE.md
-// "SolidJS + SRP"). Subcomponents (Thread/Message/ToolChip/Composer) + the full Leo-style layout
-// land in a later slice; this is the minimal wiring to the store.
+// renders the streamed reply (tokens/tool chips/recorded edits) as it assembles via `chat/Thread`
+// — the SW is the only source of truth for what the agent did, this component just renders +
+// dispatches (CLAUDE.md "SolidJS + SRP"). Composer/ContextChip/SuggestionChips/EmptyState + the
+// full Leo-style layout land in a later slice; this is the minimal wiring to the store.
 export function ChatPanel() {
   const [draft, setDraft] = createSignal('');
 
@@ -30,16 +31,7 @@ export function ChatPanel() {
 
   return (
     <div class="dz-chat">
-      <ul class="dz-chat__log">
-        <For each={messages()}>
-          {(m) => (
-            <li classList={{ [`is-${m.role}`]: true, 'is-streaming': m.streaming }}>
-              {m.text}
-              <Show when={m.error}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>
-            </li>
-          )}
-        </For>
-      </ul>
+      <Thread messages={messages()} />
 
       <Show when={error()}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>
 

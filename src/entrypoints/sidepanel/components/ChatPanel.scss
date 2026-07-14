@@ -3,38 +3,6 @@
   flex-direction: column;
   height: 100%;
 
-  &__log {
-    flex: 1;
-    list-style: none;
-    margin: 0;
-    padding: 12px;
-    overflow: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-
-    li {
-      padding: 8px 10px;
-      border-radius: var(--dz-radius);
-      max-width: 85%;
-
-      &.is-user {
-        align-self: flex-end;
-        background: var(--dz-accent);
-        color: #1a1205;
-      }
-
-      &.is-assistant {
-        align-self: flex-start;
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      &.is-streaming {
-        opacity: 0.85;
-      }
-    }
-  }
-
   &__error {
     margin: 0 12px 8px;
     color: var(--dz-status-error);
