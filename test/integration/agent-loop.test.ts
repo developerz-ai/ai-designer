@@ -117,7 +117,9 @@ describe('integration: agent turn streams tokens + tool-calls and drives the DOM
 
     // A tool-call chip surfaced on the panel stream, named by the tool.
     const toolCalls = events.filter((e) => e.type === 'tool-call');
-    expect(toolCalls).toContainEqual({ type: 'tool-call', tool: 'setStyle' });
+    expect(toolCalls).toContainEqual(
+      expect.objectContaining({ type: 'tool-call', tool: 'setStyle' }),
+    );
 
     // Prose from both steps streamed as tokens.
     const text = tokensOf(events);
@@ -269,7 +271,7 @@ describe('integration: the handoff tool is gated by approveHandoff — never shi
     });
 
     // The model still sees the call happen (chip surfaces either way) …
-    expect(events).toContainEqual({ type: 'tool-call', tool: 'handoff' });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool-call', tool: 'handoff' }));
     // … but the SDK reports the execution itself was denied — `handoff.execute` never ran, so
     // the model never received a fabricated "shipped" result to act on.
     expect(handoffResultShownToModel(model)).toEqual({ type: 'execution-denied' });

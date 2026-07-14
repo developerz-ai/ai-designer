@@ -280,6 +280,18 @@ export const Readiness = z.object({ type: z.literal('readiness') });
 export const SessionStart = z.object({ type: z.literal('session-start') });
 export const SessionStop = z.object({ type: z.literal('session-stop') });
 
+// --- on-page agent-decision overlay, opt-in (slice 09) --------------------
+// Cursor-style "watch the agent work" surface (`src/dom/overlay.ts`). Opt-in + persisted to
+// chrome.storage.local (`src/shared/overlay-prefs.ts`) so the choice survives a panel close and a
+// fresh content-script injection (a page reload) can restore it without asking the SW first. The
+// toggle RPC additionally pushes an immediate `overlay-toggle` to the active tab so a page already
+// open reflects the change without a reload — see background.ts's `set-overlay-enabled` case.
+export const SetOverlayEnabled = z.object({
+  type: z.literal('set-overlay-enabled'),
+  enabled: z.boolean(),
+});
+export const GetOverlayEnabled = z.object({ type: z.literal('get-overlay-enabled') });
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -306,6 +318,8 @@ export const PanelToSw = z.discriminatedUnion('type', [
   HistoryList,
   HistoryGet,
   HistoryDelete,
+  SetOverlayEnabled,
+  GetOverlayEnabled,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -406,6 +420,10 @@ export const HistoryGetResult = z.object({
 });
 export type HistoryGetResult = z.infer<typeof HistoryGetResult>;
 
+// RPC response for `set-overlay-enabled` / `get-overlay-enabled`.
+export const OverlayEnabledResult = z.object({ ok: z.boolean(), enabled: z.boolean() });
+export type OverlayEnabledResult = z.infer<typeof OverlayEnabledResult>;
+
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
 // tab (default: the turn's active tab); `frameId` picks an iframe within it (default: the top
@@ -500,6 +518,25 @@ export const PickerCmd = z.discriminatedUnion('type', [
   z.object({ type: z.literal('picker-stop') }),
 ]);
 export type PickerCmd = z.infer<typeof PickerCmd>;
+
+// Agent-decision overlay commands (SW -> content, slice 09). Mirrors the same tool-call signal the
+// SW streams to the panel (`SwToPanel`'s `tool-call` below), gated by the user's opt-in toggle —
+// see background.ts's `forwardOverlayStep`. Shapes mirror `src/dom/overlay.ts`'s `OverlayStep`
+// (label/selector/kind) without content.ts importing that content-only module's types here: shared/
+// stays the lower layer that dom/ imports FROM, never the reverse. Deliberately NOT part of
+// `DomTool`/`PickerCmd` — the overlay is agent-decision output, not a page-driving/picker tool.
+export const OverlayStepCmd = z.object({
+  type: z.literal('overlay-step'),
+  label: z.string(),
+  selector: z.string().optional(),
+  kind: z.enum(['read', 'act', 'info']).optional(),
+});
+export const OverlayToggleCmd = z.object({
+  type: z.literal('overlay-toggle'),
+  enabled: z.boolean(),
+});
+export const OverlayCmd = z.discriminatedUnion('type', [OverlayStepCmd, OverlayToggleCmd]);
+export type OverlayCmd = z.infer<typeof OverlayCmd>;
 
 export const ToolResult = z.object({
   type: z.literal('tool-result'),
@@ -1458,7 +1495,16 @@ export type CheckResponsiveResult = z.infer<typeof CheckResponsiveResult>;
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),
-  z.object({ type: z.literal('tool-call'), tool: z.string() }),
+  // `selector`/`kind` (slice 09): the tool-call's target element + cosmetic accent, derived
+  // pure-side by `src/shared/overlay-step.ts` `classifyTool` — optional so an unrecognized/
+  // selector-less tool (e.g. `undo`) still streams a plain chip. Feeds both the panel's future
+  // tool chip and, when the on-page overlay is enabled, `forwardOverlayStep`'s mirror to content.
+  z.object({
+    type: z.literal('tool-call'),
+    tool: z.string(),
+    selector: z.string().optional(),
+    kind: z.enum(['read', 'act', 'info']).optional(),
+  }),
   z.object({ type: z.literal('edit-recorded'), edit: Edit }),
   z.object({ type: z.literal('changeset'), changeset: Changeset }),
   // One task's live status on the Ship timeline (slice 07). A multi-task fan-out streams several,

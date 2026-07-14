@@ -17,6 +17,7 @@ import type {
   SwToPanel,
   ToolResult,
 } from '@/shared/messages';
+import { classifyTool } from '@/shared/overlay-step';
 import {
   type BudgetLimits,
   type BudgetReason,
@@ -155,9 +156,13 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
             emit({ type: 'token', text: part.text });
           }
           break;
-        case 'tool-call':
-          emit({ type: 'tool-call', tool: part.toolName });
+        case 'tool-call': {
+          // `selector`/`kind` (slice 09): feeds the future panel tool chip and, when the on-page
+          // overlay is opted in, background.ts's `forwardOverlayStep` mirror to content.
+          const { selector, kind } = classifyTool(part.toolName, part.input);
+          emit({ type: 'tool-call', tool: part.toolName, selector, kind });
           break;
+        }
         case 'abort':
           stop = 'aborted';
           break;

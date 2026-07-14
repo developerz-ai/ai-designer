@@ -9,6 +9,7 @@ import { extractIdentity } from '@/dom/identity';
 import { imageContent, readImages } from '@/dom/images';
 import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
+import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
@@ -31,12 +32,14 @@ import {
   DomTool,
   type IdentityResult,
   type ImageDescription,
+  OverlayCmd,
   PageMetricsRequest,
   type PageMetricsResult,
   PickerCmd,
   type ReadImagesResult,
   type ToolResult,
 } from '@/shared/messages';
+import { readOverlayEnabled } from '@/shared/overlay-prefs';
 
 // Content script — the only world with DOM access. It stays a THIN wire: Zod-gate inbound
 // messages, hand them to the testable src/dom modules (executor + picker + recorder), and forward
@@ -62,6 +65,13 @@ export default defineContentScript({
     const executor = createDomExecutor({ mutator, recorder });
     const interactor = createInteractor();
     const picker = createPicker(emit);
+
+    // Agent-decision overlay (slice 09), opt-in: restore the persisted toggle at injection time —
+    // a page reload gets its overlay back without waiting on a round-trip to the SW — then react
+    // to any live `overlay-toggle`/`overlay-step` the SW forwards for the rest of this page's life
+    // (background.ts's `set-overlay-enabled` case / `forwardOverlayStep`).
+    const overlay = createOverlay();
+    void readOverlayEnabled().then((enabled) => overlay.toggle(enabled));
 
     // Complex-site reads/actions (slice 15, expose-to-agent): the MAIN-world bridge client
     // (read-only, non-secret — see the top-frame lifecycle block below) backs both the page-facts
@@ -277,8 +287,21 @@ export default defineContentScript({
       if (cmd.success) {
         if (cmd.data.type === 'picker-start') picker.start();
         else picker.stop();
+        return;
       }
-      return; // no response for picker commands / foreign messages
+
+      const overlayCmd = OverlayCmd.safeParse(raw);
+      if (overlayCmd.success) {
+        if (overlayCmd.data.type === 'overlay-toggle') overlay.toggle(overlayCmd.data.enabled);
+        else {
+          overlay.step({
+            label: overlayCmd.data.label,
+            selector: overlayCmd.data.selector,
+            kind: overlayCmd.data.kind,
+          });
+        }
+      }
+      return; // no response for picker/overlay commands / foreign messages
     });
 
     // Complex-site lifecycle (slice 15A/F): warm the page-facts cache + observe SPA route changes.

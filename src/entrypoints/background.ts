@@ -63,6 +63,7 @@ import type {
   McpOAuthConfig,
   McpServer,
   Mode,
+  OverlayCmd,
   PageMetrics,
   PageMetricsRequest,
   PickerCmd,
@@ -78,6 +79,8 @@ import {
   PanelToSw,
   ToolResult,
 } from '@/shared/messages';
+import { readOverlayEnabled, writeOverlayEnabled } from '@/shared/overlay-prefs';
+import { overlayLabel } from '@/shared/overlay-step';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import type { Report } from '@/shared/report';
@@ -193,6 +196,14 @@ export default defineBackground(() => {
 
   // Rehydrate persisted history before any history-* RPC or turn-done append reads it (SW wake).
   const historyReady = historyStore.hydrate();
+
+  // On-page agent-decision overlay opt-in (slice 09): a plain persisted boolean
+  // (src/shared/overlay-prefs.ts), mirrored in memory so a turn's tool-call stream can check it
+  // synchronously per-event without an async storage read on every tool call.
+  let overlayEnabled = false;
+  const overlayReady = readOverlayEnabled().then((v) => {
+    overlayEnabled = v;
+  });
 
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
@@ -417,6 +428,7 @@ export default defineBackground(() => {
     await mcpReady; // mcp-* cases need the registry rehydrated from storage
     await sessionsReady; // user-message resumes any persisted session thread
     await historyReady; // history-* RPCs and turn-done append need the persisted ring buffer
+    await overlayReady; // user-message/get-overlay-enabled need the hydrated in-memory flag
     switch (msg.type) {
       case 'user-message': {
         // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
@@ -455,6 +467,25 @@ export default defineBackground(() => {
         const model = createProvider(cfg);
         const content = contentDispatchFor(tabId);
         const screenshot = screenshotDispatchFor(tabId);
+
+        // On-page agent-decision overlay (slice 09): mirror every `tool-call` this turn streams to
+        // the panel onto the target tab's overlay, when the user opted in. A send failure (the tab
+        // navigated away / has no injected content script) is swallowed — the overlay is cosmetic,
+        // never allowed to affect the turn.
+        function forwardOverlayStep(update: SwToPanel): void {
+          if (!overlayEnabled || update.type !== 'tool-call') return;
+          const cmd: OverlayCmd = {
+            type: 'overlay-step',
+            label: overlayLabel(update.tool, update.selector),
+            selector: update.selector,
+            kind: update.kind,
+          };
+          void chrome.tabs.sendMessage(tabId, cmd).catch(() => {});
+        }
+        const emitTurn = (update: SwToPanel): void => {
+          postToPanel(update);
+          forwardOverlayStep(update);
+        };
 
         // The session/recorder tools (slice 07): `recordEdit`/`undo`/`redo` mutate this tab's
         // changeset, `handoff` only proposes (gated below — never auto-ships). Rehydrate the
@@ -567,7 +598,7 @@ export default defineBackground(() => {
               ),
             check: content,
           },
-          emit: postToPanel,
+          emit: emitTurn,
           // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
           // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
           tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
@@ -827,6 +858,23 @@ export default defineBackground(() => {
       case 'history-delete':
         await historyStore.delete(msg.id);
         return { ok: true };
+
+      // --- on-page agent-decision overlay opt-in (slice 09) ---------------
+      // Persist + immediately push the new state to the active tab (content.ts also restores it
+      // from storage on its own at document_idle, so a tab opened/reloaded after this still picks
+      // it up without another round-trip here).
+      case 'set-overlay-enabled': {
+        overlayEnabled = msg.enabled;
+        await writeOverlayEnabled(msg.enabled);
+        const tab = await resolveTargetTab();
+        if (tab?.id !== undefined) {
+          const cmd: OverlayCmd = { type: 'overlay-toggle', enabled: overlayEnabled };
+          await chrome.tabs.sendMessage(tab.id, cmd).catch(() => {});
+        }
+        return { ok: true, enabled: overlayEnabled };
+      }
+      case 'get-overlay-enabled':
+        return { ok: true, enabled: overlayEnabled };
     }
   }
 

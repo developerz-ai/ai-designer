@@ -172,8 +172,10 @@ describe('integration: copy mode reads a reference identity and applies it to th
     if (afterSetStyle?.type !== 'json') throw new Error('unreachable');
     expect((afterSetStyle.value as ToolResult).ok).toBe(true);
 
-    expect(events).toContainEqual({ type: 'tool-call', tool: 'extractIdentity' });
-    expect(events).toContainEqual({ type: 'tool-call', tool: 'setStyle' });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'tool-call', tool: 'extractIdentity' }),
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool-call', tool: 'setStyle' }));
     expect(outcome.stop).toBe('done');
     expect(events.some((e) => e.type === 'error')).toBe(false);
   });
