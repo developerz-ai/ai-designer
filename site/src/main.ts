@@ -265,6 +265,79 @@ function initNavActiveLink(): void {
   }
 }
 
+// ─── Hero card demo loop (decorative; the card is aria-hidden) ───────────────
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function waitForReveal(): Promise<void> {
+  return new Promise((resolve) => {
+    const check = (): void => {
+      if (!document.documentElement.classList.contains('is-loading')) {
+        resolve();
+        return;
+      }
+      window.setTimeout(check, 80);
+    };
+    check();
+  });
+}
+
+function initHeroCard(): void {
+  if (prefersReducedMotion) {
+    return;
+  }
+  const card = document.querySelector<HTMLElement>('.hero__card');
+  if (!card) {
+    return;
+  }
+  // Hide the animated parts up front, before the skeleton reveal shows the card.
+  card.classList.add('is-active');
+
+  const bubbles = Array.from(card.querySelectorAll<HTMLElement>('.chat__bubble'));
+  const diffLines = Array.from(card.querySelectorAll<HTMLElement>('.diff code > span'));
+  const chips = Array.from(card.querySelectorAll<HTMLElement>('.chip'));
+
+  const run = async (): Promise<void> => {
+    if (document.documentElement.classList.contains('is-loading')) {
+      await waitForReveal();
+    }
+    await sleep(200);
+
+    // 1. user bubble pops in.
+    bubbles[0]?.classList.add('is-shown');
+    await sleep(500);
+
+    // 2. agent bubble types in char-by-char with a blinking caret.
+    const agent = bubbles[1];
+    if (agent) {
+      const full = agent.textContent ?? '';
+      agent.textContent = '';
+      agent.classList.add('is-shown', 'is-typing');
+      await sleep(120);
+      for (let i = 0; i < full.length; i++) {
+        agent.textContent = full.slice(0, i + 1);
+        await sleep(22);
+      }
+      agent.classList.remove('is-typing');
+    }
+    await sleep(220);
+
+    // 3. diff lines fade in, staggered.
+    for (const line of diffLines) {
+      line.classList.add('is-shown');
+      await sleep(90);
+    }
+    await sleep(160);
+
+    // 4. chips pop.
+    for (const chip of chips) {
+      chip.classList.add('is-shown');
+      await sleep(80);
+    }
+  };
+
+  void run();
+}
+
 initSkeleton();
 initCountUp();
 initNotify();
@@ -272,3 +345,4 @@ initReveal();
 initSpotlight();
 initNavScroll();
 initNavActiveLink();
+initHeroCard();
