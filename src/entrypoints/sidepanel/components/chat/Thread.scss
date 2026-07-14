@@ -2,6 +2,7 @@
 
 .dz-thread {
   flex: 1;
+  min-height: 0;
   list-style: none;
   margin: 0;
   padding: tokens.$dz-space-4;

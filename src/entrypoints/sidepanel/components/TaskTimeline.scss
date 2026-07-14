@@ -3,9 +3,10 @@
 .dz-tasktimeline {
   display: flex;
   flex-direction: column;
+  flex: none;
   gap: tokens.$dz-space-2;
   margin: 0;
-  padding: 0;
+  padding: tokens.$dz-space-3 tokens.$dz-space-3 0;
   list-style: none;
 
   &__item {
