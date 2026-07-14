@@ -10,7 +10,13 @@
 // That keeps the loop unit/integration-testable against a mock model with no `chrome.*`.
 
 import { isStepCount, type LanguageModel, ToolLoopAgent, type ToolSet } from 'ai';
-import type { ControlTool, NavIntent, SwToPanel, ToolResult } from '@/shared/messages';
+import type {
+  ControlTool,
+  NavIntent,
+  ResponsiveShot,
+  SwToPanel,
+  ToolResult,
+} from '@/shared/messages';
 import {
   type BudgetLimits,
   type BudgetReason,
@@ -25,6 +31,7 @@ import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
 import { createIdentityTool, type IdentityDispatch } from './tools/identity';
 import { createInteractTools, type InteractDeps } from './tools/interact';
+import { createResponsiveTools, type ResponsiveToolDeps } from './tools/responsive';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
 import { createVisionTools, type VisionToolDeps } from './tools/vision';
 
@@ -82,6 +89,11 @@ export interface RunTurnArgs {
   /** `pageFacts`/`readChart`/`chartTooltip`/`widgetAct` dispatch (slice 15) — same content-routed
    *  transport as `interact.control`. Absent ⇒ none of the complex-site tools are offered this turn. */
   readonly complexSite?: ComplexSiteDispatch;
+  /** Device-emulation + responsive dispatches (slice 16): `setDevice` (CDP/fallback) +
+   *  `responsiveCapture` (multi-breakpoint, SW-orchestrated) + `checkResponsive` (content scan).
+   *  Absent ⇒ the responsive tools aren't offered this turn. `responsiveCapture` is wrapped with the
+   *  vision budget guard (it screenshots per breakpoint). */
+  readonly responsive?: ResponsiveToolDeps;
   /** Sink for stream events → the side-panel port (`postToPanel`). */
   readonly emit: (event: SwToPanel) => void;
   /** Extra tools merged after the built-ins: connected MCP tools (02), session/recorder (07). */
@@ -203,6 +215,7 @@ type ToolDeps = Pick<
   | 'identity'
   | 'describe'
   | 'complexSite'
+  | 'responsive'
   | 'tools'
 >;
 
@@ -225,6 +238,9 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
   const identity = deps.identity ? createIdentityTool(deps.identity) : {};
   const describeTools = deps.describe ? createDescribeTools(deps.describe) : {};
   const complexSite = deps.complexSite ? createComplexSiteTools(deps.complexSite) : {};
+  const responsive = deps.responsive
+    ? createResponsiveTools(guardResponsiveDeps(deps.responsive, budget))
+    : {};
 
   const merged: ToolSet = {
     ...dom,
@@ -235,11 +251,24 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     ...identity,
     ...describeTools,
     ...complexSite,
+    ...responsive,
   };
+  // Whichever `screenshot` survived the merge (vision's `fullPage`-capable one if present, else the
+  // DOM one) and `responsiveCapture` get an image→model hook so their PNGs are fed back as vision
+  // parts instead of JSON — `responsiveCapture` fans its shots out labeled by breakpoint.
   const base = merged.screenshot;
   const screenshot = base ? { ...base, toModelOutput: screenshotToModelOutput } : undefined;
+  const captureBase = merged.responsiveCapture;
+  const responsiveCapture = captureBase
+    ? { ...captureBase, toModelOutput: responsiveCaptureToModelOutput }
+    : undefined;
 
-  return { ...merged, ...(screenshot ? { screenshot } : {}), ...(deps.tools ?? {}) };
+  return {
+    ...merged,
+    ...(screenshot ? { screenshot } : {}),
+    ...(responsiveCapture ? { responsiveCapture } : {}),
+    ...(deps.tools ?? {}),
+  };
 }
 
 // The ToolResult a guarded call returns once its per-tool budget is exhausted — the model reacts
@@ -282,6 +311,19 @@ function guardVisionDeps(deps: VisionToolDeps, budget: TurnBudget): VisionToolDe
   };
 }
 
+/** Cap `responsiveCapture` against the same vision budget as `inspectVisually` — each sweep is a
+ *  screenshot-per-breakpoint burst of vision tokens, so a runaway multi-breakpoint loop shouldn't
+ *  outlast the guard. `setDevice`/`checkResponsive` are cheap and pass through unguarded. */
+function guardResponsiveDeps(deps: ResponsiveToolDeps, budget: TurnBudget): ResponsiveToolDeps {
+  return {
+    ...deps,
+    capture: (msg, signal) => {
+      if (!budget.spendVision()) return Promise.resolve(guardExceeded('The `responsiveCapture`'));
+      return deps.capture(msg, signal);
+    },
+  };
+}
+
 // Present a successful `screenshot` result to the model as a PNG image part (vision
 // self-correction). A failed capture or non-image payload falls back to the default JSON view.
 // Exported for unit coverage of the vision hook.
@@ -300,6 +342,46 @@ export function screenshotToModelOutput({ output }: { output: ToolResult }): Mod
     };
   }
   return { type: 'text', value: JSON.stringify(output) };
+}
+
+// Present a `responsiveCapture` result to the model as an interleaved set of labeled PNGs (one per
+// breakpoint), so the vision model compares how the design holds up across sizes. Each shot with an
+// image becomes a caption text part + a file part; a shot that failed to capture keeps its error
+// caption. With no images at all, falls back to the default JSON view. Exported for unit coverage.
+export function responsiveCaptureToModelOutput({
+  output,
+}: {
+  output: ToolResult;
+}): ModelToolOutput {
+  const shots = shotsOf(output);
+  const value: Array<
+    | { type: 'text'; text: string }
+    | { type: 'file'; data: { type: 'data'; data: string }; mediaType: string }
+  > = [];
+  for (const shot of shots) {
+    const size = `${shot.metrics.width}×${shot.metrics.height}`;
+    if (shot.image) {
+      value.push({ type: 'text', text: `${shot.label} (${size}, ${shot.mechanism})` });
+      value.push({
+        type: 'file',
+        data: { type: 'data', data: stripDataUrl(shot.image) },
+        mediaType: 'image/png',
+      });
+    } else {
+      value.push({ type: 'text', text: `${shot.label} (${size}): ${shot.error ?? 'no capture'}` });
+    }
+  }
+  return value.some((part) => part.type === 'file')
+    ? { type: 'content', value }
+    : { type: 'text', value: JSON.stringify(output) };
+}
+
+// Structurally read the shots off a successful `responsiveCapture` result — `ToolResult.data` is
+// `unknown` on the bus, so narrow defensively rather than trust its shape.
+function shotsOf(output: ToolResult): ResponsiveShot[] {
+  if (!output.ok || typeof output.data !== 'object' || output.data === null) return [];
+  const shots = (output.data as { shots?: unknown }).shots;
+  return Array.isArray(shots) ? (shots as ResponsiveShot[]) : [];
 }
 
 /** Drop a `data:*;base64,` prefix so a data-URL screenshot becomes the bare base64 the SDK's

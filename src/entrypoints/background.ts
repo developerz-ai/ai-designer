@@ -9,6 +9,12 @@ import {
   migrateLegacyProvider,
   saveProviderConfig,
 } from '@/agent/config-store';
+import {
+  type DeviceEmulationDriver,
+  restoreDevice,
+  runResponsiveCapture,
+  runSetDevice,
+} from '@/agent/device-emulation';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
@@ -26,6 +32,7 @@ import { getServer, listServers, removeServer, type StoredServer, saveServer } f
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
+  CheckResponsiveInput,
   ControlTool,
   DescribeCmd,
   DesignRead,
@@ -61,12 +68,15 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 // to `DomDispatch`, `ControlDispatch`/`ReadImagesDispatch`/`ComplexSiteDispatch`,
 // `IdentityDispatch`, and `DescribeDispatch`/`ReadImageContentDispatch`).
 type ContentDispatch = (
-  msg: DomTool | ControlTool | DescribeCmd,
+  msg: DomTool | ControlTool | DescribeCmd | CheckResponsiveInput,
   signal?: AbortSignal,
 ) => Promise<ToolResult>;
 
 // Let the page paint after a programmatic scroll before grabbing the viewport for a full-page stitch.
 const SCROLL_SETTLE_MS = 200;
+// A device-emulation change re-evaluates media queries + reflows the whole layout — give it a beat
+// longer than a scroll before capturing a responsive breakpoint.
+const EMULATION_SETTLE_MS = 300;
 
 // Service worker — the brain. Holds keys, runs the agent loop, owns MCP clients
 // and the changeset store. NEVER expose the OpenRouter key to the content script
@@ -348,6 +358,33 @@ export default defineBackground(() => {
           // pageFacts/readChart/chartTooltip/widgetAct (slice 15) are content-routed exactly like
           // interact.control — same `content` transport, no extra SW-side logic needed.
           complexSite: content,
+          // Device emulation + responsive capture (slice 16): `setDevice`/`responsiveCapture` are
+          // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against `chromeDeviceDriver`;
+          // `checkResponsive` is content-routed (the scanner runs in the page's world). The sweep
+          // captures each breakpoint through the same `screenshot` dispatch the vision tools use, and
+          // emulation is restored after the turn (see the `finally` below).
+          responsive: {
+            setDevice: (message) => runSetDevice(chromeDeviceDriver, message, tabId),
+            capture: (message, signal) =>
+              runResponsiveCapture(
+                chromeDeviceDriver,
+                (target, opts, sig) =>
+                  screenshot(
+                    {
+                      type: 'screenshot',
+                      selector: opts.selector,
+                      fullPage: opts.fullPage,
+                      tabId: target,
+                    },
+                    sig,
+                  ),
+                (sig) => browseDelay(EMULATION_SETTLE_MS, sig),
+                message,
+                tabId,
+                signal,
+              ),
+            check: content,
+          },
           emit: postToPanel,
           // Backend (MCP) tools win a name clash over the built-ins, per the loop's merge order.
           tools: await mcpManager.toolsFor(),
@@ -368,6 +405,9 @@ export default defineBackground(() => {
           .catch((err) => postToPanel({ type: 'error', message: String(err) }))
           .finally(() => {
             if (turnAbort === controller) turnAbort = null;
+            // Tear down any device emulation this turn applied (detach the debugger / restore the
+            // window) so the user's page + the "being debugged" banner don't outlast the turn.
+            void restoreDevice(chromeDeviceDriver, tabId);
           });
 
         return { ok: true };
@@ -630,6 +670,73 @@ const chromeBrowserDriver: BrowserControlDriver = {
       url: f.url,
       parentFrameId: f.parentFrameId,
     }));
+  },
+};
+
+// --- device emulation (slice 16) -----------------------------------------
+// Chrome glue for the emulation runners. The preferred path drives `chrome.debugger` + CDP for TRUE
+// device emulation (DPR + touch + UA, so media queries / `@media (pointer)` / UA-sniffing all fire);
+// the fallback resizes the tab's window to approximate a narrow viewport when the `debugger`
+// permission is unavailable/denied. The tested decision logic (preset resolution, CDP-vs-fallback,
+// sweep, restore) lives in `src/agent/device-emulation.ts`; this is only the chrome glue
+// (coverage-excluded, like the browse/browser drivers). Emulation is torn down on turn end.
+const CDP_VERSION = '1.3';
+// Tabs we've attached the debugger to + windows we've resized, so attach stays idempotent and
+// restore returns each window to the exact bounds it had before this session emulated a device.
+const cdpAttached = new Set<number>();
+const savedWindowSize = new Map<number, { windowId: number; width?: number; height?: number }>();
+
+const chromeDeviceDriver: DeviceEmulationDriver = {
+  // `chrome.debugger` exists only when the `debugger` permission is declared + granted; otherwise the
+  // runner takes the viewport fallback. (Permission is added in the following slice-16 task.)
+  cdpAvailable: () => typeof chrome.debugger !== 'undefined',
+  applyCdp: async (tabId, device) => {
+    if (!cdpAttached.has(tabId)) {
+      await chrome.debugger.attach({ tabId }, CDP_VERSION);
+      cdpAttached.add(tabId);
+    }
+    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
+      width: device.width,
+      height: device.height,
+      deviceScaleFactor: device.dpr,
+      mobile: device.mobile,
+    });
+    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setTouchEmulationEnabled', {
+      enabled: device.touch,
+      maxTouchPoints: device.touch ? 5 : 0,
+    });
+    // A resolved desktop device carries no UA — override with the browser's own so switching
+    // mobile→desktop mid-sweep clears the prior mobile UA (an empty string wouldn't reset it).
+    await chrome.debugger.sendCommand({ tabId }, 'Network.setUserAgentOverride', {
+      userAgent: device.userAgent ?? navigator.userAgent,
+    });
+  },
+  clearCdp: async (tabId) => {
+    if (!cdpAttached.has(tabId)) return;
+    cdpAttached.delete(tabId);
+    // Detaching drops every override in one call; best-effort (the tab may already be gone).
+    await chrome.debugger.detach({ tabId }).catch(() => {});
+  },
+  applyViewport: async (tabId, device) => {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId === undefined) throw new Error('The tab has no window to resize.');
+    if (!savedWindowSize.has(tabId)) {
+      const win = await chrome.windows.get(tab.windowId);
+      savedWindowSize.set(tabId, { windowId: tab.windowId, width: win.width, height: win.height });
+    }
+    await chrome.windows.update(tab.windowId, {
+      state: 'normal',
+      width: device.width,
+      height: device.height,
+    });
+  },
+  clearViewport: async (tabId) => {
+    const saved = savedWindowSize.get(tabId);
+    if (!saved) return;
+    savedWindowSize.delete(tabId);
+    await chrome.windows
+      .update(saved.windowId, { width: saved.width, height: saved.height })
+      .catch(() => {});
   },
 };
 

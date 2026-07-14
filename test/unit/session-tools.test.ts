@@ -63,6 +63,12 @@ describe('createSessionTools: derivation', () => {
     // Missing intent (the user's "why") is rejected — it has no default.
     expect(schema.safeParse({ selector: { value: '#x', strategy: 'id' } }).success).toBe(false);
   });
+
+  it('accepts an optional breakpoint (slice 16 — which viewport an edit targets)', () => {
+    const schema = harness().tools.recordEdit.inputSchema as unknown as ZodType;
+    expect(schema.safeParse(anEdit('x')).success).toBe(true); // still fine with no breakpoint
+    expect(schema.safeParse({ ...anEdit('x'), breakpoint: 'iphone-se' }).success).toBe(true);
+  });
 });
 
 describe('createSessionTools: changeset mutations persist + stream', () => {
@@ -76,6 +82,15 @@ describe('createSessionTools: changeset mutations persist + stream', () => {
     expect(store.size).toBe(1);
     expect(persisted.at(-1)?.edits).toHaveLength(1);
     expect(events).toContainEqual({ type: 'edit-recorded', edit });
+  });
+
+  it('recordEdit persists the breakpoint an edit was made under emulation at', async () => {
+    const { store, tools } = harness();
+    const edit = { ...anEdit('shrink the nav'), breakpoint: 'iphone-se' };
+
+    await run(tools.recordEdit.execute, edit);
+
+    expect(store.current.edits.at(-1)?.breakpoint).toBe('iphone-se');
   });
 
   it('undo removes the last edit and streams the full changeset', async () => {

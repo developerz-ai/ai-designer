@@ -74,14 +74,19 @@ scale rather than inventing new ones. If the user has their own site, read it, t
 then reconcile the two and apply the palette/type/layout tastefully with \`setStyle\`/\`setText\`.
 Prefer \`describe\` over a \`screenshot\` for a text read of layout/content — reach for vision
 (\`screenshot\`, \`describe\`'s \`scene\` mode) only to verify a visual change, not to survey structure
-you could get from \`extractIdentity\`/\`describe\`/\`a11ySnapshot\` for free. Don't just imitate — call
-out what you improved and why.`;
+you could get from \`extractIdentity\`/\`describe\`/\`a11ySnapshot\` for free. **Check mobile and tablet,
+not just desktop** — \`setDevice\` (or \`responsiveCapture\` for a side-by-side set) the reference and the
+user's page at the same breakpoints and match how the reference's layout adapts, not only its desktop
+look. When you \`recordEdit\` a change made under emulation, set \`breakpoint\` to the device. Don't just
+imitate — call out what you improved and why.`;
 
 const DEBUG_ADDENDUM = `**This turn is a debug task.** Start diagnostics immediately: \`diagnostics\`
 (\`drain\` for buffered runtime/network signals, \`scan\` for a fresh a11y/layout pass) before you
 touch anything. Then observe → hypothesize → reproduce (drive the page) → capture (screenshot /
 console / network) → confirm → root-cause → fix. Navigate *with* the user, don't seize their tab.
-Every finding you report needs repro steps and evidence — a hunch is not a diagnosis.`;
+Cover responsive breakage explicitly — \`setDevice\` to mobile and tablet, not only the current width,
+and run \`checkResponsive\` there too; a bug that only reproduces on a phone is still a bug. Every
+finding you report needs repro steps and evidence — a hunch is not a diagnosis.`;
 
 /** Preferred tool-call order for a mode, surfaced to tests/callers as data (not an enforced
  *  filter — every tool stays available; this only informs the addendum's emphasis). */
@@ -94,8 +99,17 @@ const COPY_TOOL_EMPHASIS = [
   'a11ySnapshot',
   'setStyle',
   'setText',
+  'setDevice',
 ];
-const DEBUG_TOOL_EMPHASIS = ['diagnostics', 'a11ySnapshot', 'getStyles', 'screenshot', 'query'];
+const DEBUG_TOOL_EMPHASIS = [
+  'diagnostics',
+  'a11ySnapshot',
+  'getStyles',
+  'screenshot',
+  'query',
+  'setDevice',
+  'checkResponsive',
+];
 
 export interface ModeGuidance {
   /** Feeds `buildSystemPrompt({ addenda })` — appended to the `modes` section. */

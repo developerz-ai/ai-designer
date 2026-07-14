@@ -14,10 +14,13 @@ import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
+import { scanResponsive } from '@/dom/responsive';
 import { createWidgetDriver } from '@/dom/widgets';
 import {
   type CaptureRequest,
   CaptureResult,
+  CheckResponsiveInput,
+  type CheckResponsiveResult,
   type ContentToSw,
   ControlTool,
   DescribeCmd,
@@ -195,6 +198,24 @@ export default defineContentScript({
       return { type: 'tool-result', ok: true, data };
     }
 
+    // Responsive problem scan (slice 16): run the content-world scanner at the current — possibly
+    // emulated (the SW set a device via CDP/fallback) — viewport width. Pure DOM read
+    // (src/dom/responsive.ts, jsdom-tested); `selector` scopes it to a subtree.
+    function handleResponsive(cmd: CheckResponsiveInput): ToolResult {
+      const root = cmd.selector ? queryOne(document, cmd.selector) : document;
+      if (cmd.selector && !root) {
+        return {
+          type: 'tool-result',
+          ok: false,
+          error: `No element matches selector: ${cmd.selector}`,
+        };
+      }
+      const data: CheckResponsiveResult = scanResponsive(document, window, {
+        root: root ?? document,
+      });
+      return { type: 'tool-result', ok: true, data };
+    }
+
     // The SW addresses this tab with three message kinds: agent DomTool + ControlTool calls (reply
     // with a frame-tagged ToolResult) and user-driven PickerCmds (start/stop the overlay, no
     // reply). Parse each with its own schema; anything else is a foreign message and is ignored.
@@ -248,6 +269,9 @@ export default defineContentScript({
 
       const describeCmd = DescribeCmd.safeParse(raw);
       if (describeCmd.success) return answer(Promise.resolve(handleDescribe(describeCmd.data)));
+
+      const responsive = CheckResponsiveInput.safeParse(raw);
+      if (responsive.success) return answer(Promise.resolve(handleResponsive(responsive.data)));
 
       const cmd = PickerCmd.safeParse(raw);
       if (cmd.success) {

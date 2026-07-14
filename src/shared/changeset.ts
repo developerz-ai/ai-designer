@@ -35,6 +35,11 @@ export const Edit = z.object({
   screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
   // Tailwind classes / css-module names / styled markers — the source-mapping bridge.
   frameworkHints: z.array(z.string()).default([]),
+  // Which breakpoint this edit targeted, when made under device emulation (slice 16) — a device
+  // preset id or a custom label (e.g. "iphone-se" / "Tablet 768px"), set by `recordEdit` so the
+  // changeset (and the report) show which viewport an edit was made for. Undefined = the page's
+  // natural, non-emulated viewport.
+  breakpoint: z.string().max(60).optional(),
 });
 export type Edit = z.infer<typeof Edit>;
 
