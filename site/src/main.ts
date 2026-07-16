@@ -38,27 +38,75 @@ function initSkeleton(): void {
   window.setTimeout(reveal, dwell + 2000);
 }
 
-// ─── Waitlist count-up (no-backend demo) ───────────────────────────────────────
-const WAITLIST_SEED = 1283;
-const STORAGE_KEY = 'dz-designer-waitlist';
-// Handle for the in-flight count-up rAF so a submission can cancel it before
-// writing the new total — otherwise stale frames overwrite it (see initNotify).
-let countRaf = 0;
+// ─── hCaptcha ─────────────────────────────────────────────────────────────────
+// The site key is public. Build-time env override with the documented hCaptcha
+// TEST key as the fallback (the real production key is a deploy-time precondition).
+const HCAPTCHA_SITEKEY =
+  import.meta.env.VITE_HCAPTCHA_SITEKEY ?? '10000000-ffff-ffff-ffff-000000000001';
 
-function readSubmitted(): number {
+let captchaWidgetId: string | undefined;
+
+// api.js is loaded with ?render=explicit, so we render the widget ourselves once
+// the global is ready. Poll, because the async script may resolve after this
+// module has already run.
+function initCaptcha(): void {
+  const container = document.getElementById('notify-captcha');
+  if (!container) {
+    return;
+  }
+  let attempts = 0;
+  const tryRender = (): void => {
+    const hcaptcha = window.hcaptcha;
+    if (hcaptcha?.render) {
+      captchaWidgetId = hcaptcha.render(container, {
+        sitekey: HCAPTCHA_SITEKEY,
+        theme: 'dark',
+      });
+      return;
+    }
+    if (attempts++ < 50) {
+      window.setTimeout(tryRender, 100);
+    }
+  };
+  tryRender();
+}
+
+function captchaToken(): string {
+  const hcaptcha = window.hcaptcha;
+  if (!hcaptcha?.getResponse) {
+    return '';
+  }
   try {
-    return Number(localStorage.getItem(STORAGE_KEY) ?? '0') || 0;
+    return hcaptcha.getResponse(captchaWidgetId);
   } catch {
-    return 0;
+    return '';
   }
 }
 
-function writeSubmitted(n: number): boolean {
+function resetCaptcha(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, String(n));
-    return true;
+    window.hcaptcha?.reset(captchaWidgetId);
   } catch {
-    return false;
+    // hCaptcha not ready — nothing to reset.
+  }
+}
+
+// ─── Waitlist count-up (live count from the waitlist service) ──────────────────
+// Sane floor so the band never reads a bare "0" when the count endpoint is
+// unreachable (e.g. the static site loaded before the backend is up).
+const COUNT_FLOOR = 1200;
+
+async function fetchCount(): Promise<number> {
+  try {
+    const res = await fetch('/waitlist/count', { headers: { accept: 'application/json' } });
+    if (!res.ok) {
+      return COUNT_FLOOR;
+    }
+    const data = (await res.json()) as { count?: unknown };
+    const n = typeof data.count === 'number' ? data.count : Number(data.count);
+    return Number.isFinite(n) && n >= 0 ? n : COUNT_FLOOR;
+  } catch {
+    return COUNT_FLOOR;
   }
 }
 
@@ -73,9 +121,11 @@ function animateCount(el: HTMLElement, to: number): void {
     const progress = Math.min((now - start) / duration, 1);
     const eased = 1 - (1 - progress) ** 3; // easeOutCubic
     el.textContent = String(Math.round(to * eased));
-    countRaf = progress < 1 ? requestAnimationFrame(tick) : 0;
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+    }
   };
-  countRaf = requestAnimationFrame(tick);
+  requestAnimationFrame(tick);
 }
 
 function initCountUp(): void {
@@ -84,8 +134,10 @@ function initCountUp(): void {
     return;
   }
 
-  const target = WAITLIST_SEED + readSubmitted();
-  const run = () => animateCount(el, target);
+  const countPromise = fetchCount();
+  const run = () => {
+    void countPromise.then((target) => animateCount(el, target));
+  };
 
   if (prefersReducedMotion || !('IntersectionObserver' in window)) {
     run();
@@ -110,15 +162,74 @@ function initCountUp(): void {
   observer.observe(section);
 }
 
-// ─── Notify form (no-backend stub → success state) ─────────────────────────────
+// ─── Notify form (double opt-in → real waitlist service) ───────────────────────
+function showSuccess(form: HTMLFormElement, message: string): void {
+  form.hidden = true;
+  const error = document.getElementById('notify-error');
+  if (error instanceof HTMLElement) {
+    error.hidden = true;
+  }
+  const success = document.getElementById('notify-success');
+  if (success instanceof HTMLElement) {
+    success.textContent = message;
+    success.hidden = false;
+  }
+}
+
+function showError(message: string): void {
+  const error = document.getElementById('notify-error');
+  if (error instanceof HTMLElement) {
+    error.textContent = message;
+    error.hidden = false;
+  }
+}
+
+async function submitEmail(
+  form: HTMLFormElement,
+  email: string,
+  token: string,
+  submit: HTMLButtonElement | null,
+): Promise<void> {
+  if (submit) {
+    submit.disabled = true;
+  }
+  try {
+    const res = await fetch('/waitlist/subscribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, captchaToken: token, consent: 'true' }),
+    });
+    const data = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+    if (res.ok && data?.ok === true) {
+      showSuccess(form, 'Check your email to confirm');
+      return;
+    }
+    showError('Something went wrong. Please try again.');
+  } catch {
+    showError('Network error. Please try again.');
+  } finally {
+    if (submit) {
+      submit.disabled = false;
+    }
+    resetCaptcha();
+  }
+}
+
 function initNotify(): void {
   const form = document.getElementById('notify-form');
   if (!(form instanceof HTMLFormElement)) {
     return;
   }
 
-  const success = document.getElementById('notify-success');
+  // Double opt-in completed: the confirm link redirects here with ?subscribed=1.
+  if (new URLSearchParams(window.location.search).get('subscribed') === '1') {
+    showSuccess(form, "You're subscribed — we'll email you at launch.");
+    return;
+  }
+
   const field = form.querySelector<HTMLInputElement>('input[name="email"]');
+  const consent = document.getElementById('notify-consent');
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -131,22 +242,20 @@ function initNotify(): void {
       field.focus();
       return;
     }
-    const next = readSubmitted() + 1;
-    writeSubmitted(next);
-
-    form.hidden = true;
-    if (success instanceof HTMLElement) {
-      success.hidden = false;
-    }
-
-    const count = document.getElementById('waitlist-count');
-    if (count instanceof HTMLElement) {
-      if (countRaf) {
-        cancelAnimationFrame(countRaf);
-        countRaf = 0;
+    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
+      showError('Please agree to be emailed at launch.');
+      if (consent instanceof HTMLElement) {
+        consent.focus();
       }
-      count.textContent = String(WAITLIST_SEED + next);
+      return;
     }
+    const token = captchaToken();
+    if (token === '') {
+      showError('Please complete the captcha.');
+      return;
+    }
+
+    void submitEmail(form, field.value.trim(), token, submit);
   });
 }
 
@@ -346,6 +455,7 @@ function initHeroCard(): void {
 }
 
 initSkeleton();
+initCaptcha();
 initCountUp();
 initNotify();
 initReveal();
