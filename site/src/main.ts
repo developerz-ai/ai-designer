@@ -41,8 +41,10 @@ function initSkeleton(): void {
 // ─── hCaptcha ─────────────────────────────────────────────────────────────────
 // The site key is public. Build-time env override with the documented hCaptcha
 // TEST key as the fallback (the real production key is a deploy-time precondition).
+// `||` (not `??`): a Docker ARG that was never passed arrives as an EMPTY string,
+// which must also fall back to the test key rather than render a broken widget.
 const HCAPTCHA_SITEKEY =
-  import.meta.env.VITE_HCAPTCHA_SITEKEY ?? '10000000-ffff-ffff-ffff-000000000001';
+  import.meta.env.VITE_HCAPTCHA_SITEKEY || '10000000-ffff-ffff-ffff-000000000001';
 
 let captchaWidgetId: string | undefined;
 
