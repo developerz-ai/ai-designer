@@ -44,7 +44,6 @@ import {
   taskBackends,
 } from '@/mcp/backend';
 import type { McpConnectionSpec } from '@/mcp/client';
-import { designSafeTools } from '@/mcp/design-gate';
 import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
 import {
@@ -387,7 +386,9 @@ export default defineBackground(() => {
     // Route decision — no model call. Needs the merged ToolSet (which connected backends expose a
     // `task` tool), the server list (id/label for `target` matching), and the origin→repo map.
     const [toolset, servers, originRepoMap] = await Promise.all([
-      mcpManager.toolsFor(),
+      // toolsForShip: the ship route is the ONE sanctioned consumer of backend write tools —
+      // it must see `<id>__task` to dispatch (design turns get the filtered default, #117).
+      mcpManager.toolsForShip(),
       listServers(),
       getOriginRepoMap(),
     ]);
@@ -642,10 +643,11 @@ export default defineBackground(() => {
           emit: emitTurn,
           // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
           // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
-          // The design turn only ever sees write-gated backend tools (#117): `designSafeTools`
-          // strips `<id>__task` so the model cannot dispatch a task outside the user-clicked
-          // Ship RPC — the ship route below resolves task backends from the UNFILTERED merge.
-          tools: { ...designSafeTools(await mcpManager.toolsFor()), ...sessionTools },
+          // The design turn only ever sees write-gated backend tools (#117): `toolsFor()` is
+          // design-safe at the source (manager applies design-gate.ts), so the model cannot
+          // dispatch `<id>__task` outside the user-clicked Ship RPC — which resolves its task
+          // backends from the explicit `toolsForShip()` merge instead.
+          tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
           // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
           // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
           approveHandoff: () => false,

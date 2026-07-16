@@ -12,9 +12,10 @@ import type { DomDispatch } from '@/agent/tools/dom';
 import { designSafeTools } from '@/mcp/design-gate';
 import type { SwToPanel } from '@/shared/messages';
 
-// Integration (#117): the design-turn write-tool gate, exercised through the REAL loop with the
-// same merge shape background.ts uses (`{ ...designSafeTools(mcpTools), ...sessionTools }`,
-// session tools elided — irrelevant here). Two invariants:
+// Integration (#117): the design-turn write-tool gate, exercised through the REAL loop. The
+// filter is applied at the manager source (`McpManager.toolsFor()` returns the design-safe set
+// by default — pinned in test/unit/mcp-client.test.ts); here the pure gate runs against the
+// loop itself, mirroring what background.ts's merge hands to runTurn. Two invariants:
 //   1. the model is never OFFERED a backend's `<id>__task` tool, so it cannot dispatch a task
 //      outside the user-clicked Ship RPC (the bypass this closes);
 //   2. read tools (`<id>__kb`) still reach the loop and execute — the #21 regression guard.
@@ -118,9 +119,11 @@ describe('integration: the design turn never offers a backend task tool (#117)',
     expect(offered).not.toContain('ai-dev__task');
     // … so its attempt to call it can never reach the backend.
     expect(taskExecute).not.toHaveBeenCalled();
-    // And the turn degrades instead of crashing the SW (runTurn never throws for an
-    // expected outcome — an unknown-tool call is one).
-    expect(['done', 'error']).toContain(outcome.stop);
+    // And the turn degrades instead of crashing the SW: the SDK answers the unknown tool
+    // call with an error tool-result, the model's second stream wraps up normally, and the
+    // loop finishes 'done'. (Not load-bearing for the gate — the offered-tools and spy
+    // assertions above are — but pinned so an SDK behavior change surfaces here.)
+    expect(outcome.stop).toBe('done');
   });
 
   it('read tools still reach the loop and execute — the #21 regression guard', async () => {

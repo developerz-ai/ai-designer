@@ -16,7 +16,7 @@ import { NAMESPACE_SEP } from './client';
 
 /** Backend tool base names that dispatch work (write-shaped) — never offered to the design
  *  loop. `TASK_TOOL` is the Ship dispatch verb; the ship route resolves it from the UNFILTERED
- *  `toolsFor()` merge, so gating it here cannot break Ship. */
+ *  `toolsForShip()` merge, so gating it here cannot break Ship. */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([TASK_TOOL]);
 
 /** True when a merged-ToolSet name is a write-shaped backend tool. Suffix match
@@ -24,8 +24,9 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([TASK_TOOL]);
  *  so the trailing segment is the only reliable read — and over-matching (`id__my__task`)
  *  errs on the safe side (a read tool a backend chose to name `*__task` stays out). */
 function isWriteTool(name: string): boolean {
+  const folded = name.toLowerCase();
   for (const write of WRITE_TOOLS) {
-    if (name === write || name.endsWith(`${NAMESPACE_SEP}${write}`)) return true;
+    if (folded === write || folded.endsWith(`${NAMESPACE_SEP}${write}`)) return true;
   }
   return false;
 }
