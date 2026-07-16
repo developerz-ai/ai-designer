@@ -1,23 +1,13 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
-    "useIgnoreFile": true
+    "useIgnoreFile": false
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": [
-      "**",
-      "!**/node_modules",
-      "!**/.output",
-      "!**/.wxt",
-      "!**/coverage",
-      "!**/dist",
-      "!**/waitlist",
-      "!**/*.tsbuildinfo",
-      "!**/site"
-    ]
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/*.tsbuildinfo"]
   },
   "formatter": {
     "enabled": true,

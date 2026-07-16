@@ -1,0 +1,73 @@
+// One-shot "demo loop" entrance on the decorative hero card (.hero__card is
+// aria-hidden, so this is purely visual). initHeroCard() in main.ts adds
+// .is-active up front — hiding the animated parts before the skeleton reveal
+// shows the card (no flash) — then sequences .is-shown across bubbles, diff
+// lines, and chips once the reveal settles. Reduced-motion: the module never
+// attaches, so everything stays in its default visible state.
+@use 'tokens' as *;
+
+.hero__card.is-active {
+  .chat__bubble {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+
+  .chat__bubble.is-shown {
+    animation: hero-bubble-in $dur-3 $ease-spring both;
+  }
+
+  // Blinking caret while the agent reply "types".
+  .chat__bubble--agent.is-typing::after {
+    content: '';
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.15em;
+    background: $brand-400;
+    animation: hero-caret 0.9s steps(2, start) infinite;
+  }
+
+  .diff code > span {
+    opacity: 0;
+  }
+
+  .diff code > span.is-shown {
+    animation: hero-fade-in $dur-2 $ease-out both;
+  }
+
+  .chip {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+
+  .chip.is-shown {
+    animation: hero-chip-in $dur-2 $ease-spring both;
+  }
+}
+
+@keyframes hero-bubble-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hero-chip-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-caret {
+  50% {
+    opacity: 0;
+  }
+}

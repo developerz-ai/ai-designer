@@ -1,0 +1,131 @@
+// Sticky translucent navbar.
+@use 'sass:color';
+@use 'tokens' as *;
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+  background: color-mix(in srgb, var(--dz-bg) 80%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--dz-border);
+  transition:
+    background-color $dur-3 $ease-out,
+    border-color $dur-3 $ease-out,
+    box-shadow $dur-3 $ease-out;
+
+  // Condensed once scrolled (toggled by initNavScroll in main.ts).
+  // backdrop-filter is intentionally not transitioned — animating blur() is costly.
+  &.is-scrolled {
+    background: color-mix(in srgb, var(--dz-bg) 92%, transparent);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom-color: color.change($brand-500, $alpha: 0.18);
+    box-shadow: $elev-2;
+
+    .nav__inner {
+      height: calc(#{$nav-h} - 0.75rem);
+    }
+
+    .nav__wordmark {
+      font-size: 1rem;
+    }
+  }
+
+  &__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--nav-h);
+    transition: height $dur-3 $ease-out;
+  }
+
+  &__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: $space-3;
+  }
+
+  &__logo {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: $radius-sm;
+  }
+
+  &__wordmark {
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.01em;
+  }
+
+  &__wordmark-sub {
+    color: var(--dz-muted);
+    font-weight: 500;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: $space-5;
+  }
+
+  &__link {
+    position: relative;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--dz-muted);
+    transition: color $dur-2 $ease-out;
+
+    // Animated underline (skipped on the pill-shaped last child).
+    &::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -0.25rem;
+      height: 1px;
+      transform: scaleX(0);
+      transform-origin: left;
+      background: $grad-brand;
+      transition: transform $dur-2 $ease-out;
+    }
+
+    &:hover,
+    &.is-active {
+      color: var(--dz-ink);
+    }
+
+    &:hover::after,
+    &:focus-visible::after,
+    &.is-active::after {
+      transform: scaleX(1);
+    }
+
+    &:last-child {
+      padding: $space-2 $space-4;
+      border: 1px solid var(--dz-border);
+      border-radius: $radius-pill;
+      color: var(--dz-ink);
+
+      &::after {
+        display: none;
+      }
+
+      &:hover {
+        border-color: color.change($product, $alpha: 0.5);
+        color: $product-400;
+      }
+    }
+  }
+
+  @media (max-width: $bp-sm) {
+    &__actions {
+      gap: $space-3;
+    }
+
+    &__link {
+      font-size: 0.88rem;
+    }
+  }
+}

@@ -1,0 +1,213 @@
+// How-it-works grid + notify/waitlist band.
+@use 'sass:color';
+@use 'tokens' as *;
+
+.section__head {
+  max-width: 48rem;
+  margin-bottom: $space-8;
+
+  .section__title {
+    margin-top: $space-3;
+    font-size: fluid(2rem, 3rem);
+  }
+
+  .lead {
+    margin-top: $space-4;
+  }
+}
+
+// ─── how it works ─────────────────────────────────────────────────────────────
+.how__grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: $space-5;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+
+  // Bento at lg: Talk + See side by side, Ship as a wide horizontal feature.
+  @media (min-width: $bp-lg) {
+    grid-template-columns: repeat(6, 1fr);
+
+    .how__card:nth-child(1),
+    .how__card:nth-child(2) {
+      grid-column: span 3;
+    }
+
+    .how__card:nth-child(3) {
+      grid-column: span 6;
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: $space-5;
+
+      .how__text {
+        flex: 1 1 24rem;
+      }
+    }
+  }
+}
+
+.how__card {
+  position: relative;
+  isolation: isolate;
+  --mx: 50%;
+  --my: 50%;
+
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  padding: $space-6;
+  padding-top: $space-8;
+  overflow: hidden;
+
+  // Cursor-follow spotlight, painted behind content (z-index:-1, contained by
+  // the isolation stacking context). --mx/--my set by initSpotlight() in main.ts.
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: radial-gradient(
+      14rem 14rem at var(--mx) var(--my),
+      color.change($brand-400, $alpha: 0.14),
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity $dur-3 $ease-out;
+    pointer-events: none;
+  }
+
+  &:hover::before {
+    opacity: 1;
+  }
+}
+
+.how__bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: $grad-brand;
+}
+
+.how__step {
+  font-family: $font-mono;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: $brand-400;
+}
+
+.how__title {
+  font-size: fluid(1.25rem, 1.6rem);
+  line-height: 1.2;
+}
+
+.how__text {
+  color: var(--dz-muted);
+  font-size: 0.95rem;
+}
+
+// ─── notify / waitlist ────────────────────────────────────────────────────────
+.notify__inner {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(2rem, 6vw, 4rem);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.notify__glow {
+  position: absolute;
+  top: -6rem;
+  left: 50%;
+  translate: -50% 0;
+  width: 30rem;
+  height: 20rem;
+  background: $grad-brand;
+  opacity: 0.12;
+  filter: blur(90px);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.notify {
+  .section__title {
+    margin-top: $space-3;
+    font-size: fluid(1.75rem, 2.5rem);
+  }
+
+  .lead {
+    margin-top: $space-4;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  &__form {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-2;
+    justify-content: center;
+    margin-top: $space-6;
+    width: 100%;
+    max-width: 30rem;
+  }
+
+  &__field {
+    flex: 1 1 16rem;
+
+    input {
+      width: 100%;
+      padding: $space-3 $space-4;
+      background: color-mix(in srgb, var(--dz-bg) 60%, transparent);
+      border: 1px solid var(--dz-border);
+      border-radius: $radius-pill;
+      color: var(--dz-ink);
+
+      &::placeholder {
+        color: var(--dz-muted);
+      }
+
+      &:focus {
+        outline: none;
+        border-color: color.change($brand-500, $alpha: 0.5);
+        box-shadow: $focus-ring;
+      }
+    }
+  }
+
+  &__submit {
+    flex: 0 0 auto;
+  }
+
+  &__success {
+    position: relative;
+    margin-top: $space-4;
+    font-weight: 500;
+    color: $success;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  &__count {
+    position: relative;
+    margin-top: $space-4;
+    font-size: 0.9rem;
+    color: var(--dz-muted);
+
+    strong {
+      color: var(--dz-ink);
+      display: inline-block;
+      min-width: 4ch; // reserve max digit count (seed 1283 = 4) so the count-up
+      // growing 1 -> 4 digits doesn't shift "developers" right (tabular-nums alone
+      // fixes per-digit width, not digit-count growth).
+      text-align: right;
+      font-variant-numeric: tabular-nums lining-nums;
+      font-feature-settings: 'tnum' 1, 'lnum' 1;
+    }
+  }
+}

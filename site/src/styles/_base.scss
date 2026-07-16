@@ -1,0 +1,209 @@
+// Base reset, document shell, typography primitives, and layout utilities.
+@use 'sass:color';
+@use 'tokens' as *;
+
+:root {
+  @include root-vars;
+  --nav-h: #{$nav-h};
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(#{$nav-h} + 1rem);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  opacity: 1;
+  transition: opacity 0.15s $ease-out;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--dz-bg);
+  color: var(--dz-ink);
+  font-family: $font-sans;
+  font-optical-sizing: auto;
+  font-weight: 450; // bump from 400 on dark — halation thins strokes on #0a0a0f
+  font-size: fluid(1rem, 1.0625rem);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+picture {
+  display: block;
+  max-width: 100%;
+}
+
+img {
+  height: auto;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: $font-mono;
+}
+
+::selection {
+  background: color.change($brand-500, $alpha: 0.3);
+  color: $paper;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: $focus-ring;
+  border-radius: $radius-sm;
+}
+
+// ─── Layout containers ────────────────────────────────────────────────────────
+.container {
+  width: 100%;
+  max-width: $container;
+  margin-inline: auto;
+  padding-inline: $space-5;
+}
+
+.container--narrow {
+  max-width: $container-narrow;
+}
+
+.section {
+  padding-block: clamp(3rem, 7vw, 6rem);
+}
+
+// ─── Type primitives ──────────────────────────────────────────────────────────
+h1,
+h2,
+h3,
+h4 {
+  font-family: $font-sans;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.lead {
+  font-size: fluid(1.15rem, 1.4rem);
+  line-height: 1.6;
+  color: var(--dz-muted);
+  max-width: 46ch;
+  text-wrap: pretty;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-size: fluid(0.8rem, 0.9rem);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dz-muted);
+}
+
+.eyebrow__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: $radius-pill;
+  background: $grad-brand;
+  box-shadow: 0 0 0 4px color.change($brand-500, $alpha: 0.15);
+  animation: dot-pulse 2.4s $ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+// Chrome logo mark in the hero eyebrow (decorative — the text conveys "Chrome").
+.eyebrow__chrome {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+code {
+  font-size: 0.9em;
+  padding: 0.1em 0.4em;
+  border-radius: $radius-sm;
+  background: color.change($brand-500, $alpha: 0.1);
+  color: $brand-300;
+}
+
+strong {
+  font-weight: 600;
+  color: var(--dz-ink);
+}
+
+// ─── Accessibility helpers ────────────────────────────────────────────────────
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: $space-4;
+  top: -100%;
+  z-index: 1100;
+  padding: $space-2 $space-4;
+  background: var(--dz-surface);
+  border: 1px solid var(--dz-border);
+  border-radius: $radius;
+  transition: top $dur-2 $ease-out;
+
+  &:focus-visible {
+    top: $space-3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
