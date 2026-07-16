@@ -54,5 +54,5 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 
 ## State
 
-- Solid stores under `src/entrypoints/sidepanel/stores/`: `chat`, `changeset`, `mcp`, `history`, `readiness`, `overlay`, `session`, `settings`, plus `bus`/`sw-stream` for the message-bus plumbing. Thin — they reflect service-worker state pushed over the [message bus](../architecture/mv3-worlds.md), they don't own the agent.
+- Solid stores under `src/entrypoints/sidepanel/stores/`: `chat`, `changeset`, `focus`, `mcp`, `history`, `readiness`, `overlay`, `session`, `settings`, plus `bus`/`sw-stream` for the message-bus plumbing. Thin — they reflect service-worker state pushed over the [message bus](../architecture/mv3-worlds.md), they don't own the agent.
 - The service worker is the source of truth (agent loop, changeset, MCP, history). The panel is a view.

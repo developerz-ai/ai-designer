@@ -8,7 +8,7 @@ You have a page open (your app, staging, prod) and a reference you like elsewher
 
 ## How to start it
 
-Just say "make this page look like stripe.com's pricing section" — the agent infers copy mode from the instruction (there is no mode-picker UI; the empty-state suggestion chips seed copy-flavored prompts).
+Just say "make this page look like stripe.com's pricing section" — the agent infers copy mode from the instruction (there is no mode-picker UI; the empty-state suggestion chips include a copy-flavored prompt).
 
 ## What happens, step by step
 

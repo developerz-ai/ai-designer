@@ -41,10 +41,10 @@ Unit and integration are **separate Vitest projects** so CI runs them as paralle
 ## CI (parallel)
 
 ```
-lint (biome)  ─┐            ┌─► build
-typecheck (tsc)─┤            │
+lint (biome)   ─┐             ┌─► build
+typecheck (tsc)─┤             │
 unit (vitest)  ─┼─► all green ┤
-integration    ─┘            └─► e2e (playwright, builds its own copy)
+integration    ─┘             └─► e2e (playwright, builds its own copy)
 ```
 
 - `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on Blacksmith runners (2vcpu; 4vcpu for the two test jobs).
