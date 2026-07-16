@@ -20,6 +20,10 @@ on:
   push:
     branches: [main]
     paths: ['waitlist/**']
+  # Manual publish: first-time bootstrap — the image-build workflow itself lands
+  # via .github/** (never matching the waitlist/** path filter), so the first
+  # push needs a manual trigger once the DIGITALOCEAN_TOKEN secret exists.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
