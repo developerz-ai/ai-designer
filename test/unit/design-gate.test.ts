@@ -44,6 +44,11 @@ describe('designSafeTools', () => {
     expect(Object.keys(safe)).toEqual(['kb']);
   });
 
+  it('case-folds: upper/mixed-case task variants cannot evade the deny-set', () => {
+    const safe = designSafeTools(toolSet('ai-dev__TASK', 'ai-dev__Task', 'TASK', 'ai-dev__kb'));
+    expect(Object.keys(safe)).toEqual(['ai-dev__kb']);
+  });
+
   it('is pure: returns a new object and never mutates the input', () => {
     const input = toolSet('ai-dev__task', 'ai-dev__kb');
     const before = Object.keys(input);
@@ -60,5 +65,13 @@ describe('designSafeTools', () => {
 describe('WRITE_TOOLS', () => {
   it('covers the Ship dispatch verb from one source of truth', () => {
     expect(WRITE_TOOLS.has(TASK_TOOL)).toBe(true);
+  });
+
+  it('every entry is lowercase — the invariant the case-folded compare depends on', () => {
+    // isWriteTool folds the candidate name only; a mixed-case deny-set entry would
+    // silently never match (fail-open for that verb).
+    for (const entry of WRITE_TOOLS) {
+      expect(entry).toBe(entry.toLowerCase());
+    }
   });
 });
