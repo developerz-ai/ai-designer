@@ -200,7 +200,7 @@ describe('McpManager', () => {
     expect(mgr.health('ai-dev')).toEqual(health);
   });
 
-  it('toolsFor() merges every server, namespaced', async () => {
+  it('toolsForShip() merges every server, namespaced — write tools included', async () => {
     const { connect } = factory({
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: toolSet('search'),
@@ -209,7 +209,22 @@ describe('McpManager', () => {
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
-    expect(Object.keys(await mgr.toolsFor()).sort()).toEqual(['ai-dev__task', 'github__search']);
+    expect(Object.keys(await mgr.toolsForShip()).sort()).toEqual([
+      'ai-dev__task',
+      'github__search',
+    ]);
+  });
+
+  it('toolsFor() is design-safe by default: write tools stripped, read tools kept (#117)', async () => {
+    const { connect } = factory({
+      [AI_DEV.url]: toolSet('task', 'kb'),
+      [GITHUB.url]: toolSet('search'),
+    });
+    const mgr = new McpManager({ connect, idleMs: 0 });
+    mgr.register(AI_DEV);
+    mgr.register(GITHUB);
+
+    expect(Object.keys(await mgr.toolsFor()).sort()).toEqual(['ai-dev__kb', 'github__search']);
   });
 
   it('isolates a failing server: it degrades to error, others still merge', async () => {
@@ -221,12 +236,12 @@ describe('McpManager', () => {
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
-    expect(Object.keys(await mgr.toolsFor())).toEqual(['ai-dev__task']);
+    expect(Object.keys(await mgr.toolsForShip())).toEqual(['ai-dev__task']);
     expect(mgr.health('github')).toMatchObject({ status: 'error', error: '401 unauthorized' });
     expect(mgr.health('ai-dev')).toMatchObject({ status: 'connected' });
   });
 
-  it('toolsFor(ids) restricts the merge to the given servers', async () => {
+  it('toolsForShip(ids) restricts the merge to the given servers', async () => {
     const { connect } = factory({
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: toolSet('search'),
@@ -235,7 +250,7 @@ describe('McpManager', () => {
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
-    expect(Object.keys(await mgr.toolsFor(['ai-dev']))).toEqual(['ai-dev__task']);
+    expect(Object.keys(await mgr.toolsForShip(['ai-dev']))).toEqual(['ai-dev__task']);
   });
 
   it('closeAll() tears down connections and marks them disconnected', async () => {

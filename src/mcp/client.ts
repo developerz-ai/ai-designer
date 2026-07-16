@@ -13,8 +13,9 @@ import type { ToolSet } from 'ai';
 // (the manager drives an explicit `close()` at turn-end instead).
 const DEFAULT_IDLE_MS = 60_000;
 
-// `<serverId>__<tool>`. Mirrors ai-dev's convention for third-party servers.
-const NAMESPACE_SEP = '__';
+// `<serverId>__<tool>`. Mirrors ai-dev's convention for third-party servers. Exported for the
+// design-turn write-tool gate (design-gate.ts), which suffix-matches on it.
+export const NAMESPACE_SEP = '__';
 
 /** Resolves the auth headers for a connection at open time. A function (not a static
  *  record) so an OAuth token can be refreshed per open without re-registering the server;

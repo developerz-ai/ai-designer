@@ -11,6 +11,7 @@ import {
   type McpConnection,
   type McpConnectionSpec,
 } from './client';
+import { designSafeTools } from './design-gate';
 
 /** Last-known connection state for a registered server. `'disconnected'` = registered but
  *  not yet opened (or torn down); `'connected'` = tools discovered; `'error'` = the last
@@ -98,9 +99,18 @@ export class McpManager {
   }
 
   /** Merge the namespaced tools of the given servers (all registered, by default) into one
-   *  ToolSet for the agent loop. Servers are opened lazily and in parallel; any that fail
-   *  are recorded as `error` and omitted from the result. */
+   *  ToolSet for the agent loop — DESIGN-SAFE by default (#117): write-shaped backend tools
+   *  (design-gate.ts) are stripped here, at the source, so every model-facing call site —
+   *  present and future — inherits the gate rather than having to remember to apply it. */
   async toolsFor(ids?: string[]): Promise<ToolSet> {
+    return designSafeTools(await this.toolsForShip(ids));
+  }
+
+  /** The UNFILTERED merge — including write tools like `<id>__task`. ONLY for the
+   *  user-clicked Ship route (`runHandoffRoute`), which must see the task tool to dispatch.
+   *  Never hand this set to a model turn. Servers are opened lazily and in parallel; any
+   *  that fail are recorded as `error` and omitted from the result. */
+  async toolsForShip(ids?: string[]): Promise<ToolSet> {
     const targets = ids ?? this.ids();
     const merged: ToolSet = {};
     await Promise.all(
