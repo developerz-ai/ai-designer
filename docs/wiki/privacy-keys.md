@@ -40,9 +40,12 @@ If the extension crashes, an error event (exception class + stack trace only) go
 |------------|-----|
 | Side panel | The UI surface — stays open across page navigation |
 | Storage | Encrypted keys + MCP connections (`local`); the in-progress turn/changeset (`session`) |
-| Scripting | Injects the content script that reads/mutates the page |
+| Scripting | Currently unused — the content script is registered statically in the manifest; slated for the least-privilege review (#23) |
 | Active tab | Only touches a page after you've explicitly interacted with the extension |
 | Tabs | Screenshot capture, tracking which tab is being edited |
+| Identity | The OAuth (PKCE) consent window when you connect an MCP backend — tokens stay in the service worker |
+| Web navigation | Enumerating a page's frames so tools can address iframes |
+| Debugger | Device emulation for responsive checks (`setDevice`) — this one triggers Chrome's "started debugging" banner while active |
 | Your model's host | e.g. `openrouter.ai` — the only network destination for inference |
 | Any site (optional) | Requested per-origin, on demand, only when you point the agent at a page. Revocable any time in `chrome://extensions` |
 

@@ -14,7 +14,7 @@ Side panel → **History** tab. Shows your last 10 sessions, newest first.
 
 ## Opening one
 
-Click an entry → read-only replay: the conversation, the edits made, before/after thumbnails, and (for debug sessions) the findings. You can't continue chatting inside a replay — it's a record, not a live session.
+Click an entry → read-only replay: the conversation, the edits made, and (for debug sessions) the findings. You can't continue chatting inside a replay — it's a record, not a live session.
 
 ## Re-downloading
 

@@ -36,7 +36,7 @@ The gap: **what you see** (the rendered page) and **what you change** (the sourc
 |------|-------|--------------|
 | Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." |
 | See | Live page | Agent mutates real DOM/CSS. Instant. You react, refine. |
-| Accept | Diff review | Each change recorded as a structured changeset entry. |
+| Accept | Side-panel chat | Each change recorded as a structured changeset entry (edit chips + undo). |
 | Ship | MCP handoff | Changeset → dev-agent → finds source → edits code → PR. |
 | Verify | PR / CI | Real change, tested, reviewable. You merge. |
 

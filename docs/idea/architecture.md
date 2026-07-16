@@ -12,7 +12,7 @@ Top-level components and data flow. MV3 boundaries are load-bearing — keep DOM
 │  │ (SolidJS)    │                     │  - Vercel AI SDK loop      │  │
 │  │ - chat       │                     │  - OpenRouter client (key) │  │
 │  │ - MCP mgmt   │                     │  - MCP clients (handoff)   │  │
-│  │ - diff review│                     │  - changeset store         │  │
+│  │ - history    │                     │  - changeset store         │  │
 │  └──────────────┘                     └───────────┬───────────────┘  │
 │                                                    │ DOM tool calls    │
 │                                       ┌────────────┴───────────────┐  │

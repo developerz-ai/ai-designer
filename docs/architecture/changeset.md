@@ -20,7 +20,6 @@ erDiagram
         string intent
         string[] frameworkHints
         string breakpoint "optional — device-emulation capture"
-        int order
     }
     SELECTOR {
         string value
@@ -42,6 +41,7 @@ erDiagram
 {
   "url": "http://localhost:3000/pricing",
   "createdAt": "2026-06-21T12:00:00Z",
+  "sessionId": "a3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70",
   "edits": [{
     "intent": "Make the primary CTA orange and larger",
     "selector": { "value": "[data-testid=cta-primary]", "strategy": "data-attr", "fragile": false },

@@ -21,7 +21,7 @@ Two surfaces, one extension: a **chat** (design conversation) and **MCP manageme
 | [../reference/agent-sdk.md](../reference/agent-sdk.md) | AI SDK 7 API reference — `ToolLoopAgent`, OpenRouter, MCP, version gotchas |
 | [handoff.md](handoff.md) | Changeset → implementation task → PR |
 | [mcp.md](mcp.md) | MCP management UI, connecting ai-dev / GitHub, auth |
-| [ui.md](ui.md) | SolidJS chat + MCP panel, diff review, screenshots |
+| [ui.md](ui.md) | SolidJS side panel — chat + MCP + history + settings tabs |
 | [testing.md](testing.md) | Unit + integration + E2E pyramid, what gets mocked |
 | [ai-first.md](ai-first.md) | How we build it with Claude Code — `.claude/`, skills, compressed config |
 | [roadmap.md](roadmap.md) | v0 → v1 → v2 → anti-roadmap |

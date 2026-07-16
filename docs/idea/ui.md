@@ -13,8 +13,8 @@ SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS w
 
 Four tabs (`Tab = 'chat' | 'mcp' | 'history' | 'settings'`) — there is no standalone "diff review" tab; the changeset lives inside the Chat flow.
 
-- **Chat** — the design conversation. Mode picker (copy / debug / none), streamed tokens, tool-call chips, inline before/after thumbnails, the input box, and the **Ship bar** (Ship or Download report, per [handoff.md](handoff.md)).
-- **MCP** — connected backends, auth status, origin→repo mapping, task status timelines + PR links. Feature-flagged, on by default. See [mcp.md](mcp.md).
+- **Chat** — the design conversation. Modes (copy / debug / none) are pinned per message or inferred from its text — suggestion chips, no picker UI. Streamed tokens, tool-call chips, the picked-element context chip, the input box, task status timelines + PR links after a Ship, and the **Ship bar** (Ship or Download report, per [handoff.md](handoff.md)).
+- **MCP** — connected backends, auth status (API key / OAuth per server). Feature-flagged, on by default. The origin→repo mapping is storage-only today (no UI — see #20). See [mcp.md](mcp.md).
 - **History** — last 10 conversations (+ their reports/PR links). Selecting one swaps in a read-only replay; delete supported. See [Memory](agent.md#memory).
 - **Settings** — provider config (base URL, API key, model picker), overlay opt-in.
 
@@ -37,10 +37,10 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `ReadinessDropdown.tsx` | Status pill, checklist, Start/Stop, overlay toggle |
 | `ChatPanel.tsx` / `chat/Thread.tsx` | Message list + streaming render |
 | `chat/ToolChip.tsx` | One tool call, status, expandable args |
-| `chat/Composer.tsx` | Input, send, mode picker |
+| `chat/Composer.tsx` | Input, send/stop, model quick-switch, attach-element picker trigger |
 | `ShipBar.tsx` | Ship / Download report actions |
 | `TaskTimeline.tsx` | Handoff status → PR link |
-| `McpPanel.tsx` | Connected backends + add/remove + origin→repo mapping |
+| `McpPanel.tsx` | Connected backends + add/remove (origin→repo mapping is storage-only, no UI — #20) |
 | `AuthDialog.tsx` | OAuth/PKCE + API-key entry |
 | `HistoryPanel.tsx` / `ConversationView.tsx` | Last-10 list + read-only replay |
 | `SettingsPanel.tsx` | Provider config + model picker |
@@ -54,5 +54,5 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 
 ## State
 
-- Solid stores under `src/entrypoints/sidepanel/stores/`: `chat`, `changeset`, `mcp`, `history`, `readiness`, `overlay`, `session`, `settings`, plus `bus`/`sw-stream` for the message-bus plumbing. Thin — they reflect service-worker state pushed over the [message bus](../architecture/mv3-worlds.md), they don't own the agent.
+- Solid stores under `src/entrypoints/sidepanel/stores/`: `chat`, `changeset`, `focus`, `mcp`, `history`, `readiness`, `overlay`, `session`, `settings`, plus `bus`/`sw-stream` for the message-bus plumbing. Thin — they reflect service-worker state pushed over the [message bus](../architecture/mv3-worlds.md), they don't own the agent.
 - The service worker is the source of truth (agent loop, changeset, MCP, history). The panel is a view.

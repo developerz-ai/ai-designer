@@ -35,20 +35,20 @@ Unit and integration are **separate Vitest projects** so CI runs them as paralle
 ## E2E
 
 - `wxt build` → load unpacked in Playwright's persistent context.
-- Open the side panel, type a prompt, assert the fixture page mutates and a diff entry appears.
+- Open the side panel, type a prompt → recorded-edit chip + Ship bar appear (chat-streaming spec, stubbed model); DOM tools mutate/undo the fixture page over the real content-script bus (dom-tools spec).
 - Ship against a mock MCP server → assert `task(action:'create')` payload.
 
 ## CI (parallel)
 
 ```
-lint (biome)  ─┐
-typecheck (tsc)─┤
-unit (vitest)  ─┼─► all green ─► build ─► e2e (playwright)
-integration    ─┘
+lint (biome)   ─┐             ┌─► build
+typecheck (tsc)─┤             │
+unit (vitest)  ─┼─► all green ┤
+integration    ─┘             └─► e2e (playwright, builds its own copy)
 ```
 
-- `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on Blacksmith 2vcpu runners.
-- `build` + `e2e` gate on them. See the CI workflow.
+- `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on Blacksmith runners (2vcpu; 4vcpu for the two test jobs).
+- `build` and `e2e` are siblings — each gates on those four; `e2e` runs its own `bun run build` rather than consuming `build`'s artifact. See the CI workflow.
 
 ## Commands
 

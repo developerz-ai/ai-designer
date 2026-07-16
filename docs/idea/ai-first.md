@@ -7,7 +7,7 @@ How we build this with Claude Code. Convention from [github.com/sebyx07/claude-c
 | Layer | Path | Purpose |
 |-------|------|---------|
 | Project memory | `CLAUDE.md` | Stack, SRP rules, commands, MV3 boundaries — read every session |
-| Area memory | `src/*/CLAUDE.md` | Per-area rules (e.g. `src/dom/CLAUDE.md`: selector heuristics) |
+| Area memory | `src/*/CLAUDE.md` | Per-area rules — none yet; add as an area earns rules (e.g. `src/dom/CLAUDE.md`: selector heuristics) |
 | Skills | `.claude/skills/*/SKILL.md` | Expert hats, auto-activated by keyword |
 | Agents | `.claude/agents/*.md` | Spawned subagents for fan-out work |
 | Commands | `.claude/commands/*.md` | Slash commands for repeated flows |
@@ -39,9 +39,7 @@ Config is read every session — write it terse (ch. 11):
 
 | Hook | Trigger | Action |
 |------|---------|--------|
-| Format | after edit to `*.ts`/`*.tsx`/`*.scss` | `bun run lint:fix` on the file |
-| Typecheck | after edit | `tsc --noEmit` (debounced) |
-| Test-on-save | after edit to `src/**` | run the file's Vitest project |
+| Format + typecheck | `PostToolUse` on `Edit`/`Write`/`MultiEdit` | `bun run lint:fix` (silent), then `bun run typecheck` (repo-wide, non-blocking — typecheck failure prints a warning) |
 
 Hooks are executed by the harness, not the model — that's why automation lives here, not in prose.
 

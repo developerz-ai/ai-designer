@@ -63,7 +63,7 @@ The changeset is the task spec. Maps to ai-dev's domain tool:
 ```
 
 - `template` picked from the backend's agent templates (`frontend_dev` for UI work).
-- `repo` chosen in the [MCP panel](mcp.md) — the user maps the page's origin to a repo once, reused after.
+- `repo` from the persisted origin→repo map (see [mcp.md](mcp.md)) — set once per origin, reused after. Storage-only today; the panel UI for it is #20.
 - Screenshots travel as attachments/URLs so the dev-agent can visually verify its result against intent.
 
 ## Status back

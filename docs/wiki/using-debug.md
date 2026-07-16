@@ -8,7 +8,7 @@ Something's broken and you can point at it: a button that doesn't respond, an ov
 
 ## How to start it
 
-Composer → mode picker → **Debug**. Or describe the bug directly: "the mobile nav doesn't close when you tap outside it" — the agent infers debug mode.
+Describe the bug directly with a debug-flavored word: "the mobile nav is broken — it doesn't close when you tap outside it" — the agent infers debug mode from trigger words like debug / broken / fix / bug / error / crash / not working (`src/agent/modes.ts`). There is no mode-picker UI.
 
 ## What happens, step by step
 
