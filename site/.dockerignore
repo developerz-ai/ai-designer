@@ -1,0 +1,10 @@
+# Keep the Docker build context lean and reproducible. The build stage runs a
+# frozen `bun install` + `bun run build` from source, so any local install or
+# build output must NOT leak in (the acceptance smoke build runs `bun install`
+# + `bun run build` in this dir first, leaving node_modules/ + dist/ behind).
+node_modules
+dist
+.git
+.gitignore
+Dockerfile
+.dockerignore

@@ -1,0 +1,81 @@
+name: site-deploy
+
+# Build the Designer landing image and publish it to DOCR.
+#
+# On push to main touching site/**: build the multi-stage image from
+# site/Dockerfile and push `designer-landing` (tags `latest` + `sha-<short>`)
+# to registry.digitalocean.com/developerz-ai. ArgoCD Image Updater repins the
+# live digest in-cluster — NO SSH / cluster creds here.
+#
+# Push-trigger ONLY (never pull_request): a PR run would fail at the DOCR push
+# (no token pre-provisioning) and block the CI-green merge gate. The Dockerfile
+# is validated by the local smoke build in ai-designer#107's acceptance, and
+# the workflow YAML is linted by the actionlint job in ci.yml on every PR.
+#
+# Required secret: DIGITALOCEAN_TOKEN — DigitalOcean API token with registry
+# read/write (used as both docker username and password). Human precondition
+# under ai-designer#85 / infra #870; this workflow's first live push is gated
+# on that secret + the DOCR repo existing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never auto-cancel an in-flight publish on main.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: registry.digitalocean.com
+  IMAGE: developerz-ai/designer-landing
+
+jobs:
+  build-and-push:
+    name: Build + push designer-landing
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      # persist-credentials: false — nothing after checkout needs git auth.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to DOCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          password: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      # Context is site/ so the Dockerfile's `COPY . .` sees the self-contained
+      # sub-project; keep this in sync with site/Dockerfile.
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: site
+          file: site/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=designer-landing
+          cache-to: type=gha,mode=max,scope=designer-landing
