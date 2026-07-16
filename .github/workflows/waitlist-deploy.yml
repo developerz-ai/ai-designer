@@ -1,0 +1,79 @@
+name: waitlist-deploy
+
+# Build the designer-waitlist image and publish it to DOCR.
+#
+# Push-trigger ONLY: on push to main touching `waitlist/**`, build
+# `waitlist/Dockerfile` and push `designer-waitlist` (tags `latest` +
+# `sha-<short>`) to registry.digitalocean.com/developerz-ai. ArgoCD Image
+# Updater repins the live digest in-cluster (infra#870) — NO SSH / cluster
+# creds here. Never runs on pull_request: a PR-time run would fail at the DOCR
+# push (the token is a deploy precondition, not a PR gate) and block the
+# CI-green merge. The digest push IS the deploy trigger.
+#
+# Required secret: DIGITALOCEAN_TOKEN — DigitalOcean API token with registry
+# read/write (used as both docker username and password). Provisioned as a
+# repo secret under infra#870's deploy preconditions. NOTE: sibling app repos
+# (ggcoin, discord-server) name this secret DOCR_TOKEN; this workflow follows
+# issue #112's DIGITALOCEAN_TOKEN — align the provisioned name to match.
+
+on:
+  push:
+    branches: [main]
+    paths: ['waitlist/**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never auto-cancel an in-flight publish on main.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: registry.digitalocean.com
+  IMAGE: registry.digitalocean.com/developerz-ai/designer-waitlist
+
+jobs:
+  build-and-push:
+    name: Build & push image to DOCR
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      # persist-credentials: false — nothing after checkout needs git auth.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to DOCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          password: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: waitlist
+          file: waitlist/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # DOCR mishandles provenance/sbom attestation manifests — disabled
+          # deliberately, matching the org's other app-image workflows.
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=designer-waitlist
+          cache-to: type=gha,mode=max,scope=designer-waitlist
