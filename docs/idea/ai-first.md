@@ -39,7 +39,7 @@ Config is read every session — write it terse (ch. 11):
 
 | Hook | Trigger | Action |
 |------|---------|--------|
-| Format + typecheck | `PostToolUse` on `Edit`/`Write`/`MultiEdit` | `bun run lint:fix`, then `bun run typecheck` (repo-wide, non-blocking — prints a warning on failure) |
+| Format + typecheck | `PostToolUse` on `Edit`/`Write`/`MultiEdit` | `bun run lint:fix` (silent), then `bun run typecheck` (repo-wide, non-blocking — typecheck failure prints a warning) |
 
 Hooks are executed by the harness, not the model — that's why automation lives here, not in prose.
 

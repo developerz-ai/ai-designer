@@ -8,7 +8,7 @@ You have a page open (your app, staging, prod) and a reference you like elsewher
 
 ## How to start it
 
-Composer → mode picker → **Copy**. Or just say "make this page look like stripe.com's pricing section" — the agent infers the mode from the instruction.
+Just say "make this page look like stripe.com's pricing section" — the agent infers copy mode from the instruction (there is no mode-picker UI; the empty-state suggestion chips seed copy-flavored prompts).
 
 ## What happens, step by step
 

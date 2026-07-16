@@ -28,7 +28,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 
 | Module | World | Responsibility |
 |--------|-------|-----------------|
-| `src/agent/` | SW | Loop (`ToolLoopAgent`), provider + config, readiness, modes (copy/debug/browse), session, budget, history store, browser-control tools |
+| `src/agent/` | SW | Loop (`ToolLoopAgent`), provider + config, readiness, modes (copy/debug), session, budget, history store, browser-control tools |
 | `src/dom/` | Content | Read/mutate primitives, selector engine, picker overlay, recorder, diagnostics (viewport/scroll/perf), identity/describe, charts/widget recipes, responsive scanner |
 | `src/mcp/` | SW | MCP client + manager, auth (API key / OAuth+PKCE), server store, handoff routing (MCP task or MD-report fallback) |
 | `src/changeset/` | SW | Store (undo/redo), Markdown report renderer (`toMarkdown`), session record |
@@ -60,7 +60,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 
 ## Readiness + Start
 
-Before chatting, the agent checks readiness via a truth table: provider + model configured + host permission granted + MCP backends (if any) reachable. UI shows status via ReadinessDropdown (Leo-style pill) with a Fix deep-link per failing row. User clicks Start → loop boots. Modes: copy / debug / none — pinned via `UserMessage.mode` or inferred from the message text (`src/agent/modes.ts`); no mode picker UI. Browse is a tool, not a mode. Ship routes to MCP task create (if backend connected) or Markdown report download (fallback; `.md` to the download folder).
+Before chatting, the agent checks readiness via a truth table: provider + model configured + host permission granted + MCP backends (if any) reachable. UI shows status via ReadinessDropdown (Leo-style pill) with a Fix deep-link per failing row; only provider + model gate Start — host permission + MCP are advisory rows. User clicks Start → loop boots. Modes: copy / debug / none — pinned via `UserMessage.mode` or inferred from the message text (`src/agent/modes.ts`); no mode picker UI. Browse is a tool, not a mode. Ship routes to MCP task create (if backend connected) or Markdown report download (fallback; `.md` to the download folder).
 
 ## Outputs
 

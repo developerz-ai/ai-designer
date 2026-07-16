@@ -37,10 +37,10 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `ReadinessDropdown.tsx` | Status pill, checklist, Start/Stop, overlay toggle |
 | `ChatPanel.tsx` / `chat/Thread.tsx` | Message list + streaming render |
 | `chat/ToolChip.tsx` | One tool call, status, expandable args |
-| `chat/Composer.tsx` | Input, send, mode picker |
+| `chat/Composer.tsx` | Input, send/stop, model quick-switch, attach-element picker trigger |
 | `ShipBar.tsx` | Ship / Download report actions |
 | `TaskTimeline.tsx` | Handoff status → PR link |
-| `McpPanel.tsx` | Connected backends + add/remove + origin→repo mapping |
+| `McpPanel.tsx` | Connected backends + add/remove (origin→repo mapping is storage-only, no UI — #20) |
 | `AuthDialog.tsx` | OAuth/PKCE + API-key entry |
 | `HistoryPanel.tsx` / `ConversationView.tsx` | Last-10 list + read-only replay |
 | `SettingsPanel.tsx` | Provider config + model picker |
