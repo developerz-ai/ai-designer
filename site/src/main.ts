@@ -41,6 +41,9 @@ function initSkeleton(): void {
 // ─── Waitlist count-up (no-backend demo) ───────────────────────────────────────
 const WAITLIST_SEED = 1283;
 const STORAGE_KEY = 'dz-designer-waitlist';
+// Handle for the in-flight count-up rAF so a submission can cancel it before
+// writing the new total — otherwise stale frames overwrite it (see initNotify).
+let countRaf = 0;
 
 function readSubmitted(): number {
   try {
@@ -70,11 +73,9 @@ function animateCount(el: HTMLElement, to: number): void {
     const progress = Math.min((now - start) / duration, 1);
     const eased = 1 - (1 - progress) ** 3; // easeOutCubic
     el.textContent = String(Math.round(to * eased));
-    if (progress < 1) {
-      requestAnimationFrame(tick);
-    }
+    countRaf = progress < 1 ? requestAnimationFrame(tick) : 0;
   };
-  requestAnimationFrame(tick);
+  countRaf = requestAnimationFrame(tick);
 }
 
 function initCountUp(): void {
@@ -125,6 +126,8 @@ function initNotify(): void {
       return;
     }
     if (field.value.trim() === '' || !field.checkValidity()) {
+      // novalidate is set, so the browser won't surface why on its own.
+      field.reportValidity();
       field.focus();
       return;
     }
@@ -138,6 +141,10 @@ function initNotify(): void {
 
     const count = document.getElementById('waitlist-count');
     if (count instanceof HTMLElement) {
+      if (countRaf) {
+        cancelAnimationFrame(countRaf);
+        countRaf = 0;
+      }
       count.textContent = String(WAITLIST_SEED + next);
     }
   });

@@ -1,5 +1,6 @@
-// Entry stylesheet. @use order matters only for readability — each partial is a
-// standalone module; CSS is emitted once regardless of @use order.
+// Entry stylesheet. @use order is load-bearing: partials emit in this order, and
+// several define overlapping selectors (.lead, .dz-gradient-text, [data-skeleton]),
+// so reordering changes the CSS cascade. Not readability-only.
 @use 'fonts';
 @use 'base';
 @use 'effects';

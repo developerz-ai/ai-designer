@@ -42,6 +42,11 @@
          No JS = no .is-loading = content shows, skeletons stay hidden. -->
     <script>
       document.documentElement.classList.add('is-loading');
+      // Bundle-independent watchdog: if main.ts is blocked or throws and never
+      // clears .is-loading, reveal the real content anyway so it can't strand hidden.
+      setTimeout(() => {
+        document.documentElement.classList.remove('is-loading', 'is-leaving');
+      }, 5000);
     </script>
     <style>
       *,
