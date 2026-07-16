@@ -77,7 +77,7 @@ One AI SDK tool set per module under `src/agent/tools/`, merged by `buildTools()
 
 | Module | Tools | Purpose |
 |--------|-------|---------|
-| `dom.ts` | `query`, `getStyles`, `setStyle`, `setText`, `a11ySnapshot`, `undo`, `screenshot` | Core page read/mutate — 1:1 with `DomTool` |
+| `dom.ts` | `query`, `getStyles`, `setStyle`, `setText`, `a11ySnapshot`, `undo`, `screenshot`, `diagnostics` | Core page read/mutate — 1:1 with `DomTool` |
 | `interact.ts` | `click`, `type`, `pressKey`, `hover`, `scrollTo`, `selectOption`, `waitFor`, dialog handling, `navigate`/`back`/`reload` | Drive the page like a user |
 | `tabs.ts` | `tabs`, `frames` | Multi-tab + iframe enumeration, addressable `{tabId, frameId}` |
 | `vision.ts` | `screenshot`, `readImages`, `inspectVisually` | Visual capture + broken/oversized-image scan + vision-model self-check |
