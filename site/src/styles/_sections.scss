@@ -147,12 +147,70 @@
   &__form {
     position: relative;
     display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: $space-4;
+    margin-top: $space-6;
+    margin-inline: auto;
+    width: 100%;
+    max-width: 30rem;
+  }
+
+  // Email input + submit button, side by side (wraps on narrow viewports).
+  &__row {
+    display: flex;
     flex-wrap: wrap;
     gap: $space-2;
     justify-content: center;
-    margin-top: $space-6;
     width: 100%;
-    max-width: 30rem;
+  }
+
+  &__captcha {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    // Reserve the hCaptcha widget height so the band doesn't jump when it renders.
+    min-height: 78px;
+  }
+
+  &__consent {
+    display: flex;
+    align-items: flex-start;
+    gap: $space-2;
+    width: 100%;
+    text-align: left;
+    font-size: 0.85rem;
+    color: var(--dz-muted);
+
+    input[type='checkbox'] {
+      flex: 0 0 auto;
+      margin-top: 0.2rem;
+      width: 1rem;
+      height: 1rem;
+      accent-color: $brand-600;
+      cursor: pointer;
+    }
+
+    a {
+      color: $brand-300;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+
+      &:hover {
+        color: $brand-400;
+      }
+    }
+  }
+
+  &__error {
+    position: relative;
+    margin-top: $space-4;
+    font-weight: 500;
+    color: $danger;
+
+    &[hidden] {
+      display: none;
+    }
   }
 
   &__field {
@@ -202,7 +260,7 @@
     strong {
       color: var(--dz-ink);
       display: inline-block;
-      min-width: 4ch; // reserve max digit count (seed 1283 = 4) so the count-up
+      min-width: 4ch; // reserve digit width (floor 1200 = 4 digits) so the count-up
       // growing 1 -> 4 digits doesn't shift "developers" right (tabular-nums alone
       // fixes per-digit width, not digit-count growth).
       text-align: right;

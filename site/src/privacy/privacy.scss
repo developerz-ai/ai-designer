@@ -1,0 +1,107 @@
+// Privacy notice page styles. Reuses the shared shell (tokens, base reset + type
+// primitives + containers, effects) so the page matches the landing look, then
+// adds its own document layout. No raw color/dimension literals that are tokens.
+@use '../styles/tokens' as *;
+@use '../styles/fonts';
+@use '../styles/base';
+@use '../styles/effects';
+
+// ─── Top bar ──────────────────────────────────────────────────────────────────
+.privacy__top {
+  border-bottom: 1px solid var(--dz-border);
+}
+
+.privacy__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-4;
+  min-height: $nav-h;
+  padding-block: $space-3;
+}
+
+.privacy__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-weight: 600;
+}
+
+.privacy__logo {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.privacy__sub {
+  color: var(--dz-muted);
+}
+
+.privacy__back {
+  font-size: 0.9rem;
+  color: var(--dz-muted);
+  transition: color $dur-2 $ease-out;
+
+  &:hover {
+    color: var(--dz-ink);
+  }
+}
+
+// ─── Document ─────────────────────────────────────────────────────────────────
+.privacy {
+  padding-block: clamp(2.5rem, 6vw, 5rem);
+}
+
+.privacy__title {
+  margin-top: $space-3;
+  font-size: fluid(2rem, 2.75rem);
+}
+
+.privacy__intro {
+  margin-top: $space-4;
+  color: var(--dz-muted);
+  font-size: fluid(1.05rem, 1.2rem);
+  max-width: 46ch;
+}
+
+.privacy__section {
+  margin-top: $space-8;
+
+  h2 {
+    font-size: fluid(1.2rem, 1.5rem);
+  }
+
+  p {
+    margin-top: $space-3;
+    color: var(--dz-muted);
+    max-width: 60ch;
+  }
+
+  a {
+    color: $brand-300;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+
+    &:hover {
+      color: $brand-400;
+    }
+  }
+}
+
+// ─── Footer ───────────────────────────────────────────────────────────────────
+.privacy__foot {
+  margin-top: $space-10;
+  padding-block: $space-6;
+  border-top: 1px solid var(--dz-border);
+  color: var(--dz-muted);
+  font-size: 0.9rem;
+
+  a {
+    color: $brand-300;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+
+    &:hover {
+      color: $brand-400;
+    }
+  }
+}

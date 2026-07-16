@@ -98,6 +98,9 @@
         "publisher": { "@type": "Organization", "name": "developerz.ai", "url": "https://developerz.ai" }
       }
     </script>
+
+    <!-- hCaptcha: explicit render so main.ts can apply the build-time site key. -->
+    <script src="https://js.hcaptcha.com/1/api.js?render=explicit" async defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -302,27 +305,40 @@
           </p>
 
           <form class="notify__form" id="notify-form" novalidate>
-            <label class="notify__field" for="notify-email">
-              <span class="sr-only">Email address</span>
-              <input
-                id="notify-email"
-                type="email"
-                name="email"
-                inputmode="email"
-                autocomplete="email"
-                placeholder="you@yourteam.dev"
-                required
-              />
-            </label>
-            <button type="submit" class="dz-btn dz-btn--primary notify__submit">
-              Notify me
-              <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </button>
+            <div class="notify__row">
+              <label class="notify__field" for="notify-email">
+                <span class="sr-only">Email address</span>
+                <input
+                  id="notify-email"
+                  type="email"
+                  name="email"
+                  inputmode="email"
+                  autocomplete="email"
+                  placeholder="you@yourteam.dev"
+                  required
+                />
+              </label>
+              <button type="submit" class="dz-btn dz-btn--primary notify__submit">
+                Notify me
+                <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+              </button>
+            </div>
+
+            <div class="notify__captcha">
+              <div class="h-captcha" id="notify-captcha" data-sitekey="10000000-ffff-ffff-ffff-000000000001"></div>
+            </div>
+
+            <div class="notify__consent">
+              <input type="checkbox" id="notify-consent" required />
+              <label for="notify-consent">
+                I agree to receive one email when Designer launches. See the
+                <a href="/privacy.html">Privacy notice</a>.
+              </label>
+            </div>
           </form>
 
-          <p class="notify__success" id="notify-success" role="status" hidden>
-            You're on the list, we'll email you at launch.
-          </p>
+          <p class="notify__error" id="notify-error" role="alert" hidden></p>
+          <p class="notify__success" id="notify-success" role="status" hidden>Check your email to confirm</p>
           <p class="notify__count">
             Join <strong id="waitlist-count">0</strong> developers on the waitlist.
           </p>
@@ -374,7 +390,7 @@
 
         <nav class="footer__col" aria-label="legal">
           <h4 class="footer__heading">Legal</h4>
-          <a href="https://developerz.ai" rel="noopener">Privacy</a>
+          <a href="/privacy.html">Privacy</a>
           <a href="https://developerz.ai" rel="noopener">Security</a>
           <a href="https://github.com/developerz-ai" rel="noopener">GitHub</a>
         </nav>

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 // Standalone static site — NOT part of the WXT extension build.
@@ -18,5 +19,12 @@ export default defineConfig({
     outDir: 'dist',
     target: 'esnext',
     sourcemap: false,
+    rollupOptions: {
+      // Multi-page: the landing page plus a standalone privacy notice.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        privacy: fileURLToPath(new URL('./privacy.html', import.meta.url)),
+      },
+    },
   },
 });
