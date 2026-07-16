@@ -81,5 +81,3 @@ if (import.meta.main) {
   Bun.serve({ port, fetch: app.fetch });
   console.info(`designer-waitlist listening on :${port}`);
 }
-
-export default app;
