@@ -44,6 +44,7 @@ import {
   taskBackends,
 } from '@/mcp/backend';
 import type { McpConnectionSpec } from '@/mcp/client';
+import { designSafeTools } from '@/mcp/design-gate';
 import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
 import {
@@ -641,7 +642,10 @@ export default defineBackground(() => {
           emit: emitTurn,
           // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
           // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
-          tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
+          // The design turn only ever sees write-gated backend tools (#117): `designSafeTools`
+          // strips `<id>__task` so the model cannot dispatch a task outside the user-clicked
+          // Ship RPC — the ship route below resolves task backends from the UNFILTERED merge.
+          tools: { ...designSafeTools(await mcpManager.toolsFor()), ...sessionTools },
           // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
           // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
           approveHandoff: () => false,
