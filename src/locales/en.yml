@@ -2,14 +2,247 @@
 # _locales/ files and the typed `#i18n` module from this file at `wxt prepare` /
 # build time. Top-level flat keys back the manifest __MSG_*__ substitutions; nested
 # groups back the side-panel UI, accessed via i18n.t('group.key').
+#
+# Substitutions: named {placeholder} → i18n.t('k', { placeholder: v }); positional
+# $1 → i18n.t('k', [v]). Plurals: { 1: 'one', n: '$1 many' } → i18n.t('k', count).
+# Data renders (model/tool names, user content, dates, enum values) stay in code —
+# they are not translatable copy.
 
 # ─── Manifest (flat top-level keys, referenced as __MSG_<key>__ in wxt.config.ts) ──
 extName: developerz.ai Designer
 extDescription: Chat with an agent, redesign the live page in real time, then ship the real code via MCP.
 actionTitle: developerz.ai Designer
 
-# ─── Side-panel UI ────────────────────────────────────────────────────────────────
-# Filled in during string extraction (issue #131). One nested group is present now
-# to verify the nested-key mechanism end-to-end before the bulk extraction.
+# ─── App shell (App.tsx, index.html) ──────────────────────────────────────────────
 app:
-  title: developerz.ai Designer
+  documentTitle: developerz.ai Designer
+  logo:
+    alt: developerz.ai
+  tab:
+    chat: Chat
+    mcp: MCP
+    settings: Settings
+    history:
+      ariaLabel: History
+  chat:
+    empty: Configure a provider above, then hit Start to begin chatting.
+
+# ─── About (AboutSection.tsx) ─────────────────────────────────────────────────────
+about:
+  section:
+    ariaLabel: About
+  repoLink: GitHub repository
+  issueLink: Report an issue
+
+# ─── Auth dialog (AuthDialog.tsx) ─────────────────────────────────────────────────
+auth:
+  backdrop:
+    ariaLabel: Close authorization dialog
+  title: Authorize {label}
+  close:
+    ariaLabel: Close
+  tab:
+    apikey: API key
+    oauth: OAuth
+  apikey:
+    label: API key
+    placeholder: Bearer token
+    saving: Saving…
+    save: Save key
+  oauth:
+    authEndpoint:
+      label: Authorization endpoint
+      placeholder: https://backend.example.com/oauth/authorize
+    tokenEndpoint:
+      label: Token endpoint
+      placeholder: https://backend.example.com/oauth/token
+    clientId:
+      label: Client ID
+      placeholder: client id
+    scope:
+      label: Scope (optional)
+      placeholder: mcp:tools
+    authorizing: Authorizing…
+    authorize: Authorize
+
+# ─── Conversation replay (ConversationView.tsx) ───────────────────────────────────
+conversation:
+  back: History
+  loading: Loading conversation…
+  notFound: Conversation not found.
+  readonly: Read-only replay
+  redownload: Re-download report
+  viewPr: View PR
+
+# ─── History (HistoryPanel.tsx + stores/history.ts) ───────────────────────────────
+history:
+  loading: Loading history…
+  empty: No conversations yet — the last 10 will show up here once you chat with the agent.
+  reportBadge: Report
+  prLink: PR
+  delete:
+    ariaLabel: Delete {title}
+  error:
+    loadFailed: Failed to load history.
+    notFound: Conversation not found.
+    deleteFailed: Failed to delete conversation.
+  replay:
+    toolCall: → called {tool}
+    toolResult: ← {tool} result
+    imageOmitted: '[image omitted]'
+
+# ─── MCP panel (McpPanel.tsx + stores/mcp.ts) ─────────────────────────────────────
+mcp:
+  hint: Connect an implement backend. The agent ships changesets here.
+  loading: Loading servers…
+  preset:
+    added: '{label} added'
+    add: Add {label}
+  server:
+    toolCount:
+      1: $1 tool
+      n: $1 tools
+    connect: Connect
+    authorize: Authorize
+    remove:
+      ariaLabel: Remove {label}
+  add:
+    label: Add server
+    labelPlaceholder: Label
+    urlPlaceholder: https://backend.example.com/mcp
+    authKind:
+      none: No auth
+      apikey: API key
+      oauth: OAuth
+    submit: Add
+  error:
+    listFailed: Failed to list MCP servers.
+    addFailed: Failed to add server.
+    removeFailed: Failed to remove server.
+    connectFailed: Failed to connect {id}.
+    authFailed: Authorization failed.
+
+# ─── Readiness dropdown (ReadinessDropdown.tsx) ───────────────────────────────────
+readiness:
+  button:
+    stop: Stop
+    start: Start
+  label:
+    running: Running…
+    ready: Ready
+    setupNeeded: Setup needed
+  check:
+    provider: Provider
+    model: Model
+    hostPermission: Host permission
+    mcp: MCP backend
+    mcpDetail: '{connected}/{total} connected'
+  fix: Fix
+  overlay:
+    label: On-page overlay
+    on: 'On'
+    off: 'Off'
+
+# ─── Settings (SettingsPanel.tsx + stores/settings.ts) ────────────────────────────
+settings:
+  status:
+    valid: Provider saved and reachable.
+    invalidFallback: Provider rejected the config.
+    saving: Validating…
+    keySaved: Key saved.
+    noKey: No key set — add one to connect.
+  provider:
+    label: Provider
+    customUrlPlaceholder: https://api.example.com/v1
+  apiKey:
+    label: API key
+    placeholderSaved: saved — paste to replace
+    placeholderEmpty: sk-...
+    clear: Clear
+  model:
+    label: Model
+    refresh: Refresh
+    hint: Pick a vision-capable model; cost varies per model.
+  save: Save
+  preset:
+    openrouter: OpenRouter
+    openai: OpenAI
+    custom: Custom
+  error:
+    noModel: Choose a model before saving.
+    hostDenied: Host access denied.
+    unreachable: Provider unreachable — saved anyway.
+
+# ─── Ship bar (ShipBar.tsx + stores/changeset.ts) ─────────────────────────────────
+ship:
+  button: Ship
+  download: Download brief
+  sendTo: Send to…
+  fallback: '{reason} — downloaded a brief instead.'
+  error:
+    failed: Ship failed.
+
+# ─── Task timeline (TaskTimeline.tsx) ─────────────────────────────────────────────
+task:
+  timeline:
+    ariaLabel: Ship task status
+  counter: '· task {index}/{total}'
+  prLink: PR
+
+# ─── Composer (chat/Composer.tsx) ─────────────────────────────────────────────────
+composer:
+  modelFallback: Model
+  placeholder: Tell the agent what to change…
+  attach:
+    title: Pick an element to attach as context
+  send:
+    ariaLabel: Send
+  stop: Stop
+
+# ─── Context chip (chat/ContextChip.tsx) ──────────────────────────────────────────
+contextChip:
+  strategy:
+    dataAttr: data attr
+    id: id
+    aria: aria
+    text: text
+    cssPath: css path
+    shadow: shadow
+  picking: Picking element…
+  remove:
+    ariaLabel: Remove context
+
+# ─── Empty state (chat/EmptyState.tsx) ────────────────────────────────────────────
+empty:
+  title: Tell the agent what to build
+  subtitle: 'It edits this page live — pin an element with the picker for context, or start with one of these:'
+
+# ─── Message (chat/Message.tsx) ───────────────────────────────────────────────────
+message:
+  editsSummary:
+    1: $1 edit recorded
+    n: $1 edits recorded
+
+# ─── Suggestion chips (chat/SuggestionChips.tsx) ──────────────────────────────────
+suggestion:
+  copyHero:
+    label: Copy nvidia's hero
+    prompt: Copy nvidia.com's hero section onto this page.
+  debugFilter:
+    label: Debug this filter
+    prompt: This filter looks broken — debug and fix it.
+  ship:
+    label: Ship to developerz.ai
+    prompt: Ship my accepted edits to developerz.ai as a PR.
+
+# ─── Tool chip (chat/ToolChip.tsx) ────────────────────────────────────────────────
+toolChip:
+  kind:
+    read: read
+    act: act
+    info: info
+
+# ─── Message bus (stores/bus.ts) ──────────────────────────────────────────────────
+bus:
+  error:
+    malformedResponse: Malformed service-worker response for "{type}"

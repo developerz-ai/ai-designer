@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { i18n } from '#i18n';
 import type { Conversation, ConversationSummary } from '@/shared/messages';
 import { HistoryGetResult, HistoryListResult, OkResult } from '@/shared/messages';
 import { request } from './bus';
@@ -25,7 +26,7 @@ export async function hydrateHistory(): Promise<void> {
   try {
     const r = await request({ type: 'history-list' }, HistoryListResult);
     if (r.ok) setConversations(r.conversations ?? []);
-    else setError('Failed to load history.');
+    else setError(i18n.t('history.error.loadFailed'));
   } catch (e) {
     setError(errMsg(e));
   } finally {
@@ -40,7 +41,7 @@ export async function openConversation(id: string): Promise<void> {
   try {
     const r = await request({ type: 'history-get', id }, HistoryGetResult);
     if (r.ok && r.conversation) setSelected(r.conversation);
-    else setError(r.error ?? 'Conversation not found.');
+    else setError(r.error ?? i18n.t('history.error.notFound'));
   } catch (e) {
     setError(errMsg(e));
   } finally {
@@ -59,7 +60,7 @@ export async function deleteConversation(id: string): Promise<void> {
   try {
     const r = await request({ type: 'history-delete', id }, OkResult);
     if (!r.ok) {
-      setError(r.error ?? 'Failed to delete conversation.');
+      setError(r.error ?? i18n.t('history.error.deleteFailed'));
       return;
     }
     setConversations((list) => list.filter((c) => c.id !== id));
@@ -104,12 +105,12 @@ function renderPart(part: unknown): string {
     case 'reasoning':
       return typeof p.text === 'string' ? p.text : '';
     case 'tool-call':
-      return `→ called ${toolName}`;
+      return i18n.t('history.replay.toolCall', { tool: toolName });
     case 'tool-result':
-      return `← ${toolName} result`;
+      return i18n.t('history.replay.toolResult', { tool: toolName });
     case 'image':
     case 'file':
-      return '[image omitted]';
+      return i18n.t('history.replay.imageOmitted');
     default:
       return '';
   }

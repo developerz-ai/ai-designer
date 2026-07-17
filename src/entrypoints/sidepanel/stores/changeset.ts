@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
+import { i18n } from '#i18n';
 import type { Changeset } from '@/shared/changeset';
 import type { Mode, SwToPanel } from '@/shared/messages';
 import { HandoffResult, type ShipRequest } from '@/shared/messages';
@@ -143,7 +144,7 @@ export async function sendReport(
 
 function applyHandoffResult(r: HandoffResult): void {
   if (!r.ok) {
-    setError(r.error ?? 'Ship failed.');
+    setError(r.error ?? i18n.t('ship.error.failed'));
     return;
   }
   if (r.routed === 'report' && r.markdown) {

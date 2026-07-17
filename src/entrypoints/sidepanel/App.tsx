@@ -1,4 +1,5 @@
 import { createMemo, createSignal, Match, Show, Switch } from 'solid-js';
+import { i18n } from '#i18n';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Icon } from './components/Icon';
@@ -32,7 +33,7 @@ export function App() {
   return (
     <div class="dz-app">
       <header class="dz-app__header">
-        <img class="dz-app__logo" src="/logo.png" alt="developerz.ai" />
+        <img class="dz-app__logo" src="/logo.png" alt={i18n.t('app.logo.alt')} />
         <ReadinessDropdown onNavigate={handleNavigate} />
         <nav class="dz-app__tabs">
           <button
@@ -40,7 +41,7 @@ export function App() {
             classList={{ 'is-active': tab() === 'chat' }}
             onClick={() => setTab('chat')}
           >
-            Chat
+            {i18n.t('app.tab.chat')}
           </button>
           <Show when={SHOW_MCP}>
             <button
@@ -48,14 +49,14 @@ export function App() {
               classList={{ 'is-active': tab() === 'mcp' }}
               onClick={() => setTab('mcp')}
             >
-              MCP
+              {i18n.t('app.tab.mcp')}
             </button>
           </Show>
           <button
             type="button"
             classList={{ 'is-active': tab() === 'history' }}
             onClick={() => setTab('history')}
-            aria-label="History"
+            aria-label={i18n.t('app.tab.history.ariaLabel')}
           >
             <Icon name="history" size="sm" />
           </button>
@@ -64,7 +65,7 @@ export function App() {
             classList={{ 'is-active': tab() === 'settings' }}
             onClick={() => setTab('settings')}
           >
-            Settings
+            {i18n.t('app.tab.settings')}
           </button>
         </nav>
       </header>
@@ -74,11 +75,7 @@ export function App() {
           <Match when={tab() === 'chat'}>
             <Show
               when={sessionStarted()}
-              fallback={
-                <p class="dz-app__empty">
-                  Configure a provider above, then hit Start to begin chatting.
-                </p>
-              }
+              fallback={<p class="dz-app__empty">{i18n.t('app.chat.empty')}</p>}
             >
               <ChatPanel />
             </Show>

@@ -1,3 +1,4 @@
+import { i18n } from '#i18n';
 import { Icon } from '../Icon';
 import './EmptyState.scss';
 import type { Suggestion } from './SuggestionChips';
@@ -14,11 +15,8 @@ export function EmptyState(props: EmptyStateProps) {
   return (
     <div class="dz-empty-state">
       <Icon name="agent" size="lg" class="dz-empty-state__icon" />
-      <p class="dz-empty-state__title">Tell the agent what to build</p>
-      <p class="dz-empty-state__subtitle">
-        It edits this page live — pin an element with the picker for context, or start with one of
-        these:
-      </p>
+      <p class="dz-empty-state__title">{i18n.t('empty.title')}</p>
+      <p class="dz-empty-state__subtitle">{i18n.t('empty.subtitle')}</p>
       <SuggestionChips onSelect={props.onSelectSuggestion} />
     </div>
   );

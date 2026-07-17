@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
+import { i18n } from '#i18n';
 import type {
   AuthKind,
   McpOAuthConfig,
@@ -63,7 +64,7 @@ export async function hydrateMcp(): Promise<void> {
   try {
     const r = await request({ type: 'mcp-list' }, McpListResult);
     if (r.ok) setServers(r.servers ?? []);
-    else setError(r.error ?? 'Failed to list MCP servers.');
+    else setError(r.error ?? i18n.t('mcp.error.listFailed'));
   } catch (e) {
     setError(errMsg(e));
   } finally {
@@ -84,7 +85,7 @@ export async function addServer(input: {
   try {
     const r = await request({ type: 'mcp-add', ...input }, McpServerResult);
     if (!r.ok) {
-      setError(r.error ?? 'Failed to add server.');
+      setError(r.error ?? i18n.t('mcp.error.addFailed'));
       return false;
     }
     if (r.server) upsertLocal(r.server);
@@ -101,7 +102,7 @@ export async function removeServer(id: string): Promise<void> {
   try {
     const r = await request({ type: 'mcp-remove', id }, OkResult);
     if (!r.ok) {
-      setError(r.error ?? 'Failed to remove server.');
+      setError(r.error ?? i18n.t('mcp.error.removeFailed'));
       return;
     }
     setServers((list) => list.filter((s) => s.id !== id));
@@ -117,7 +118,7 @@ export async function connectServer(id: string): Promise<void> {
   try {
     const r = await request({ type: 'mcp-connect', id }, McpServerResult);
     if (r.server) upsertLocal(r.server);
-    else if (!r.ok) setError(r.error ?? `Failed to connect ${id}.`);
+    else if (!r.ok) setError(r.error ?? i18n.t('mcp.error.connectFailed', { id }));
   } catch (e) {
     setError(errMsg(e));
   }
@@ -145,7 +146,7 @@ async function runAuth(
   try {
     const r = await request(msg, McpServerResult);
     if (!r.ok) {
-      setAuthError(r.error ?? 'Authorization failed.');
+      setAuthError(r.error ?? i18n.t('mcp.error.authFailed'));
       return false;
     }
     if (r.server) upsertLocal(r.server);

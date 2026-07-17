@@ -1,4 +1,5 @@
 import { For, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { TaskStatus } from '../stores/changeset';
 import { tasks } from '../stores/changeset';
 import { Icon } from './Icon';
@@ -37,7 +38,7 @@ function rowKey(task: TaskStatus): string {
 export function TaskTimeline() {
   return (
     <Show when={tasks.length > 0}>
-      <ol class="dz-tasktimeline" aria-label="Ship task status">
+      <ol class="dz-tasktimeline" aria-label={i18n.t('task.timeline.ariaLabel')}>
         <For each={tasks} fallback={null}>
           {(task) => {
             const s = () => stage(task.status);
@@ -52,7 +53,10 @@ export function TaskTimeline() {
                     {statusLabel(task.status)}
                     <Show when={task.total > 1}>
                       {' '}
-                      · task {task.index + 1}/{task.total}
+                      {i18n.t('task.counter', {
+                        index: String(task.index + 1),
+                        total: String(task.total),
+                      })}
                     </Show>
                   </small>
                   <Show when={task.error}>
@@ -67,7 +71,7 @@ export function TaskTimeline() {
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      <Icon name="externalLink" size="sm" /> PR
+                      <Icon name="externalLink" size="sm" /> {i18n.t('task.prLink')}
                     </a>
                   )}
                 </Show>

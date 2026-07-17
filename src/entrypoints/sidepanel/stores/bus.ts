@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { i18n } from '#i18n';
 import type { PanelToSw } from '@/shared/messages';
 
 // Thin panel -> service-worker RPC: send a typed message, validate the reply
@@ -9,7 +10,7 @@ export async function request<T>(msg: PanelToSw, schema: z.ZodType<T>): Promise<
   const raw = await chrome.runtime.sendMessage(msg);
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error(`Malformed service-worker response for "${msg.type}"`);
+    throw new Error(i18n.t('bus.error.malformedResponse', { type: msg.type }));
   }
   return parsed.data;
 }

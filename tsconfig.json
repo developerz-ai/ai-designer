@@ -25,7 +25,12 @@
     "noEmit": true,
 
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // @wxt-dev/i18n alias. `extends` replaces (not merges) the parent .wxt paths,
+      // and those are .wxt-relative, so the #i18n mapping is redeclared here
+      // root-relative. Regenerated target: .wxt/i18n/index.ts (via `wxt prepare`).
+      "#i18n": ["./.wxt/i18n/index.ts"],
+      "#i18n/*": ["./.wxt/i18n/index.ts/*"]
     }
   },
   "include": [

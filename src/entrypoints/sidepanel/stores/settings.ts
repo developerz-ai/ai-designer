@@ -1,4 +1,5 @@
 import { createStore } from 'solid-js/store';
+import { i18n } from '#i18n';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import {
   GetProviderResult,
@@ -27,9 +28,13 @@ interface PresetDef {
 // Ordered for the dropdown. `baseURL: null` (custom) is the fallback when a saved
 // config's baseURL doesn't match a known preset.
 export const PRESETS: PresetDef[] = [
-  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1' },
-  { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1' },
-  { id: 'custom', label: 'Custom', baseURL: null },
+  {
+    id: 'openrouter',
+    label: i18n.t('settings.preset.openrouter'),
+    baseURL: 'https://openrouter.ai/api/v1',
+  },
+  { id: 'openai', label: i18n.t('settings.preset.openai'), baseURL: 'https://api.openai.com/v1' },
+  { id: 'custom', label: i18n.t('settings.preset.custom'), baseURL: null },
 ];
 
 interface SettingsState {
@@ -159,14 +164,14 @@ export async function loadModels(apiKeyText?: string): Promise<void> {
 export async function saveProvider(apiKeyText: string, model: string): Promise<void> {
   const trimmedModel = model.trim();
   if (!trimmedModel) {
-    set({ error: 'Choose a model before saving.' });
+    set({ error: i18n.t('settings.error.noModel') });
     return;
   }
   const preset = PRESETS.find((p) => p.id === settings.preset);
   set({ saveStatus: 'saving', error: null });
   const access = await ensureHostAccess(settings.baseURL);
   if (!access.ok) {
-    set({ saveStatus: 'invalid', error: access.error ?? 'Host access denied.' });
+    set({ saveStatus: 'invalid', error: access.error ?? i18n.t('settings.error.hostDenied') });
     return;
   }
   try {
@@ -184,7 +189,7 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
     );
     set({
       saveStatus: r.valid ? 'valid' : 'invalid',
-      error: r.valid ? null : (r.error ?? 'Provider unreachable — saved anyway.'),
+      error: r.valid ? null : (r.error ?? i18n.t('settings.error.unreachable')),
     });
     await hydrate();
   } catch (e) {
