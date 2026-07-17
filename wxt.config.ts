@@ -8,17 +8,21 @@ export default defineConfig({
   // this the icons (manifest `icons`) and /logo.png are missing from the build and
   // Chrome refuses to load the unpacked extension ("Could not load icon").
   publicDir: 'src/public',
-  modules: ['@wxt-dev/module-solid'],
+  // @wxt-dev/i18n: type-safe browser.i18n wrapper. Messages live in src/locales/<lang>.yml;
+  // `wxt prepare` generates _locales/ + the typed `#i18n` module. default_locale below is
+  // required for the manifest __MSG_*__ substitutions to resolve.
+  modules: ['@wxt-dev/module-solid', '@wxt-dev/i18n/module'],
   manifest: {
-    name: 'developerz.ai Designer',
-    description:
-      'Chat with an agent, redesign the live page in real time, then ship the real code via MCP.',
+    // Localized via src/locales/en.yml (top-level flat keys → generated _locales messages).
+    default_locale: 'en',
+    name: '__MSG_extName__',
+    description: '__MSG_extDescription__',
     // Side panel is the durable UI surface — survives page navigation.
     side_panel: {
       default_path: 'sidepanel/index.html',
     },
     action: {
-      default_title: 'developerz.ai Designer',
+      default_title: '__MSG_actionTitle__',
     },
     // Least-privilege permissions — each retained entry gates a concrete, in-use
     // `chrome.*` surface. `scripting` was removed (zero `chrome.scripting.*` refs

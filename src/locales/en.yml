@@ -1,0 +1,15 @@
+# Localization source — default locale (en). @wxt-dev/i18n generates the browser
+# _locales/ files and the typed `#i18n` module from this file at `wxt prepare` /
+# build time. Top-level flat keys back the manifest __MSG_*__ substitutions; nested
+# groups back the side-panel UI, accessed via i18n.t('group.key').
+
+# ─── Manifest (flat top-level keys, referenced as __MSG_<key>__ in wxt.config.ts) ──
+extName: developerz.ai Designer
+extDescription: Chat with an agent, redesign the live page in real time, then ship the real code via MCP.
+actionTitle: developerz.ai Designer
+
+# ─── Side-panel UI ────────────────────────────────────────────────────────────────
+# Filled in during string extraction (issue #131). One nested group is present now
+# to verify the nested-key mechanism end-to-end before the bulk extraction.
+app:
+  title: developerz.ai Designer
