@@ -1,44 +1,48 @@
-// Sticky translucent navbar.
+// Island nav — a floating glass capsule (#743 parity). The .nav wrapper is a
+// transparent sticky rail; the .nav__inner .container becomes the capsule. Set
+// in DM Sans ($font-nav), rounded-square ($radius-lg, not a pill). The capsule
+// geometry never morphs on scroll; only its surface intensifies via .is-scrolled
+// (toggled by initNavScroll in main.ts). Scroll-spy toggles .is-active on links.
 @use 'sass:color';
 @use 'tokens' as *;
 
 .nav {
   position: sticky;
-  top: 0;
+  top: 1.25rem;
   z-index: 1020;
-  background: color-mix(in srgb, var(--dz-bg) 80%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--dz-border);
-  transition:
-    background-color $dur-3 $ease-out,
-    border-color $dur-3 $ease-out,
-    box-shadow $dur-3 $ease-out;
-
-  // Condensed once scrolled (toggled by initNavScroll in main.ts).
-  // backdrop-filter is intentionally not transitioned — animating blur() is costly.
-  &.is-scrolled {
-    background: color-mix(in srgb, var(--dz-bg) 92%, transparent);
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
-    border-bottom-color: color.change($brand-500, $alpha: 0.18);
-    box-shadow: $elev-2;
-
-    .nav__inner {
-      height: calc(#{$nav-h} - 0.75rem);
-    }
-
-    .nav__wordmark {
-      font-size: 1rem;
-    }
-  }
+  // Transparent rail — the capsule (.nav__inner) carries the surface.
+  background: transparent;
+  margin-top: 1.25rem;
+  font-family: $font-nav;
 
   &__inner {
+    // .container already caps width at 75rem + centres; the capsule adds chrome.
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: var(--nav-h);
-    transition: height $dur-3 $ease-out;
+    min-height: 3.5rem;
+    padding: 0.4rem 0.5rem 0.4rem 1.5rem;
+    border-radius: $radius-lg;
+    border: 1px solid var(--dz-border);
+    background: color-mix(in srgb, var(--dz-surface) 72%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow:
+      0 18px 50px color.change($ink, $alpha: 0.35),
+      0 2px 10px color.change($ink, $alpha: 0.2);
+    transition:
+      background-color $dur-3 $ease-out,
+      border-color $dur-3 $ease-out,
+      box-shadow $dur-3 $ease-out;
+  }
+
+  // Surface intensifies once scrolled — geometry is unchanged (no jump).
+  &.is-scrolled &__inner {
+    background: color-mix(in srgb, var(--dz-surface) 88%, transparent);
+    border-color: color.change($brand-500, $alpha: 0.22);
+    box-shadow:
+      0 22px 60px color.change($ink, $alpha: 0.45),
+      0 2px 12px color.change($ink, $alpha: 0.28);
   }
 
   &__brand {
@@ -54,8 +58,8 @@
   }
 
   &__wordmark {
-    font-weight: 700;
-    font-size: 1.05rem;
+    font-weight: 600;
+    font-size: 1.02rem;
     letter-spacing: -0.01em;
   }
 
@@ -67,65 +71,54 @@
   &__actions {
     display: flex;
     align-items: center;
-    gap: $space-5;
+    gap: $space-2;
   }
 
   &__link {
     position: relative;
-    font-size: 0.95rem;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.9rem;
     font-weight: 500;
     color: var(--dz-muted);
-    transition: color $dur-2 $ease-out;
-
-    // Animated underline (skipped on the pill-shaped last child).
-    &::after {
-      content: '';
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: -0.25rem;
-      height: 1px;
-      transform: scaleX(0);
-      transform-origin: left;
-      background: $grad-brand;
-      transition: transform $dur-2 $ease-out;
-    }
+    border-radius: $radius;
+    transition:
+      color $dur-2 $ease-out,
+      background-color $dur-2 $ease-out;
 
     &:hover,
     &.is-active {
       color: var(--dz-ink);
+      background: color-mix(in srgb, var(--dz-surface-2) 80%, transparent);
     }
 
-    &:hover::after,
-    &:focus-visible::after,
-    &.is-active::after {
-      transform: scaleX(1);
-    }
-
+    // Last link is the launch CTA — solid product pill (per Variant A).
     &:last-child {
-      padding: $space-2 $space-4;
-      border: 1px solid var(--dz-border);
+      margin-left: $space-1;
+      padding: 0.5rem 1.1rem;
+      color: $ink;
+      font-weight: 600;
+      background: $product;
       border-radius: $radius-pill;
-      color: var(--dz-ink);
-
-      &::after {
-        display: none;
-      }
 
       &:hover {
-        border-color: color.change($product, $alpha: 0.5);
-        color: $product-400;
+        background: $product-400;
+        color: $ink;
       }
     }
   }
 
   @media (max-width: $bp-sm) {
-    &__actions {
-      gap: $space-3;
+    &__inner {
+      padding-left: 1rem;
     }
 
     &__link {
-      font-size: 0.88rem;
+      padding: 0.4rem 0.7rem;
+      font-size: 0.84rem;
+
+      &:last-child {
+        padding: 0.4rem 0.9rem;
+      }
     }
   }
 }

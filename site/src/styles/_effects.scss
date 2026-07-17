@@ -14,6 +14,11 @@
 
 // Gradient-clipped text (brand). Fills with brand-500 if background-clip unsupported.
 .dz-gradient-text {
+  // Editorial accent phrase (#743): Newsreader italic in the brand gradient.
+  font-family: $font-serif;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.01em;
   background: $grad-brand;
   background-size: 200% auto;
   background-clip: text;

@@ -34,10 +34,16 @@
     border-radius: $radius-sm;
   }
 
+  // Editorial serif statement (#743): the tagline set as a Newsreader display line.
   &__blurb {
-    margin-top: $space-3;
-    color: var(--dz-muted);
-    font-size: 0.9rem;
+    margin-top: $space-4;
+    max-width: 20rem;
+    font-family: $font-serif;
+    font-size: fluid(1.25rem, 1.65rem);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--dz-ink);
+    text-wrap: balance;
   }
 
   &__col {

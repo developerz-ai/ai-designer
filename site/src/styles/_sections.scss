@@ -16,34 +16,17 @@
   }
 }
 
-// ─── how it works ─────────────────────────────────────────────────────────────
+// ─── how it works — editorial hairline rule-grid (#743) ───────────────────────
 .how__grid {
   list-style: none;
   padding: 0;
   display: grid;
-  gap: $space-5;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 0;
+  grid-template-columns: 1fr;
+  border-block: 1px solid var(--dz-border);
 
-  // Bento at lg: Talk + See side by side, Ship as a wide horizontal feature.
   @media (min-width: $bp-lg) {
-    grid-template-columns: repeat(6, 1fr);
-
-    .how__card:nth-child(1),
-    .how__card:nth-child(2) {
-      grid-column: span 3;
-    }
-
-    .how__card:nth-child(3) {
-      grid-column: span 6;
-      flex-direction: row;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: $space-5;
-
-      .how__text {
-        flex: 1 1 24rem;
-      }
-    }
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
@@ -57,20 +40,47 @@
   flex-direction: column;
   gap: $space-3;
   padding: $space-6;
-  padding-top: $space-8;
   overflow: hidden;
 
-  // Cursor-follow spotlight, painted behind content (z-index:-1, contained by
-  // the isolation stacking context). --mx/--my set by initSpotlight() in main.ts.
+  // Editorial rule-grid: ruled cells, no card chrome (overrides .dz-glass/.dz-card).
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 1px solid var(--dz-border);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  @media (min-width: $bp-lg) {
+    border-bottom: 0;
+
+    &:not(:last-child) {
+      border-right: 1px solid var(--dz-border);
+    }
+  }
+
+  // Neutralise the .dz-lift hover translate so ruled cells stay aligned.
+  &:hover {
+    transform: none;
+  }
+
+  // Decorative icon chip is dropped in the editorial grid — the mono index and
+  // the title carry the hierarchy.
+  .icon-chip {
+    display: none;
+  }
+
+  // Cursor-follow spotlight, behind content. --mx/--my set by initSpotlight().
   &::before {
     content: '';
     position: absolute;
     inset: 0;
     z-index: -1;
-    border-radius: inherit;
     background: radial-gradient(
       14rem 14rem at var(--mx) var(--my),
-      color.change($brand-400, $alpha: 0.14),
+      color.change($brand-400, $alpha: 0.1),
       transparent 60%
     );
     opacity: 0;
@@ -84,16 +94,14 @@
 }
 
 .how__bar {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: $grad-brand;
+  display: none; // editorial grid uses hairlines, not the gradient bar
 }
 
 .how__step {
   font-family: $font-mono;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: $brand-400;
 }
 
@@ -213,16 +221,19 @@
     }
   }
 
+  // Editorial underline field (#743): a hairline-ruled input, not a pill.
   &__field {
     flex: 1 1 16rem;
 
     input {
       width: 100%;
-      padding: $space-3 $space-4;
-      background: color-mix(in srgb, var(--dz-bg) 60%, transparent);
-      border: 1px solid var(--dz-border);
-      border-radius: $radius-pill;
+      padding: $space-3 $space-1;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--dz-border);
+      border-radius: 0;
       color: var(--dz-ink);
+      transition: border-color $dur-2 $ease-out;
 
       &::placeholder {
         color: var(--dz-muted);
@@ -230,8 +241,8 @@
 
       &:focus {
         outline: none;
-        border-color: color.change($brand-500, $alpha: 0.5);
-        box-shadow: $focus-ring;
+        border-bottom-color: $brand-500;
+        box-shadow: none;
       }
     }
   }

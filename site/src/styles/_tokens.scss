@@ -62,9 +62,11 @@ $grad-brand: linear-gradient(135deg, $brand-600 0%, $accent-500 100%);
 $grad-brand-soft: linear-gradient(135deg, $brand-500 0%, $pink-500 100%);
 $grad-product: linear-gradient(135deg, $product-400 0%, $product-600 100%);
 
-// ─── Typography ───────────────────────────────────────────────────────────────
+// ─── Typography (editorial redesign, #743 parity) ─────────────────────────────
+// Manrope = UI/body/headings/eyebrow · Newsreader = serif display + italic accent
+// DM Mono = code/numeric · DM Sans = island nav only. Faces in _fonts.scss (OFL).
 $font-sans: (
-  'Instrument Sans',
+  'Manrope',
   system-ui,
   -apple-system,
   'Segoe UI',
@@ -73,8 +75,15 @@ $font-sans: (
   Arial,
   sans-serif
 );
+$font-serif: (
+  'Newsreader',
+  Georgia,
+  'Times New Roman',
+  Times,
+  serif
+);
 $font-mono: (
-  'JetBrains Mono',
+  'DM Mono',
   ui-monospace,
   SFMono-Regular,
   'SF Mono',
@@ -82,6 +91,14 @@ $font-mono: (
   Monaco,
   Consolas,
   monospace
+);
+$font-nav: (
+  'DM Sans',
+  system-ui,
+  -apple-system,
+  'Segoe UI',
+  Roboto,
+  sans-serif
 );
 
 // ─── Radius ───────────────────────────────────────────────────────────────────

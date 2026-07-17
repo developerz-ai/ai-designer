@@ -60,12 +60,15 @@
   }
 
   &__title {
-    margin-top: $space-4;
-    font-size: fluid(2.5rem, 4rem);
-    line-height: 1.05;
+    margin-top: $space-5;
+    font-weight: 800;
+    font-size: fluid(2.6rem, 5rem);
+    line-height: 0.98;
+    letter-spacing: -0.045em; // editorial display tracking (#743)
 
     .dz-gradient-text {
       display: block;
+      letter-spacing: -0.02em; // serif accent sits looser than the sans headline
     }
   }
 
