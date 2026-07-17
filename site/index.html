@@ -39,16 +39,9 @@
     <link rel="preload" href="/fonts/manrope-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/newsreader-latin-400-italic.woff2" as="font" type="font/woff2" crossorigin />
 
-    <!-- Adds .is-loading before first paint. main.ts removes it once ready.
-         No JS = no .is-loading = content shows, skeletons stay hidden. -->
-    <script>
-      document.documentElement.classList.add('is-loading');
-      // Bundle-independent watchdog: if main.ts is blocked or throws and never
-      // clears .is-loading, reveal the real content anyway so it can't strand hidden.
-      setTimeout(() => {
-        document.documentElement.classList.remove('is-loading', 'is-leaving');
-      }, 5000);
-    </script>
+    <!-- Critical inline CSS — dark shell before the SCSS bundle lands (no FOUC).
+         Direction B shows content immediately (no skeleton system), so the body
+         paints visible from the start — there is no opacity gate to clear. -->
     <style>
       *,
       *::before,
@@ -63,7 +56,6 @@
         background: #0a0a0f;
       }
       body {
-        opacity: 0;
         background: #0a0a0f;
         color: #f8fafc;
         font-family: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -78,13 +70,6 @@
         max-width: 100%;
       }
     </style>
-    <noscript>
-      <style>
-        body {
-          opacity: 1;
-        }
-      </style>
-    </noscript>
 
     <script type="application/ld+json">
       {
@@ -107,47 +92,23 @@
     <a class="skip-link" href="#main">Skip to content</a>
 
     <!-- ───────────────────────── nav ───────────────────────── -->
-    <header class="nav" data-skel-host>
-      <div class="skel-nav container" data-skeleton aria-hidden="true">
-        <div class="skel-nav__group">
-          <span class="skel skel--circle-sm"></span>
-          <span class="skel skel--line skel--w8"></span>
-        </div>
-        <div class="skel-nav__group">
-          <span class="skel skel--line skel--w4"></span>
-          <span class="skel skel--pill skel--w4"></span>
-        </div>
-      </div>
-      <div class="container nav__inner">
+    <header class="nav">
+      <div class="nav__inner container">
         <a class="nav__brand" href="https://www.developerz.ai/" rel="noopener">
           <img class="nav__logo" src="/logo.png" alt="" width="302" height="302" />
           <span class="nav__wordmark">developerz.ai<span class="nav__wordmark-sub"> Designer</span></span>
         </a>
-        <nav class="nav__actions" aria-label="primary">
+        <nav class="nav__links" aria-label="primary">
           <a class="nav__link" href="#how">How it works</a>
           <a class="nav__link" href="#notify">Notify me</a>
         </nav>
+        <a class="nav__cta" href="#notify">Notify me</a>
       </div>
     </header>
 
     <main id="main">
       <!-- ─────────────────────── hero ─────────────────────── -->
-      <section class="hero" data-skel-host>
-        <div class="skel-hero container" data-skeleton aria-hidden="true">
-          <div class="skel-hero__copy">
-            <span class="skel skel--line skel--w6"></span>
-            <span class="skel skel--title skel--w100"></span>
-            <span class="skel skel--title skel--w70"></span>
-            <span class="skel skel--lead skel--w100"></span>
-            <span class="skel skel--lead skel--w100"></span>
-            <span class="skel skel--lead skel--w50"></span>
-            <div class="skel-hero__row">
-              <span class="skel skel--pill skel--w8"></span>
-              <span class="skel skel--pill skel--w6"></span>
-            </div>
-          </div>
-          <div class="skel-hero__visual skel"></div>
-        </div>
+      <section class="hero">
         <div class="hero__glow" aria-hidden="true"></div>
         <div class="container hero__grid">
           <div class="hero__copy">
@@ -157,8 +118,7 @@
               <img class="eyebrow__chrome" src="/chrome.svg" alt="" width="16" height="16" aria-hidden="true" />
             </p>
             <h1 class="hero__title">
-              Design in the live page.
-              <span class="dz-gradient-text">Ship the real code.</span>
+              Design in the live page. <span class="serif">Ship</span> the real code.
             </h1>
             <p class="lead">
               Open any page, your prod app or <code>localhost</code>, tell the agent what to change,
@@ -167,7 +127,7 @@
               the source and opens a reviewable PR.
             </p>
             <div class="hero__cta">
-              <a class="dz-btn dz-btn--primary" href="#notify" data-cta="notify">
+              <a class="dz-btn dz-btn--primary" href="#notify">
                 Notify me at launch
                 <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
               </a>
@@ -176,9 +136,9 @@
             <p class="hero__fine">BYOK · ephemeral live edits · human-in-the-loop. Nothing ships without you.</p>
           </div>
 
-          <!-- decorative floating chat + changeset card -->
+          <!-- restrained product-demo card -->
           <div class="hero__visual" aria-hidden="true">
-            <div class="dz-glass hero__card">
+            <div class="hero__card">
               <div class="window-dots">
                 <span></span><span></span><span></span>
               </div>
@@ -204,47 +164,16 @@
       </section>
 
       <!-- ─────────────────────── how it works ─────────────────────── -->
-      <section class="how section" id="how" data-skel-host>
-        <div class="skel-how container" data-skeleton aria-hidden="true">
-          <div class="skel-how__head">
-            <span class="skel skel--line skel--w4"></span>
-            <span class="skel skel--title skel--w50"></span>
-            <span class="skel skel--lead skel--w70"></span>
-          </div>
-          <div class="skel-how__grid">
-            <div class="skel-how__card">
-              <span class="skel skel--circle"></span>
-              <span class="skel skel--title skel--w50"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w70"></span>
-            </div>
-            <div class="skel-how__card">
-              <span class="skel skel--circle"></span>
-              <span class="skel skel--title skel--w50"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w70"></span>
-            </div>
-            <div class="skel-how__card">
-              <span class="skel skel--circle"></span>
-              <span class="skel skel--title skel--w50"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w100"></span>
-              <span class="skel skel--lead skel--w70"></span>
-            </div>
-          </div>
-        </div>
+      <section class="how section" id="how">
         <div class="container">
-          <header class="section__head" data-reveal>
+          <header class="section__head">
             <p class="eyebrow">The loop</p>
-            <h2 class="section__title">From a sentence to a <span class="dz-gradient-text">real PR</span>.</h2>
+            <h2 class="section__title">From a sentence to a real PR.</h2>
             <p class="lead">Three steps. No mockups, no copy-paste, no re-implementation by hand.</p>
           </header>
 
-          <ol class="how__grid" data-reveal>
-            <li class="dz-glass dz-card dz-lift how__card">
-              <span class="how__bar" aria-hidden="true"></span>
+          <ol class="how__grid">
+            <li class="how__card">
               <span class="how__step">01</span>
               <span class="icon-chip">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.7A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z" /></svg>
@@ -252,12 +181,11 @@
               <h3 class="how__title">Talk</h3>
               <p class="how__text">
                 Open the side panel on any page and describe the change in plain English,
-                "make the hero full-bleed, tighten the nav, CTA orange."
+                “make the hero full-bleed, tighten the nav, CTA orange.”
               </p>
             </li>
 
-            <li class="dz-glass dz-card dz-lift how__card">
-              <span class="how__bar" aria-hidden="true"></span>
+            <li class="how__card">
               <span class="how__step">02</span>
               <span class="icon-chip">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -269,8 +197,7 @@
               </p>
             </li>
 
-            <li class="dz-glass dz-card dz-lift how__card">
-              <span class="how__bar" aria-hidden="true"></span>
+            <li class="how__card">
               <span class="how__step">03</span>
               <span class="icon-chip">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>
@@ -286,23 +213,15 @@
       </section>
 
       <!-- ─────────────────────── notify / waitlist ─────────────────────── -->
-      <section class="notify section" id="notify" data-skel-host>
-        <div class="skel-notify container container--narrow" data-skeleton aria-hidden="true">
-          <span class="skel skel--line skel--w4"></span>
-          <span class="skel skel--title skel--w50"></span>
-          <span class="skel skel--lead skel--w70"></span>
-          <div class="skel-notify__row">
-            <span class="skel skel--pill skel--grow"></span>
-            <span class="skel skel--pill skel--w6"></span>
-          </div>
-          <span class="skel skel--line skel--w6"></span>
-        </div>
-        <div class="container container--narrow notify__inner dz-glass dz-glow-border">
-          <div class="notify__glow" aria-hidden="true"></div>
+      <!-- The form contract (IDs + structure) is lifted verbatim from the working
+           landing so main.ts's captcha/count/subscribe handlers bind unchanged;
+           only the surrounding band adopts Direction B's restrained styling. -->
+      <section class="notify section" id="notify">
+        <div class="container container--narrow notify__inner">
           <p class="eyebrow">Coming soon</p>
-          <h2 class="section__title">Be first to try <span class="dz-gradient-text">Designer</span>.</h2>
+          <h2 class="section__title">Be first to try Designer.</h2>
           <p class="lead">
-            We'll email you when Designer hits the Chrome Web Store. No spam, one message at launch.
+            We’ll email you when Designer hits the Chrome Web Store. No spam, one message at launch.
           </p>
 
           <form class="notify__form" id="notify-form" novalidate>
@@ -349,31 +268,7 @@
     </main>
 
     <!-- ───────────────────────── footer ───────────────────────── -->
-    <footer class="footer" data-skel-host>
-      <div class="skel-footer container" data-skeleton aria-hidden="true">
-        <div class="skel-footer__grid">
-          <div class="skel-footer__brand">
-            <div class="skel-nav__group">
-              <span class="skel skel--circle-sm"></span>
-              <span class="skel skel--line skel--w8"></span>
-            </div>
-            <span class="skel skel--lead skel--w100"></span>
-            <span class="skel skel--lead skel--w70"></span>
-          </div>
-          <div class="skel-footer__col">
-            <span class="skel skel--line skel--w4"></span>
-            <span class="skel skel--lead skel--w70"></span>
-            <span class="skel skel--lead skel--w70"></span>
-            <span class="skel skel--lead skel--w70"></span>
-          </div>
-          <div class="skel-footer__col">
-            <span class="skel skel--line skel--w4"></span>
-            <span class="skel skel--lead skel--w70"></span>
-            <span class="skel skel--lead skel--w70"></span>
-            <span class="skel skel--lead skel--w70"></span>
-          </div>
-        </div>
-      </div>
+    <footer class="footer">
       <div class="container footer__grid">
         <div class="footer__brand">
           <a class="footer__lockup" href="https://www.developerz.ai/" rel="noopener">
@@ -403,7 +298,6 @@
       </div>
     </footer>
 
-    <div class="dz-grain" aria-hidden="true"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
