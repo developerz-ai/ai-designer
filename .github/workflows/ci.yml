@@ -127,6 +127,50 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
+  site:
+    # The standalone landing sub-project (site/) is self-contained and NOT covered
+    # by the jobs above: root `bun run lint` excludes **/site and root typecheck is
+    # the extension's tsc. Gate site/ on its own lint/typecheck/build here, and pin
+    # the hCaptcha fail-closed guard so a future weakening can't silently reship the
+    # always-pass test key (#128).
+    name: Site (landing)
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          # site/ has its own package.json + bun.lock; skip the root install.
+          install: 'false'
+      - name: Install site deps
+        working-directory: site
+        run: bun install --frozen-lockfile
+      - name: Lint
+        working-directory: site
+        run: bun run lint
+      - name: Typecheck
+        working-directory: site
+        run: bun run typecheck
+      - name: Build (no key -> allowed, mirrors a local build)
+        working-directory: site
+        run: bun run build
+      - name: hCaptcha guard fails closed (#128 regression pin)
+        working-directory: site
+        run: |
+          # The build MUST abort when VITE_HCAPTCHA_SITEKEY is defined-but-empty or the
+          # always-pass test key (site/vite.config.ts hcaptcha-key-guard). If a future
+          # change weakens the guard, one of these builds succeeds and this job fails.
+          if VITE_HCAPTCHA_SITEKEY="" bun run build; then
+            echo "::error::hcaptcha-key-guard did not abort on an empty VITE_HCAPTCHA_SITEKEY (fail-open regression, #128)"
+            exit 1
+          fi
+          if VITE_HCAPTCHA_SITEKEY="10000000-ffff-ffff-ffff-000000000001" bun run build; then
+            echo "::error::hcaptcha-key-guard did not abort on the hCaptcha test key (fail-open regression, #128)"
+            exit 1
+          fi
+          echo "hcaptcha-key-guard correctly aborts empty and test-key builds"
+
   actionlint:
     name: actionlint
     runs-on: blacksmith-2vcpu-ubuntu-2404

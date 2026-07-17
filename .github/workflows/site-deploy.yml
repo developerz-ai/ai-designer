@@ -80,7 +80,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # PUBLIC hCaptcha site key (repo variable, not a secret) baked into the
-          # Vite bundle. Unset/empty -> main.ts falls back to the hCaptcha test key.
+          # Vite bundle. Fails CLOSED: if this repo variable is unset/empty the build
+          # aborts (hcaptcha-key-guard in site/vite.config.ts) instead of shipping the
+          # always-pass hCaptcha test key. Keep vars.HCAPTCHA_SITEKEY set to the real key.
           build-args: |
             VITE_HCAPTCHA_SITEKEY=${{ vars.HCAPTCHA_SITEKEY }}
           provenance: false

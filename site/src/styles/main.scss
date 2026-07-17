@@ -244,6 +244,12 @@ strong {
     transform: translateY(-2px);
   }
 }
+.dz-btn:disabled {
+  // Covers the submit-in-flight state and the fail-closed state (no hCaptcha key).
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
 
 // ─── Island nav (Manrope, quieter than the spec baseline) ─────
 .nav {
