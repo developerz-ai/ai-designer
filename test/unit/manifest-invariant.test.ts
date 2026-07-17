@@ -1,21 +1,42 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import wxtConfig from '../../wxt.config';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+// Reads the live wxt.config.ts as text (no `wxt` import → no esbuild) and extracts
+// the manifest permission/host arrays. The manifest arrays are static string
+// literals in wxt.config.ts, so a regex extract is exact and drift-sensitive:
+// any change to the granted surface still flows through this parser.
+function readManifestArrays(): {
+  permissions: string[];
+  host_permissions: string[];
+  optional_host_permissions: string[];
+} {
+  const configPath = resolve(__dirname, '../../wxt.config.ts');
+  const src = readFileSync(configPath, 'utf8');
+  const extract = (key: string): string[] => {
+    const match = src.match(new RegExp(`${key}\\s*:\\s*\\[([^\\]]*)\\]`, 'm'));
+    if (!match?.[1]) return [];
+    return match[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .map((s) => s.replace(/^['"]/, '').replace(/['"]$/, ''));
+  };
+  return {
+    permissions: extract('permissions'),
+    host_permissions: extract('host_permissions'),
+    optional_host_permissions: extract('optional_host_permissions'),
+  };
+}
 
 // Guards the least-privilege manifest invariant documented in
-// docs/architecture/security.md. Reads the live wxt.config.ts manifest (no
-// hardcoded list) so any drift in the granted surface fails this test.
-
-// Cast through unknown to a permissive shape: wxt's UserManifest types are
-// deep unions across MV2/MV3, but we only inspect the permission arrays here.
-const manifest = (
-  wxtConfig as {
-    manifest: {
-      permissions?: string[];
-      host_permissions?: string[];
-      optional_host_permissions?: string[];
-    };
-  }
-).manifest;
+// docs/architecture/security.md. Parses the live wxt.config.ts manifest as text
+// (no `wxt` import — importing wxt pulls in esbuild, which crashes under
+// Vitest's jsdom env) so any drift in the granted surface fails this test.
+const manifest = readManifestArrays();
 
 describe('manifest least-privilege invariants', () => {
   it('retains exactly the approved permission set', () => {
