@@ -55,12 +55,21 @@ describe('GET /healthz', () => {
 });
 
 describe('GET /count', () => {
-  it('returns the confirmed-only count', async () => {
+  it('returns the marketing seed plus the confirmed-only count', async () => {
     db.countConfirmed.mockResolvedValue(42);
     const res = await app.request('/count');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ count: 42 });
+    // 134 default seed floors the public number so an early real count never
+    // reads as dead; real confirmed signups accumulate on top of the seed.
+    expect(await res.json()).toEqual({ count: 134 + 42 });
     expect(db.countConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the seed alone when there are no confirmed signups yet', async () => {
+    db.countConfirmed.mockResolvedValue(0);
+    const res = await app.request('/count');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 134 });
   });
 });
 

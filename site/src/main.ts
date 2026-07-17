@@ -95,8 +95,10 @@ function resetCaptcha(): void {
 
 // ─── Waitlist count-up (live count from the waitlist service) ──────────────────
 // Sane floor so the band never reads a bare "0" when the count endpoint is
-// unreachable (e.g. the static site loaded before the backend is up).
-const COUNT_FLOOR = 1200;
+// unreachable (e.g. the static site loaded before the backend is up). Kept in
+// sync with the waitlist service's WAITLIST_SEED_COUNT default so the fallback
+// matches the seeded live number instead of jumping to an unrelated value.
+const COUNT_FLOOR = 134;
 
 async function fetchCount(): Promise<number> {
   try {
