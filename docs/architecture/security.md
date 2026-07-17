@@ -61,9 +61,35 @@ What this does and does not buy:
 
 ## Least privilege
 
-- Default permissions: `sidePanel`, `storage`, `scripting`, `activeTab`, `tabs`.
-- Host permissions requested per-site, on demand. User can scope to a single origin.
-- MCP connection is opt-in and per-backend; tokens revocable from MCP management UI.
+Permissions are pinned to the minimum each feature needs; every retained entry gates a concrete, in-use `chrome.*` surface. Source of truth: [`wxt.config.ts`](../../wxt.config.ts).
+
+**Invariant (enforced by [the manifest-invariant test](../../test/unit/manifest-invariant.test.ts)):**
+
+- `activeTab` is the only static host-grant permission — the content script runs against the user's current tab on explicit action, never via a blanket grant.
+- `<all_urls>` is **opt-in only**, declared in `optional_host_permissions` and granted per-origin on demand. There is no static broad host grant.
+- `scripting` was **removed** — zero `chrome.scripting.*` references remain in `src/`; the content script is auto-injected via the manifest, not programmatically.
+
+### Retained permissions
+
+| Permission | Why | World |
+|------------|-----|-------|
+| `sidePanel` | `chrome.sidePanel.*` — the durable side-panel UI surface that survives page navigation. | Side panel |
+| `storage` | `chrome.storage.{local,session}` — agent / MCP / changeset stores persist service-worker state across ephemeral restarts. | Service worker |
+| `activeTab` | Host grant for the current tab on explicit user gesture; lets the content script run without `<all_urls>`. | Content script |
+| `tabs` | `chrome.tabs.*` (query / capture / navigate) — tab tools and ~27 background calls. | Service worker |
+| `identity` | `chrome.identity.{launchWebAuthFlow,getRedirectURL}` — OAuth 2.0 PKCE for MCP backends; tokens never touch the page. | Service worker |
+| `webNavigation` | `chrome.webNavigation.getAllFrames` — frame-tree enumeration so the agent can target a specific iframe. | Service worker |
+| `debugger` | `chrome.debugger.*` (attach / sendCommand / detach) — CDP `Emulation.setDeviceMetricsOverride` for true device emulation. | Service worker |
+
+### Host permissions
+
+| Grant | Why | How granted |
+|-------|-----|-------------|
+| `https://openrouter.ai/*` | BYOK model endpoint; the service worker calls it directly (CORS-exempt). | Static (`host_permissions`) — service worker only |
+| `https://glitchtip.infra.developerz.ai/*` | Crash ingest (GlitchTip, error events only). | Static (`host_permissions`) — service worker only |
+| `<all_urls>` | Broad page access when the user wants it. | **Opt-in** (`optional_host_permissions`); per-origin, revocable |
+
+MCP connection is opt-in and per-backend; tokens are revocable from the MCP management UI. See [privacy.md](privacy.md) Permissions, [mv3-worlds.md](mv3-worlds.md).
 
 ## Privacy posture
 
