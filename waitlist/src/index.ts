@@ -13,10 +13,17 @@ const PUBLIC_BASE = process.env.PUBLIC_BASE ?? 'http://localhost:3000';
 // Marketing seed for the public waitlist number. An early real count of "1"
 // reads as dead, so the displayed total starts from a base and real confirmed
 // signups accumulate on top. Override with WAITLIST_SEED_COUNT; default 134.
-const WAITLIST_SEED = (() => {
-  const raw = Number(process.env.WAITLIST_SEED_COUNT);
-  return Number.isInteger(raw) && raw >= 0 ? raw : 134;
-})();
+//
+// Requires a non-empty, non-negative integer string. A blank/whitespace value
+// (e.g. an unrendered GitOps env template) falls back to 134 instead of
+// Number("")===0 silently disabling the floor; an explicit "0" is honoured as a
+// deliberate disable. Exported for unit tests.
+export function seedFromEnv(raw: string | undefined): number {
+  const v = raw?.trim();
+  const n = Number(v);
+  return v && Number.isInteger(n) && n >= 0 ? n : 134;
+}
+const WAITLIST_SEED = seedFromEnv(process.env.WAITLIST_SEED_COUNT);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const validEmail = (s: string): boolean => EMAIL_RE.test(s) && s.length <= 320;

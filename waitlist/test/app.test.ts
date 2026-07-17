@@ -20,7 +20,7 @@ vi.mock('../src/db', () => db);
 vi.mock('../src/mail', () => mail);
 vi.mock('../src/hcaptcha', () => captcha);
 
-import { app } from '../src/index';
+import { app, seedFromEnv } from '../src/index';
 import { signToken } from '../src/token';
 
 beforeAll(() => {
@@ -44,6 +44,23 @@ const json = (body: unknown) => ({
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify(body),
+});
+
+describe('seedFromEnv (waitlist seed guard)', () => {
+  it('applies a valid non-negative integer override', () => {
+    expect(seedFromEnv('200')).toBe(200);
+    expect(seedFromEnv('  50  ')).toBe(50); // trimmed
+  });
+
+  it('honours an explicit "0" as a deliberate disable', () => {
+    expect(seedFromEnv('0')).toBe(0);
+  });
+
+  it('falls back to 134 on blank, missing, or invalid values', () => {
+    for (const bad of [undefined, '', '   ', '-5', '1.5', 'abc', 'NaN']) {
+      expect(seedFromEnv(bad)).toBe(134);
+    }
+  });
 });
 
 describe('GET /healthz', () => {
