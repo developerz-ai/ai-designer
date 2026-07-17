@@ -28,7 +28,7 @@ src/
 | `side_panel` | `sidepanel/index.html` | Persistent UI, survives page nav. |
 | `background.service_worker` | `background.ts` (module) | Agent loop + key custody. |
 | `content_scripts` | match `<all_urls>`, `run_at: document_idle` | DOM access on the active tab. |
-| `permissions` | `sidePanel`, `storage`, `scripting`, `activeTab`, `tabs`, `identity`, `webNavigation`, `debugger` | `identity` = MCP OAuth PKCE; `debugger` = device emulation; `webNavigation` = frame enumeration; `scripting` currently unused (least-privilege review: #23). |
+| `permissions` | `sidePanel`, `storage`, `activeTab`, `tabs`, `identity`, `webNavigation`, `debugger` | `identity` = MCP OAuth PKCE; `debugger` = device emulation; `webNavigation` = frame enumeration. (`scripting` was removed as unused in #23.) |
 | `host_permissions` | `https://openrouter.ai/*`, `https://glitchtip.infra.developerz.ai/*` (static) | The SW calls the BYOK model endpoint + crash reporting directly; page hosts stay opt-in. |
 | `optional_host_permissions` | `<all_urls>` | User grants page access when they want it everywhere. |
 

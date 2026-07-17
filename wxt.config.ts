@@ -20,12 +20,25 @@ export default defineConfig({
     action: {
       default_title: 'developerz.ai Designer',
     },
-    // `identity` powers the OAuth 2.0 PKCE flow for MCP backends
-    // (`chrome.identity.launchWebAuthFlow`) — SW-only, tokens never touch the page.
+    // Least-privilege permissions — each retained entry gates a concrete, in-use
+    // `chrome.*` surface. `scripting` was removed (zero `chrome.scripting.*` refs
+    // in src/; content script is auto-injected via the manifest, not programmatic).
+    //   sidePanel      — chrome.sidePanel.*: the durable side-panel UI surface.
+    //   storage        — chrome.storage.{session,local}: agent/mcp/changeset
+    //                    stores persist SW state across ephemeral restarts.
+    //   activeTab      — host grant for the user's current tab on explicit action;
+    //                    lets the content script run without a broad <all_urls> grant.
+    //   tabs           — chrome.tabs.* (query/capture/navigate): ~27 background.ts
+    //                    calls + tab tools. SW-only — not exposed to the page.
+    //   identity       — chrome.identity.{launchWebAuthFlow,getRedirectURL}:
+    //                    OAuth 2.0 PKCE for MCP backends; tokens never touch the page.
+    //   webNavigation  — chrome.webNavigation.getAllFrames: frame-tree enumeration
+    //                    so the agent can target a specific iframe. SW-only.
+    //   debugger       — chrome.debugger.* (attach/sendCommand/detach): CDP
+    //                    Emulation.setDeviceMetricsOverride for true device emulation. SW-only.
     permissions: [
       'sidePanel',
       'storage',
-      'scripting',
       'activeTab',
       'tabs',
       'identity',
