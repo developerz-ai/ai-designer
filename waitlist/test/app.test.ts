@@ -20,7 +20,7 @@ vi.mock('../src/db', () => db);
 vi.mock('../src/mail', () => mail);
 vi.mock('../src/hcaptcha', () => captcha);
 
-import { app } from '../src/index';
+import { app, seedFromEnv } from '../src/index';
 import { signToken } from '../src/token';
 
 beforeAll(() => {
@@ -46,6 +46,23 @@ const json = (body: unknown) => ({
   body: JSON.stringify(body),
 });
 
+describe('seedFromEnv (waitlist seed guard)', () => {
+  it('applies a valid non-negative integer override', () => {
+    expect(seedFromEnv('200')).toBe(200);
+    expect(seedFromEnv('  50  ')).toBe(50); // trimmed
+  });
+
+  it('honours an explicit "0" as a deliberate disable', () => {
+    expect(seedFromEnv('0')).toBe(0);
+  });
+
+  it('falls back to 134 on blank, missing, or invalid values', () => {
+    for (const bad of [undefined, '', '   ', '-5', '1.5', 'abc', 'NaN']) {
+      expect(seedFromEnv(bad)).toBe(134);
+    }
+  });
+});
+
 describe('GET /healthz', () => {
   it('returns 200 ok', async () => {
     const res = await app.request('/healthz');
@@ -55,12 +72,21 @@ describe('GET /healthz', () => {
 });
 
 describe('GET /count', () => {
-  it('returns the confirmed-only count', async () => {
+  it('returns the marketing seed plus the confirmed-only count', async () => {
     db.countConfirmed.mockResolvedValue(42);
     const res = await app.request('/count');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ count: 42 });
+    // 134 default seed floors the public number so an early real count never
+    // reads as dead; real confirmed signups accumulate on top of the seed.
+    expect(await res.json()).toEqual({ count: 134 + 42 });
     expect(db.countConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the seed alone when there are no confirmed signups yet', async () => {
+    db.countConfirmed.mockResolvedValue(0);
+    const res = await app.request('/count');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 134 });
   });
 });
 
