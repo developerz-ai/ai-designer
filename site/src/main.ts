@@ -9,12 +9,18 @@ import './styles/main.scss';
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ─── hCaptcha ─────────────────────────────────────────────────────────────────
-// The site key is public. Build-time env override with the documented hCaptcha
-// TEST key as the fallback (the real production key is a deploy-time precondition).
-// `||` (not `??`): a Docker ARG that was never passed arrives as an EMPTY string,
-// which must also fall back to the test key rather than render a broken widget.
+// The site key is public and baked at build time (VITE_HCAPTCHA_SITEKEY, from the
+// HCAPTCHA_SITEKEY repo variable via site-deploy.yml -> Dockerfile ARG). In DEV
+// (`vite dev`) we fall back to hCaptcha's public TEST key so the widget works
+// locally; that literal is behind `import.meta.env.DEV`, so it is dead-code-
+// eliminated from the production bundle. A production build with an empty key is
+// rejected at build time (hcaptcha-key-guard in vite.config.ts), so this is never a
+// silent test-key fallback in prod. If it is ever empty at runtime anyway (e.g. a
+// local prod build), initCaptcha fails CLOSED — a visible disabled state — rather
+// than rendering the always-pass test widget (#128).
 const HCAPTCHA_SITEKEY =
-  import.meta.env.VITE_HCAPTCHA_SITEKEY || '10000000-ffff-ffff-ffff-000000000001';
+  import.meta.env.VITE_HCAPTCHA_SITEKEY ||
+  (import.meta.env.DEV ? '10000000-ffff-ffff-ffff-000000000001' : '');
 
 let captchaWidgetId: string | undefined;
 
@@ -24,6 +30,13 @@ let captchaWidgetId: string | undefined;
 function initCaptcha(): void {
   const container = document.getElementById('notify-captcha');
   if (!container) {
+    return;
+  }
+  // Fail closed: an empty key must never silently become the always-pass test key.
+  // The build already aborts on an empty key (vite.config.ts hcaptcha-key-guard);
+  // this is the runtime backstop for any build that slips through.
+  if (HCAPTCHA_SITEKEY === '') {
+    disableSignup('Signups are briefly unavailable. Please check back soon.');
     return;
   }
   let attempts = 0;
@@ -61,6 +74,21 @@ function resetCaptcha(): void {
   } catch {
     // hCaptcha not ready — nothing to reset.
   }
+}
+
+// Fail-closed state when no real hCaptcha key is configured: hide the empty widget
+// slot, disable the submit button, and surface a visible message so the form can
+// never accept a signup without bot protection.
+function disableSignup(message: string): void {
+  const captcha = document.getElementById('notify-captcha');
+  if (captcha instanceof HTMLElement) {
+    captcha.hidden = true;
+  }
+  const submit = document.querySelector<HTMLButtonElement>('#notify-form button[type="submit"]');
+  if (submit) {
+    submit.disabled = true;
+  }
+  showError(message);
 }
 
 // ─── Waitlist count-up (live count from the waitlist service) ──────────────────
