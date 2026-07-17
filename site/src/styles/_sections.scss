@@ -239,10 +239,12 @@
         color: var(--dz-muted);
       }
 
+      // Keyboard focus keeps the global :focus-visible ring (a11y); mouse focus
+      // just shifts the underline colour. Do NOT set box-shadow:none here — it
+      // would override the global focus ring and drop keyboard affordance.
       &:focus {
         outline: none;
         border-bottom-color: $brand-500;
-        box-shadow: none;
       }
     }
   }
