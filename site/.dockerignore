@@ -8,3 +8,8 @@ dist
 .gitignore
 Dockerfile
 .dockerignore
+# Keep the hCaptcha key guard's source authoritative: the build reads the key from
+# the Docker ENV (-> process.env), never a .env file. Excluding .env prevents a
+# stray local file from feeding Vite's loadEnv and bypassing the guard.
+.env
+.env.*
