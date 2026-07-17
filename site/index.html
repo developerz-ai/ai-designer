@@ -326,7 +326,8 @@
             </div>
 
             <div class="notify__captcha">
-              <div class="h-captcha" id="notify-captcha" data-sitekey="10000000-ffff-ffff-ffff-000000000001"></div>
+              <!-- Widget is rendered explicitly in main.ts with the build-time site key (VITE_HCAPTCHA_SITEKEY); no static data-sitekey here. -->
+              <div class="h-captcha" id="notify-captcha"></div>
             </div>
 
             <div class="notify__consent">
