@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
+// Resolve directly from `import.meta.url` (a `file:` URL) rather than
+// `new URL('.', import.meta.url)` — under Vitest's jsdom env the relative-URL
+// constructor rewrites the `file:` base to `http://localhost:3000/...`, so
+// fileURLToPath would throw "The URL must be of scheme file".
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Reads the live wxt.config.ts as text (no `wxt` import → no esbuild) and extracts
 // the manifest permission/host arrays. The manifest arrays are static string
