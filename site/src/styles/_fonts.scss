@@ -1,41 +1,7 @@
-// Self-hosted fonts (OFL). Files live in /public/fonts and are served at /fonts/*.
-// font-display: optional — the skeleton reveal (body opacity:0 until load + a
-// dwell) means the preloaded face is always decoded before any hero text shows,
-// so optional's 0s swap never bites (zero FOUT/CLS).
-//
-// Instrument Sans — OFL (Fontsource/Google), latin variable (wght axis). Chosen
-// over Inter for a less-ubiquitous, more intentional grotesque on the dark brand.
-
-/* stylelint-disable scss/no-duplicate-@font-face-names */
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: normal;
-  font-display: optional;
-  font-weight: 100 900;
-  src: url('/fonts/instrument-sans-latin-variable.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-    U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: optional;
-  font-weight: 400;
-  src: url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-    U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: optional;
-  font-weight: 600;
-  src: url('/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-    U+FEFF, U+FFFD;
-}
+// Self-hosted fonts (SIL OFL 1.1). Files live in /public/fonts, served at /fonts/*.
+// The editorial redesign (#743 parity) replaced Instrument Sans / JetBrains Mono
+// with the developerz.ai brand stack: Manrope (UI/body/headings), Newsreader
+// (serif display + italic accent), DM Mono (code/numeric), DM Sans (island nav).
+// Faces + latin subset + font-display live in _editorial-fonts; forwarded here so
+// main.scss keeps its single `@use 'fonts'` entry. License: public/fonts/OFL.txt.
+@forward 'editorial-fonts';
