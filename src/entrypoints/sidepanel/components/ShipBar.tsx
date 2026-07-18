@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import {
   downloadReport,
   error,
@@ -43,7 +44,7 @@ export function ShipBar() {
           onClick={() => void ship()}
         >
           <Icon name={shipping() ? 'spinner' : 'ship'} size="sm" spin={shipping()} />
-          Ship
+          {i18n.t('ship.button')}
         </button>
 
         <button
@@ -53,7 +54,7 @@ export function ShipBar() {
           onClick={() => void downloadReport()}
         >
           <Icon name="download" size="sm" />
-          Download brief
+          {i18n.t('ship.download')}
         </button>
 
         <div class="dz-shipbar__send">
@@ -65,7 +66,7 @@ export function ShipBar() {
             onClick={() => setSendOpen((v) => !v)}
           >
             <Icon name="send" size="sm" />
-            Send to…
+            {i18n.t('ship.sendTo')}
             <Icon name="chevronDown" size="sm" />
           </button>
 
@@ -87,7 +88,8 @@ export function ShipBar() {
 
       <Show when={fallbackReason()}>
         <p class="dz-shipbar__hint">
-          <Icon name="status" size="sm" /> {fallbackReason()} — downloaded a brief instead.
+          <Icon name="status" size="sm" />{' '}
+          {i18n.t('ship.fallback', { reason: fallbackReason() ?? '' })}
         </p>
       </Show>
       <Show when={error()}>

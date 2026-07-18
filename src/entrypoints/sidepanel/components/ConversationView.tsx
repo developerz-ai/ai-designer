@@ -1,4 +1,5 @@
 import { For, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { Conversation } from '@/shared/messages';
 import { saveMarkdown } from '../stores/changeset';
 import { closeConversation, renderConversationMessages } from '../stores/history';
@@ -29,18 +30,18 @@ export function ConversationView(props: ConversationViewProps) {
     <div class="dz-convview">
       <div class="dz-convview__header">
         <button type="button" class="dz-convview__back" onClick={closeConversation}>
-          <Icon name="back" size="sm" /> History
+          <Icon name="back" size="sm" /> {i18n.t('conversation.back')}
         </button>
       </div>
 
       <Show when={props.loading}>
         <p class="dz-convview__hint">
-          <Icon name="spinner" size="sm" spin /> Loading conversation…
+          <Icon name="spinner" size="sm" spin /> {i18n.t('conversation.loading')}
         </p>
       </Show>
 
       <Show when={!props.loading && !props.conversation}>
-        <p class="dz-convview__hint">Conversation not found.</p>
+        <p class="dz-convview__hint">{i18n.t('conversation.notFound')}</p>
       </Show>
 
       <Show when={!props.loading && props.conversation}>
@@ -53,7 +54,7 @@ export function ConversationView(props: ConversationViewProps) {
                 {(mode) => <span class={`dz-convview__badge is-${mode()}`}>{mode()}</span>}
               </Show>
               <span class="dz-convview__readonly">
-                <Icon name="eye" size="sm" /> Read-only replay
+                <Icon name="eye" size="sm" /> {i18n.t('conversation.readonly')}
               </span>
             </div>
 
@@ -71,7 +72,7 @@ export function ConversationView(props: ConversationViewProps) {
             <div class="dz-convview__footer">
               <Show when={conversation().report}>
                 <button type="button" class="dz-convview__action" onClick={redownload}>
-                  <Icon name="download" size="sm" /> Re-download report
+                  <Icon name="download" size="sm" /> {i18n.t('conversation.redownload')}
                 </button>
               </Show>
               <Show when={conversation().prLink}>
@@ -82,7 +83,7 @@ export function ConversationView(props: ConversationViewProps) {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    <Icon name="externalLink" size="sm" /> View PR
+                    <Icon name="externalLink" size="sm" /> {i18n.t('conversation.viewPr')}
                   </a>
                 )}
               </Show>

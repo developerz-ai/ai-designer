@@ -1,4 +1,5 @@
 import { For } from 'solid-js';
+import { i18n } from '#i18n';
 import type { Mode } from '@/shared/messages';
 import './SuggestionChips.scss';
 
@@ -15,16 +16,19 @@ export interface Suggestion {
 
 export const SUGGESTIONS: Suggestion[] = [
   {
-    label: "Copy nvidia's hero",
-    prompt: "Copy nvidia.com's hero section onto this page.",
+    label: i18n.t('suggestion.copyHero.label'),
+    prompt: i18n.t('suggestion.copyHero.prompt'),
     mode: 'copy',
   },
   {
-    label: 'Debug this filter',
-    prompt: 'This filter looks broken — debug and fix it.',
+    label: i18n.t('suggestion.debugFilter.label'),
+    prompt: i18n.t('suggestion.debugFilter.prompt'),
     mode: 'debug',
   },
-  { label: 'Ship to developerz.ai', prompt: 'Ship my accepted edits to developerz.ai as a PR.' },
+  {
+    label: i18n.t('suggestion.ship.label'),
+    prompt: i18n.t('suggestion.ship.prompt'),
+  },
 ];
 
 export interface SuggestionChipsProps {

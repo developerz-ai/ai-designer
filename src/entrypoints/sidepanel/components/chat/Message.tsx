@@ -1,4 +1,5 @@
 import { For, mergeProps, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { Edit } from '@/shared/changeset';
 import type { ToolCallEntry } from '../../stores/chat';
 import { Icon } from '../Icon';
@@ -33,7 +34,7 @@ export function showMarkdown(role: MessageRole): boolean {
 /** The "N edits recorded" summary line under a bubble's tool calls. Pure formatting, unit-tested
  *  independent of the `<Icon>` it renders alongside. */
 export function editsSummary(count: number): string {
-  return `${count} edit${count === 1 ? '' : 's'} recorded`;
+  return i18n.t('message.editsSummary', count);
 }
 
 /** A tool call's chip status, derived rather than stored (the chat store doesn't carry a

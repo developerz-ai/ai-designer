@@ -1,4 +1,5 @@
 import { For, onMount, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import {
   clearProvider,
   hydrate,
@@ -35,13 +36,15 @@ export function SettingsPanel() {
   function statusText(): string {
     switch (settings.saveStatus) {
       case 'valid':
-        return 'Provider saved and reachable.';
+        return i18n.t('settings.status.valid');
       case 'invalid':
-        return settings.error ?? 'Provider rejected the config.';
+        return settings.error ?? i18n.t('settings.status.invalidFallback');
       case 'saving':
-        return 'Validating…';
+        return i18n.t('settings.status.saving');
       default:
-        return settings.hasKey ? 'Key saved.' : 'No key set — add one to connect.';
+        return settings.hasKey
+          ? i18n.t('settings.status.keySaved')
+          : i18n.t('settings.status.noKey');
     }
   }
 
@@ -49,7 +52,7 @@ export function SettingsPanel() {
     <div class="dz-settings">
       <section class="dz-settings__section">
         <label class="dz-settings__label" for="dz-preset">
-          Provider
+          {i18n.t('settings.provider.label')}
         </label>
         <div class="dz-settings__presetrow">
           <select
@@ -64,7 +67,7 @@ export function SettingsPanel() {
           <input
             class="dz-settings__url"
             type="url"
-            placeholder="https://api.example.com/v1"
+            placeholder={i18n.t('settings.provider.customUrlPlaceholder')}
             value={settings.baseURL}
             onInput={(e) => setCustomBaseURL(e.currentTarget.value)}
           />
@@ -73,7 +76,7 @@ export function SettingsPanel() {
 
       <section class="dz-settings__section">
         <label class="dz-settings__label" for="dz-key">
-          API key
+          {i18n.t('settings.apiKey.label')}
         </label>
         <div class="dz-settings__keyrow">
           <input
@@ -82,11 +85,15 @@ export function SettingsPanel() {
             type="password"
             autocomplete="off"
             spellcheck={false}
-            placeholder={settings.hasKey ? 'saved — paste to replace' : 'sk-...'}
+            placeholder={
+              settings.hasKey
+                ? i18n.t('settings.apiKey.placeholderSaved')
+                : i18n.t('settings.apiKey.placeholderEmpty')
+            }
           />
           <Show when={settings.hasKey}>
             <button type="button" class="dz-settings__ghost" onClick={() => void clearProvider()}>
-              Clear
+              {i18n.t('settings.apiKey.clear')}
             </button>
           </Show>
         </div>
@@ -94,7 +101,7 @@ export function SettingsPanel() {
 
       <section class="dz-settings__section">
         <label class="dz-settings__label" for="dz-model">
-          Model
+          {i18n.t('settings.model.label')}
         </label>
         <div class="dz-settings__modelrow">
           <select
@@ -115,10 +122,10 @@ export function SettingsPanel() {
             disabled={settings.modelsLoading}
             onClick={() => void loadModels(keyInput.value)}
           >
-            Refresh
+            {i18n.t('settings.model.refresh')}
           </button>
         </div>
-        <p class="dz-settings__hint">Pick a vision-capable model; cost varies per model.</p>
+        <p class="dz-settings__hint">{i18n.t('settings.model.hint')}</p>
       </section>
 
       <section class="dz-settings__section">
@@ -132,7 +139,7 @@ export function SettingsPanel() {
             });
           }}
         >
-          Save
+          {i18n.t('settings.save')}
         </button>
         <p
           class="dz-settings__status"

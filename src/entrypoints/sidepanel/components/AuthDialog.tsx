@@ -1,4 +1,5 @@
 import { createSignal, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { McpServer } from '@/shared/messages';
 import { Icon } from './Icon';
 import './AuthDialog.scss';
@@ -51,17 +52,17 @@ export function AuthDialog(props: AuthDialogProps) {
       <button
         type="button"
         class="dz-authdialog__backdrop-dismiss"
-        aria-label="Close authorization dialog"
+        aria-label={i18n.t('auth.backdrop.ariaLabel')}
         onClick={props.onClose}
       />
       <div class="dz-authdialog" role="dialog" aria-modal="true">
         <header class="dz-authdialog__header">
-          <strong>Authorize {props.server.label}</strong>
+          <strong>{i18n.t('auth.title', { label: props.server.label })}</strong>
           <button
             type="button"
             class="dz-authdialog__close"
             onClick={props.onClose}
-            aria-label="Close"
+            aria-label={i18n.t('auth.close.ariaLabel')}
           >
             <Icon name="close" size="sm" />
           </button>
@@ -73,21 +74,21 @@ export function AuthDialog(props: AuthDialogProps) {
             classList={{ 'is-active': mode() === 'apikey' }}
             onClick={() => setMode('apikey')}
           >
-            API key
+            {i18n.t('auth.tab.apikey')}
           </button>
           <button
             type="button"
             classList={{ 'is-active': mode() === 'oauth' }}
             onClick={() => setMode('oauth')}
           >
-            OAuth
+            {i18n.t('auth.tab.oauth')}
           </button>
         </div>
 
         <Show when={mode() === 'apikey'}>
           <form class="dz-authdialog__form" onSubmit={handleApiKey}>
             <label class="dz-authdialog__label" for="dz-auth-key">
-              API key
+              {i18n.t('auth.apikey.label')}
             </label>
             <input
               id="dz-auth-key"
@@ -95,10 +96,10 @@ export function AuthDialog(props: AuthDialogProps) {
               type="password"
               autocomplete="off"
               spellcheck={false}
-              placeholder="Bearer token"
+              placeholder={i18n.t('auth.apikey.placeholder')}
             />
             <button type="submit" class="dz-authdialog__submit" disabled={pending()}>
-              {pending() ? 'Saving…' : 'Save key'}
+              {pending() ? i18n.t('auth.apikey.saving') : i18n.t('auth.apikey.save')}
             </button>
           </form>
         </Show>
@@ -106,39 +107,49 @@ export function AuthDialog(props: AuthDialogProps) {
         <Show when={mode() === 'oauth'}>
           <form class="dz-authdialog__form" onSubmit={handleOAuth}>
             <label class="dz-authdialog__label" for="dz-auth-authz">
-              Authorization endpoint
+              {i18n.t('auth.oauth.authEndpoint.label')}
             </label>
             <input
               id="dz-auth-authz"
               ref={authEndpoint}
               type="url"
-              placeholder="https://backend.example.com/oauth/authorize"
+              placeholder={i18n.t('auth.oauth.authEndpoint.placeholder')}
             />
             <label class="dz-authdialog__label" for="dz-auth-token">
-              Token endpoint
+              {i18n.t('auth.oauth.tokenEndpoint.label')}
             </label>
             <input
               id="dz-auth-token"
               ref={tokenEndpoint}
               type="url"
-              placeholder="https://backend.example.com/oauth/token"
+              placeholder={i18n.t('auth.oauth.tokenEndpoint.placeholder')}
             />
             <label class="dz-authdialog__label" for="dz-auth-client">
-              Client ID
+              {i18n.t('auth.oauth.clientId.label')}
             </label>
-            <input id="dz-auth-client" ref={clientId} type="text" placeholder="client id" />
+            <input
+              id="dz-auth-client"
+              ref={clientId}
+              type="text"
+              placeholder={i18n.t('auth.oauth.clientId.placeholder')}
+            />
             <label class="dz-authdialog__label" for="dz-auth-scope">
-              Scope (optional)
+              {i18n.t('auth.oauth.scope.label')}
             </label>
-            <input id="dz-auth-scope" ref={scope} type="text" placeholder="mcp:tools" />
+            <input
+              id="dz-auth-scope"
+              ref={scope}
+              type="text"
+              placeholder={i18n.t('auth.oauth.scope.placeholder')}
+            />
             <button type="submit" class="dz-authdialog__submit" disabled={pending()}>
               {pending() ? (
                 <>
-                  <Icon name="spinner" size="sm" spin /> Authorizing…
+                  <Icon name="spinner" size="sm" spin /> {i18n.t('auth.oauth.authorizing')}
                 </>
               ) : (
                 <>
-                  <Icon name="externalLink" size="sm" /> Authorize
+                  <Icon name="externalLink" size="sm" /> {i18n.t('auth.oauth.authorize')}
                 </>
               )}
             </button>

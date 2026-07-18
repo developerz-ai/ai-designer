@@ -1,4 +1,5 @@
 import { createSignal, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import { Icon } from '../Icon';
 import type { IconName } from '../icon-registry';
 import './ToolChip.scss';
@@ -26,9 +27,9 @@ const STATUS_ICON: Record<ToolChipStatus, IconName> = {
 };
 
 const KIND_LABEL: Record<'read' | 'act' | 'info', string> = {
-  read: 'read',
-  act: 'act',
-  info: 'info',
+  read: i18n.t('toolChip.kind.read'),
+  act: i18n.t('toolChip.kind.act'),
+  info: i18n.t('toolChip.kind.info'),
 };
 
 /** Defaults an unset status to `'done'` — the chat store doesn't carry a per-call status yet

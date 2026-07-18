@@ -1,4 +1,5 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { AuthKind, McpServer } from '@/shared/messages';
 import {
   addServer,
@@ -84,7 +85,7 @@ export function McpPanel() {
 
   return (
     <div class="dz-mcp">
-      <p class="dz-mcp__hint">Connect an implement backend. The agent ships changesets here.</p>
+      <p class="dz-mcp__hint">{i18n.t('mcp.hint')}</p>
 
       <section class="dz-mcp__presets">
         <For each={DEFAULT_BACKENDS}>
@@ -96,7 +97,9 @@ export function McpPanel() {
               onClick={() => void addPreset(preset)}
             >
               <Icon name="mcp" size="sm" />
-              {isAdded(preset) ? `${preset.label} added` : `Add ${preset.label}`}
+              {isAdded(preset)
+                ? i18n.t('mcp.preset.added', { label: preset.label })
+                : i18n.t('mcp.preset.add', { label: preset.label })}
             </button>
           )}
         </For>
@@ -104,7 +107,7 @@ export function McpPanel() {
 
       <Show when={loading()}>
         <p class="dz-mcp__hint">
-          <Icon name="spinner" size="sm" spin /> Loading servers…
+          <Icon name="spinner" size="sm" spin /> {i18n.t('mcp.loading')}
         </p>
       </Show>
       <Show when={error()}>
@@ -124,7 +127,7 @@ export function McpPanel() {
                 <strong>{s.label}</strong>
                 <small>{s.url}</small>
                 <Show when={s.status === 'connected'}>
-                  <small class="dz-mcp__tools">{s.toolCount} tools</small>
+                  <small class="dz-mcp__tools">{i18n.t('mcp.server.toolCount', s.toolCount)}</small>
                 </Show>
                 <Show when={s.status === 'error' && s.error}>
                   <small class="dz-mcp__errortext">{s.error}</small>
@@ -133,18 +136,18 @@ export function McpPanel() {
               <div class="dz-mcp__actions">
                 <Show when={s.status !== 'connected'}>
                   <button type="button" onClick={() => void connectServer(s.id)}>
-                    Connect
+                    {i18n.t('mcp.server.connect')}
                   </button>
                 </Show>
                 <Show when={s.authKind !== 'none'}>
                   <button type="button" class="dz-mcp__ghost" onClick={() => setAuthTarget(s)}>
-                    Authorize
+                    {i18n.t('mcp.server.authorize')}
                   </button>
                 </Show>
                 <button
                   type="button"
                   class="dz-mcp__ghost"
-                  aria-label={`Remove ${s.label}`}
+                  aria-label={i18n.t('mcp.server.remove.ariaLabel', { label: s.label })}
                   onClick={() => void removeServer(s.id)}
                 >
                   <Icon name="trash" size="sm" />
@@ -157,19 +160,19 @@ export function McpPanel() {
 
       <form class="dz-mcp__add" onSubmit={submitAdd}>
         <label class="dz-mcp__label" for="dz-mcp-label">
-          Add server
+          {i18n.t('mcp.add.label')}
         </label>
         <input
           id="dz-mcp-label"
           type="text"
-          placeholder="Label"
+          placeholder={i18n.t('mcp.add.labelPlaceholder')}
           value={label()}
           onInput={(e) => setLabel(e.currentTarget.value)}
         />
         <input
           id="dz-mcp-url"
           type="url"
-          placeholder="https://backend.example.com/mcp"
+          placeholder={i18n.t('mcp.add.urlPlaceholder')}
           value={url()}
           onInput={(e) => setUrl(e.currentTarget.value)}
         />
@@ -178,12 +181,12 @@ export function McpPanel() {
           value={authKind()}
           onChange={(e) => setAuthKind(e.currentTarget.value as AuthKind)}
         >
-          <option value="none">No auth</option>
-          <option value="apikey">API key</option>
-          <option value="oauth">OAuth</option>
+          <option value="none">{i18n.t('mcp.add.authKind.none')}</option>
+          <option value="apikey">{i18n.t('mcp.add.authKind.apikey')}</option>
+          <option value="oauth">{i18n.t('mcp.add.authKind.oauth')}</option>
         </select>
         <button type="submit">
-          <Icon name="add" size="sm" /> Add
+          <Icon name="add" size="sm" /> {i18n.t('mcp.add.submit')}
         </button>
       </form>
 

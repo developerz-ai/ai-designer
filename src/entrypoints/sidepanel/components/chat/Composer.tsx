@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import { send as sendMessage, stopTurn, streaming } from '../../stores/chat';
 import { pickerActive, selector, startPicker } from '../../stores/focus';
 import { settings, switchModel } from '../../stores/settings';
@@ -23,7 +24,7 @@ export function Composer() {
 
   const canSend = createMemo(() => draft().trim().length > 0 && !streaming());
   const attachActive = createMemo(() => pickerActive() || selector() !== null);
-  const currentModelLabel = createMemo(() => settings.model ?? 'Model');
+  const currentModelLabel = createMemo(() => settings.model ?? i18n.t('composer.modelFallback'));
 
   function submit(): void {
     const text = draft();
@@ -50,7 +51,7 @@ export function Composer() {
 
       <textarea
         class="dz-composer__input"
-        placeholder="Tell the agent what to change…"
+        placeholder={i18n.t('composer.placeholder')}
         rows={1}
         value={draft()}
         onInput={(e) => setDraft(e.currentTarget.value)}
@@ -64,7 +65,7 @@ export function Composer() {
           class="dz-composer__attach"
           classList={{ 'is-active': attachActive() }}
           aria-pressed={attachActive()}
-          title="Pick an element to attach as context"
+          title={i18n.t('composer.attach.title')}
           onClick={() => void startPicker()}
         >
           <Icon name="picker" size="sm" />
@@ -104,7 +105,7 @@ export function Composer() {
             <button
               type="button"
               class="dz-composer__send"
-              aria-label="Send"
+              aria-label={i18n.t('composer.send.ariaLabel')}
               disabled={!canSend()}
               onClick={submit}
             >
@@ -113,7 +114,7 @@ export function Composer() {
           }
         >
           <button type="button" class="dz-composer__stop" onClick={() => void stopTurn()}>
-            Stop
+            {i18n.t('composer.stop')}
           </button>
         </Show>
       </div>

@@ -1,4 +1,5 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { ConversationSummary } from '@/shared/messages';
 import {
   conversations,
@@ -32,7 +33,7 @@ export function HistoryPanel() {
       >
         <Show when={loading()}>
           <p class="dz-history__hint">
-            <Icon name="spinner" size="sm" spin /> Loading history…
+            <Icon name="spinner" size="sm" spin /> {i18n.t('history.loading')}
           </p>
         </Show>
         <Show when={error()}>
@@ -41,9 +42,7 @@ export function HistoryPanel() {
           </p>
         </Show>
         <Show when={!loading() && conversations().length === 0}>
-          <p class="dz-history__empty">
-            No conversations yet — the last 10 will show up here once you chat with the agent.
-          </p>
+          <p class="dz-history__empty">{i18n.t('history.empty')}</p>
         </Show>
 
         <ul class="dz-history__list">
@@ -83,7 +82,7 @@ function HistoryRow(props: { conversation: ConversationSummary }) {
             <time class="dz-history__date">{formatDate(props.conversation.createdAt)}</time>
             <Show when={!props.conversation.prLink && props.conversation.hasReport}>
               <span class="dz-history__reportbadge">
-                <Icon name="report" size="sm" /> Report
+                <Icon name="report" size="sm" /> {i18n.t('history.reportBadge')}
               </span>
             </Show>
           </div>
@@ -93,7 +92,7 @@ function HistoryRow(props: { conversation: ConversationSummary }) {
       <Show when={props.conversation.prLink}>
         {(link) => (
           <a class="dz-history__pr" href={link()} target="_blank" rel="noopener noreferrer">
-            <Icon name="externalLink" size="sm" /> PR
+            <Icon name="externalLink" size="sm" /> {i18n.t('history.prLink')}
           </a>
         )}
       </Show>
@@ -101,7 +100,7 @@ function HistoryRow(props: { conversation: ConversationSummary }) {
       <button
         type="button"
         class="dz-history__delete"
-        aria-label={`Delete ${props.conversation.title}`}
+        aria-label={i18n.t('history.delete.ariaLabel', { title: props.conversation.title })}
         onClick={() => void deleteConversation(props.conversation.id)}
       >
         <Icon name="trash" size="sm" />

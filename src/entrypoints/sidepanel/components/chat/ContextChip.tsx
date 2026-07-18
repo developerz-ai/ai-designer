@@ -1,4 +1,5 @@
 import { createMemo, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import type { StableSelector } from '@/shared/messages';
 import { clearFocus, pickerActive, selector, stopPicker } from '../../stores/focus';
 import { Icon } from '../Icon';
@@ -10,12 +11,12 @@ import './ContextChip.scss';
 // still clicking a target on the page, then the resolved element once one lands. Dispatch-only —
 // dismiss routes back through the focus store (CLAUDE.md "SolidJS + SRP").
 const STRATEGY_LABEL: Record<StableSelector['strategy'], string> = {
-  'data-attr': 'data attr',
-  id: 'id',
-  aria: 'aria',
-  text: 'text',
-  'css-path': 'css path',
-  shadow: 'shadow',
+  'data-attr': i18n.t('contextChip.strategy.dataAttr'),
+  id: i18n.t('contextChip.strategy.id'),
+  aria: i18n.t('contextChip.strategy.aria'),
+  text: i18n.t('contextChip.strategy.text'),
+  'css-path': i18n.t('contextChip.strategy.cssPath'),
+  shadow: i18n.t('contextChip.strategy.shadow'),
 };
 
 /** Formats a pinned selector for the chip's single-line label: value first (truncated so a
@@ -48,7 +49,7 @@ export function ContextChip() {
         <Icon name="picker" size="sm" spin={active() && !picked()} />
         <Show
           when={picked()}
-          fallback={<span class="dz-context-chip__label">Picking element…</span>}
+          fallback={<span class="dz-context-chip__label">{i18n.t('contextChip.picking')}</span>}
         >
           {(sel) => (
             <span
@@ -62,7 +63,7 @@ export function ContextChip() {
         <button
           type="button"
           class="dz-context-chip__dismiss"
-          aria-label="Remove context"
+          aria-label={i18n.t('contextChip.remove.ariaLabel')}
           onClick={dismiss}
         >
           <Icon name="close" size="sm" />

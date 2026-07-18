@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { i18n } from '#i18n';
 import {
   initOverlayStore,
   enabled as overlayEnabled,
@@ -40,8 +41,8 @@ export type SessionAction = 'start' | 'stop';
  *  so the three-state mapping is unit-testable without mounting Solid. */
 export function sessionButton(state: SessionState): { label: string; action: SessionAction } {
   return state === 'running'
-    ? { label: 'Stop', action: 'stop' }
-    : { label: 'Start', action: 'start' };
+    ? { label: i18n.t('readiness.button.stop'), action: 'stop' }
+    : { label: i18n.t('readiness.button.start'), action: 'start' };
 }
 
 interface CheckRow {
@@ -71,8 +72,8 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
   const running = createMemo(() => sessionState() === 'running');
 
   const label = createMemo(() => {
-    if (running()) return 'Running…';
-    return ready() ? 'Ready' : 'Setup needed';
+    if (running()) return i18n.t('readiness.label.running');
+    return ready() ? i18n.t('readiness.label.ready') : i18n.t('readiness.label.setupNeeded');
   });
 
   const pillIcon = createMemo<IconName>(() => {
@@ -84,19 +85,32 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
     const s = state();
     if (!s) return [];
     return [
-      { key: 'provider', label: 'Provider', ok: s.provider === 'ok', tab: 'settings' },
-      { key: 'model', label: 'Model', ok: s.model === 'ok', tab: 'settings' },
+      {
+        key: 'provider',
+        label: i18n.t('readiness.check.provider'),
+        ok: s.provider === 'ok',
+        tab: 'settings',
+      },
+      {
+        key: 'model',
+        label: i18n.t('readiness.check.model'),
+        ok: s.model === 'ok',
+        tab: 'settings',
+      },
       {
         key: 'hostPermission',
-        label: 'Host permission',
+        label: i18n.t('readiness.check.hostPermission'),
         ok: s.hostPermission === 'granted',
         tab: 'settings',
       },
       {
         key: 'mcp',
-        label: 'MCP backend',
+        label: i18n.t('readiness.check.mcp'),
         ok: s.mcp.connected > 0,
-        detail: `${s.mcp.connected}/${s.mcp.total} connected`,
+        detail: i18n.t('readiness.check.mcpDetail', {
+          connected: String(s.mcp.connected),
+          total: String(s.mcp.total),
+        }),
         tab: 'mcp',
       },
     ];
@@ -151,7 +165,7 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
                     class="dz-readiness__link"
                     onClick={() => navigate(check.tab)}
                   >
-                    Fix <Icon name="externalLink" size="sm" />
+                    {i18n.t('readiness.fix')} <Icon name="externalLink" size="sm" />
                   </button>
                 </Show>
               </div>
@@ -160,7 +174,7 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
 
           <div class="dz-readiness__row">
             <Icon name="eye" size="sm" />
-            <span class="dz-readiness__rowlabel">On-page overlay</span>
+            <span class="dz-readiness__rowlabel">{i18n.t('readiness.overlay.label')}</span>
             <button
               type="button"
               class="dz-readiness__link"
@@ -168,7 +182,7 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
               aria-checked={overlayEnabled()}
               onClick={() => void setOverlayEnabled(!overlayEnabled())}
             >
-              {overlayEnabled() ? 'On' : 'Off'}
+              {overlayEnabled() ? i18n.t('readiness.overlay.on') : i18n.t('readiness.overlay.off')}
             </button>
           </div>
 

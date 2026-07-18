@@ -11,6 +11,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
+      // The WXT-generated #i18n module resolves via globalThis chrome/browser, which the
+      // per-test fakes replace. Point tests at a self-contained double that reads
+      // src/locales/en.yml directly, so localized strings resolve independent of the fake.
+      '#i18n': resolve(__dirname, './test/fakes/i18n.ts'),
     },
   },
   test: {
