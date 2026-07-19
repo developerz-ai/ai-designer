@@ -1,5 +1,6 @@
 import { For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import { openOnboarding } from '../stores/onboarding';
 import {
   clearProvider,
   hydrate,
@@ -150,6 +151,12 @@ export function SettingsPanel() {
         >
           {statusText()}
         </p>
+      </section>
+
+      <section class="dz-settings__section">
+        <button type="button" class="dz-settings__ghost" onClick={() => openOnboarding()}>
+          {i18n.t('settings.setupGuide.button')}
+        </button>
       </section>
 
       <AboutSection />

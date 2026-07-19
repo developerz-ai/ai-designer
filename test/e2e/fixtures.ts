@@ -12,7 +12,7 @@ const pathToExtension = path.resolve(process.cwd(), '.output/chrome-mv3');
 export const test = base.extend<{
   context: BrowserContext;
   extensionId: string;
-  openExtensionPage: (relativePath: string) => Promise<Page>;
+  openExtensionPage: (relativePath: string, opts?: { firstRun?: boolean }) => Promise<Page>;
 }>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright passes the fixtures object as arg 1; this fixture has no deps.
   context: async ({}, use) => {
@@ -49,8 +49,20 @@ export const test = base.extend<{
 
   // Open any extension-origin page in this context (side panels can't be opened
   // via a Playwright toolbar gesture, so we navigate a tab to the panel page).
+  //
+  // The first-run onboarding guide (slice 24) auto-shows on an empty profile as a modal overlay
+  // that covers the panel tabs. Every persistent context here starts empty, so by default we seed
+  // `onboarding:dismissed=true` (via the SW's chrome.storage) BEFORE navigating, so panel specs
+  // reach the tabs unobstructed — exactly as they did before onboarding existed. The dedicated
+  // onboarding spec passes `{ firstRun: true }` to see the guide.
   openExtensionPage: async ({ context, extensionId }, use) => {
-    await use(async (relativePath: string) => {
+    await use(async (relativePath: string, opts: { firstRun?: boolean } = {}) => {
+      const [sw] = context.serviceWorkers();
+      if (sw) {
+        await sw.evaluate(async (dismissed) => {
+          await chrome.storage.local.set({ 'onboarding:dismissed': dismissed });
+        }, !opts.firstRun);
+      }
       const page = await context.newPage();
       await page.goto(`chrome-extension://${extensionId}/${relativePath.replace(/^\//, '')}`);
       return page;

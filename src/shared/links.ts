@@ -13,3 +13,13 @@ export const ISSUES_URL = `${REPO_URL}/issues`;
  * template (`.github/ISSUE_TEMPLATE/bug_report.md`).
  */
 export const NEW_ISSUE_URL = `${REPO_URL}/issues/new?template=bug_report.md`;
+
+/** Docs home — the in-repo documentation tree (architecture + idea notes). */
+export const DOCS_URL = `${REPO_URL}/tree/main/docs`;
+
+/**
+ * Privacy policy — the repo's data-handling doc (BYOK, ephemeral edits, no
+ * first-party server). Linked from the onboarding footer so a first-run user can
+ * read the posture before adding a key. See `docs/architecture/privacy.md`.
+ */
+export const PRIVACY_URL = `${REPO_URL}/blob/main/docs/architecture/privacy.md`;

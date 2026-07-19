@@ -85,6 +85,7 @@ import {
   PanelToSw,
   ToolResult,
 } from '@/shared/messages';
+import { readOnboardingDismissed, writeOnboardingDismissed } from '@/shared/onboarding-prefs';
 import { readOverlayEnabled, writeOverlayEnabled } from '@/shared/overlay-prefs';
 import { overlayLabel } from '@/shared/overlay-step';
 import { PORT_NAME } from '@/shared/port';
@@ -945,6 +946,15 @@ export default defineBackground(() => {
       }
       case 'get-overlay-enabled':
         return { ok: true, enabled: overlayEnabled };
+
+      // --- first-run onboarding guide, dismissed flag (slice 24) ----------
+      // Panel-only presentation state (which surface to show) — just persist/read it, no
+      // in-memory SW flag and no tab push (nothing on the page reacts to it).
+      case 'set-onboarding-dismissed':
+        await writeOnboardingDismissed(msg.dismissed);
+        return { ok: true, dismissed: msg.dismissed };
+      case 'get-onboarding-dismissed':
+        return { ok: true, dismissed: await readOnboardingDismissed() };
     }
   }
 

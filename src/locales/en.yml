@@ -34,6 +34,29 @@ about:
   repoLink: GitHub repository
   issueLink: Report an issue
 
+# ─── First-run onboarding (Onboarding.tsx) ────────────────────────────────────────
+onboarding:
+  ariaLabel: Get started with Designer
+  title: Welcome to Designer
+  subtitle: Three quick steps to your first live edit.
+  optional: Optional
+  skip: Skip for now
+  docsLink: Docs
+  privacyLink: Privacy policy
+  step:
+    provider:
+      label: Add your AI provider
+      desc: Bring your own OpenRouter (or any OpenAI-compatible) key and pick a model.
+      cta: Open settings
+    mcp:
+      label: Connect a backend
+      desc: Link an implementation backend so the agent can ship your edits as a real PR.
+      cta: Manage backends
+    start:
+      label: Make your first edit
+      desc: Hit Start, then tell the agent what to change on this page.
+      cta: Get started
+
 # ─── Auth dialog (AuthDialog.tsx) ─────────────────────────────────────────────────
 auth:
   backdrop:
@@ -164,6 +187,8 @@ settings:
     refresh: Refresh
     hint: Pick a vision-capable model; cost varies per model.
   save: Save
+  setupGuide:
+    button: Show setup guide
   preset:
     openrouter: OpenRouter
     openai: OpenAI
