@@ -292,6 +292,17 @@ export const SetOverlayEnabled = z.object({
 });
 export const GetOverlayEnabled = z.object({ type: z.literal('get-overlay-enabled') });
 
+// --- first-run onboarding guide, dismissed flag (slice 24) ----------------
+// Whether the user has skipped/finished the first-run guide. Persisted to chrome.storage.local
+// (`src/shared/onboarding-prefs.ts`) so it auto-shows on each panel open until skipped/finished;
+// the panel re-opens it on demand from Settings without touching this flag. Panel-only concern, so
+// — unlike the overlay toggle — the SW just reads/writes storage with no cross-tab push.
+export const SetOnboardingDismissed = z.object({
+  type: z.literal('set-onboarding-dismissed'),
+  dismissed: z.boolean(),
+});
+export const GetOnboardingDismissed = z.object({ type: z.literal('get-onboarding-dismissed') });
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -320,6 +331,8 @@ export const PanelToSw = z.discriminatedUnion('type', [
   HistoryDelete,
   SetOverlayEnabled,
   GetOverlayEnabled,
+  SetOnboardingDismissed,
+  GetOnboardingDismissed,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -423,6 +436,10 @@ export type HistoryGetResult = z.infer<typeof HistoryGetResult>;
 // RPC response for `set-overlay-enabled` / `get-overlay-enabled`.
 export const OverlayEnabledResult = z.object({ ok: z.boolean(), enabled: z.boolean() });
 export type OverlayEnabledResult = z.infer<typeof OverlayEnabledResult>;
+
+// RPC response for `set-onboarding-dismissed` / `get-onboarding-dismissed`.
+export const OnboardingStateResult = z.object({ ok: z.boolean(), dismissed: z.boolean() });
+export type OnboardingStateResult = z.infer<typeof OnboardingStateResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the

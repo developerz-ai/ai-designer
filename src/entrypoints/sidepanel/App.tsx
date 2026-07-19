@@ -1,12 +1,14 @@
-import { createMemo, createSignal, Match, Show, Switch } from 'solid-js';
+import { createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
 import { i18n } from '#i18n';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Icon } from './components/Icon';
 import { McpPanel } from './components/McpPanel';
+import { Onboarding } from './components/Onboarding';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
 import { SettingsPanel } from './components/SettingsPanel';
+import { initOnboardingStore, visible as onboardingVisible } from './stores/onboarding';
 import { sessionState } from './stores/session';
 import './App.scss';
 
@@ -21,6 +23,10 @@ const SHOW_MCP = true;
 // model picker). See docs/idea/ui.md.
 export function App() {
   const [tab, setTab] = createSignal<Tab>('chat');
+  // First-run guide: auto-shown on a fresh install and re-shown each open until skipped/finished
+  // (see stores/onboarding.ts), plus re-openable from Settings. Rendered as an overlay below so it
+  // sits above the tab shell.
+  onMount(() => initOnboardingStore());
   // Gates ChatPanel: false only in the pre-Start `idle` state — a `stopped` turn (Stop
   // clicked mid-run) keeps chat mounted, since the session itself is still open (see
   // stores/session.ts).
@@ -91,6 +97,10 @@ export function App() {
           </Match>
         </Switch>
       </main>
+
+      <Show when={onboardingVisible()}>
+        <Onboarding onNavigate={handleNavigate} />
+      </Show>
     </div>
   );
 }
