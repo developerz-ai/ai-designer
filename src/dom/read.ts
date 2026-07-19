@@ -218,7 +218,23 @@ export interface ScreenshotRect {
   devicePixelRatio: number;
 }
 
-/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). */
+/** Whether `rect` sits (even partly) outside the viewport, so `el` must be scrolled into view
+ *  before a single-viewport capture — `captureVisibleTab` only sees what's on screen, so a
+ *  below-fold or partly-clipped element would otherwise crop to empty. Pure so it's unit-testable
+ *  without a real layout (jsdom's `getBoundingClientRect`/`scrollIntoView` are no-ops). */
+export function needsScrollIntoView(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): boolean {
+  return (
+    rect.top < 0 || rect.left < 0 || rect.bottom > viewportHeight || rect.right > viewportWidth
+  );
+}
+
+/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). An off-screen
+ *  element is first centered into view (the same easing `interact.ts` uses) and re-measured, so a
+ *  below-fold target yields a real crop instead of an empty one. */
 export function screenshotRect(el?: Element | null): ScreenshotRect {
   const devicePixelRatio = window.devicePixelRatio || 1;
   if (!el) {
@@ -227,7 +243,14 @@ export function screenshotRect(el?: Element | null): ScreenshotRect {
       devicePixelRatio,
     };
   }
-  const r = el.getBoundingClientRect();
+  let r = el.getBoundingClientRect();
+  if (
+    needsScrollIntoView(r, window.innerWidth, window.innerHeight) &&
+    typeof el.scrollIntoView === 'function'
+  ) {
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    r = el.getBoundingClientRect();
+  }
   return { rect: { x: r.x, y: r.y, width: r.width, height: r.height }, devicePixelRatio };
 }
 
