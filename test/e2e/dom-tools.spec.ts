@@ -252,6 +252,8 @@ test('screenshot scrolls a below-fold element into view for capture, then restor
 
   // jsdom can't prove this; a real browser can: the tool scrolled #far into view for the capture
   // (otherwise the crop is empty), then restored scroll so it stays a read.
+  // The tool waits for the forward scroll and the restore to land, so by the time it returns the
+  // page has visibly scrolled (maxScrollY>0) and is fully back at the top.
   const maxScrollY = await page.evaluate(
     () => (window as unknown as { __maxScrollY: number }).__maxScrollY,
   );
