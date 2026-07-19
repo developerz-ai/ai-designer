@@ -57,12 +57,14 @@ export const test = base.extend<{
   // onboarding spec passes `{ firstRun: true }` to see the guide.
   openExtensionPage: async ({ context, extensionId }, use) => {
     await use(async (relativePath: string, opts: { firstRun?: boolean } = {}) => {
-      const [sw] = context.serviceWorkers();
-      if (sw) {
-        await sw.evaluate(async (dismissed) => {
-          await chrome.storage.local.set({ 'onboarding:dismissed': dismissed });
-        }, !opts.firstRun);
-      }
+      // The seed is load-bearing: without it the first-run modal covers the tab shell and breaks
+      // every panel spec. MV3 SWs idle-terminate, so wait for one rather than skip on an empty
+      // list — a missing seed must fail loud, not silently no-op into a flaky whole-suite red.
+      let [sw] = context.serviceWorkers();
+      if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+      await sw.evaluate(async (dismissed) => {
+        await chrome.storage.local.set({ 'onboarding:dismissed': dismissed });
+      }, !opts.firstRun);
       const page = await context.newPage();
       await page.goto(`chrome-extension://${extensionId}/${relativePath.replace(/^\//, '')}`);
       return page;

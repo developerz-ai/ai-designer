@@ -23,8 +23,9 @@ const SHOW_MCP = true;
 // model picker). See docs/idea/ui.md.
 export function App() {
   const [tab, setTab] = createSignal<Tab>('chat');
-  // First-run guide: auto-shown once on a fresh install (see stores/onboarding.ts), then
-  // re-openable from Settings. Rendered as an overlay below so it sits above the tab shell.
+  // First-run guide: auto-shown on a fresh install and re-shown each open until skipped/finished
+  // (see stores/onboarding.ts), plus re-openable from Settings. Rendered as an overlay below so it
+  // sits above the tab shell.
   onMount(() => initOnboardingStore());
   // Gates ChatPanel: false only in the pre-Start `idle` state — a `stopped` turn (Stop
   // clicked mid-run) keeps chat mounted, since the session itself is still open (see

@@ -15,11 +15,14 @@ import { request } from './bus';
 //    re-appears on the next panel open with the just-completed step checked off (criterion:
 //    "guides setup"). Re-openable immediately from Settings meanwhile.
 //  - `openOnboarding()`    — Settings re-entry: show it again without changing the flag.
+//
+// Persistence is best-effort: the actions swallow RPC failures rather than surface them (a failed
+// save just re-shows the guide next open — no data loss, and nothing renders an error on a screen
+// the user is dismissing), so there is no write-only `error` signal to read.
 
 const [visible, setVisible] = createSignal(false);
-const [error, setError] = createSignal<string | null>(null);
 
-export { error, visible };
+export { visible };
 
 let wired = false;
 
@@ -31,23 +34,26 @@ export function initOnboardingStore(): void {
   void hydrateOnboarding();
 }
 
+// Auto-SHOW only — reveal the guide when it has never been dismissed, but NEVER set visible false
+// here: a late-resolving mount RPC must not clobber an `openOnboarding()` the user just triggered
+// from Settings. `visible` defaults false, so "not dismissed" is the only nudge hydrate needs.
 async function hydrateOnboarding(): Promise<void> {
   try {
     const r = await request({ type: 'get-onboarding-dismissed' }, OnboardingStateResult);
-    setVisible(!r.dismissed);
-  } catch (e) {
-    setError(errMsg(e));
+    if (!r.dismissed) setVisible(true);
+  } catch {
+    // Best-effort: a failed read leaves the guide hidden (the safe default); the user can still
+    // open it from Settings.
   }
 }
 
 /** Skip or finish: persist dismissed=true (won't auto-show again) and hide. */
 export async function dismissOnboarding(): Promise<void> {
-  setError(null);
   setVisible(false);
   try {
     await request({ type: 'set-onboarding-dismissed', dismissed: true }, OnboardingStateResult);
-  } catch (e) {
-    setError(errMsg(e));
+  } catch {
+    // Best-effort persist: if the write fails the guide simply re-appears next open — no data loss.
   }
 }
 
@@ -59,10 +65,5 @@ export function hideOnboarding(): void {
 
 /** Settings "Show setup guide": re-open without touching the persisted flag. */
 export function openOnboarding(): void {
-  setError(null);
   setVisible(true);
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

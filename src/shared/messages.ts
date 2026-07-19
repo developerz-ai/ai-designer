@@ -294,9 +294,9 @@ export const GetOverlayEnabled = z.object({ type: z.literal('get-overlay-enabled
 
 // --- first-run onboarding guide, dismissed flag (slice 24) ----------------
 // Whether the user has skipped/finished the first-run guide. Persisted to chrome.storage.local
-// (`src/shared/onboarding-prefs.ts`) so it auto-shows exactly once; the panel re-opens it on
-// demand from Settings without touching this flag. Panel-only concern, so — unlike the overlay
-// toggle — the SW just reads/writes storage with no cross-tab push.
+// (`src/shared/onboarding-prefs.ts`) so it auto-shows on each panel open until skipped/finished;
+// the panel re-opens it on demand from Settings without touching this flag. Panel-only concern, so
+// — unlike the overlay toggle — the SW just reads/writes storage with no cross-tab push.
 export const SetOnboardingDismissed = z.object({
   type: z.literal('set-onboarding-dismissed'),
   dismissed: z.boolean(),

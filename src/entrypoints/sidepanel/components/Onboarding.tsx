@@ -85,12 +85,41 @@ export interface OnboardingProps {
 // tab that fixes it, so re-opening later shows the completed step checked off; Skip / "Get
 // started" persist the dismissal.
 export function Onboarding(props: OnboardingProps) {
-  onMount(() => initReadinessStore());
+  let cardRef!: HTMLDivElement;
+  onMount(() => {
+    initReadinessStore();
+    // Move focus into the modal so `aria-modal` is actually enforced — otherwise a keyboard user
+    // could Tab straight to the tab-shell controls rendered beneath the overlay.
+    cardRef.querySelector<HTMLElement>('button:not([disabled]), a[href]')?.focus();
+  });
   const steps = createMemo(() => onboardingSteps(readinessState()));
 
   function goTo(tab: DeepLinkTab): void {
     hideOnboarding();
     props.onNavigate(tab);
+  }
+
+  // Modal keyboard contract: Escape skips the guide; Tab cycles within the card (focus trap) so it
+  // never lands on the covered surface behind. Handler sits on the root so Tab/Escape from any
+  // focused child bubbles here.
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      void dismissOnboarding();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusable = cardRef.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]');
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   return (
@@ -100,8 +129,9 @@ export function Onboarding(props: OnboardingProps) {
       role="dialog"
       aria-modal="true"
       aria-label={i18n.t('onboarding.ariaLabel')}
+      onKeyDown={onKeyDown}
     >
-      <div class="dz-onboarding__card">
+      <div ref={cardRef} class="dz-onboarding__card">
         <button type="button" class="dz-onboarding__skip" onClick={() => void dismissOnboarding()}>
           {i18n.t('onboarding.skip')} <Icon name="close" size="sm" />
         </button>

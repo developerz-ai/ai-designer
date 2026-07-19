@@ -25,9 +25,30 @@ test('first run shows the 3-step guide with a privacy link; Skip dismisses it fo
   await panel.getByRole('button', { name: 'Skip for now' }).click();
   await expect(guide).toBeHidden();
 
+  // The Skip handler is fire-and-forget; wait for the flag to actually land in SW storage before
+  // reloading, so the reloaded panel deterministically hydrates dismissed=true (no race re-show).
+  await expect
+    .poll(async () => {
+      const [sw] = panel.context().serviceWorkers();
+      if (!sw) return undefined;
+      return sw.evaluate(
+        async () =>
+          (await chrome.storage.local.get('onboarding:dismissed'))['onboarding:dismissed'],
+      );
+    })
+    .toBe(true);
+
   await panel.reload();
   await expect(panel.locator('.dz-app')).toBeVisible({ timeout: 10_000 });
   await expect(panel.getByTestId('first-run-onboarding')).toHaveCount(0);
+});
+
+test('Escape dismisses the guide (modal keyboard contract)', async ({ openExtensionPage }) => {
+  const panel = await openExtensionPage('sidepanel.html', { firstRun: true });
+  await expect(panel.getByTestId('first-run-onboarding')).toBeVisible({ timeout: 10_000 });
+
+  await panel.keyboard.press('Escape');
+  await expect(panel.getByTestId('first-run-onboarding')).toBeHidden();
 });
 
 test('a step CTA hides the guide and deep-links to the tab that fixes it', async ({
