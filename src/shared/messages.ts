@@ -1492,6 +1492,16 @@ export const CheckResponsiveResult = z.object({
 });
 export type CheckResponsiveResult = z.infer<typeof CheckResponsiveResult>;
 
+// Cumulative token/step spend for a design session, surfaced on `turn-done` so the panel shows a
+// running usage meter — the "cost shown via usage accounting" guardrail (#25). Tokens are the
+// honest unit: a BYOK endpoint (any openai-compatible /v1) has no universal price, so we account
+// spend, never invent a dollar figure. Structurally matches `TurnSession.usage` (session.ts).
+export const TurnUsage = z.object({
+  steps: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+});
+export type TurnUsage = z.infer<typeof TurnUsage>;
+
 // --- service worker -> panel (stream) ------------------------------------
 export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),
@@ -1538,7 +1548,8 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // Marks the end of one agent turn's stream (background.ts's `user-message` handler, emitted
   // once the turn settles — success or error — and was not superseded by a newer message). The
   // panel's chat store (11) uses this to close out the in-flight assistant bubble and flip its
-  // `streaming` flag; token/tool-call/edit-recorded/error carry the content, this just marks done.
-  z.object({ type: z.literal('turn-done') }),
+  // `streaming` flag; token/tool-call/edit-recorded/error carry the content. `usage` is the
+  // session's cumulative spend after this turn, so the panel's usage meter updates on each turn.
+  z.object({ type: z.literal('turn-done'), usage: TurnUsage }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;

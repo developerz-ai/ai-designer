@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import type { Edit } from '@/shared/changeset';
-import type { Mode, SwToPanel } from '@/shared/messages';
+import type { Mode, SwToPanel, TurnUsage } from '@/shared/messages';
 import { OkResult } from '@/shared/messages';
 import { request } from './bus';
 import { connectPort, subscribeToSw } from './sw-stream';
@@ -55,6 +55,15 @@ export function reduceChat(messages: ChatMessage[], msg: SwToPanel): ChatMessage
   }
 }
 
+/** Zero-spend baseline for a fresh session's usage meter. */
+export const ZERO_USAGE: TurnUsage = { steps: 0, tokens: 0 };
+
+/** Pure fold for the session usage meter: `turn-done` carries the session's cumulative spend, so
+ *  adopt it; every other message leaves the total unchanged. Exported for a mock-free unit test. */
+export function nextUsage(prev: TurnUsage, msg: SwToPanel): TurnUsage {
+  return msg.type === 'turn-done' ? msg.usage : prev;
+}
+
 /** Append `patch` onto the in-flight assistant message, or start a new one when the last message
  *  isn't a streaming assistant bubble (turn start, or the previous one already closed out). */
 function foldIntoAssistant(
@@ -106,8 +115,11 @@ const [messages, setMessages] = createSignal<ChatMessage[]>([]);
 // `turn-done`/`error`/a stopped or idle session — whichever closes out the turn first.
 const [streaming, setStreaming] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
+// Cumulative token/step spend for this session, folded from `turn-done`'s `usage` — the running
+// usage meter (#25). Reset by `clearChat` on a fresh session.
+const [usage, setUsage] = createSignal<TurnUsage>(ZERO_USAGE);
 
-export { error, messages, streaming };
+export { error, messages, streaming, usage };
 
 let wired = false;
 
@@ -119,6 +131,7 @@ export function initChatStore(): void {
   connectPort();
   subscribeToSw((msg) => {
     setMessages((prev) => reduceChat(prev, msg));
+    setUsage((prev) => nextUsage(prev, msg));
     if (msg.type === 'turn-done' || msg.type === 'error') {
       setStreaming(false);
     } else if (msg.type === 'session-state' && msg.state !== 'running') {
@@ -136,6 +149,7 @@ export function clearChat(): void {
   setMessages([]);
   setStreaming(false);
   setError(null);
+  setUsage(ZERO_USAGE);
 }
 
 /** Send a user instruction: appends it locally, closes out any prior in-flight bubble (the SW

@@ -1,5 +1,5 @@
 import { createMemo, onMount, Show } from 'solid-js';
-import { error, initChatStore, messages, send as sendMessage } from '../stores/chat';
+import { error, initChatStore, messages, send as sendMessage, usage } from '../stores/chat';
 import { initFocusStore } from '../stores/focus';
 import { initReadinessStore } from '../stores/readiness';
 import './ChatPanel.scss';
@@ -9,6 +9,7 @@ import type { Suggestion } from './chat/SuggestionChips';
 import { Thread } from './chat/Thread';
 import { ShipBar } from './ShipBar';
 import { TaskTimeline } from './TaskTimeline';
+import { UsageMeter } from './UsageMeter';
 
 // The design conversation — pure composition, no business logic (CLAUDE.md "SolidJS + SRP").
 // Wires the three stores its subtree renders: `stores/chat.ts` (thread + streaming, this
@@ -41,6 +42,7 @@ export function ChatPanel() {
         <Thread messages={messages()} />
         <TaskTimeline />
         <ShipBar />
+        <UsageMeter usage={usage()} />
       </Show>
 
       <Show when={error()}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>

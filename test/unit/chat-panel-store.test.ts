@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type ChatMessage, reduceChat } from '@/entrypoints/sidepanel/stores/chat';
+import {
+  type ChatMessage,
+  nextUsage,
+  reduceChat,
+  ZERO_USAGE,
+} from '@/entrypoints/sidepanel/stores/chat';
 import type { Edit } from '@/shared/changeset';
 import type { PanelToSw, SwToPanel } from '@/shared/messages';
 
@@ -12,6 +17,12 @@ const edit: Edit = {
   changes: [{ prop: 'color', before: null, after: '#000' }],
   frameworkHints: [],
 };
+
+/** `turn-done` fixture — carries the session's cumulative spend (`usage`), required since #25. */
+const turnDone = (steps = 0, tokens = 0): SwToPanel => ({
+  type: 'turn-done',
+  usage: { steps, tokens },
+});
 
 describe('reduceChat: streaming assembly', () => {
   it('starts a new streaming assistant bubble on the first token', () => {
@@ -47,16 +58,16 @@ describe('reduceChat: streaming assembly', () => {
 
   it('turn-done closes the in-flight bubble and is idempotent', () => {
     let messages = reduceChat([], { type: 'token', text: 'ok' });
-    messages = reduceChat(messages, { type: 'turn-done' });
+    messages = reduceChat(messages, turnDone());
     expect(messages[0]?.streaming).toBe(false);
 
-    const again = reduceChat(messages, { type: 'turn-done' });
+    const again = reduceChat(messages, turnDone());
     expect(again).toEqual(messages); // no-op: nothing was in flight
   });
 
   it('a new token after turn-done starts a fresh bubble rather than reopening the old one', () => {
     let messages = reduceChat([], { type: 'token', text: 'first' });
-    messages = reduceChat(messages, { type: 'turn-done' });
+    messages = reduceChat(messages, turnDone());
     messages = reduceChat(messages, { type: 'token', text: 'second' });
     expect(messages).toHaveLength(2);
     expect(messages.map((m) => m.text)).toEqual(['first', 'second']);
@@ -84,7 +95,7 @@ describe('reduceChat: streaming assembly', () => {
   it('a subsequent turn-done after error is a no-op (already closed)', () => {
     let messages = reduceChat([], { type: 'error', message: 'boom' });
     const before = messages;
-    messages = reduceChat(messages, { type: 'turn-done' });
+    messages = reduceChat(messages, turnDone());
     expect(messages).toEqual(before);
   });
 
@@ -110,6 +121,23 @@ describe('reduceChat: streaming assembly', () => {
     expect(next).toHaveLength(2);
     expect(next[0]).toEqual(withUser[0]);
     expect(next[1]).toMatchObject({ role: 'assistant', text: 'hello' });
+  });
+});
+
+describe('nextUsage: session usage meter fold', () => {
+  it('adopts the cumulative usage carried on turn-done', () => {
+    expect(nextUsage(ZERO_USAGE, turnDone(3, 1200))).toEqual({ steps: 3, tokens: 1200 });
+  });
+
+  it('replaces rather than accumulates — turn-done already carries the running total', () => {
+    const prev = { steps: 3, tokens: 1200 };
+    expect(nextUsage(prev, turnDone(5, 2000))).toEqual({ steps: 5, tokens: 2000 });
+  });
+
+  it('leaves the total unchanged for any non-turn-done message', () => {
+    const prev = { steps: 3, tokens: 1200 };
+    expect(nextUsage(prev, { type: 'token', text: 'hi' })).toBe(prev);
+    expect(nextUsage(prev, { type: 'error', message: 'boom' })).toBe(prev);
   });
 });
 
@@ -224,9 +252,10 @@ describe('chat store actions', () => {
     port.emit({ type: 'token', text: 'working on it' });
     expect(store.messages().at(-1)?.text).toBe('working on it');
 
-    port.emit({ type: 'turn-done' });
+    port.emit(turnDone(2, 900));
     expect(store.streaming()).toBe(false);
     expect(store.messages().at(-1)?.streaming).toBe(false);
+    expect(store.usage()).toEqual({ steps: 2, tokens: 900 });
   });
 });
 

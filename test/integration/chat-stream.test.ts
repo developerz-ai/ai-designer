@@ -78,7 +78,7 @@ describe('mocked SwToPanel stream -> chat store -> Thread/ToolChip render shape'
     expect(chipStatusesFor(bubble)).toEqual(['running']);
 
     port.emit({ type: 'token', text: 'recolored it.' });
-    port.emit({ type: 'turn-done' });
+    port.emit({ type: 'turn-done', usage: { steps: 0, tokens: 0 } });
 
     // Turn closed out: same chip, now done — text fully accumulated for Thread to display.
     bubble = store.messages().at(-1);
@@ -130,7 +130,7 @@ describe('mocked SwToPanel stream -> chat store -> Thread/ToolChip render shape'
     ]);
     expect(chipStatusesFor(bubble)).toEqual(['done', 'done', 'running']);
 
-    port.emit({ type: 'turn-done' });
+    port.emit({ type: 'turn-done', usage: { steps: 0, tokens: 0 } });
     bubble = store.messages().at(-1);
     if (!bubble) throw new Error('unreachable');
     expect(chipStatusesFor(bubble)).toEqual(['done', 'done', 'done']);
