@@ -60,8 +60,14 @@ const STEP_COPY: Record<OnboardingStepId, { label: string; desc: string; cta: st
   },
 };
 
-// The tab a step's "Fix" CTA deep-links to. "start" has none — it just closes the guide.
-const STEP_TAB: Record<'provider' | 'mcp', DeepLinkTab> = { provider: 'settings', mcp: 'mcp' };
+// The tab a step's "Fix" CTA deep-links to; "start" has none (it just closes the guide). Typed
+// over every step id (null for "start") so the CTA reads it without a cast — `<Show>` doesn't
+// narrow `step.id`, so the null branch is unreachable in render but keeps the lookup total.
+const STEP_TAB: Record<OnboardingStepId, DeepLinkTab | null> = {
+  provider: 'settings',
+  mcp: 'mcp',
+  start: null,
+};
 const STEP_ICON: Record<OnboardingStepId, IconName> = {
   provider: 'settings',
   mcp: 'mcp',
@@ -144,7 +150,10 @@ export function Onboarding(props: OnboardingProps) {
                   <button
                     type="button"
                     class="dz-onboarding__cta"
-                    onClick={() => goTo(STEP_TAB[step.id as 'provider' | 'mcp'])}
+                    onClick={() => {
+                      const tab = STEP_TAB[step.id];
+                      if (tab) goTo(tab);
+                    }}
                   >
                     {STEP_COPY[step.id].cta} <Icon name={STEP_ICON[step.id]} size="sm" />
                   </button>
