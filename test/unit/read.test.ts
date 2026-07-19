@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   a11ySnapshot,
   cropBox,
@@ -22,26 +22,6 @@ function byId(id: string): HTMLElement {
   if (!el) throw new Error(`fixture missing: #${id}`);
   return el;
 }
-
-// A DOMRect stand-in — jsdom's getBoundingClientRect always returns zeros, so screenshotRect's
-// off-screen path is exercised by mocking this.
-function rect(x: number, y: number, width: number, height: number): DOMRect {
-  return {
-    x,
-    y,
-    width,
-    height,
-    top: y,
-    left: x,
-    bottom: y + height,
-    right: x + width,
-    toJSON: () => ({}),
-  } as DOMRect;
-}
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 describe('query', () => {
   it('returns a stable, non-fragile selector for a data-testid element', () => {
@@ -143,35 +123,6 @@ describe('screenshotRect', () => {
     const shot = screenshotRect();
     expect(shot.rect.width).toBe(window.innerWidth);
     expect(shot.rect.height).toBe(window.innerHeight);
-  });
-
-  it('scrolls an off-screen element into view before measuring, then re-reads its rect', () => {
-    mount('<div id="d">x</div>');
-    const el = byId('d');
-    // jsdom doesn't implement scrollIntoView (the runtime guard skips it there), so assign a mock.
-    const scrollSpy = vi.fn();
-    el.scrollIntoView = scrollSpy;
-    // Below the fold (jsdom viewport is 1024x768): first read off-screen, second read in view.
-    vi.spyOn(el, 'getBoundingClientRect')
-      .mockReturnValueOnce(rect(0, 900, 100, 50))
-      .mockReturnValueOnce(rect(10, 300, 100, 50));
-
-    const shot = screenshotRect(el);
-
-    expect(scrollSpy).toHaveBeenCalledWith({ block: 'center', inline: 'center' });
-    expect(shot.rect).toMatchObject({ x: 10, y: 300 }); // the post-scroll measurement
-  });
-
-  it('does not scroll an element already fully in view', () => {
-    mount('<div id="d">x</div>');
-    const el = byId('d');
-    const scrollSpy = vi.fn();
-    el.scrollIntoView = scrollSpy;
-    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(rect(10, 10, 100, 50));
-
-    screenshotRect(el);
-
-    expect(scrollSpy).not.toHaveBeenCalled();
   });
 });
 

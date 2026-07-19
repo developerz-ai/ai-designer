@@ -232,9 +232,10 @@ export function needsScrollIntoView(
   );
 }
 
-/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). An off-screen
- *  element is first centered into view (the same easing `interact.ts` uses) and re-measured, so a
- *  below-fold target yields a real crop instead of an empty one. */
+/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). Pure geometry —
+ *  a side-effect-free read: the caller (`content.ts`'s `screenshot`) is responsible for first
+ *  scrolling an off-screen `el` into view and letting it paint (see `needsScrollIntoView`), so the
+ *  target is already positioned when measured here. */
 export function screenshotRect(el?: Element | null): ScreenshotRect {
   const devicePixelRatio = window.devicePixelRatio || 1;
   if (!el) {
@@ -243,14 +244,7 @@ export function screenshotRect(el?: Element | null): ScreenshotRect {
       devicePixelRatio,
     };
   }
-  let r = el.getBoundingClientRect();
-  if (
-    needsScrollIntoView(r, window.innerWidth, window.innerHeight) &&
-    typeof el.scrollIntoView === 'function'
-  ) {
-    el.scrollIntoView({ block: 'center', inline: 'center' });
-    r = el.getBoundingClientRect();
-  }
+  const r = el.getBoundingClientRect();
   return { rect: { x: r.x, y: r.y, width: r.width, height: r.height }, devicePixelRatio };
 }
 

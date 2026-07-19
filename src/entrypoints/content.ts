@@ -13,7 +13,7 @@ import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
-import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
+import { needsScrollIntoView, pageMetrics, queryOne, screenshotRect } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
 import { createWidgetDriver } from '@/dom/widgets';
@@ -46,6 +46,11 @@ import { readOverlayEnabled } from '@/shared/overlay-prefs';
 // their ContentToSw events to the service worker. All logic lives in src/dom (jsdom-testable,
 // coverage-counted); this entrypoint is coverage-excluded, so keep it minimal. Page mutations are
 // EPHEMERAL + reversible (docs/idea/live-edit.md); the only durable output is the changeset (07).
+
+// Paint-settle after scrolling an element into view before the SW captures — captureVisibleTab
+// reads the composited surface, so an un-settled scroll would grab pre-scroll pixels. Same value +
+// rationale as the full-page stitch path's SCROLL_SETTLE_MS (background.ts).
+const SCROLL_SETTLE_MS = 200;
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -123,9 +128,26 @@ export default defineContentScript({
           error: `No element matches selector: ${selector}`,
         };
       }
+      // Bring an off-screen target into view before the SW grabs the viewport, else captureVisibleTab
+      // (which only sees the current viewport) crops to empty. `behavior:'instant'` forces a
+      // synchronous jump regardless of the page's `scroll-behavior` CSS; then settle a paint frame
+      // before capture. Scroll is restored afterward so the tool stays a read and doesn't strand the
+      // page mid-scroll for the next tool or a later full-page capture's restore-to-start.
+      const before = { x: window.scrollX, y: window.scrollY };
+      let scrolled = false;
+      if (
+        el &&
+        typeof el.scrollIntoView === 'function' &&
+        needsScrollIntoView(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
+      ) {
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        await new Promise((resolve) => setTimeout(resolve, SCROLL_SETTLE_MS));
+        scrolled = true;
+      }
       const { rect, devicePixelRatio } = screenshotRect(el);
       const request: CaptureRequest = { type: 'capture-visible-tab', rect, devicePixelRatio };
       const parsed = CaptureResult.safeParse(await chrome.runtime.sendMessage(request));
+      if (scrolled) window.scrollTo(before.x, before.y);
       if (!parsed.success) {
         return { type: 'tool-result', ok: false, error: 'Malformed capture result from the SW' };
       }

@@ -22,6 +22,8 @@ const FIXTURE_HTML = `<!doctype html>
   <body>
     <h1 id="hero">Hero</h1>
     <button id="cta" data-testid="cta">Buy now</button>
+    <div style="height: 3000px"></div>
+    <div id="far">Far below the fold</div>
   </body>
 </html>`;
 
@@ -208,4 +210,51 @@ test('screenshot with no selector captures the full viewport', async ({ context 
   const result = await sendToContent(sw, tabId, { type: 'screenshot' });
   expect(result.ok).toBe(true);
   expect(String(result.data)).toBe(STUB_PNG_DATA_URL); // whole-frame crop is a no-op (cropBox null)
+});
+
+test('screenshot scrolls a below-fold element into view for capture, then restores scroll (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(context);
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-belowfold`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // The tool restores scroll before returning, so a post-hoc scrollY check can't see it — record
+  // the furthest the page scrolled while the tool ran.
+  await page.evaluate(() => {
+    const w = window as unknown as { __maxScrollY: number };
+    w.__maxScrollY = 0;
+    window.addEventListener(
+      'scroll',
+      () => {
+        w.__maxScrollY = Math.max(w.__maxScrollY, window.scrollY);
+      },
+      { passive: true },
+    );
+  });
+
+  // Precondition: #far starts below the fold with the page unscrolled.
+  const startBelowFold = await page.evaluate(() => {
+    const el = document.getElementById('far');
+    return !!el && el.getBoundingClientRect().top > window.innerHeight && window.scrollY === 0;
+  });
+  expect(startBelowFold).toBe(true);
+
+  const result = await sendToContent(sw, tabId, { type: 'screenshot', selector: '#far' });
+  expect(result.ok).toBe(true);
+
+  // jsdom can't prove this; a real browser can: the tool scrolled #far into view for the capture
+  // (otherwise the crop is empty), then restored scroll so it stays a read.
+  const maxScrollY = await page.evaluate(
+    () => (window as unknown as { __maxScrollY: number }).__maxScrollY,
+  );
+  expect(maxScrollY).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
