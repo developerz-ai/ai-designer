@@ -97,3 +97,10 @@ MCP connection is opt-in and per-backend; tokens are revocable from the MCP mana
 
 - BYOK end to end — we sit between the user and *their* providers; we don't proxy or resell.
 - No first-party server in v0/v1; nothing about the page leaves the user's chosen endpoints.
+- Cost is accounted, not billed: the panel shows a running **usage meter** (steps + tokens per
+  session, `UsageMeter`) so spend stays visible; tokens are the unit because a BYOK endpoint has no
+  universal price. Per-turn step/token budgets force-stop a runaway turn (`src/agent/budget.ts`), and
+  network/tool errors surface as a chat bubble rather than crashing the service worker (#25).
+- Error telemetry is first-party only: self-hosted GlitchTip via `@sentry/browser`
+  (`src/shared/sentry.ts`, breadcrumbs/events scrubbed) — no third-party analytics ships, guarded by
+  `test/unit/no-third-party-telemetry.test.ts` (the #25 live-test greps the built bundle too).

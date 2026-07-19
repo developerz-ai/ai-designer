@@ -555,6 +555,9 @@ export default defineBackground(() => {
 
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
         // (unblocking the panel). Completion persists spend + threads the assistant reply.
+        // Running cumulative session spend: seeded from the session's prior total, advanced in
+        // `.then()`, and surfaced to the panel's usage meter on `turn-done` (#25).
+        let sessionUsage = session.usage;
         void runTurn({
           tabId,
           messages: session.messages,
@@ -662,7 +665,13 @@ export default defineBackground(() => {
             if (outcome.text) {
               await sessions.appendMessages(tabId, { role: 'assistant', content: outcome.text });
             }
-            await sessions.patch(tabId, { usage: outcome.usage });
+            // Accumulate spend across the session's turns (nothing else reads `session.usage`, so
+            // summing is safe) so the panel shows a running session total, not just the last turn.
+            sessionUsage = {
+              steps: sessionUsage.steps + outcome.usage.steps,
+              tokens: sessionUsage.tokens + outcome.usage.tokens,
+            };
+            await sessions.patch(tabId, { usage: sessionUsage });
             // Persist this turn to history (slice 08): the conversation is keyed by the
             // changeset's sessionId (minted once per tab session), so every turn in the same
             // design session appends to one entry rather than forking a new ring-buffer slot.
@@ -699,7 +708,7 @@ export default defineBackground(() => {
             if (emulation.owns(tabId, emulationOwner)) {
               void restoreDevice(chromeDeviceDriver, tabId).catch(() => {});
             }
-            if (wasCurrent) postToPanel({ type: 'turn-done' });
+            if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });
           });
 
         return { ok: true };
