@@ -3,11 +3,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// #25 criteria 3 & 4: the extension sends page content ONLY to the user's chosen model/MCP and
-// ships NO third-party telemetry/analytics. First-party self-hosted GlitchTip (via @sentry/browser
-// -> glitchtip.infra.developerz.ai) is the ONLY telemetry allowed. This guards the dependency
-// graph — the vector by which an analytics SaaS would slip back in — at CI's unit lane; the #25
-// live-test greps the built bundle for the same hosts as a belt-and-braces runtime check.
+// #25 criterion 4: the extension ships NO third-party telemetry/analytics. First-party self-hosted
+// GlitchTip (via @sentry/browser -> glitchtip.infra.developerz.ai) is the ONLY telemetry allowed.
+// This guards the dependency graph — the vector by which an analytics SaaS would slip back in — at
+// CI's unit lane; the #25 live-test greps the built bundle for the same hosts as belt-and-braces.
+//
+// Scope: a dependency denylist proves criterion 4 (no third-party telemetry SDK ships). It does NOT
+// prove criterion 3 (page content restricted to the chosen model/MCP) — that guarantee lives in the
+// content-scrub on the one first-party egress path, src/shared/sentry.ts (covered by sentry.test.ts).
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,7 +37,7 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'u
 };
 const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
 
-describe('no third-party telemetry (#25 criteria 3 & 4)', () => {
+describe('no third-party telemetry (#25 criterion 4)', () => {
   it('declares no third-party analytics/telemetry SDK dependency', () => {
     const offenders = deps.filter((d) =>
       THIRD_PARTY_TELEMETRY.some((frag) => d.toLowerCase().includes(frag)),

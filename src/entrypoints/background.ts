@@ -667,6 +667,8 @@ export default defineBackground(() => {
             }
             // Accumulate spend across the session's turns (nothing else reads `session.usage`, so
             // summing is safe) so the panel shows a running session total, not just the last turn.
+            // Only the current turn reaches here — a superseded/Stopped turn returns above, so its
+            // partial spend isn't counted; the meter is current-lineage and approximate (hence "~").
             sessionUsage = {
               steps: sessionUsage.steps + outcome.usage.steps,
               tokens: sessionUsage.tokens + outcome.usage.tokens,
