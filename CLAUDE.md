@@ -75,3 +75,7 @@ Before chatting, the agent checks readiness via a truth table: provider + model 
 - Auto-ship. "Ship" is user-triggered.
 
 House style for docs/config: lead with the rule, fragments over sentences, tables for structured data, no meta-framing — `github.com/sebyx07/claude-code-bible` ch.11.
+
+## Note
+
+Do not use git worktrees — work directly in this checkout. See `.claude/commands/feature.md` and `.claude/commands/planx.md`.
