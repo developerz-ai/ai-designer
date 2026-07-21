@@ -14,11 +14,11 @@ import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import {
-  needsScrollIntoView,
   pageMetrics,
   queryOne,
   screenshotRect,
   scrollableAncestors,
+  scrollImprovesCapture,
 } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
@@ -153,7 +153,7 @@ export default defineContentScript({
         el &&
         selfFrameId === 0 &&
         typeof el.scrollIntoView === 'function' &&
-        needsScrollIntoView(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
+        scrollImprovesCapture(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
       ) {
         ancestors = scrollableAncestors(el).map((a) => ({
           el: a,
@@ -193,8 +193,10 @@ export default defineContentScript({
     // and the SW dispatches each call independently, so without this two scroll-moving calls (two
     // screenshots, or a screenshot between a full-page stitch's bands — its scrollTo rides
     // handleControl) interleave their scroll/restore and strand the page at a wrong offset. Pure
-    // reads (describe / responsive / page-metrics / design-read) stay off the queue so they never
-    // wait behind a settle or a stitch.
+    // reads (describe / responsive / design-read) stay off the queue so they never wait behind a
+    // settle or a stitch — except page-metrics, which rides it because the stitch's `finally`
+    // "restores" to its scrollY, so answering mid-element-scroll would strand the page somewhere
+    // it never was.
     let toolQueue: Promise<unknown> = Promise.resolve();
     function enqueue<T>(run: () => Promise<T>): Promise<T> {
       const result = toolQueue.then(run, run);
@@ -313,19 +315,29 @@ export default defineContentScript({
 
       // Full-page capture (slice 13): the SW scroll-stitches viewport grabs (only it has
       // captureVisibleTab + OffscreenCanvas) and needs this frame's scroll/viewport geometry to plan
-      // the bands. Pure DOM read (src/dom/read.ts); a failure degrades to an error the SW surfaces.
+      // the bands. Pure DOM read (src/dom/read.ts), but it rides the tool queue like the
+      // page-driving tools: the stitch's `finally` restores to this scrollY, so answering while a
+      // queued element screenshot is mid-scroll would snapshot a position the page was never
+      // parked at — and the stitch would "restore" the user there. A failure degrades to an error
+      // the SW surfaces.
       const metrics = PageMetricsRequest.safeParse(raw);
       if (metrics.success) {
-        try {
-          sendResponse({
-            type: 'page-metrics-result',
-            ok: true,
-            metrics: pageMetrics(document, window),
-          } satisfies PageMetricsResult);
-        } catch (err) {
-          sendResponse({ type: 'page-metrics-result', ok: false, error: String(err) });
-        }
-        return; // responded synchronously
+        enqueue((): Promise<PageMetricsResult> => {
+          try {
+            return Promise.resolve({
+              type: 'page-metrics-result',
+              ok: true,
+              metrics: pageMetrics(document, window),
+            });
+          } catch (err) {
+            return Promise.resolve({
+              type: 'page-metrics-result',
+              ok: false,
+              error: String(err),
+            });
+          }
+        }).then(sendResponse);
+        return true; // async PageMetricsResult
       }
 
       // Always answer a tool call: a rejected round-trip (e.g. the SW evicted mid-screenshot)

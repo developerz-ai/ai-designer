@@ -232,13 +232,38 @@ export function needsScrollIntoView(
   );
 }
 
+/** Whether scrolling actually improves what a single-viewport capture of `rect` sees. Per axis:
+ *  an element that FITS on that axis benefits when it's clipped there; an element LARGER than the
+ *  viewport on that axis never does — centering it just swaps the currently visible band (the
+ *  top/left, usually the header/title) for a middle band at the same capture size, plus a
+ *  pointless scroll/restore cycle. */
+export function scrollImprovesCapture(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): boolean {
+  const vertical =
+    rect.bottom - rect.top >= viewportHeight ? false : rect.top < 0 || rect.bottom > viewportHeight;
+  const horizontal =
+    rect.right - rect.left >= viewportWidth ? false : rect.left < 0 || rect.right > viewportWidth;
+  return vertical || horizontal;
+}
+
 /** The overflow containers `scrollIntoView` will also move, nearest-first: per CSSOM View it
- *  scrolls EVERY scrollable ancestor, not just the document scroller. Snapshot their offsets before
- *  scrolling so the caller can restore them after — else a read-only screenshot strands a nested
- *  panel at a new scroll position. Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
+ *  scrolls EVERY scrollable ancestor in the flat tree, not just the document scroller. Snapshot
+ *  their offsets before scrolling so the caller can restore them after — else a read-only
+ *  screenshot strands a nested panel at a new scroll position. Walks the COMPOSED tree
+ *  (assignedSlot → parentElement → shadow host) so a slotted element's in-shadow scroll containers
+ *  are covered too. Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
 export function scrollableAncestors(el: Element): Element[] {
+  const up = (node: Element): Element | null => {
+    if (node.assignedSlot) return node.assignedSlot;
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  };
   const out: Element[] = [];
-  for (let p = el.parentElement; p; p = p.parentElement) {
+  for (let p = up(el); p; p = up(p)) {
     if (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth) out.push(p);
   }
   return out;

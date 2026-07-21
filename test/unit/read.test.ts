@@ -10,6 +10,7 @@ import {
   queryOne,
   screenshotRect,
   scrollableAncestors,
+  scrollImprovesCapture,
 } from '@/dom/read';
 import type { PageMetrics } from '@/shared/messages';
 
@@ -179,6 +180,61 @@ describe('scrollableAncestors', () => {
   it('is empty when no ancestor scrolls (jsdom default sizes)', () => {
     mount('<div id="wrap"><div id="target"></div></div>');
     expect(scrollableAncestors(byId('target'))).toEqual([]);
+  });
+
+  it('walks into shadow roots via the host when the target is shadow-in', () => {
+    mount('<div id="host"></div>');
+    const shadow = byId('host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div id="scroller"><div id="inner"></div></div>';
+    const scroller = shadow.getElementById('scroller');
+    const inner = shadow.getElementById('inner');
+    if (!scroller || !inner) throw new Error('shadow fixture missing');
+    fakeSizes(scroller, { scrollHeight: 900, clientHeight: 200 });
+    expect(scrollableAncestors(inner).map((a) => a.id)).toEqual(['scroller']);
+  });
+
+  it('walks the composed tree for slotted elements (assignedSlot before parentElement)', () => {
+    mount('<div id="host"><span id="slotted"></span></div>');
+    const shadow = byId('host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div id="shadowscroller"><slot></slot></div>';
+    const scroller = shadow.getElementById('shadowscroller');
+    if (!scroller) throw new Error('shadow fixture missing');
+    fakeSizes(scroller, { scrollHeight: 900, clientHeight: 200 });
+    // A slotted element's flat-tree parent chain goes through its slot, so a scrollable container
+    // inside the shadow root must be found even though it is NOT a DOM ancestor.
+    expect(scrollableAncestors(byId('slotted')).map((a) => a.id)).toContain('shadowscroller');
+  });
+});
+
+describe('scrollImprovesCapture', () => {
+  it('is false for an element fully in view', () => {
+    expect(scrollImprovesCapture({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768)).toBe(
+      false,
+    );
+  });
+
+  it('is true when a fittable axis is clipped', () => {
+    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
+    expect(scrollImprovesCapture({ top: 10, left: -5, bottom: 100, right: 40 }, 1024, 768)).toBe(
+      true,
+    );
+  });
+
+  it('is false for a taller-than-viewport element — centering swaps the header for a middle band', () => {
+    expect(scrollImprovesCapture({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
+      false,
+    );
+    expect(scrollImprovesCapture({ top: -50, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
+      false,
+    );
+  });
+
+  it('is still true for a taller-than-viewport element clipped on a fittable width', () => {
+    expect(scrollImprovesCapture({ top: 10, left: -5, bottom: 2000, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
   });
 });
 

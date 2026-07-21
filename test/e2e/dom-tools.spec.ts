@@ -356,6 +356,35 @@ test('screenshot restores a nested scroll container it had to scroll (#59)', asy
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
+test('page-metrics waits behind an in-flight screenshot scroll instead of snapshotting it (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(context);
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-metrics-queue`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // The full-page stitch's `finally` restores to the scrollY its page-metrics request observed.
+  // Same-step tool calls run concurrently and the screenshot's synchronous scroll runs before the
+  // metrics message is handled, so pre-queue this read deterministically observes the mid-scroll
+  // position — and a stitch restoring to it would strand the page somewhere it never was.
+  const [shot, metrics] = await Promise.all([
+    sendToContent(sw, tabId, { type: 'screenshot', selector: '#far' }),
+    sendToContent(sw, tabId, { type: 'page-metrics' }),
+  ]);
+  expect(shot.ok).toBe(true);
+  expect(metrics.ok).toBe(true);
+  const m = (metrics as { metrics?: { scrollY?: number } }).metrics;
+  expect(m?.scrollY).toBe(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test('concurrent screenshots serialize their scroll/restore instead of stranding the page (#59)', async ({
   context,
 }) => {

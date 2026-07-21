@@ -285,22 +285,32 @@ export default defineBackground(() => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
       const tabId = message.tabId ?? defaultTabId;
       const frameId = message.frameId ?? 0;
-      try {
-        const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
-        const parsed = ToolResult.safeParse(raw);
-        if (!parsed.success) {
-          return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+      const send = async (): Promise<ToolResult> => {
+        try {
+          const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
+          const parsed = ToolResult.safeParse(raw);
+          if (!parsed.success) {
+            return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+          }
+          return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
+        } catch (err) {
+          return { type: 'tool-result', ok: false, error: String(err) };
         }
-        return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
-      } catch (err) {
-        return { type: 'tool-result', ok: false, error: String(err) };
-      }
+      };
+      // Element screenshots scroll the page (content.ts), so they ride the per-tab capture mutex
+      // against full-page stitches — see withCaptureLock. Lock exactly here (not also in
+      // screenshotDispatchFor's element branch, which funnels into this) so one call never
+      // double-locks and self-deadlocks.
+      return message.type === 'screenshot' ? withCaptureLock(tabId, send) : send();
     };
   }
 
   // `screenshot` transport (slice 13). An element/viewport crop routes to content (it computes the
   // rect, the SW crops — the slice-05 path); a `fullPage` capture is SW-owned scroll-stitch of the
-  // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`).
+  // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`). The
+  // element branch needs no lock of its own — contentDispatchFor mutexes `type:'screenshot'` — but
+  // the stitch must lock: it scrolls the page per band, and an element screenshot dequeued
+  // mid-band-settle would corrupt that band's grab (see withCaptureLock).
   function screenshotDispatchFor(defaultTabId: number): ScreenshotDispatch {
     const content = contentDispatchFor(defaultTabId);
     return async (input, signal) => {
@@ -322,7 +332,7 @@ export default defineBackground(() => {
         return {
           type: 'tool-result',
           ok: true,
-          data: await captureFullPage(tabId, tab.windowId, signal),
+          data: await withCaptureLock(tabId, () => captureFullPage(tabId, tab.windowId, signal)),
         };
       } catch (err) {
         return { type: 'tool-result', ok: false, error: String(err) };
@@ -1179,6 +1189,25 @@ function taskExecutor(tool: Tool | undefined, name: string): TaskToolExecute {
 }
 
 // --- full-page screenshot (scroll-stitch) --------------------------------
+// Per-tab capture mutex serializing element-crop captures against full-page stitches. Same-step
+// tool calls execute concurrently (the AI SDK Promise.all's them), and both capture paths move or
+// read the page's scroll: an element screenshot dequeued during a stitch's per-band settle would
+// scroll the page under that band's capture (one corrupted band baked into the stitched PNG), and
+// a stitch starting mid-element-scroll would read a mid-scroll scrollY from page-metrics and
+// "restore" the page to somewhere it never was. The content-side tool queue (content.ts) covers
+// the general tool case; this covers the SW-orchestrated capture pair. Entries settle resolved,
+// so the map stays tiny.
+const captureLocks = new Map<number, Promise<unknown>>();
+function withCaptureLock<T>(tabId: number, run: () => Promise<T>): Promise<T> {
+  const prior = captureLocks.get(tabId) ?? Promise.resolve();
+  const result = prior.then(run, run);
+  captureLocks.set(
+    tabId,
+    result.catch(() => {}),
+  );
+  return result;
+}
+
 // Plan the scroll bands from the page's metrics (pure math in `planStitch`), grab the viewport at
 // each band (captureVisibleTab is SW-only), and stitch them into one PNG. The user's scroll is
 // restored even if a grab fails midway. captureVisibleTab is rate-limited without a broad host
