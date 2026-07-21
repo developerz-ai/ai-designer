@@ -232,26 +232,52 @@ export function needsScrollIntoView(
   );
 }
 
-/** Whether scrolling actually improves what a single-viewport capture of `rect` sees. Per axis:
- *  an element that FITS on that axis benefits when it's clipped there; an element LARGER than the
- *  viewport on that axis benefits only when NONE of it is visible — centering it otherwise just
- *  swaps the currently visible band (the top/left, usually the header/title) for a middle band at
- *  the same capture size, plus a pointless scroll/restore cycle. */
-export function scrollImprovesCapture(
+/** Per-axis scroll verdicts for a single-viewport capture of `rect`: on each axis, an element
+ *  that FITS benefits when it's clipped there; one LARGER than the viewport benefits only when
+ *  NONE of it is visible — centering it otherwise just swaps the currently visible band (the
+ *  top/left, usually the header/title) for a middle band at the same capture size, plus a
+ *  pointless scroll/restore cycle. */
+export function scrollAxesForCapture(
   rect: { top: number; left: number; bottom: number; right: number },
   viewportWidth: number,
   viewportHeight: number,
-): boolean {
-  if (!needsScrollIntoView(rect, viewportWidth, viewportHeight)) return false;
+): { vertical: boolean; horizontal: boolean } {
   const vertical =
-    rect.bottom - rect.top >= viewportHeight
+    rect.bottom - rect.top > viewportHeight
       ? rect.top >= viewportHeight || rect.bottom <= 0
       : rect.top < 0 || rect.bottom > viewportHeight;
   const horizontal =
-    rect.right - rect.left >= viewportWidth
+    rect.right - rect.left > viewportWidth
       ? rect.left >= viewportWidth || rect.right <= 0
       : rect.left < 0 || rect.right > viewportWidth;
-  return vertical || horizontal;
+  return { vertical, horizontal };
+}
+
+/** The scrollIntoView options for capturing `rect`, or `null` when scrolling wouldn't improve the
+ *  capture at all ({@link scrollAxesForCapture} on both axes). Benefiting axes center (the repo's
+ *  scroll convention). Non-benefiting axes stay put: 'nearest' when the element fits and is fully
+ *  visible there (a true no-op), 'start' when it's unfittable-but-partially-visible — 'nearest'
+ *  would align the END edge and swap the visible header for a bottom band, while 'start' keeps the
+ *  top/left (usually the title) in frame. */
+export function captureScrollOptions(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): { block: ScrollLogicalPosition; inline: ScrollLogicalPosition } | null {
+  const axes = scrollAxesForCapture(rect, viewportWidth, viewportHeight);
+  if (!axes.vertical && !axes.horizontal) return null;
+  return {
+    block: axes.vertical
+      ? 'center'
+      : rect.bottom - rect.top <= viewportHeight
+        ? 'nearest'
+        : 'start',
+    inline: axes.horizontal
+      ? 'center'
+      : rect.right - rect.left <= viewportWidth
+        ? 'nearest'
+        : 'start',
+  };
 }
 
 /** The overflow containers `scrollIntoView` will also move, nearest-first: per CSSOM View it

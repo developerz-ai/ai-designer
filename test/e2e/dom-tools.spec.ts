@@ -374,6 +374,10 @@ test('page-metrics waits behind an in-flight screenshot scroll instead of snapsh
   // Same-step tool calls run concurrently and the screenshot's synchronous scroll runs before the
   // metrics message is handled, so pre-queue this read deterministically observes the mid-scroll
   // position — and a stitch restoring to it would strand the page somewhere it never was.
+  // Readiness ping first: settle the content listener + sendToContent's retry window so arrival
+  // order (not a first-send retry) decides which contended message lands first.
+  await sendToContent(sw, tabId, { type: 'page-metrics' });
+
   const [shot, metrics] = await Promise.all([
     sendToContent(sw, tabId, { type: 'screenshot', selector: '#far' }),
     sendToContent(sw, tabId, { type: 'page-metrics' }),

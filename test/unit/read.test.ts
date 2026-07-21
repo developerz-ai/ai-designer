@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   a11ySnapshot,
+  captureScrollOptions,
   cropBox,
   getStyles,
   needsScrollIntoView,
@@ -9,8 +10,8 @@ import {
   query,
   queryOne,
   screenshotRect,
+  scrollAxesForCapture,
   scrollableAncestors,
-  scrollImprovesCapture,
 } from '@/dom/read';
 import type { PageMetrics } from '@/shared/messages';
 
@@ -184,13 +185,17 @@ describe('scrollableAncestors', () => {
 
   it('walks into shadow roots via the host when the target is shadow-in', () => {
     mount('<div id="host"></div>');
-    const shadow = byId('host').attachShadow({ mode: 'open' });
+    const host = byId('host');
+    const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = '<div id="scroller"><div id="inner"></div></div>';
     const scroller = shadow.getElementById('scroller');
     const inner = shadow.getElementById('inner');
     if (!scroller || !inner) throw new Error('shadow fixture missing');
     fakeSizes(scroller, { scrollHeight: 900, clientHeight: 200 });
-    expect(scrollableAncestors(inner).map((a) => a.id)).toEqual(['scroller']);
+    // The host ITSELF scrolling is what pins the ShadowRoot->host hop: #scroller is reachable via
+    // parentElement inside the shadow tree, so without the hop this assertion would stop at it.
+    fakeSizes(host, { scrollHeight: 2000, clientHeight: 400 });
+    expect(scrollableAncestors(inner).map((a) => a.id)).toEqual(['scroller', 'host']);
   });
 
   it('walks the composed tree for slotted elements (assignedSlot before parentElement)', () => {
@@ -206,48 +211,77 @@ describe('scrollableAncestors', () => {
   });
 });
 
-describe('scrollImprovesCapture', () => {
-  it('is false for an element fully in view', () => {
-    expect(scrollImprovesCapture({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768)).toBe(
-      false,
+describe('scrollAxesForCapture', () => {
+  it('is false on both axes for an element fully in view', () => {
+    expect(scrollAxesForCapture({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768)).toEqual(
+      { vertical: false, horizontal: false },
     );
   });
 
-  it('is true when a fittable axis is clipped', () => {
-    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768)).toBe(
-      true,
-    );
-    expect(scrollImprovesCapture({ top: 10, left: -5, bottom: 100, right: 40 }, 1024, 768)).toBe(
-      true,
-    );
+  it('flags only the clipped fittable axis', () => {
+    expect(
+      scrollAxesForCapture({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: true, horizontal: false });
+    expect(scrollAxesForCapture({ top: 10, left: -5, bottom: 100, right: 40 }, 1024, 768)).toEqual({
+      vertical: false,
+      horizontal: true,
+    });
   });
 
-  it('is false for a taller-than-viewport element whose top is visible — centering swaps the header for a middle band', () => {
-    expect(scrollImprovesCapture({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
-      false,
-    );
-    expect(scrollImprovesCapture({ top: -50, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
-      false,
-    );
+  it('does not flag an unfittable axis while any of the element is visible there', () => {
+    // Taller than the viewport, top visible (or scrolled past mid-element).
+    expect(
+      scrollAxesForCapture({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
+    expect(
+      scrollAxesForCapture({ top: -50, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
+    // Wider than the viewport, left edge visible — the horizontal twin.
+    expect(
+      scrollAxesForCapture({ top: 10, left: 10, bottom: 100, right: 2000 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
   });
 
-  it('is true for an unfittable element when NONE of it is visible — scrolling shows a band of it', () => {
-    // Taller than the viewport, entirely below (incl. the exactly-viewport-sized edge).
-    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
-      true,
-    );
-    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 1568, right: 100 }, 1024, 768)).toBe(
-      true,
-    );
+  it('flags an unfittable axis when NONE of the element is visible there', () => {
+    // Taller than the viewport, entirely below.
+    expect(
+      scrollAxesForCapture({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: true, horizontal: false });
     // Wider than the viewport, entirely to the left.
     expect(
-      scrollImprovesCapture({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
-    ).toBe(true);
+      scrollAxesForCapture({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: true });
+  });
+});
+
+describe('captureScrollOptions', () => {
+  it('is null when scrolling would not improve the capture', () => {
+    expect(
+      captureScrollOptions({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768),
+    ).toBeNull();
+    // Taller than the viewport with its top visible — centering would swap the header for a band.
+    expect(
+      captureScrollOptions({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toBeNull();
   });
 
-  it('is still true for a taller-than-viewport element clipped on a fittable width', () => {
-    expect(scrollImprovesCapture({ top: 10, left: -5, bottom: 2000, right: 100 }, 1024, 768)).toBe(
-      true,
+  it('centers benefiting axes and leaves fully-visible axes alone (nearest)', () => {
+    expect(
+      captureScrollOptions({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'center', inline: 'nearest' });
+  });
+
+  it('aligns start (keeps the header band) on a non-benefiting unfittable axis', () => {
+    // Taller than the viewport with its top visible, clipped only horizontally: the horizontal
+    // scroll must not drag the vertical header out of frame.
+    expect(
+      captureScrollOptions({ top: 10, left: -5, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'start', inline: 'center' });
+  });
+
+  it('centers an exactly-viewport-sized element clipped by a few px (fit, not unfittable)', () => {
+    expect(captureScrollOptions({ top: -1, left: 10, bottom: 767, right: 100 }, 1024, 768)).toEqual(
+      { block: 'center', inline: 'nearest' },
     );
   });
 });

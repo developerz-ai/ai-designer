@@ -14,11 +14,11 @@ import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import {
+  captureScrollOptions,
   pageMetrics,
   queryOne,
   screenshotRect,
   scrollableAncestors,
-  scrollImprovesCapture,
 } from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
@@ -149,18 +149,16 @@ export default defineContentScript({
       const before = { x: window.scrollX, y: window.scrollY };
       let ancestors: { el: Element; top: number; left: number }[] = [];
       let scrolled = false;
-      if (
-        el &&
-        selfFrameId === 0 &&
-        typeof el.scrollIntoView === 'function' &&
-        scrollImprovesCapture(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
-      ) {
+      const scrollOpts = el
+        ? captureScrollOptions(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
+        : null;
+      if (el && selfFrameId === 0 && typeof el.scrollIntoView === 'function' && scrollOpts) {
         ancestors = scrollableAncestors(el).map((a) => ({
           el: a,
           top: a.scrollTop,
           left: a.scrollLeft,
         }));
-        el.scrollIntoView({ block: 'center', inline: 'center' });
+        el.scrollIntoView(scrollOpts);
         // Not abort-aware, unlike the stitch's browseDelay: tool messages carry no AbortSignal
         // (contentDispatchFor checks it only pre-send), so there's nothing to thread here —
         // bounded at SCROLL_SETTLE_MS + one capture round-trip.
