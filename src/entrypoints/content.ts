@@ -13,7 +13,13 @@ import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
-import { needsScrollIntoView, pageMetrics, queryOne, screenshotRect } from '@/dom/read';
+import {
+  needsScrollIntoView,
+  pageMetrics,
+  queryOne,
+  screenshotRect,
+  scrollableAncestors,
+} from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
 import { createWidgetDriver } from '@/dom/widgets';
@@ -51,7 +57,8 @@ import { readOverlayEnabled } from '@/shared/overlay-prefs';
 // reads the composited surface, so an un-settled scroll would grab pre-scroll pixels (same value +
 // rationale as the full-page stitch path's SCROLL_SETTLE_MS, background.ts). On a `scroll-behavior:
 // smooth` page the scroll animates, so the settle is best-effort there — matching the repo's own
-// scroll convention (interact.ts / widgets.ts / the full-page path all use behavior:'auto').
+// scroll convention (none of interact.ts / widgets.ts / the full-page path forces an instant
+// scroll).
 const SCROLL_SETTLE_MS = 200;
 
 export default defineContentScript({
@@ -134,16 +141,29 @@ export default defineContentScript({
       // (which only sees the current viewport) crops to empty. Then settle a paint frame before
       // capture. Scroll is restored in `finally` so the tool stays a read even if the capture
       // round-trip rejects — never strand the page mid-scroll for the next tool or a later full-page
-      // capture's restore-to-start (mirrors background.ts's full-page path). On `scroll-behavior:
-      // smooth` pages the scroll animates (best-effort, per the constant's note).
+      // capture's restore-to-start (mirrors background.ts's full-page path). scrollIntoView scrolls
+      // EVERY scrollable ancestor, so their offsets are snapshotted + restored too, not just the
+      // window's. Skipped in child frames: there it can scroll the TOP document, which this frame
+      // can't restore (cross-origin: can't even read it) — a frame-routed off-screen target keeps
+      // the pre-existing empty-crop → full-frame fallback rather than gain an unrestorable mutation.
       const before = { x: window.scrollX, y: window.scrollY };
+      let ancestors: { el: Element; top: number; left: number }[] = [];
       let scrolled = false;
       if (
         el &&
+        selfFrameId === 0 &&
         typeof el.scrollIntoView === 'function' &&
         needsScrollIntoView(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
       ) {
+        ancestors = scrollableAncestors(el).map((a) => ({
+          el: a,
+          top: a.scrollTop,
+          left: a.scrollLeft,
+        }));
         el.scrollIntoView({ block: 'center', inline: 'center' });
+        // Not abort-aware, unlike the stitch's browseDelay: tool messages carry no AbortSignal
+        // (contentDispatchFor checks it only pre-send), so there's nothing to thread here —
+        // bounded at SCROLL_SETTLE_MS + one capture round-trip.
         await new Promise((resolve) => setTimeout(resolve, SCROLL_SETTLE_MS));
         scrolled = true;
       }
@@ -159,8 +179,27 @@ export default defineContentScript({
           ? { type: 'tool-result', ok: true, data: dataUrl }
           : { type: 'tool-result', ok: false, error: error ?? 'Screenshot capture failed' };
       } finally {
-        if (scrolled) window.scrollTo(before.x, before.y);
+        if (scrolled) {
+          for (const a of ancestors) {
+            a.el.scrollTop = a.top;
+            a.el.scrollLeft = a.left;
+          }
+          window.scrollTo(before.x, before.y);
+        }
       }
+    }
+
+    // Serialize page-driving tools per frame: the AI SDK executes same-step tool calls concurrently
+    // and the SW dispatches each call independently, so without this two scroll-moving calls (two
+    // screenshots, or a screenshot between a full-page stitch's bands — its scrollTo rides
+    // handleControl) interleave their scroll/restore and strand the page at a wrong offset. Pure
+    // reads (describe / responsive / page-metrics / design-read) stay off the queue so they never
+    // wait behind a settle or a stitch.
+    let toolQueue: Promise<unknown> = Promise.resolve();
+    function enqueue<T>(run: () => Promise<T>): Promise<T> {
+      const result = toolQueue.then(run, run);
+      toolQueue = result.catch(() => {});
+      return result;
     }
 
     function handleTool(tool: DomTool): Promise<ToolResult> {
@@ -300,10 +339,10 @@ export default defineContentScript({
       };
 
       const tool = DomTool.safeParse(raw);
-      if (tool.success) return answer(handleTool(tool.data));
+      if (tool.success) return answer(enqueue(() => handleTool(tool.data)));
 
       const control = ControlTool.safeParse(raw);
-      if (control.success) return answer(handleControl(control.data));
+      if (control.success) return answer(enqueue(() => handleControl(control.data)));
 
       const describeCmd = DescribeCmd.safeParse(raw);
       if (describeCmd.success) return answer(Promise.resolve(handleDescribe(describeCmd.data)));

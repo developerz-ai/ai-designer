@@ -9,6 +9,7 @@ import {
   query,
   queryOne,
   screenshotRect,
+  scrollableAncestors,
 } from '@/dom/read';
 import type { PageMetrics } from '@/shared/messages';
 
@@ -146,6 +147,38 @@ describe('needsScrollIntoView', () => {
     expect(needsScrollIntoView({ top: 10, left: 10, bottom: 100, right: 1200 }, 1024, 768)).toBe(
       true,
     );
+  });
+});
+
+describe('scrollableAncestors', () => {
+  // jsdom reports 0 for every box size, so fake the four the helper reads.
+  function fakeSizes(
+    el: HTMLElement,
+    sizes: {
+      scrollHeight?: number;
+      clientHeight?: number;
+      scrollWidth?: number;
+      clientWidth?: number;
+    },
+  ): void {
+    for (const [key, value] of Object.entries(sizes)) {
+      Object.defineProperty(el, key, { value, configurable: true });
+    }
+  }
+
+  it('returns the scrollable ancestors nearest-first, skipping non-scrollable ones', () => {
+    mount(
+      '<div id="outer"><div id="mid"><div id="inner"><div id="target"></div></div></div></div>',
+    );
+    fakeSizes(byId('outer'), { scrollHeight: 900, clientHeight: 200 });
+    fakeSizes(byId('mid'), { scrollHeight: 200, clientHeight: 200 });
+    fakeSizes(byId('inner'), { scrollWidth: 500, clientWidth: 100 });
+    expect(scrollableAncestors(byId('target')).map((a) => a.id)).toEqual(['inner', 'outer']);
+  });
+
+  it('is empty when no ancestor scrolls (jsdom default sizes)', () => {
+    mount('<div id="wrap"><div id="target"></div></div>');
+    expect(scrollableAncestors(byId('target'))).toEqual([]);
   });
 });
 

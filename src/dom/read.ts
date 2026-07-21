@@ -232,6 +232,18 @@ export function needsScrollIntoView(
   );
 }
 
+/** The overflow containers `scrollIntoView` will also move, nearest-first: per CSSOM View it
+ *  scrolls EVERY scrollable ancestor, not just the document scroller. Snapshot their offsets before
+ *  scrolling so the caller can restore them after — else a read-only screenshot strands a nested
+ *  panel at a new scroll position. Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
+export function scrollableAncestors(el: Element): Element[] {
+  const out: Element[] = [];
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth) out.push(p);
+  }
+  return out;
+}
+
 /** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). Pure geometry —
  *  a side-effect-free read: the caller (`content.ts`'s `screenshot`) is responsible for first
  *  scrolling an off-screen `el` into view and letting it paint (see `needsScrollIntoView`), so the
