@@ -234,18 +234,23 @@ export function needsScrollIntoView(
 
 /** Whether scrolling actually improves what a single-viewport capture of `rect` sees. Per axis:
  *  an element that FITS on that axis benefits when it's clipped there; an element LARGER than the
- *  viewport on that axis never does — centering it just swaps the currently visible band (the
- *  top/left, usually the header/title) for a middle band at the same capture size, plus a
- *  pointless scroll/restore cycle. */
+ *  viewport on that axis benefits only when NONE of it is visible — centering it otherwise just
+ *  swaps the currently visible band (the top/left, usually the header/title) for a middle band at
+ *  the same capture size, plus a pointless scroll/restore cycle. */
 export function scrollImprovesCapture(
   rect: { top: number; left: number; bottom: number; right: number },
   viewportWidth: number,
   viewportHeight: number,
 ): boolean {
+  if (!needsScrollIntoView(rect, viewportWidth, viewportHeight)) return false;
   const vertical =
-    rect.bottom - rect.top >= viewportHeight ? false : rect.top < 0 || rect.bottom > viewportHeight;
+    rect.bottom - rect.top >= viewportHeight
+      ? rect.top >= viewportHeight || rect.bottom <= 0
+      : rect.top < 0 || rect.bottom > viewportHeight;
   const horizontal =
-    rect.right - rect.left >= viewportWidth ? false : rect.left < 0 || rect.right > viewportWidth;
+    rect.right - rect.left >= viewportWidth
+      ? rect.left >= viewportWidth || rect.right <= 0
+      : rect.left < 0 || rect.right > viewportWidth;
   return vertical || horizontal;
 }
 

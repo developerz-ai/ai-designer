@@ -222,13 +222,27 @@ describe('scrollImprovesCapture', () => {
     );
   });
 
-  it('is false for a taller-than-viewport element — centering swaps the header for a middle band', () => {
+  it('is false for a taller-than-viewport element whose top is visible — centering swaps the header for a middle band', () => {
     expect(scrollImprovesCapture({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
       false,
     );
     expect(scrollImprovesCapture({ top: -50, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
       false,
     );
+  });
+
+  it('is true for an unfittable element when NONE of it is visible — scrolling shows a band of it', () => {
+    // Taller than the viewport, entirely below (incl. the exactly-viewport-sized edge).
+    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
+    expect(scrollImprovesCapture({ top: 800, left: 10, bottom: 1568, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
+    // Wider than the viewport, entirely to the left.
+    expect(
+      scrollImprovesCapture({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
+    ).toBe(true);
   });
 
   it('is still true for a taller-than-viewport element clipped on a fittable width', () => {
