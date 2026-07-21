@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Developerz.ai Designer" width="120">
+  <img src="assets/logo.png" alt="Developerz.ai Designer" width="300">
 </p>
 
 # Developerz.ai Designer
