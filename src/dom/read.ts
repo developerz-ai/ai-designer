@@ -218,7 +218,85 @@ export interface ScreenshotRect {
   devicePixelRatio: number;
 }
 
-/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). */
+/** Whether `rect` sits (even partly) outside the viewport, so `el` must be scrolled into view
+ *  before a single-viewport capture — `captureVisibleTab` only sees what's on screen, so a
+ *  below-fold or partly-clipped element would otherwise crop to empty. Pure so it's unit-testable
+ *  without a real layout (jsdom's `getBoundingClientRect`/`scrollIntoView` are no-ops). */
+export function needsScrollIntoView(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): boolean {
+  return (
+    rect.top < 0 || rect.left < 0 || rect.bottom > viewportHeight || rect.right > viewportWidth
+  );
+}
+
+/** Per-axis scroll verdicts for a single-viewport capture of `rect`: on each axis, an element
+ *  that FITS benefits when it's clipped there; one LARGER than the viewport benefits only when
+ *  NONE of it is visible — centering it otherwise just swaps the currently visible band (the
+ *  top/left, usually the header/title) for a middle band at the same capture size, plus a
+ *  pointless scroll/restore cycle. */
+export function scrollAxesForCapture(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): { vertical: boolean; horizontal: boolean } {
+  const vertical =
+    rect.bottom - rect.top > viewportHeight
+      ? rect.top >= viewportHeight || rect.bottom <= 0
+      : rect.top < 0 || rect.bottom > viewportHeight;
+  const horizontal =
+    rect.right - rect.left > viewportWidth
+      ? rect.left >= viewportWidth || rect.right <= 0
+      : rect.left < 0 || rect.right > viewportWidth;
+  return { vertical, horizontal };
+}
+
+/** The scrollIntoView options for capturing `rect`, or `null` when scrolling wouldn't improve the
+ *  capture at all ({@link scrollAxesForCapture} on both axes). On each axis: an element LARGER
+ *  than the viewport aligns 'start' — the capture keeps the top/left band (usually the
+ *  header/title), never swaps in a middle or bottom band. One that fits centers when scrolling
+ *  benefits (shows the whole thing) and stays put ('nearest', a true no-op when fully visible)
+ *  when it doesn't. */
+export function captureScrollOptions(
+  rect: { top: number; left: number; bottom: number; right: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): { block: ScrollLogicalPosition; inline: ScrollLogicalPosition } | null {
+  const axes = scrollAxesForCapture(rect, viewportWidth, viewportHeight);
+  if (!axes.vertical && !axes.horizontal) return null;
+  return {
+    block: rect.bottom - rect.top > viewportHeight ? 'start' : axes.vertical ? 'center' : 'nearest',
+    inline:
+      rect.right - rect.left > viewportWidth ? 'start' : axes.horizontal ? 'center' : 'nearest',
+  };
+}
+
+/** The overflow containers `scrollIntoView` will also move, nearest-first: per CSSOM View it
+ *  scrolls EVERY scrollable ancestor in the flat tree, not just the document scroller. Snapshot
+ *  their offsets before scrolling so the caller can restore them after — else a read-only
+ *  screenshot strands a nested panel at a new scroll position. Walks the COMPOSED tree
+ *  (assignedSlot → parentElement → shadow host) so a slotted element's in-shadow scroll containers
+ *  are covered too. Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
+export function scrollableAncestors(el: Element): Element[] {
+  const up = (node: Element): Element | null => {
+    if (node.assignedSlot) return node.assignedSlot;
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  };
+  const out: Element[] = [];
+  for (let p = up(el); p; p = up(p)) {
+    if (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth) out.push(p);
+  }
+  return out;
+}
+
+/** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). Pure geometry —
+ *  a side-effect-free read: the caller (`content.ts`'s `screenshot`) is responsible for first
+ *  scrolling an off-screen `el` into view and letting it paint (see `needsScrollIntoView`), so the
+ *  target is already positioned when measured here. */
 export function screenshotRect(el?: Element | null): ScreenshotRect {
   const devicePixelRatio = window.devicePixelRatio || 1;
   if (!el) {

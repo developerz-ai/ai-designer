@@ -2,6 +2,7 @@ import { generateObject, generateText, type Tool } from 'ai';
 import { defineBackground } from '#imports';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
+import { withCaptureLock } from '@/agent/capture-lock';
 import {
   clearProviderConfig,
   getProviderConfig,
@@ -285,22 +286,38 @@ export default defineBackground(() => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
       const tabId = message.tabId ?? defaultTabId;
       const frameId = message.frameId ?? 0;
-      try {
-        const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
-        const parsed = ToolResult.safeParse(raw);
-        if (!parsed.success) {
-          return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+      const send = async (): Promise<ToolResult> => {
+        // Re-checked here (not just at dispatch entry): a locked screenshot may wait out a stitch
+        // holder, and the turn may have aborted during the wait.
+        if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+        try {
+          const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
+          const parsed = ToolResult.safeParse(raw);
+          if (!parsed.success) {
+            return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+          }
+          return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
+        } catch (err) {
+          return { type: 'tool-result', ok: false, error: String(err) };
         }
-        return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
-      } catch (err) {
-        return { type: 'tool-result', ok: false, error: String(err) };
-      }
+      };
+      // Element screenshots scroll the page (content.ts), so they ride the per-tab capture mutex
+      // against full-page stitches (src/agent/capture-lock.ts). Lock exactly here (not also in
+      // screenshotDispatchFor's element branch, which funnels into this) so one call never
+      // double-locks and self-deadlocks.
+      return message.type === 'screenshot' ? withCaptureLock(tabId, send) : send();
     };
   }
 
   // `screenshot` transport (slice 13). An element/viewport crop routes to content (it computes the
   // rect, the SW crops — the slice-05 path); a `fullPage` capture is SW-owned scroll-stitch of the
-  // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`).
+  // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`). The
+  // element branch needs no lock of its own — contentDispatchFor mutexes `type:'screenshot'` — but
+  // the stitch must lock: it scrolls the page per band, and an element screenshot dequeued
+  // mid-band-settle would corrupt that band's grab (src/agent/capture-lock.ts). The lock covers
+  // the capture pair only — the wider page-driver-vs-stitch atomicity class (click/hover
+  // scrollIntoView, layout-shifting mutations, CDP emulation resizes mid-stitch) is pre-existing
+  // and tracked in #136.
   function screenshotDispatchFor(defaultTabId: number): ScreenshotDispatch {
     const content = contentDispatchFor(defaultTabId);
     return async (input, signal) => {
@@ -322,10 +339,19 @@ export default defineBackground(() => {
         return {
           type: 'tool-result',
           ok: true,
-          data: await captureFullPage(tabId, tab.windowId, signal),
+          data: await withCaptureLock(tabId, () => {
+            // Re-checked after the lock wait — the turn may have aborted behind a holder.
+            if (signal?.aborted) throw new Error('aborted');
+            return captureFullPage(tabId, tab.windowId, signal);
+          }),
         };
       } catch (err) {
-        return { type: 'tool-result', ok: false, error: String(err) };
+        // Normalize the abort-throw's 'Error: aborted' to the element path's plain 'aborted'.
+        return {
+          type: 'tool-result',
+          ok: false,
+          error: err instanceof Error && err.message === 'aborted' ? 'aborted' : String(err),
+        };
       }
     };
   }

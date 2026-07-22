@@ -22,6 +22,8 @@ const FIXTURE_HTML = `<!doctype html>
   <body>
     <h1 id="hero">Hero</h1>
     <button id="cta" data-testid="cta">Buy now</button>
+    <div style="height: 3000px"></div>
+    <div id="far">Far below the fold</div>
   </body>
 </html>`;
 
@@ -43,9 +45,9 @@ interface BusEventLike {
   [key: string]: unknown;
 }
 
-async function stubFixturePage(context: BrowserContext): Promise<void> {
+async function stubFixturePage(context: BrowserContext, html = FIXTURE_HTML): Promise<void> {
   await context.route(`${FIXTURE_PREFIX}**`, (route) =>
-    route.fulfill({ status: 200, contentType: 'text/html', body: FIXTURE_HTML }),
+    route.fulfill({ status: 200, contentType: 'text/html', body: html }),
   );
 }
 
@@ -173,6 +175,31 @@ test('picker highlights on hover and forwards a committed selection to the SW', 
 const STUB_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
+// A viewport-sized stub capture (1280x720 = the Playwright viewport, dpr 1) generated in the SW.
+// The 1x1 STUB_PNG_DATA_URL makes every cropBox null (any rect clamps empty against it), so it
+// can't distinguish a post-scroll in-bounds rect from a pre-scroll out-of-bounds one. Against a
+// real-size frame the discriminator works: a post-scroll rect produces a real crop (different
+// dataUrl comes back); a pre-scroll rect (top ≈ 3000) clamps out of bounds → cropBox null → the
+// SW returns the stub unchanged.
+async function stubViewportCapture(sw: Worker): Promise<string> {
+  return sw.evaluate(async () => {
+    const canvas = new OffscreenCanvas(1280, 720);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no 2d context on OffscreenCanvas');
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 1280, 720);
+    const bytes = new Uint8Array(
+      await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer(),
+    );
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const dataUrl = `data:image/png;base64,${btoa(bin)}`;
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(dataUrl)) as typeof chrome.tabs.captureVisibleTab;
+    return dataUrl;
+  });
+}
+
 test('screenshot returns PNG bytes for vision self-correction', async ({ context }) => {
   await stubFixturePage(context);
   const sw = await serviceWorker(context);
@@ -208,4 +235,274 @@ test('screenshot with no selector captures the full viewport', async ({ context 
   const result = await sendToContent(sw, tabId, { type: 'screenshot' });
   expect(result.ok).toBe(true);
   expect(String(result.data)).toBe(STUB_PNG_DATA_URL); // whole-frame crop is a no-op (cropBox null)
+});
+
+test('screenshot scrolls a below-fold element into view for capture, then restores scroll (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(context);
+  const sw = await serviceWorker(context);
+  const stubDataUrl = await stubViewportCapture(sw);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-belowfold`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // The tool restores scroll before returning, so a post-hoc scrollY check can't see it — record
+  // the furthest the page scrolled while the tool ran.
+  await page.evaluate(() => {
+    const w = window as unknown as { __maxScrollY: number };
+    w.__maxScrollY = 0;
+    window.addEventListener(
+      'scroll',
+      () => {
+        w.__maxScrollY = Math.max(w.__maxScrollY, window.scrollY);
+      },
+      { passive: true },
+    );
+  });
+
+  // Precondition: #far starts below the fold with the page unscrolled.
+  const startBelowFold = await page.evaluate(() => {
+    const el = document.getElementById('far');
+    return !!el && el.getBoundingClientRect().top > window.innerHeight && window.scrollY === 0;
+  });
+  expect(startBelowFold).toBe(true);
+
+  const result = await sendToContent(sw, tabId, { type: 'screenshot', selector: '#far' });
+  expect(result.ok).toBe(true);
+
+  // The crop rect was measured AFTER the scroll: a pre-scroll rect (top ≈ 3000) clamps out of the
+  // 1280x720 frame, the SW would return the stub unchanged (cropBox null → full frame), and this
+  // assertion would fail — this is what pins remeasure-after-scroll, not just scroll-happened.
+  expect(String(result.data)).not.toBe(stubDataUrl);
+
+  // jsdom can't prove this; a real browser can: the tool scrolled #far into view for the capture
+  // (otherwise the crop is empty), then restored scroll so it stays a read.
+  // The tool waits for the forward scroll and the restore to land, so by the time it returns the
+  // page has visibly scrolled (maxScrollY>0) and is fully back at the top.
+  const maxScrollY = await page.evaluate(
+    () => (window as unknown as { __maxScrollY: number }).__maxScrollY,
+  );
+  expect(maxScrollY).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('screenshot restores a nested scroll container it had to scroll (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(
+    context,
+    `<!doctype html>
+<html>
+  <body>
+    <div id="panel" style="height: 200px; overflow-y: auto;">
+      <div style="height: 1000px"></div>
+      <div id="inner">Deep inside the panel</div>
+    </div>
+  </body>
+</html>`,
+  );
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-container`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // Record the furthest the PANEL scrolled while the tool ran (restore happens before return).
+  await page.evaluate(() => {
+    const w = window as unknown as { __maxPanelScroll: number };
+    w.__maxPanelScroll = 0;
+    document.getElementById('panel')?.addEventListener(
+      'scroll',
+      (e) => {
+        w.__maxPanelScroll = Math.max(
+          w.__maxPanelScroll,
+          (e.currentTarget as HTMLElement).scrollTop,
+        );
+      },
+      { passive: true },
+    );
+  });
+
+  // Precondition: #inner's rect starts below the fold (pushed out by the panel's 1000px spacer)
+  // with the panel unscrolled.
+  const startBelowFold = await page.evaluate(() => {
+    const el = document.getElementById('inner');
+    const panel = document.getElementById('panel');
+    return (
+      !!el &&
+      !!panel &&
+      el.getBoundingClientRect().top > window.innerHeight &&
+      panel.scrollTop === 0
+    );
+  });
+  expect(startBelowFold).toBe(true);
+
+  const result = await sendToContent(sw, tabId, { type: 'screenshot', selector: '#inner' });
+  expect(result.ok).toBe(true);
+
+  // scrollIntoView scrolls EVERY scrollable ancestor — the tool must restore the ones it moved,
+  // not just the window, or a read-only tool strands the user's panel mid-scroll.
+  const maxPanelScroll = await page.evaluate(
+    () => (window as unknown as { __maxPanelScroll: number }).__maxPanelScroll,
+  );
+  expect(maxPanelScroll).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.getElementById('panel')?.scrollTop)).toBe(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('screenshot reveals an element clipped by a container while its rect stays in-window (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(
+    context,
+    `<!doctype html>
+<html>
+  <body>
+    <div style="height: 100px"></div>
+    <div id="panel" style="height: 200px; overflow-y: auto;">
+      <div style="height: 100px"></div>
+      <div id="inner">Clipped inside the panel</div>
+      <div style="height: 800px"></div>
+    </div>
+  </body>
+</html>`,
+  );
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-clipped-in-window`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // Scroll the panel 150px down: #inner's layout rect moves ABOVE the panel's clip box but stays
+  // inside the window — zero painted pixels, yet fully "in view" by rect. getBoundingClientRect
+  // is unclipped, so without the container reveal the crop silently captures whatever else paints
+  // at those coordinates.
+  await page.evaluate(() => {
+    const panel = document.getElementById('panel');
+    if (panel) panel.scrollTop = 150;
+  });
+  await page.evaluate(() => {
+    const w = window as unknown as { __minPanelScroll: number };
+    w.__minPanelScroll = Number.POSITIVE_INFINITY;
+    document.getElementById('panel')?.addEventListener(
+      'scroll',
+      (e) => {
+        w.__minPanelScroll = Math.min(
+          w.__minPanelScroll,
+          (e.currentTarget as HTMLElement).scrollTop,
+        );
+      },
+      { passive: true },
+    );
+  });
+
+  const pre = await page.evaluate(() => {
+    const el = document.getElementById('inner');
+    const panel = document.getElementById('panel');
+    if (!el || !panel) throw new Error('fixture missing');
+    const r = el.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    return {
+      inWindow: r.top >= 0 && r.bottom <= window.innerHeight,
+      clippedByPanel: r.bottom <= pr.top,
+      scrollTop: panel.scrollTop,
+    };
+  });
+  expect(pre).toEqual({ inWindow: true, clippedByPanel: true, scrollTop: 150 });
+
+  const result = await sendToContent(sw, tabId, { type: 'screenshot', selector: '#inner' });
+  expect(result.ok).toBe(true);
+
+  // The reveal scroll happened (panel dipped below 150 to show #inner at its edge)…
+  const minPanelScroll = await page.evaluate(
+    () => (window as unknown as { __minPanelScroll: number }).__minPanelScroll,
+  );
+  expect(minPanelScroll).toBeLessThan(150);
+  // …and the panel was restored to where the user left it (150, NOT 0).
+  expect(await page.evaluate(() => document.getElementById('panel')?.scrollTop)).toBe(150);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('page-metrics waits behind an in-flight screenshot scroll instead of snapshotting it (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(context);
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-metrics-queue`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // The full-page stitch's `finally` restores to the scrollY its page-metrics request observed.
+  // Same-step tool calls run concurrently and the screenshot's synchronous scroll runs before the
+  // metrics message is handled, so pre-queue this read deterministically observes the mid-scroll
+  // position — and a stitch restoring to it would strand the page somewhere it never was.
+  // Readiness ping first: settle the content listener + sendToContent's retry window so arrival
+  // order (not a first-send retry) decides which contended message lands first.
+  await sendToContent(sw, tabId, { type: 'page-metrics' });
+
+  const [shot, metrics] = await Promise.all([
+    sendToContent(sw, tabId, { type: 'screenshot', selector: '#far' }),
+    sendToContent(sw, tabId, { type: 'page-metrics' }),
+  ]);
+  expect(shot.ok).toBe(true);
+  expect(metrics.ok).toBe(true);
+  const m = (metrics as { metrics?: { scrollY?: number } }).metrics;
+  expect(m?.scrollY).toBe(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('concurrent screenshots serialize their scroll/restore instead of stranding the page (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(
+    context,
+    `<!doctype html>
+<html>
+  <body>
+    <h1 id="hero">Hero</h1>
+    <div style="height: 2000px"></div>
+    <div id="a">A below the fold</div>
+    <div style="height: 2000px"></div>
+    <div id="b">B below the fold</div>
+  </body>
+</html>`,
+  );
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-concurrent`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // The AI SDK executes same-step tool calls concurrently. Without the per-frame queue in
+  // content.ts the second call snapshots its restore point mid-first-scroll and the page ends
+  // stranded at that offset; with it each call scrolls + captures + restores in turn. (The first
+  // call's scrollIntoView runs synchronously before its settle await, so the second call's
+  // snapshot deterministically reads the scrolled position — this fails deterministically without
+  // the queue.)
+  const [a, b] = await Promise.all([
+    sendToContent(sw, tabId, { type: 'screenshot', selector: '#a' }),
+    sendToContent(sw, tabId, { type: 'screenshot', selector: '#b' }),
+  ]);
+  expect(a.ok).toBe(true);
+  expect(b.ok).toBe(true);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });

@@ -13,7 +13,13 @@ import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
-import { pageMetrics, queryOne, screenshotRect } from '@/dom/read';
+import {
+  captureScrollOptions,
+  pageMetrics,
+  queryOne,
+  screenshotRect,
+  scrollableAncestors,
+} from '@/dom/read';
 import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
 import { createWidgetDriver } from '@/dom/widgets';
@@ -46,6 +52,14 @@ import { readOverlayEnabled } from '@/shared/overlay-prefs';
 // their ContentToSw events to the service worker. All logic lives in src/dom (jsdom-testable,
 // coverage-counted); this entrypoint is coverage-excluded, so keep it minimal. Page mutations are
 // EPHEMERAL + reversible (docs/idea/live-edit.md); the only durable output is the changeset (07).
+
+// Paint-settle after scrolling an element into view before the SW captures — captureVisibleTab
+// reads the composited surface, so an un-settled scroll would grab pre-scroll pixels (same value +
+// rationale as the full-page stitch path's SCROLL_SETTLE_MS, background.ts). On a `scroll-behavior:
+// smooth` page the scroll animates, so the settle is best-effort there — matching the repo's own
+// scroll convention (none of interact.ts / widgets.ts / the full-page path forces an instant
+// scroll).
+const SCROLL_SETTLE_MS = 200;
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -123,16 +137,87 @@ export default defineContentScript({
           error: `No element matches selector: ${selector}`,
         };
       }
-      const { rect, devicePixelRatio } = screenshotRect(el);
-      const request: CaptureRequest = { type: 'capture-visible-tab', rect, devicePixelRatio };
-      const parsed = CaptureResult.safeParse(await chrome.runtime.sendMessage(request));
-      if (!parsed.success) {
-        return { type: 'tool-result', ok: false, error: 'Malformed capture result from the SW' };
+      // Bring an off-screen target into view before the SW grabs the viewport, else captureVisibleTab
+      // (which only sees the current viewport) crops to empty. Then settle a paint frame before
+      // capture. Scroll is restored in `finally` so the tool stays a read even if the capture
+      // round-trip rejects — never strand the page mid-scroll for the next tool or a later full-page
+      // capture's restore-to-start (mirrors background.ts's full-page path). scrollIntoView scrolls
+      // EVERY scrollable ancestor, so their offsets are snapshotted + restored too, not just the
+      // window's. Skipped in child frames: there it can scroll the TOP document, which this frame
+      // can't restore (cross-origin: can't even read it) — a frame-routed off-screen target keeps
+      // the pre-existing empty-crop → full-frame fallback rather than gain an unrestorable mutation.
+      const before = { x: window.scrollX, y: window.scrollY };
+      let ancestors: { el: Element; top: number; left: number }[] = [];
+      let scrolled = false;
+      const scrollOpts = el
+        ? captureScrollOptions(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
+        : null;
+      const scrollContainers = el ? scrollableAncestors(el) : [];
+      // Container-clipped blind spot: getBoundingClientRect is UNCLIPPED layout geometry, so an
+      // element fully clipped by a scrollable ancestor keeps an in-window rect (null options
+      // above) while zero pixels of it are painted — the crop would silently capture whatever
+      // else sits at those coordinates. With a scrollable ancestor beyond the document scroller,
+      // do a minimal 'nearest' reveal instead: a true no-op when the element is genuinely visible
+      // in every scrolling box, so the common in-view case pays only the settle.
+      const containerClipped =
+        !scrollOpts &&
+        scrollContainers.some((a) => a !== document.documentElement && a !== document.body);
+      const effectiveOpts: ScrollIntoViewOptions | null =
+        scrollOpts ?? (containerClipped ? { block: 'nearest', inline: 'nearest' } : null);
+      if (el && selfFrameId === 0 && typeof el.scrollIntoView === 'function' && effectiveOpts) {
+        ancestors = scrollContainers.map((a) => ({
+          el: a,
+          top: a.scrollTop,
+          left: a.scrollLeft,
+        }));
+        el.scrollIntoView(effectiveOpts);
+        // Not abort-aware, unlike the stitch's browseDelay: tool messages carry no AbortSignal
+        // (contentDispatchFor checks it only pre-send), so there's nothing to thread here —
+        // bounded at SCROLL_SETTLE_MS + one capture round-trip.
+        await new Promise((resolve) => setTimeout(resolve, SCROLL_SETTLE_MS));
+        scrolled = true;
       }
-      const { ok, dataUrl, error } = parsed.data;
-      return ok && dataUrl
-        ? { type: 'tool-result', ok: true, data: dataUrl }
-        : { type: 'tool-result', ok: false, error: error ?? 'Screenshot capture failed' };
+      try {
+        const { rect, devicePixelRatio } = screenshotRect(el);
+        const request: CaptureRequest = { type: 'capture-visible-tab', rect, devicePixelRatio };
+        const parsed = CaptureResult.safeParse(await chrome.runtime.sendMessage(request));
+        if (!parsed.success) {
+          return { type: 'tool-result', ok: false, error: 'Malformed capture result from the SW' };
+        }
+        const { ok, dataUrl, error } = parsed.data;
+        return ok && dataUrl
+          ? { type: 'tool-result', ok: true, data: dataUrl }
+          : { type: 'tool-result', ok: false, error: error ?? 'Screenshot capture failed' };
+      } finally {
+        if (scrolled) {
+          for (const a of ancestors) {
+            a.el.scrollTop = a.top;
+            a.el.scrollLeft = a.left;
+          }
+          window.scrollTo(before.x, before.y);
+        }
+      }
+    }
+
+    // Serialize page-driving tools per frame: the AI SDK executes same-step tool calls concurrently
+    // and the SW dispatches each call independently, so without this two scroll-moving calls (two
+    // screenshots, or a screenshot between a full-page stitch's bands — its scrollTo rides
+    // handleControl) interleave their scroll/restore and strand the page at a wrong offset. Pure
+    // reads (describe / responsive / design-read) stay off the queue so they never wait behind a
+    // settle or a stitch — except page-metrics, which rides it because the stitch's `finally`
+    // "restores" to its scrollY, so answering mid-element-scroll would strand the page somewhere
+    // it never was.
+    let toolQueue: Promise<unknown> = Promise.resolve();
+    function enqueue<T>(run: () => Promise<T>): Promise<T> {
+      const result = toolQueue.then(run, run);
+      // Chain liveness + no payload retention: the stored link swallows a rejection AND drops the
+      // run's value (a fulfilled link would otherwise hold the last ToolResult — captures carry
+      // base64 PNGs — for this frame's whole lifetime).
+      toolQueue = result.then(
+        () => {},
+        () => {},
+      );
+      return result;
     }
 
     function handleTool(tool: DomTool): Promise<ToolResult> {
@@ -246,19 +331,31 @@ export default defineContentScript({
 
       // Full-page capture (slice 13): the SW scroll-stitches viewport grabs (only it has
       // captureVisibleTab + OffscreenCanvas) and needs this frame's scroll/viewport geometry to plan
-      // the bands. Pure DOM read (src/dom/read.ts); a failure degrades to an error the SW surfaces.
+      // the bands. Pure DOM read (src/dom/read.ts), but it rides the tool queue like the
+      // page-driving tools: the stitch's `finally` restores to this scrollY, so answering while a
+      // queued element screenshot is mid-scroll would snapshot a position the page was never
+      // parked at — and the stitch would "restore" the user there. A failure degrades to an error
+      // the SW surfaces.
       const metrics = PageMetricsRequest.safeParse(raw);
       if (metrics.success) {
-        try {
-          sendResponse({
-            type: 'page-metrics-result',
-            ok: true,
-            metrics: pageMetrics(document, window),
-          } satisfies PageMetricsResult);
-        } catch (err) {
-          sendResponse({ type: 'page-metrics-result', ok: false, error: String(err) });
-        }
-        return; // responded synchronously
+        enqueue((): Promise<PageMetricsResult> => {
+          try {
+            return Promise.resolve({
+              type: 'page-metrics-result',
+              ok: true,
+              metrics: pageMetrics(document, window),
+            });
+          } catch (err) {
+            return Promise.resolve({
+              type: 'page-metrics-result',
+              ok: false,
+              error: String(err),
+            });
+          }
+        })
+          .then(sendResponse)
+          .catch(() => {}); // dead-SW swallow, mirrors emit()
+        return true; // async PageMetricsResult
       }
 
       // Always answer a tool call: a rejected round-trip (e.g. the SW evicted mid-screenshot)
@@ -272,10 +369,10 @@ export default defineContentScript({
       };
 
       const tool = DomTool.safeParse(raw);
-      if (tool.success) return answer(handleTool(tool.data));
+      if (tool.success) return answer(enqueue(() => handleTool(tool.data)));
 
       const control = ControlTool.safeParse(raw);
-      if (control.success) return answer(handleControl(control.data));
+      if (control.success) return answer(enqueue(() => handleControl(control.data)));
 
       const describeCmd = DescribeCmd.safeParse(raw);
       if (describeCmd.success) return answer(Promise.resolve(handleDescribe(describeCmd.data)));

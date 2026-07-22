@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   a11ySnapshot,
+  captureScrollOptions,
   cropBox,
   getStyles,
+  needsScrollIntoView,
   pageMetrics,
   planStitch,
   query,
   queryOne,
   screenshotRect,
+  scrollAxesForCapture,
+  scrollableAncestors,
 } from '@/dom/read';
 import type { PageMetrics } from '@/shared/messages';
 
@@ -122,6 +126,178 @@ describe('screenshotRect', () => {
     const shot = screenshotRect();
     expect(shot.rect.width).toBe(window.innerWidth);
     expect(shot.rect.height).toBe(window.innerHeight);
+  });
+});
+
+describe('needsScrollIntoView', () => {
+  it('is false for an element fully inside the viewport', () => {
+    expect(needsScrollIntoView({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768)).toBe(
+      false,
+    );
+  });
+
+  it('is true below the fold, above the fold, or clipped at either side', () => {
+    expect(needsScrollIntoView({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
+    expect(needsScrollIntoView({ top: -50, left: 10, bottom: 20, right: 100 }, 1024, 768)).toBe(
+      true,
+    );
+    expect(needsScrollIntoView({ top: 10, left: -5, bottom: 100, right: 40 }, 1024, 768)).toBe(
+      true,
+    );
+    expect(needsScrollIntoView({ top: 10, left: 10, bottom: 100, right: 1200 }, 1024, 768)).toBe(
+      true,
+    );
+  });
+});
+
+describe('scrollableAncestors', () => {
+  // jsdom reports 0 for every box size, so fake the four the helper reads.
+  function fakeSizes(
+    el: HTMLElement,
+    sizes: {
+      scrollHeight?: number;
+      clientHeight?: number;
+      scrollWidth?: number;
+      clientWidth?: number;
+    },
+  ): void {
+    for (const [key, value] of Object.entries(sizes)) {
+      Object.defineProperty(el, key, { value, configurable: true });
+    }
+  }
+
+  it('returns the scrollable ancestors nearest-first, skipping non-scrollable ones', () => {
+    mount(
+      '<div id="outer"><div id="mid"><div id="inner"><div id="target"></div></div></div></div>',
+    );
+    fakeSizes(byId('outer'), { scrollHeight: 900, clientHeight: 200 });
+    fakeSizes(byId('mid'), { scrollHeight: 200, clientHeight: 200 });
+    fakeSizes(byId('inner'), { scrollWidth: 500, clientWidth: 100 });
+    expect(scrollableAncestors(byId('target')).map((a) => a.id)).toEqual(['inner', 'outer']);
+  });
+
+  it('is empty when no ancestor scrolls (jsdom default sizes)', () => {
+    mount('<div id="wrap"><div id="target"></div></div>');
+    expect(scrollableAncestors(byId('target'))).toEqual([]);
+  });
+
+  it('walks into shadow roots via the host when the target is shadow-in', () => {
+    mount('<div id="host"></div>');
+    const host = byId('host');
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div id="scroller"><div id="inner"></div></div>';
+    const scroller = shadow.getElementById('scroller');
+    const inner = shadow.getElementById('inner');
+    if (!scroller || !inner) throw new Error('shadow fixture missing');
+    fakeSizes(scroller, { scrollHeight: 900, clientHeight: 200 });
+    // The host ITSELF scrolling is what pins the ShadowRoot->host hop: #scroller is reachable via
+    // parentElement inside the shadow tree, so without the hop this assertion would stop at it.
+    fakeSizes(host, { scrollHeight: 2000, clientHeight: 400 });
+    expect(scrollableAncestors(inner).map((a) => a.id)).toEqual(['scroller', 'host']);
+  });
+
+  it('walks the composed tree for slotted elements (assignedSlot before parentElement)', () => {
+    mount('<div id="host"><span id="slotted"></span></div>');
+    const shadow = byId('host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div id="shadowscroller"><slot></slot></div>';
+    const scroller = shadow.getElementById('shadowscroller');
+    if (!scroller) throw new Error('shadow fixture missing');
+    fakeSizes(scroller, { scrollHeight: 900, clientHeight: 200 });
+    // A slotted element's flat-tree parent chain goes through its slot, so a scrollable container
+    // inside the shadow root must be found even though it is NOT a DOM ancestor.
+    expect(scrollableAncestors(byId('slotted')).map((a) => a.id)).toContain('shadowscroller');
+  });
+});
+
+describe('scrollAxesForCapture', () => {
+  it('is false on both axes for an element fully in view', () => {
+    expect(scrollAxesForCapture({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768)).toEqual(
+      { vertical: false, horizontal: false },
+    );
+  });
+
+  it('flags only the clipped fittable axis', () => {
+    expect(
+      scrollAxesForCapture({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: true, horizontal: false });
+    expect(scrollAxesForCapture({ top: 10, left: -5, bottom: 100, right: 40 }, 1024, 768)).toEqual({
+      vertical: false,
+      horizontal: true,
+    });
+  });
+
+  it('does not flag an unfittable axis while any of the element is visible there', () => {
+    // Taller than the viewport, top visible (or scrolled past mid-element).
+    expect(
+      scrollAxesForCapture({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
+    expect(
+      scrollAxesForCapture({ top: -50, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
+    // Wider than the viewport, left edge visible — the horizontal twin.
+    expect(
+      scrollAxesForCapture({ top: 10, left: 10, bottom: 100, right: 2000 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: false });
+  });
+
+  it('flags an unfittable axis when NONE of the element is visible there', () => {
+    // Taller than the viewport, entirely below.
+    expect(
+      scrollAxesForCapture({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ vertical: true, horizontal: false });
+    // Wider than the viewport, entirely to the left.
+    expect(
+      scrollAxesForCapture({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
+    ).toEqual({ vertical: false, horizontal: true });
+  });
+});
+
+describe('captureScrollOptions', () => {
+  it('is null when scrolling would not improve the capture', () => {
+    expect(
+      captureScrollOptions({ top: 10, left: 10, bottom: 100, right: 100 }, 1024, 768),
+    ).toBeNull();
+    // Taller than the viewport with its top visible — centering would swap the header for a band.
+    expect(
+      captureScrollOptions({ top: 10, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toBeNull();
+  });
+
+  it('centers benefiting axes and leaves fully-visible axes alone (nearest)', () => {
+    expect(
+      captureScrollOptions({ top: 800, left: 10, bottom: 900, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'center', inline: 'nearest' });
+  });
+
+  it('aligns start (keeps the header band) on a non-benefiting unfittable axis', () => {
+    // Taller than the viewport with its top visible, clipped only horizontally: the horizontal
+    // scroll must not drag the vertical header out of frame.
+    expect(
+      captureScrollOptions({ top: 10, left: -5, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'start', inline: 'center' });
+  });
+
+  it('aligns start on an unfittable BENEFITING axis too — the header band, not a middle slice', () => {
+    // Taller than the viewport, entirely below: scrolling shows the element's TOP.
+    expect(
+      captureScrollOptions({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'start', inline: 'nearest' });
+    // Wider than the viewport, entirely to the left — the horizontal twin.
+    expect(
+      captureScrollOptions({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
+    ).toEqual({ block: 'nearest', inline: 'start' });
+  });
+
+  it('centers an exactly-viewport-sized element clipped by a few px (fit, not unfittable)', () => {
+    expect(captureScrollOptions({ top: -1, left: 10, bottom: 767, right: 100 }, 1024, 768)).toEqual(
+      { block: 'center', inline: 'nearest' },
+    );
+    // Horizontal twin.
+    expect(
+      captureScrollOptions({ top: 10, left: -1, bottom: 100, right: 1023 }, 1024, 768),
+    ).toEqual({ block: 'nearest', inline: 'center' });
   });
 });
 
