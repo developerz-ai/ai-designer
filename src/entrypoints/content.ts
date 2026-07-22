@@ -152,13 +152,25 @@ export default defineContentScript({
       const scrollOpts = el
         ? captureScrollOptions(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
         : null;
-      if (el && selfFrameId === 0 && typeof el.scrollIntoView === 'function' && scrollOpts) {
-        ancestors = scrollableAncestors(el).map((a) => ({
+      const scrollContainers = el ? scrollableAncestors(el) : [];
+      // Container-clipped blind spot: getBoundingClientRect is UNCLIPPED layout geometry, so an
+      // element fully clipped by a scrollable ancestor keeps an in-window rect (null options
+      // above) while zero pixels of it are painted — the crop would silently capture whatever
+      // else sits at those coordinates. With a scrollable ancestor beyond the document scroller,
+      // do a minimal 'nearest' reveal instead: a true no-op when the element is genuinely visible
+      // in every scrolling box, so the common in-view case pays only the settle.
+      const containerClipped =
+        !scrollOpts &&
+        scrollContainers.some((a) => a !== document.documentElement && a !== document.body);
+      const effectiveOpts: ScrollIntoViewOptions | null =
+        scrollOpts ?? (containerClipped ? { block: 'nearest', inline: 'nearest' } : null);
+      if (el && selfFrameId === 0 && typeof el.scrollIntoView === 'function' && effectiveOpts) {
+        ancestors = scrollContainers.map((a) => ({
           el: a,
           top: a.scrollTop,
           left: a.scrollLeft,
         }));
-        el.scrollIntoView(scrollOpts);
+        el.scrollIntoView(effectiveOpts);
         // Not abort-aware, unlike the stitch's browseDelay: tool messages carry no AbortSignal
         // (contentDispatchFor checks it only pre-send), so there's nothing to thread here —
         // bounded at SCROLL_SETTLE_MS + one capture round-trip.
@@ -198,7 +210,13 @@ export default defineContentScript({
     let toolQueue: Promise<unknown> = Promise.resolve();
     function enqueue<T>(run: () => Promise<T>): Promise<T> {
       const result = toolQueue.then(run, run);
-      toolQueue = result.catch(() => {});
+      // Chain liveness + no payload retention: the stored link swallows a rejection AND drops the
+      // run's value (a fulfilled link would otherwise hold the last ToolResult — captures carry
+      // base64 PNGs — for this frame's whole lifetime).
+      toolQueue = result.then(
+        () => {},
+        () => {},
+      );
       return result;
     }
 
@@ -334,7 +352,9 @@ export default defineContentScript({
               error: String(err),
             });
           }
-        }).then(sendResponse);
+        })
+          .then(sendResponse)
+          .catch(() => {}); // dead-SW swallow, mirrors emit()
         return true; // async PageMetricsResult
       }
 

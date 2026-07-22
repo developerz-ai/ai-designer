@@ -254,11 +254,11 @@ export function scrollAxesForCapture(
 }
 
 /** The scrollIntoView options for capturing `rect`, or `null` when scrolling wouldn't improve the
- *  capture at all ({@link scrollAxesForCapture} on both axes). Benefiting axes center (the repo's
- *  scroll convention). Non-benefiting axes stay put: 'nearest' when the element fits and is fully
- *  visible there (a true no-op), 'start' when it's unfittable-but-partially-visible — 'nearest'
- *  would align the END edge and swap the visible header for a bottom band, while 'start' keeps the
- *  top/left (usually the title) in frame. */
+ *  capture at all ({@link scrollAxesForCapture} on both axes). On each axis: an element LARGER
+ *  than the viewport aligns 'start' — the capture keeps the top/left band (usually the
+ *  header/title), never swaps in a middle or bottom band. One that fits centers when scrolling
+ *  benefits (shows the whole thing) and stays put ('nearest', a true no-op when fully visible)
+ *  when it doesn't. */
 export function captureScrollOptions(
   rect: { top: number; left: number; bottom: number; right: number },
   viewportWidth: number,
@@ -267,16 +267,9 @@ export function captureScrollOptions(
   const axes = scrollAxesForCapture(rect, viewportWidth, viewportHeight);
   if (!axes.vertical && !axes.horizontal) return null;
   return {
-    block: axes.vertical
-      ? 'center'
-      : rect.bottom - rect.top <= viewportHeight
-        ? 'nearest'
-        : 'start',
-    inline: axes.horizontal
-      ? 'center'
-      : rect.right - rect.left <= viewportWidth
-        ? 'nearest'
-        : 'start',
+    block: rect.bottom - rect.top > viewportHeight ? 'start' : axes.vertical ? 'center' : 'nearest',
+    inline:
+      rect.right - rect.left > viewportWidth ? 'start' : axes.horizontal ? 'center' : 'nearest',
   };
 }
 

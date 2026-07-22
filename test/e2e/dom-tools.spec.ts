@@ -356,6 +356,83 @@ test('screenshot restores a nested scroll container it had to scroll (#59)', asy
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
+test('screenshot reveals an element clipped by a container while its rect stays in-window (#59)', async ({
+  context,
+}) => {
+  await stubFixturePage(
+    context,
+    `<!doctype html>
+<html>
+  <body>
+    <div style="height: 100px"></div>
+    <div id="panel" style="height: 200px; overflow-y: auto;">
+      <div style="height: 100px"></div>
+      <div id="inner">Clipped inside the panel</div>
+      <div style="height: 800px"></div>
+    </div>
+  </body>
+</html>`,
+  );
+  const sw = await serviceWorker(context);
+  await sw.evaluate((stubDataUrl) => {
+    chrome.tabs.captureVisibleTab = (() =>
+      Promise.resolve(stubDataUrl)) as typeof chrome.tabs.captureVisibleTab;
+  }, STUB_PNG_DATA_URL);
+
+  const page = await context.newPage();
+  await page.goto(`${FIXTURE_PREFIX}screenshot-clipped-in-window`);
+  const tabId = await tabIdFor(sw, FIXTURE_PREFIX);
+
+  // Scroll the panel 150px down: #inner's layout rect moves ABOVE the panel's clip box but stays
+  // inside the window — zero painted pixels, yet fully "in view" by rect. getBoundingClientRect
+  // is unclipped, so without the container reveal the crop silently captures whatever else paints
+  // at those coordinates.
+  await page.evaluate(() => {
+    const panel = document.getElementById('panel');
+    if (panel) panel.scrollTop = 150;
+  });
+  await page.evaluate(() => {
+    const w = window as unknown as { __minPanelScroll: number };
+    w.__minPanelScroll = Number.POSITIVE_INFINITY;
+    document.getElementById('panel')?.addEventListener(
+      'scroll',
+      (e) => {
+        w.__minPanelScroll = Math.min(
+          w.__minPanelScroll,
+          (e.currentTarget as HTMLElement).scrollTop,
+        );
+      },
+      { passive: true },
+    );
+  });
+
+  const pre = await page.evaluate(() => {
+    const el = document.getElementById('inner');
+    const panel = document.getElementById('panel');
+    if (!el || !panel) throw new Error('fixture missing');
+    const r = el.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    return {
+      inWindow: r.top >= 0 && r.bottom <= window.innerHeight,
+      clippedByPanel: r.bottom <= pr.top,
+      scrollTop: panel.scrollTop,
+    };
+  });
+  expect(pre).toEqual({ inWindow: true, clippedByPanel: true, scrollTop: 150 });
+
+  const result = await sendToContent(sw, tabId, { type: 'screenshot', selector: '#inner' });
+  expect(result.ok).toBe(true);
+
+  // The reveal scroll happened (panel dipped below 150 to show #inner at its edge)…
+  const minPanelScroll = await page.evaluate(
+    () => (window as unknown as { __minPanelScroll: number }).__minPanelScroll,
+  );
+  expect(minPanelScroll).toBeLessThan(150);
+  // …and the panel was restored to where the user left it (150, NOT 0).
+  expect(await page.evaluate(() => document.getElementById('panel')?.scrollTop)).toBe(150);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test('page-metrics waits behind an in-flight screenshot scroll instead of snapshotting it (#59)', async ({
   context,
 }) => {

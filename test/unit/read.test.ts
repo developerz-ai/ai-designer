@@ -279,10 +279,25 @@ describe('captureScrollOptions', () => {
     ).toEqual({ block: 'start', inline: 'center' });
   });
 
+  it('aligns start on an unfittable BENEFITING axis too — the header band, not a middle slice', () => {
+    // Taller than the viewport, entirely below: scrolling shows the element's TOP.
+    expect(
+      captureScrollOptions({ top: 800, left: 10, bottom: 2000, right: 100 }, 1024, 768),
+    ).toEqual({ block: 'start', inline: 'nearest' });
+    // Wider than the viewport, entirely to the left — the horizontal twin.
+    expect(
+      captureScrollOptions({ top: 10, left: -1500, bottom: 100, right: -200 }, 1024, 768),
+    ).toEqual({ block: 'nearest', inline: 'start' });
+  });
+
   it('centers an exactly-viewport-sized element clipped by a few px (fit, not unfittable)', () => {
     expect(captureScrollOptions({ top: -1, left: 10, bottom: 767, right: 100 }, 1024, 768)).toEqual(
       { block: 'center', inline: 'nearest' },
     );
+    // Horizontal twin.
+    expect(
+      captureScrollOptions({ top: 10, left: -1, bottom: 100, right: 1023 }, 1024, 768),
+    ).toEqual({ block: 'nearest', inline: 'center' });
   });
 });
 

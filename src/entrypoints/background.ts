@@ -346,7 +346,12 @@ export default defineBackground(() => {
           }),
         };
       } catch (err) {
-        return { type: 'tool-result', ok: false, error: String(err) };
+        // Normalize the abort-throw's 'Error: aborted' to the element path's plain 'aborted'.
+        return {
+          type: 'tool-result',
+          ok: false,
+          error: err instanceof Error && err.message === 'aborted' ? 'aborted' : String(err),
+        };
       }
     };
   }

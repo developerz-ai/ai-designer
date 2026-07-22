@@ -10,8 +10,9 @@
 export type CaptureLock = <T>(tabId: number, run: () => Promise<T>) => Promise<T>;
 
 /** A fresh per-tab promise-chain mutex. FIFO per tab; a rejected run does not poison the chain
- *  (the stored link swallows the rejection, the caller still sees it); chains settle resolved, so
- *  the map stays tiny. */
+ *  (the stored link swallows the rejection, the caller still sees it). The stored link also DROPS
+ *  the run's value — a fulfilled link would otherwise retain the last capture's ToolResult (a
+ *  possibly multi-MB stitched dataUrl) for the lock's whole lifetime. */
 export function createCaptureLock(): CaptureLock {
   const locks = new Map<number, Promise<unknown>>();
   return <T>(tabId: number, run: () => Promise<T>): Promise<T> => {
@@ -19,7 +20,10 @@ export function createCaptureLock(): CaptureLock {
     const result = prior.then(run, run);
     locks.set(
       tabId,
-      result.catch(() => {}),
+      result.then(
+        () => {},
+        () => {},
+      ),
     );
     return result;
   };
