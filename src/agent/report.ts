@@ -198,7 +198,11 @@ function summarizeEdit(edit: Edit): string {
     ? `class ${edit.classes.map((c) => `${c.op === 'add' ? '+' : '-'}${c.name}`).join(', ')}`
     : '';
   const structural = edit.structural
-    ? `struct ${edit.structural.op}${edit.structural.position ? ` ${edit.structural.position}` : ''}`
+    ? `struct ${edit.structural.op}${
+        'position' in edit.structural && edit.structural.position
+          ? ` ${edit.structural.position}`
+          : ''
+      }`
     : '';
   const text = edit.text ? ` text "${edit.text.before}"→"${edit.text.after}"` : '';
   const at = edit.breakpoint ? ` @${edit.breakpoint}` : '';

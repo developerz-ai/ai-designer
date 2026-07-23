@@ -178,7 +178,7 @@ describe('generateReport: assembles a grounded, agent-authored brief', () => {
   it('grounds a structural delta in the prompt edit lines (#58)', () => {
     const structural: Edit = {
       ...edit('insert a banner'),
-      structural: { op: 'insert', position: 'beforeend' },
+      structural: { op: 'insert', position: 'beforeend', html: '<div class="banner">x</div>' },
     };
 
     const text = JSON.stringify(buildReportMessages({ changeset: changesetWith(structural) }));

@@ -259,7 +259,10 @@ describe('createMutator structural edits', () => {
     const img = ref.querySelector('img');
     expect(img?.hasAttribute('onerror')).toBe(false);
     expect(img?.hasAttribute('onload')).toBe(false);
-    expect(img?.getAttribute('src')).toBe('x'); // resource attr preserved
+    // Behavior changed deliberately (#58 review, MAJOR-1): the sanitizer now applies setAttr's
+    // deny-list uniformly, so a remote-loading `src` is refused too — otherwise insertNode would
+    // trivially bypass setAttr('src', …)'s refusal.
+    expect(img?.getAttribute('src')).toBeNull();
   });
 
   it('moveNode relocates and undo restores the original position', () => {
@@ -320,5 +323,80 @@ describe('createMutator structural undo anchors (#58)', () => {
     mutation.undo();
     expect(a.contains(one)).toBe(true);
     expect(one.nextSibling).toBe(two); // restored at the anchor, not "index 0"
+  });
+});
+
+describe('insertNode markup sanitizer (#58 review)', () => {
+  it('drops framed-document and document-hijack tags outright', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<p id="ok">ok</p><iframe src="https://evil.example"></iframe><object data="x"></object>' +
+        '<embed src="x"><base href="https://evil.example/"><meta http-equiv="refresh" content="0">' +
+        '<link rel="stylesheet" href="https://evil.example/x.css"><script>window.x=1</' +
+        'script>',
+      'beforeend',
+    );
+    expect(document.getElementById('ok')).not.toBeNull();
+    for (const tag of ['iframe', 'object', 'embed', 'base', 'meta', 'link', 'script'])
+      expect(document.querySelector(tag), tag).toBeNull();
+  });
+
+  it('runs every attribute through the setAttr deny-list (srcdoc/src/javascript:/marker all die)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      `<a id="a" href="javascript:alert(1)" onclick="alert(2)" ${MARKER_ATTR}="dz-99">x</a>` +
+        '<img id="i" src="https://evil.example/x.png" alt="pic">',
+      'beforeend',
+    );
+    const a = document.getElementById('a');
+    expect(a?.getAttribute('href')).toBeNull();
+    expect(a?.getAttribute('onclick')).toBeNull();
+    expect(a?.getAttribute(MARKER_ATTR)).toBeNull();
+    // uniform with setAttr: plain remote loads are refused too — mockups are described, not hotlinked
+    expect(document.getElementById('i')?.getAttribute('src')).toBeNull();
+    expect(document.getElementById('i')?.getAttribute('alt')).toBe('pic');
+  });
+
+  it('sanitizes INSIDE nested <template> content (page JS could clone it live later)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<template id="tpl"><span onclick="alert(1)">inner</span><iframe src="https://evil.example"></iframe></template>',
+      'beforeend',
+    );
+    const tpl = document.getElementById('tpl') as HTMLTemplateElement;
+    expect(tpl.content.querySelector('span')?.getAttribute('onclick')).toBeNull();
+    expect(tpl.content.querySelector('iframe')).toBeNull();
+  });
+});
+
+describe('structural undo under page churn (#58 review)', () => {
+  it('removeNode undo throws honestly when the anchor sibling was churned away', () => {
+    mount('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const y = byId('y');
+    const mutation = createMutator(document).removeNode(byId('x'));
+    y.remove(); // page-side churn the recorder knows nothing about (SPA re-render)
+    expect(() => mutation.undo()).toThrow(/original location changed/);
+  });
+
+  it('removeNode undo throws when the whole parent was detached (no silent invisible restore)', () => {
+    mount('<section id="wrap"><ul id="list"><li id="x">x</li></ul></section>');
+    const mutation = createMutator(document).removeNode(byId('x'));
+    byId('wrap').remove(); // the parent is now in a detached subtree
+    expect(() => mutation.undo()).toThrow(/original location changed/);
+  });
+
+  it('moveNode undo restores the anchor after a concurrent shift (the case an index restore fails)', () => {
+    mount('<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>');
+    const [one, two, a, b] = [byId('one'), byId('two'), byId('a'), byId('b')];
+    const mutation = createMutator(document).moveNode(one, b, 'beforeend');
+    // Unrecorded concurrent mutation: a NEW first child appears in the original parent. An
+    // index-based restore would put #one before the NEW node; the anchor restore puts it before #two.
+    a.insertBefore(document.createElement('span'), two);
+    mutation.undo();
+    expect(a.contains(one)).toBe(true);
+    expect(one.nextSibling).toBe(two);
   });
 });

@@ -43,17 +43,32 @@ export const ClassChange = z.object({
 });
 export type ClassChange = z.infer<typeof ClassChange>;
 
-// One structural delta (#58): the durable, shippable form of an insertNode/moveNode/removeNode —
-// what happened (`op`), where (`position` + `refSelector`, for insert/move), and what markup
-// (`html`, for insert). Optional on Edit: most edits are property-level, so an absent field beats
-// a null placeholder. The live page itself is never reverted by this record — it maps the change
-// for the coding backend (and the Diff tab) only.
-export const StructuralChange = z.object({
-  op: z.enum(['insert', 'move', 'remove']),
-  position: z.enum(['beforebegin', 'afterbegin', 'beforeend', 'afterend']).optional(),
-  refSelector: StableSelector.optional(),
-  html: z.string().optional(),
-});
+// One structural delta (#58): the durable, shippable form of an insertNode/moveNode/removeNode,
+// discriminated on `op` so a contradictory payload can't validate (an insert without markup, a
+// move without an anchor, a remove carrying one). Optional on Edit: most edits are property-level,
+// so an absent field beats a null placeholder. The live page itself is never reverted by this
+// record — it maps the change for the coding backend on Ship.
+export const StructuralPosition = z.enum(['beforebegin', 'afterbegin', 'beforeend', 'afterend']);
+export const StructuralChange = z.discriminatedUnion('op', [
+  // .strict() — a model-populated field: unknown keys must REJECT, not silently strip (else a
+  // contradictory payload like a `remove` carrying `html` "validates" with the extra key dropped).
+  z
+    .object({
+      op: z.literal('insert'),
+      html: z.string(),
+      position: StructuralPosition.optional(),
+      refSelector: StableSelector.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('move'),
+      refSelector: StableSelector,
+      position: StructuralPosition.optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal('remove') }).strict(),
+]);
 export type StructuralChange = z.infer<typeof StructuralChange>;
 
 export const Edit = z.object({

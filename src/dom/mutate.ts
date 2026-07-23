@@ -9,6 +9,8 @@ import type { MutationKind } from '@/shared/messages';
 
 const SHEET_ID = 'dz-designer-overrides';
 
+export { SHEET_ID };
+
 /** Our private per-element marker. setStyle tags a target with a generated id and writes
  *  `[data-dz-designer="dz-N"] { … }` into the overrides sheet, so an edit reverses to a precise
  *  rule even for anonymous elements. The recorder (slice 05) ignores this attribute. */
@@ -91,27 +93,45 @@ function insertAt(ref: Element, node: Node, position: InsertPosition): void {
 // Parse `html` into its ordered top-level nodes. Uses a <template> whose content is inert (no scripts
 // run, no remote code fetched WHILE parsed), then imports the WHOLE fragment — every element AND text
 // node — into the live document, so multi-node and bare-text markup round-trips instead of collapsing
-// to the first element or getting wrapped in a span. Inline on*-handlers, which the <template> defers
-// but insertion would make live, are stripped first (see stripEventHandlers).
+// to the first element or getting wrapped in a span. The fragment is sanitized first
+// (sanitizeFragment): no executable/framed/remote-load content survives insertion.
 function nodesFromHtml(doc: Document, html: string): Node[] {
   const tpl = doc.createElement('template');
   tpl.innerHTML = html;
-  stripEventHandlers(tpl.content);
+  sanitizeFragment(tpl.content);
   const frag = doc.importNode(tpl.content, true);
   return Array.from(frag.childNodes);
 }
 
-// Drop inline event-handler attributes (`onclick`, `onerror`, `onload`, …) from every imported
-// element. A <template> defers them, but insertion makes them live — stripping keeps agent-authored
-// markup from running page JS once inserted. Resource attrs (`src`/`href`) stay: a plain load is not
-// code execution and the markup is agent-authored, not remote.
-function stripEventHandlers(frag: DocumentFragment): void {
+// Tags dropped outright from inserted markup: framed-document carriers (iframe/object/embed),
+// document-hijack tags (base rewrites every relative URL; meta refresh navigates; link pulls remote
+// CSS), and script (already inert via the template-parse "already started" flag, but dropped for
+// zero ambiguity). None has a legitimate use in an agent design edit — mockups are built from
+// layout, text, and styled elements.
+const DROPPED_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link']);
+
+// Sanitize one parsed fragment before insertion (CSP-safe by construction):
+// - drop every DROPPED_TAGS element outright,
+// - run EVERY attribute of every remaining element through the same `attrDenyReason` policy
+//   setAttr uses (on* handlers, remote-load attrs, javascript: URLs, our overrides marker) and
+//   strip the refused ones — otherwise insertNode would trivially bypass setAttr's deny-list
+//   (e.g. `setAttr('srcdoc', …)` is refused, so `<iframe srcdoc=…>` must die too),
+// - recurse into nested <template> content (querySelectorAll does not descend into it, but page
+//   JS can clone it live later).
+// Note: this refuses plain remote loads (<img src>) exactly like setAttr already does — the
+// agent composes mockups from markup it can describe, not hotlinked assets.
+function sanitizeFragment(frag: DocumentFragment): void {
+  for (const el of frag.querySelectorAll(DROPPED_TAGS_SELECT)) el.remove();
   for (const el of frag.querySelectorAll('*')) {
     for (const name of el.getAttributeNames()) {
-      if (name.toLowerCase().startsWith('on')) el.removeAttribute(name);
+      if (attrDenyReason(name, el.getAttribute(name) ?? '') !== null) el.removeAttribute(name);
     }
+    const tpl = el instanceof HTMLTemplateElement ? el : null;
+    if (tpl) sanitizeFragment(tpl.content);
   }
 }
+
+const DROPPED_TAGS_SELECT = [...DROPPED_TAGS].join(',');
 
 function serialize(node: Node): string {
   return node instanceof Element ? node.outerHTML : (node.textContent ?? '');
@@ -364,8 +384,21 @@ export function createMutator(doc: Document = document): Mutator {
       before: '',
       after: '',
       undo() {
-        if (parent) parent.insertBefore(el, next);
-        else el.remove();
+        // Anchor validation: page-side churn between apply and undo (an SPA re-render is the norm
+        // on target pages) may have removed/relocated the anchor or the whole parent. A blind
+        // insertBefore would either throw NotFoundError or — worse, when `next` still sits inside
+        // a DETACHED parent — "succeed" into an invisible tree and look like a real revert.
+        if (!parent) {
+          // The element was detached at apply time (executor never produces this; direct calls
+          // can): "restore" = remove it from wherever it was moved to.
+          el.remove();
+          return;
+        }
+        if (!parent.isConnected || (next && next.parentNode !== parent))
+          throw new Error(
+            'Cannot undo moveNode: the original location changed since the mutation (page updated).',
+          );
+        parent.insertBefore(el, next);
       },
     };
   }
@@ -381,7 +414,13 @@ export function createMutator(doc: Document = document): Mutator {
       before,
       after: '',
       undo() {
-        if (parent) parent.insertBefore(el, next);
+        // Same churn honesty as moveNode's undo (see above).
+        if (!parent) return;
+        if (!parent.isConnected || (next && next.parentNode !== parent))
+          throw new Error(
+            'Cannot undo removeNode: the original location changed since the mutation (page updated).',
+          );
+        parent.insertBefore(el, next);
       },
     };
   }

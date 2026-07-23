@@ -54,7 +54,8 @@ export function createSessionTools(deps: SessionToolDeps) {
         '(setAttr/addClass/removeClass), ALSO fill `attrs` ({name, before, after} — null when the ' +
         'attribute is absent/removed) and/or `classes` ({name, op}) so the shipped changeset carries ' +
         'the structured delta, not just prose. For structural changes (insertNode/moveNode/' +
-        'removeNode), fill `structural` ({op, position?, refSelector?, html?}) the same way. When ' +
+        "removeNode), fill `structural` the same way: {op: 'insert', html, position?, " +
+        "refSelector?} / {op: 'move', refSelector, position?} / {op: 'remove'}. When " +
         'you made this change under device emulation ' +
         '(`setDevice`), set `breakpoint` to the device so the changeset and report show which ' +
         'viewport it targets. This is what Ship hands off; record after you have applied and ' +

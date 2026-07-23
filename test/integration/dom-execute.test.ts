@@ -270,3 +270,109 @@ describe('DomTool execute — structural mutations (#58)', () => {
     expect(exec({ type: 'undo' })).toMatchObject({ ok: true, data: { undone: false } });
   });
 });
+
+describe('DomTool execute — structural guards + churn honesty (#58 review)', () => {
+  it('refuses to move an element into its own descendant (HierarchyRequestError → clean refusal)', () => {
+    const { exec, emitted } = setup('<div id="a"><span id="child">x</span></div>');
+
+    const result = exec({
+      type: 'moveNode',
+      selector: '#a',
+      refSelector: '#child',
+      position: 'beforeend',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(emitted).toHaveLength(0); // nothing recorded — the page is untouched
+    expect(document.getElementById('a')?.contains(document.getElementById('child'))).toBe(true);
+  });
+
+  it('refuses structural ops on <body> as the mutated element, but allows body as a destination', () => {
+    const { exec } = setup('<div id="d">x</div>');
+
+    expect(exec({ type: 'removeNode', selector: 'body' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('<body>'),
+    });
+    expect(
+      exec({ type: 'moveNode', selector: 'body', refSelector: '#d', position: 'beforeend' }),
+    ).toMatchObject({ ok: false });
+    // …but inserting INTO body (a banner at page bottom) is a normal design action:
+    expect(
+      exec({
+        type: 'insertNode',
+        selector: 'body',
+        html: '<footer id="f">x</footer>',
+        position: 'beforeend',
+      }),
+    ).toMatchObject({ ok: true });
+    expect(document.getElementById('f')).not.toBeNull();
+  });
+
+  it('refuses to insert into or remove the editor’s own overrides sheet', () => {
+    const { exec } = setup('<div></div>');
+    // The sheet only exists after a setStyle; create it.
+    exec({ type: 'setStyle', selector: 'body', props: { color: 'red' } });
+    expect(document.getElementById('dz-designer-overrides')).not.toBeNull();
+
+    expect(exec({ type: 'removeNode', selector: '#dz-designer-overrides' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('overrides'),
+    });
+    expect(
+      exec({
+        type: 'insertNode',
+        selector: '#dz-designer-overrides',
+        html: '<span>x</span>',
+        position: 'beforeend',
+      }),
+    ).toMatchObject({ ok: false });
+    expect(document.getElementById('dz-designer-overrides')).not.toBeNull();
+  });
+
+  it('removeNode records the PRE-REMOVAL stable selector, not a degraded bare tag', () => {
+    const { exec, emitted } = setup('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+
+    exec({ type: 'removeNode', selector: '#x' });
+
+    const event = (emitted[0] as { event?: { selector?: { value: string } } }).event;
+    expect(event?.selector?.value).toBe('#x'); // the pre-removal identity, recorded explicitly
+  });
+
+  it('a churned anchor turns undo into an honest refusal — and keeps the log entry for a later success', () => {
+    const { exec } = setup('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const y = document.getElementById('y');
+
+    exec({ type: 'removeNode', selector: '#x' });
+    y?.remove(); // page-side churn the recorder knows nothing about
+
+    const failed = exec({ type: 'undo' });
+    expect(failed.ok).toBe(false);
+    expect(failed.error).toContain('original location changed');
+    expect(document.getElementById('x')).toBeNull(); // no fake revert happened
+
+    // The entry was NOT lost: put the anchor back (page churns again) and the same undo succeeds.
+    document.getElementById('list')?.appendChild(y as Node);
+    expect(exec({ type: 'undo' })).toMatchObject({ ok: true });
+    expect(document.getElementById('x')).not.toBeNull();
+  });
+
+  it('undo of a moveNode restores the anchor after a concurrent shift (an index restore would fail)', () => {
+    const { exec } = setup(
+      '<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>',
+    );
+    const [one, two, a] = [
+      document.getElementById('one'),
+      document.getElementById('two'),
+      document.getElementById('a'),
+    ];
+
+    exec({ type: 'moveNode', selector: '#one', refSelector: '#b', position: 'beforeend' });
+    // Unrecorded concurrent shift: a NEW first child lands in the original parent.
+    a?.insertBefore(document.createElement('span'), two ?? null);
+
+    exec({ type: 'undo' });
+    expect(a?.contains(one ?? null)).toBe(true);
+    expect(one?.nextSibling).toBe(two); // before the ORIGINAL sibling, not before the new node
+  });
+});

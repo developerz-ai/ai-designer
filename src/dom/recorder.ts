@@ -62,7 +62,16 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
   function undo(): MutationEvent | null {
     const entry = stack.pop();
     if (!entry) return null;
-    entry.mutation.undo();
+    try {
+      entry.mutation.undo();
+    } catch (err) {
+      // A failed revert (e.g. a structural undo whose anchor the page churned away) must NOT lose
+      // the entry: re-push it and throw, so the executor answers with an honest error instead of
+      // silently dropping the entry and letting a retry revert something older. The agent decides
+      // to retry, clear, or move on — the log is never corrupted by a throw.
+      stack.push(entry);
+      throw err;
+    }
     return entry.event;
   }
 

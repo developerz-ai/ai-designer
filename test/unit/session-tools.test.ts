@@ -200,3 +200,40 @@ describe('createSessionTools: handoff proposes but never ships', () => {
     expect(events.some((e) => e.type === 'task-status')).toBe(false);
   });
 });
+
+describe('createSessionTools: StructuralChange coherence (#58 review)', () => {
+  const schema = () => harness().tools.recordEdit.inputSchema as unknown as ZodType;
+
+  it('rejects contradictory structural payloads (insert without html, move without refSelector, remove with html)', () => {
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'insert', position: 'beforeend' } })
+        .success,
+    ).toBe(false);
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'move', position: 'beforeend' } })
+        .success,
+    ).toBe(false);
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'remove', html: '<div/>' } }).success,
+    ).toBe(false);
+  });
+
+  it('accepts the three coherent shapes', () => {
+    expect(
+      schema().safeParse({
+        ...anEdit('x'),
+        structural: { op: 'insert', html: '<div/>', position: 'beforeend' },
+      }).success,
+    ).toBe(true);
+    expect(
+      schema().safeParse({
+        ...anEdit('x'),
+        structural: {
+          op: 'move',
+          refSelector: { value: '#a', strategy: 'id', fragile: false },
+        },
+      }).success,
+    ).toBe(true);
+    expect(schema().safeParse({ ...anEdit('x'), structural: { op: 'remove' } }).success).toBe(true);
+  });
+});
