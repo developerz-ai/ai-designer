@@ -141,9 +141,11 @@ describe('attrDenyReason (setAttr security deny-list)', () => {
   it('allows safe attribute writes', () => {
     expect(attrDenyReason('href', '/home')).toBeNull();
     expect(attrDenyReason('href', 'https://example.com')).toBeNull();
-    expect(attrDenyReason('data-id', '42')).toBeNull();
+    expect(attrDenyReason('data-id', '42')).toBeNull(); // data-* is not the bare `data` attr
     expect(attrDenyReason('alt', 'a photo')).toBeNull();
-    // the literal word without the scheme colon is fine
+    // `javascript:` is inert in a non-navigational attribute, so it must NOT false-refuse legit copy.
+    expect(attrDenyReason('alt', 'JavaScript: The Good Parts')).toBeNull();
+    expect(attrDenyReason('title', 'javascript: a language')).toBeNull();
     expect(attrDenyReason('title', 'javascript is a language')).toBeNull();
   });
 
@@ -153,17 +155,27 @@ describe('attrDenyReason (setAttr security deny-list)', () => {
     expect(attrDenyReason('onmouseover', 'x()')).toBeTruthy();
   });
 
-  it('refuses src (remote load) and srcdoc (inline-script iframe)', () => {
+  it('refuses the remote-load / framed-script attribute names outright', () => {
     expect(attrDenyReason('src', 'https://cdn.example/x.js')).toContain('remote resource');
-    expect(attrDenyReason('SRC', '/local.png')).toBeTruthy();
-    expect(attrDenyReason('srcdoc', '<script>x()</script>')).toContain('iframe');
+    expect(attrDenyReason('SRC', '/local.png')).toBeTruthy(); // case-insensitive
+    expect(attrDenyReason('srcset', 'https://cdn/x.png 2x')).toBeTruthy();
+    expect(attrDenyReason('poster', 'https://cdn/p.png')).toBeTruthy();
+    expect(attrDenyReason('ping', 'https://track/beacon')).toBeTruthy();
+    expect(attrDenyReason('data', 'https://evil/x.html')).toBeTruthy(); // <object data> runs framed JS
+    expect(attrDenyReason('srcdoc', '<script>x()</script>')).toContain('inject');
   });
 
-  it('refuses javascript: URLs in any value, including whitespace/control-char obfuscation', () => {
+  it('refuses writes to the internal setStyle marker', () => {
+    expect(attrDenyReason(MARKER_ATTR, 'dz-99')).toContain('reserved');
+  });
+
+  it('refuses javascript: URLs in navigational attributes (whitespace/control-char tolerant)', () => {
     expect(attrDenyReason('href', 'javascript:alert(1)')).toContain('javascript:');
     expect(attrDenyReason('href', '  JavaScript:alert(1)')).toBeTruthy(); // leading ws + casing
     expect(attrDenyReason('href', 'java\tscript:alert(1)')).toBeTruthy(); // embedded control char
+    expect(attrDenyReason('xlink:href', 'javascript:x')).toBeTruthy();
     expect(attrDenyReason('formaction', 'javascript:x')).toBeTruthy();
+    expect(attrDenyReason('action', 'javascript:x')).toBeTruthy();
   });
 });
 

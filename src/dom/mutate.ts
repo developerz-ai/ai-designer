@@ -117,36 +117,54 @@ function serialize(node: Node): string {
   return node instanceof Element ? node.outerHTML : (node.textContent ?? '');
 }
 
+// Attribute names refused outright: each loads a remote resource, injects/executes a framed
+// document, or exfiltrates — none has a legitimate use in an agent design edit. `srcdoc` and
+// `<object data="…text/html">` in particular execute script in a (nested) browsing context, which
+// setStyle's url() cannot. Includes our private setStyle marker so an agent can't corrupt the
+// overrides map. (`src` on iframe/img, `srcset`, `poster`, `ping`, `data` on object/embed.)
+const DENIED_ATTR_NAMES = new Set([
+  'src',
+  'srcset',
+  'poster',
+  'ping',
+  'data',
+  'srcdoc',
+  MARKER_ATTR,
+]);
+
+// The only attribute names where a `javascript:` value EXECUTES on activation/submit. The scheme is
+// inert text everywhere else, so probing e.g. `alt`/`title` would only false-refuse legit copy
+// ("JavaScript: The Good Parts"). `src`/`data` (the other executable-URL attrs) are denied by name.
+const URL_NAV_ATTRS = new Set(['href', 'xlink:href', 'formaction', 'action']);
+
 // Security deny-list for `setAttr`: returns a human-readable reason a raw attribute write is
 // refused, or null when it is safe. A bare `setAttribute` is a way to smuggle executable code or a
 // remote load past our no-remote-code / CSP posture (docs/architecture/mv3-worlds.md), so the known
 // vectors are gated at the source (matching the on*-stripping insertNode already does). This is NOT
-// an exhaustive XSS filter — it blocks:
-//   - inline event handlers (`on*`)      — run page JS when the event fires;
-//   - `src` / `srcdoc`                   — a remote-resource load / an inline-script iframe injection;
-//   - `javascript:` URL in ANY value     — executes on activation (href, formaction, xlink:href, …).
-// Not covered (accept-with-follow-up if it ever matters): `data:` navigations, `style` url() loads.
-// The `javascript:` probe strips whitespace + C0 control chars first, since the URL parser ignores
-// them ("java\tscript:", " javascript:", leading NULs all still execute).
+// an exhaustive XSS filter — it blocks inline event handlers (`on*`), the remote-load / framed-script
+// attribute names above, and a `javascript:` URL in a navigational attribute. Not covered
+// (accept-with-follow-up if it ever matters): `data:` navigations, `style` url() loads.
 export function attrDenyReason(name: string, value: string): string | null {
   const attr = name.trim().toLowerCase();
   if (attr.startsWith('on')) {
     return `Refused: "${name}" is an inline event handler; on* attributes run page JS.`;
   }
-  if (attr === 'src') {
-    return `Refused: "src" loads a remote resource. Use insertNode for agent-authored markup instead.`;
+  if (attr === MARKER_ATTR) {
+    return `Refused: "${name}" is reserved for the editor's internal style overrides.`;
   }
-  if (attr === 'srcdoc') {
-    return `Refused: "srcdoc" injects inline HTML/script into an iframe. Use insertNode instead.`;
+  if (DENIED_ATTR_NAMES.has(attr)) {
+    return `Refused: "${name}" can load a remote resource or inject/execute markup; it is not editable.`;
   }
-  // Drop every char at or below U+0020 (space + all C0 control chars) before probing the scheme:
-  // the URL parser ignores them, so "java\tscript:", " javascript:", and leading NULs all still
-  // execute. A char-code filter avoids a control-char regex (noControlCharactersInRegex).
-  const scheme = Array.from(value, (c) => (c.charCodeAt(0) > 0x20 ? c : ''))
-    .join('')
-    .toLowerCase();
-  if (scheme.startsWith('javascript:')) {
-    return `Refused: "${name}" has a javascript: URL, which executes on activation.`;
+  if (URL_NAV_ATTRS.has(attr)) {
+    // Drop every char at or below U+0020 (space + all C0 control chars) before probing the scheme:
+    // the URL parser ignores them, so "java\tscript:", " javascript:", and leading NULs all still
+    // execute. A char-code filter avoids a control-char regex (noControlCharactersInRegex).
+    const scheme = Array.from(value, (c) => (c.charCodeAt(0) > 0x20 ? c : ''))
+      .join('')
+      .toLowerCase();
+    if (scheme.startsWith('javascript:')) {
+      return `Refused: "${name}" has a javascript: URL, which executes on activation.`;
+    }
   }
   return null;
 }

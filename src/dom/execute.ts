@@ -53,7 +53,7 @@ function refused(error: string): ToolResult {
 function leafOnly(el: Element): string | null {
   const n = el.children.length;
   return n > 0
-    ? `setText would delete ${n} child element(s); target a leaf, or use insertNode/removeNode for structure.`
+    ? `setText would delete ${n} child element(s); target a leaf element (one with no child elements) instead.`
     : null;
 }
 
