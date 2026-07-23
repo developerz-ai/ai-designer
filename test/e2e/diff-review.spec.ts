@@ -140,11 +140,20 @@ const OTHER_PAGE = '<!doctype html><html><body><h1>Elsewhere</h1></body></html>'
 
 // Two distinctive edits. Args must satisfy the `Edit` schema (src/shared/changeset.ts) — the
 // recordEdit tool's inputSchema IS that schema (src/agent/tools/session.ts). CTA_EDIT is fragile
-// so the Diff tab's fragile-selector badge has a pin.
+// so the Diff tab's fragile-selector badge has a pin, and it carries the #139 structured
+// attr/class delta so the attrs table + class chips have pins too.
 const CTA_EDIT = {
   intent: 'Recolor the CTA to the brand accent',
   selector: { value: '#cta', strategy: 'id', fragile: true },
   changes: [{ prop: 'background-color', before: '#e5e7eb', after: '#22c55e' }],
+  attrs: [
+    { name: 'href', before: null, after: '/buy' },
+    { name: 'title', before: 'Buy', after: null },
+  ],
+  classes: [
+    { name: 'btn-primary', op: 'add' },
+    { name: 'btn-ghost', op: 'remove' },
+  ],
   frameworkHints: [],
 };
 
@@ -189,11 +198,27 @@ test('diff review shows a recorded edit (#22)', async ({ context, openExtensionP
   await expect(item.locator('.dz-diff__fragile')).toContainText('Fragile selector');
   await expect(item.locator('.dz-diff__intent')).toHaveText('Recolor the CTA to the brand accent');
 
-  const change = item.locator('.dz-diff__changes tbody tr');
+  const change = item.locator('.dz-diff__changes:not(.dz-diff__attrs) tbody tr');
   await expect(change).toHaveCount(1);
   await expect(change.locator('.dz-diff__prop')).toHaveText('background-color');
   await expect(change.locator('.dz-diff__before')).toHaveText('#e5e7eb');
   await expect(change.locator('.dz-diff__after')).toHaveText('#22c55e');
+
+  // The #139 structured delta renders too: class chips (+add / −remove) and the attrs table
+  // (∅ marks an absent/removed attribute).
+  const classes = item.locator('.dz-diff__class');
+  await expect(classes).toHaveCount(2);
+  await expect(classes.nth(0)).toHaveText('+btn-primary');
+  await expect(classes.nth(1)).toHaveText('−btn-ghost');
+
+  const attrs = item.locator('.dz-diff__attrs tbody tr');
+  await expect(attrs).toHaveCount(2);
+  await expect(attrs.nth(0).locator('.dz-diff__prop')).toHaveText('href');
+  await expect(attrs.nth(0).locator('.dz-diff__before')).toHaveText('∅');
+  await expect(attrs.nth(0).locator('.dz-diff__after')).toHaveText('/buy');
+  await expect(attrs.nth(1).locator('.dz-diff__prop')).toHaveText('title');
+  await expect(attrs.nth(1).locator('.dz-diff__before')).toHaveText('Buy');
+  await expect(attrs.nth(1).locator('.dz-diff__after')).toHaveText('∅');
 });
 
 test('curation round-trip: per-edit remove forks history, then undo/redo/clear walk the durable record', async ({

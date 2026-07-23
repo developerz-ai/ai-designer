@@ -187,12 +187,19 @@ export function buildReportContext(input: ReportInput): string {
 }
 
 // One edit as a `intent — selector [breakpoint]: prop before→after` line. Grounds the model in what
-// was actually changed, in the changeset's own vocabulary.
+// was actually changed, in the changeset's own vocabulary — style, attribute, class, and text deltas
+// alike, so the brief speaks the structured delta, not just the intent prose (#139).
 function summarizeEdit(edit: Edit): string {
   const changes = edit.changes.map((c) => `${c.prop} ${c.before ?? '∅'}→${c.after}`).join('; ');
+  const attrs = edit.attrs
+    .map((a) => `attr ${a.name} ${a.before ?? '∅'}→${a.after ?? '∅'}`)
+    .join('; ');
+  const classes = edit.classes.length
+    ? `class ${edit.classes.map((c) => `${c.op === 'add' ? '+' : '-'}${c.name}`).join(', ')}`
+    : '';
   const text = edit.text ? ` text "${edit.text.before}"→"${edit.text.after}"` : '';
   const at = edit.breakpoint ? ` @${edit.breakpoint}` : '';
-  const detail = [changes, text].filter(Boolean).join(';');
+  const detail = [changes, attrs, classes, text].filter(Boolean).join(';');
   return `- ${edit.intent} — \`${edit.selector.value}\`${at}${detail ? `: ${detail}` : ''}`;
 }
 

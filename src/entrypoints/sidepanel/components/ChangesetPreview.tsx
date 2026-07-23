@@ -144,6 +144,45 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
         </div>
       </Show>
 
+      <Show when={props.edit.classes.length > 0}>
+        <div class="dz-diff__classes">
+          <span class="dz-diff__classes-label">{i18n.t('diff.classes.label')}</span>
+          <For each={props.edit.classes}>
+            {(c) => (
+              <span class={`dz-diff__class dz-diff__class--${c.op}`}>
+                {c.op === 'add' ? '+' : '−'}
+                {c.name}
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <Show when={props.edit.attrs.length > 0}>
+        <div class="dz-diff__changes-wrap">
+          <table class="dz-diff__changes dz-diff__attrs">
+            <thead>
+              <tr>
+                <th>{i18n.t('diff.attrs.attribute')}</th>
+                <th>{i18n.t('diff.changes.before')}</th>
+                <th>{i18n.t('diff.changes.after')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={props.edit.attrs}>
+                {(a) => (
+                  <tr>
+                    <td class="dz-diff__prop">{a.name}</td>
+                    <td class="dz-diff__before">{a.before ?? '∅'}</td>
+                    <td class="dz-diff__after">{a.after ?? '∅'}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </div>
+      </Show>
+
       <Show when={props.edit.text}>
         {(text) => (
           <div class="dz-diff__text">

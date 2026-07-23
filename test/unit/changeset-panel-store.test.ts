@@ -211,6 +211,8 @@ const editFixture = (intent: string): Edit => ({
   intent,
   selector: { value: `#${intent}`, strategy: 'id', fragile: false },
   changes: [{ prop: 'color', before: null, after: '#000' }],
+  attrs: [],
+  classes: [],
   frameworkHints: [],
 });
 

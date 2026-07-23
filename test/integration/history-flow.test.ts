@@ -183,6 +183,8 @@ describe('history flow: ship -> PR link updates the entry', () => {
           intent: 'Recolor the CTA',
           selector: { value: '.cta', strategy: 'css-path', fragile: false },
           changes: [{ prop: 'background', before: '#fff', after: '#f97316' }],
+          attrs: [],
+          classes: [],
           frameworkHints: [],
         },
       ],

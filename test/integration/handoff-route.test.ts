@@ -27,6 +27,8 @@ function changeset(): Changeset {
         intent: 'Recolor the CTA',
         selector: { value: '.cta', strategy: 'css-path', fragile: false },
         changes: [{ prop: 'background', before: '#fff', after: '#f97316' }],
+        attrs: [],
+        classes: [],
         frameworkHints: [],
       },
     ],

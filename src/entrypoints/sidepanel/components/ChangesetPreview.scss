@@ -243,6 +243,38 @@
     color: var(--dz-fg);
   }
 
+  &__classes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+  }
+
+  &__classes-label {
+    color: var(--dz-muted);
+    font-size: tokens.$dz-font-xs;
+  }
+
+  &__class {
+    padding: tokens.$dz-space-1 tokens.$dz-space-2;
+    background: var(--dz-surface);
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    font-family: ui-monospace, monospace;
+    font-size: tokens.$dz-font-xs;
+    color: var(--dz-fg);
+
+    &--add {
+      color: var(--dz-accent);
+      border-color: var(--dz-accent);
+    }
+
+    &--remove {
+      color: var(--dz-muted);
+      text-decoration: line-through;
+    }
+  }
+
   &__breakpoint {
     align-self: flex-start;
     color: var(--dz-muted);
