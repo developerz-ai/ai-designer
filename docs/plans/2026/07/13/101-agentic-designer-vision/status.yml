@@ -61,4 +61,4 @@ slices:
     percent: 0
 evidence: []
 notes: "Vision plan from .codegraph/vision.txt. Plumbing tier done; agent/DOM/MCP/history/reports/overlay are net-new. Leo (Brave) is the chat-UI reference — copy its polish, build for web developers + vibecoders. 13=real browser control (iframes/tabs)+vision, 14=describe-in-text + design-identity, 15=complex sites (SPA/shadow-DOM widgets/canvas charts via vision+MAIN-world probe), 16=responsive/mobile (CDP emulation + problem scan). 06 debug is first-class (reproduce→confirm→root-cause). Report agent-authored (colors/fonts/problems/pros); multi-problem→multi-task when MCP connected; Start/Stop toggle."
-last_updated: 2026-07-13
+last_updated: 2026-07-23
