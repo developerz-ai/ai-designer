@@ -109,6 +109,21 @@ describe('createMutator setText / setAttr', () => {
     expect(el.getAttribute('href')).toBe('/old');
   });
 
+  it('setAttr records the attribute name in the event (self-describing, like setStyle)', () => {
+    mount('<a id="l" href="/old">x</a>');
+    const m = createMutator(document).setAttr(byId('l'), 'href', '/new');
+    // before/after carry the name so #9/#10 can reconstruct WHICH attribute changed, not just its value.
+    expect(JSON.parse(m.before)).toEqual({ href: '/old' });
+    expect(JSON.parse(m.after)).toEqual({ href: '/new' });
+  });
+
+  it('setAttr encodes an absent prior attribute as null', () => {
+    mount('<a id="l">x</a>');
+    const m = createMutator(document).setAttr(byId('l'), 'data-x', '1');
+    expect(JSON.parse(m.before)).toEqual({ 'data-x': null });
+    expect(JSON.parse(m.after)).toEqual({ 'data-x': '1' });
+  });
+
   it('setAttr throws on a denied write and does not touch the DOM (safe at source)', () => {
     mount('<a id="l">x</a>');
     const el = byId('l');

@@ -255,16 +255,19 @@ export function createMutator(doc: Document = document): Mutator {
     // rather than this throw.
     const denied = attrDenyReason(name, value);
     if (denied) throw new Error(denied);
-    const had = el.hasAttribute(name);
-    const before = el.getAttribute(name) ?? '';
+    const prev = el.getAttribute(name); // string | null — null means the attribute was absent
     el.setAttribute(name, value);
     return {
       kind: 'setAttr',
       computed: value,
-      before,
-      after: value,
+      // Self-describing like setStyle: encode the attribute NAME into before/after so the event is
+      // recoverable downstream (#9 recorder / #10 fold). Bare values alone would lose WHICH attribute
+      // changed — unlike class toggles (full class string) or setStyle (`{prop: value}`), a raw
+      // setAttr value is not enough to reconstruct the edit. `null` = the attribute was absent.
+      before: JSON.stringify({ [name]: prev }),
+      after: JSON.stringify({ [name]: value }),
       undo() {
-        if (had) el.setAttribute(name, before);
+        if (prev !== null) el.setAttribute(name, prev);
         else el.removeAttribute(name);
       },
     };
