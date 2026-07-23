@@ -14,11 +14,14 @@
 import { tool } from 'ai';
 import {
   A11ySnapshotInput,
+  AddClassInput,
   DiagnosticsInput,
   type DomTool,
   GetStylesInput,
   QueryInput,
+  RemoveClassInput,
   ScreenshotInput,
+  SetAttrInput,
   SetStyleInput,
   SetTextInput,
   ToolResult,
@@ -85,11 +88,36 @@ export function createDomTools(dispatch: DomDispatch) {
     }),
     setText: tool({
       description:
-        'Replace the visible text content of the element matching `selector`. ' +
+        'Replace the visible text content of the element matching `selector`. Target a leaf — ' +
+        'it is refused on an element that has child elements (it would delete the subtree). ' +
         'Reversible and recorded as an edit.',
       inputSchema: SetTextInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'setText', ...input }, abortSignal),
+    }),
+    setAttr: tool({
+      description:
+        'Set attribute `name` to `value` on the element matching `selector`. Reversible and ' +
+        'recorded as an edit. Unsafe writes are refused (on* handlers, src, javascript: URLs).',
+      inputSchema: SetAttrInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'setAttr', ...input }, abortSignal),
+    }),
+    addClass: tool({
+      description:
+        'Add CSS class `name` to the element matching `selector` (no-op if already present). ' +
+        'Reversible and recorded as an edit.',
+      inputSchema: AddClassInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'addClass', ...input }, abortSignal),
+    }),
+    removeClass: tool({
+      description:
+        'Remove CSS class `name` from the element matching `selector` (no-op if absent). ' +
+        'Reversible and recorded as an edit.',
+      inputSchema: RemoveClassInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'removeClass', ...input }, abortSignal),
     }),
     undo: tool({
       description: 'Revert the most recent recorded page mutation. Takes no arguments.',

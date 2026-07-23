@@ -107,6 +107,21 @@ const CASES = [
     input: { selector: '#cta', value: 'Buy now' },
     msg: { type: 'setText', selector: '#cta', value: 'Buy now' },
   },
+  {
+    tool: 'setAttr',
+    input: { selector: '#l', name: 'href', value: '/home' },
+    msg: { type: 'setAttr', selector: '#l', name: 'href', value: '/home' },
+  },
+  {
+    tool: 'addClass',
+    input: { selector: '#d', name: 'hero' },
+    msg: { type: 'addClass', selector: '#d', name: 'hero' },
+  },
+  {
+    tool: 'removeClass',
+    input: { selector: '#d', name: 'hero' },
+    msg: { type: 'removeClass', selector: '#d', name: 'hero' },
+  },
   { tool: 'undo', input: {}, msg: { type: 'undo' } },
 ] as const;
 

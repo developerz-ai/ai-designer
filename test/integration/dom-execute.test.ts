@@ -79,7 +79,7 @@ describe('DomTool execute — mutations record + reverse', () => {
     expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'setText' } });
   });
 
-  it('undo reverses the last mutation and reports it; a second undo is empty', () => {
+  it('undo reverses the last mutation and reports it; a second undo is a benign no-op', () => {
     const { exec } = setup('<p id="t">before</p>');
     exec({ type: 'setText', selector: '#t', value: 'after' });
 
@@ -88,8 +88,54 @@ describe('DomTool execute — mutations record + reverse', () => {
     expect(data<{ kind: string }>(undone).kind).toBe('setText');
     expect(document.getElementById('t')?.textContent).toBe('before');
 
+    // #5: an empty undo log is a no-op (ok), not an error the agent must reason about.
     const empty = exec({ type: 'undo' });
-    expect(empty).toMatchObject({ ok: false, error: 'Nothing to undo' });
+    expect(empty).toMatchObject({ ok: true, data: { undone: false } });
+  });
+
+  it('setAttr applies a safe attribute and records it', () => {
+    const { exec, emitted } = setup('<a id="l">x</a>');
+    const result = exec({ type: 'setAttr', selector: '#l', name: 'href', value: '/home' });
+    expect(result.ok).toBe(true);
+    expect(document.getElementById('l')?.getAttribute('href')).toBe('/home');
+    expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'setAttr' } });
+  });
+
+  it('setAttr refuses on* / src / javascript: without touching the DOM or recording', () => {
+    const { exec, emitted } = setup('<a id="l">x</a>');
+    const denied = [
+      { name: 'onclick', value: 'steal()' },
+      { name: 'src', value: 'https://cdn/x.js' },
+      { name: 'href', value: 'javascript:alert(1)' },
+    ] as const;
+    for (const { name, value } of denied) {
+      const r = exec({ type: 'setAttr', selector: '#l', name, value });
+      expect(r.ok, `${name}=${value}`).toBe(false);
+    }
+    const el = document.getElementById('l');
+    expect(el?.hasAttribute('onclick')).toBe(false);
+    expect(el?.hasAttribute('src')).toBe(false);
+    expect(el?.getAttribute('href')).toBeNull();
+    expect(emitted).toHaveLength(0); // a refusal is not a mutation
+  });
+
+  it('addClass and removeClass toggle a class and record each', () => {
+    const { exec, emitted } = setup('<div id="d" class="a"></div>');
+    exec({ type: 'addClass', selector: '#d', name: 'hero' });
+    expect(document.getElementById('d')?.classList.contains('hero')).toBe(true);
+    exec({ type: 'removeClass', selector: '#d', name: 'a' });
+    expect(document.getElementById('d')?.classList.contains('a')).toBe(false);
+    expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'addClass' } });
+    expect(emitted[1]).toMatchObject({ type: 'recorder-event', event: { kind: 'removeClass' } });
+  });
+
+  it('setText refuses an element with child elements (leaf-guard) and records nothing', () => {
+    const { exec, emitted } = setup('<p id="t">Hi <b>bold</b></p>');
+    const r = exec({ type: 'setText', selector: '#t', value: 'flat' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('child');
+    expect(document.getElementById('t')?.querySelector('b')).not.toBeNull(); // subtree intact
+    expect(emitted).toHaveLength(0);
   });
 
   it('undo of a setStyle drops the rule and the marker', () => {

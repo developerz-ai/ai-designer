@@ -117,6 +117,36 @@ function serialize(node: Node): string {
   return node instanceof Element ? node.outerHTML : (node.textContent ?? '');
 }
 
+// Security deny-list for `setAttr`: returns a human-readable reason a raw attribute write is
+// refused, or null when it is safe. A bare `setAttribute` is the one mutation primitive that can
+// smuggle executable code or a remote load past our no-remote-code / CSP posture
+// (docs/architecture/mv3-worlds.md), so it is gated at the source. Three vectors, matching the
+// on*-stripping insertNode already does (stripEventHandlers):
+//   - inline event handlers (`on*`)      — run page JS when the event fires;
+//   - `src`                              — points the element at a remote resource we don't control;
+//   - `javascript:` URL in ANY value     — executes on activation (href, formaction, xlink:href, …).
+// The `javascript:` probe strips whitespace + C0 control chars first, since the URL parser ignores
+// them ("java\tscript:", " javascript:", leading NULs all still execute).
+export function attrDenyReason(name: string, value: string): string | null {
+  const attr = name.trim().toLowerCase();
+  if (attr.startsWith('on')) {
+    return `Refused: "${name}" is an inline event handler; on* attributes run page JS.`;
+  }
+  if (attr === 'src') {
+    return `Refused: "src" loads a remote resource. Use insertNode for agent-authored markup instead.`;
+  }
+  // Drop every char at or below U+0020 (space + all C0 control chars) before probing the scheme:
+  // the URL parser ignores them, so "java\tscript:", " javascript:", and leading NULs all still
+  // execute. A char-code filter avoids a control-char regex (noControlCharactersInRegex).
+  const scheme = Array.from(value, (c) => (c.charCodeAt(0) > 0x20 ? c : ''))
+    .join('')
+    .toLowerCase();
+  if (scheme.startsWith('javascript:')) {
+    return `Refused: "${name}" has a javascript: URL, which executes on activation.`;
+  }
+  return null;
+}
+
 /**
  * A page-bound reversible mutator. Holds the injected overrides stylesheet + per-element override
  * maps so repeated `setStyle`s on one element merge into a single rule and unwind precisely. One
@@ -220,6 +250,11 @@ export function createMutator(doc: Document = document): Mutator {
   }
 
   function setAttr(el: Element, name: string, value: string): ElementMutation<string> {
+    // Safe at the source: refuse a denied write even for a direct caller that skips the executor's
+    // pre-check. The executor (execute.ts) checks first so the agent gets a clean error ToolResult
+    // rather than this throw.
+    const denied = attrDenyReason(name, value);
+    if (denied) throw new Error(denied);
     const had = el.hasAttribute(name);
     const before = el.getAttribute(name) ?? '';
     el.setAttribute(name, value);

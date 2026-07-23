@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMutator, MARKER_ATTR } from '@/dom/mutate';
+import { attrDenyReason, createMutator, MARKER_ATTR } from '@/dom/mutate';
 
 const SHEET_ID = 'dz-designer-overrides';
 
@@ -107,6 +107,47 @@ describe('createMutator setText / setAttr', () => {
     expect(el.getAttribute('href')).toBe('/new');
     mutation.undo();
     expect(el.getAttribute('href')).toBe('/old');
+  });
+
+  it('setAttr throws on a denied write and does not touch the DOM (safe at source)', () => {
+    mount('<a id="l">x</a>');
+    const el = byId('l');
+    const mutator = createMutator(document);
+    expect(() => mutator.setAttr(el, 'onclick', 'steal()')).toThrow(/event handler/);
+    expect(() => mutator.setAttr(el, 'href', 'javascript:alert(1)')).toThrow(/javascript:/);
+    expect(() => mutator.setAttr(el, 'src', 'https://cdn/x.js')).toThrow(/remote resource/);
+    expect(el.hasAttribute('onclick')).toBe(false);
+    expect(el.hasAttribute('src')).toBe(false);
+    expect(el.hasAttribute('href')).toBe(false);
+  });
+});
+
+describe('attrDenyReason (setAttr security deny-list)', () => {
+  it('allows safe attribute writes', () => {
+    expect(attrDenyReason('href', '/home')).toBeNull();
+    expect(attrDenyReason('href', 'https://example.com')).toBeNull();
+    expect(attrDenyReason('data-id', '42')).toBeNull();
+    expect(attrDenyReason('alt', 'a photo')).toBeNull();
+    // the literal word without the scheme colon is fine
+    expect(attrDenyReason('title', 'javascript is a language')).toBeNull();
+  });
+
+  it('refuses on* event-handler attributes regardless of casing', () => {
+    expect(attrDenyReason('onclick', 'x()')).toContain('event handler');
+    expect(attrDenyReason('OnError', 'x()')).toContain('event handler');
+    expect(attrDenyReason('onmouseover', 'x()')).toBeTruthy();
+  });
+
+  it('refuses the src attribute outright', () => {
+    expect(attrDenyReason('src', 'https://cdn.example/x.js')).toContain('remote resource');
+    expect(attrDenyReason('SRC', '/local.png')).toBeTruthy();
+  });
+
+  it('refuses javascript: URLs in any value, including whitespace/control-char obfuscation', () => {
+    expect(attrDenyReason('href', 'javascript:alert(1)')).toContain('javascript:');
+    expect(attrDenyReason('href', '  JavaScript:alert(1)')).toBeTruthy(); // leading ws + casing
+    expect(attrDenyReason('href', 'java\tscript:alert(1)')).toBeTruthy(); // embedded control char
+    expect(attrDenyReason('formaction', 'javascript:x')).toBeTruthy();
   });
 });
 
