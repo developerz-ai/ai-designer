@@ -559,12 +559,43 @@ export const RemoveClassInput = z.object({
   name: z.string(),
   ...Target.shape,
 });
+// Structural mutations (#58): insert agent-authored markup, move an element, or remove one.
+// `position` follows the DOM's InsertPosition vocabulary ('beforeend' = last child, the default).
+// The content executor clipboard-tracks every moved/removed node so undo restores node identity
+// and the original parent + nextSibling anchor (never an index — sibling indices shift).
+export const InsertPositionEnum = z.enum(['beforebegin', 'afterbegin', 'beforeend', 'afterend']);
+export type InsertPositionEnum = z.infer<typeof InsertPositionEnum>;
+export const InsertNodeInput = z.object({
+  type: z.literal('insertNode'),
+  // The REFERENCE element the markup is inserted relative to (per `position`).
+  selector: z.string(),
+  html: z.string(),
+  position: InsertPositionEnum.default('beforeend'),
+  ...Target.shape,
+});
+export const MoveNodeInput = z.object({
+  type: z.literal('moveNode'),
+  // The element to move…
+  selector: z.string(),
+  // …and the reference element to move it relative to (per `position`).
+  refSelector: z.string(),
+  position: InsertPositionEnum.default('beforeend'),
+  ...Target.shape,
+});
+export const RemoveNodeInput = z.object({
+  type: z.literal('removeNode'),
+  selector: z.string(),
+  ...Target.shape,
+});
 export const A11ySnapshotInput = z.object({
   type: z.literal('a11ySnapshot'),
   selector: z.string(),
   ...Target.shape,
 });
 export const UndoInput = z.object({ type: z.literal('undo'), ...Target.shape });
+// `discardUndo` drops the top undo entry WITHOUT reverting it — the deliberate escape when a
+// permanently churned anchor wedges the LIFO top (every `undo` retries the same failing entry).
+export const DiscardUndoInput = z.object({ type: z.literal('discardUndo'), ...Target.shape });
 
 // The debug engine's content-side pull (slice 06, complements the `diagnostics-signal` PUSH
 // below): `drain` returns everything the collector has buffered since the last drain (runtime +
@@ -587,8 +618,12 @@ export const DomTool = z.discriminatedUnion('type', [
   SetAttrInput,
   AddClassInput,
   RemoveClassInput,
+  InsertNodeInput,
+  MoveNodeInput,
+  RemoveNodeInput,
   A11ySnapshotInput,
   UndoInput,
+  DiscardUndoInput,
   DiagnosticsInput,
 ]);
 export type DomTool = z.infer<typeof DomTool>;

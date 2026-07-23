@@ -174,6 +174,17 @@ describe('generateReport: assembles a grounded, agent-authored brief', () => {
     expect(text).toContain('attr title Buy→∅');
     expect(text).toContain('class +btn-primary, -btn-ghost');
   });
+
+  it('grounds a structural delta in the prompt edit lines (#58)', () => {
+    const structural: Edit = {
+      ...edit('insert a banner'),
+      structural: { op: 'insert', position: 'beforeend', html: '<div class="banner">x</div>' },
+    };
+
+    const text = JSON.stringify(buildReportMessages({ changeset: changesetWith(structural) }));
+
+    expect(text).toContain('struct insert beforeend');
+  });
 });
 
 describe('report grounding helpers (pure)', () => {

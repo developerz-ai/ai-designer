@@ -1,4 +1,4 @@
-import { attrDenyReason, type ElementMutation, type Mutator } from '@/dom/mutate';
+import { attrDenyReason, type ElementMutation, type Mutator, SHEET_ID } from '@/dom/mutate';
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
 import type { Recorder } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
@@ -55,6 +55,23 @@ function leafOnly(el: Element): string | null {
   return n > 0
     ? `setText would delete ${n} child element(s); target a leaf element (one with no child elements) instead.`
     : null;
+}
+
+// Structural target guard (#58): refuse the mutations whose blast radius a user can't reasonably
+// review — blanking the whole page (removing/moving <html>/<head>/<body>) or tearing down the
+// extension's own chrome (the overrides sheet, the picker/overlay hosts — all recorded and
+// undoable, but invisible to the agent's selectors). `body` stays legal as an insert/move
+// DESTINATION ('beforeend' a banner at page bottom is a normal design action); it is refused only
+// as the element being moved/removed.
+function structuralTargetReason(el: Element, role: 'target' | 'ref'): string | null {
+  if (el.id === SHEET_ID) return `Refused: #${SHEET_ID} is the editor's own overrides sheet.`;
+  if (el.closest('[data-dz-designer="picker"], [data-dz-designer="overlay"]'))
+    return 'Refused: that is part of the editor’s own UI, not page content.';
+  if (el === el.ownerDocument.documentElement || el === el.ownerDocument.head)
+    return 'Refused: structural mutations on <html>/<head> would blank or hijack the page.';
+  if (role === 'target' && el === el.ownerDocument.body)
+    return 'Refused: removing or moving <body> would blank the page; target a content element.';
+  return null;
 }
 
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
@@ -117,11 +134,75 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         return mutate(tool.selector, (el) => mutator.addClass(el, tool.name));
       case 'removeClass':
         return mutate(tool.selector, (el) => mutator.removeClass(el, tool.name));
+      // Structural mutations (#58): the mutator clipboard-tracks every inserted/moved/removed
+      // node, so the recorded undo restores node identity + the original parent/nextSibling
+      // anchor (never an index — sibling indices shift under concurrent mutations).
+      case 'insertNode':
+        // The resolved selector is the insertion REFERENCE (destination) — body is legal here.
+        return mutate(
+          tool.selector,
+          (el) => mutator.insertNode(el, tool.html, tool.position),
+          (el) => structuralTargetReason(el, 'ref'),
+        );
+      case 'moveNode': {
+        // Two resolutions: the element to move and the reference anchor — the single-selector
+        // `mutate()` helper can't express the pair, so the flow is spelled out (same
+        // resolve → guard → apply → record → ok contract).
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const elReason = structuralTargetReason(el, 'target');
+        if (elReason) return refused(elReason);
+        const ref = queryOne(doc, tool.refSelector);
+        if (!ref) return notFound(tool.refSelector);
+        const refReason = structuralTargetReason(ref, 'ref');
+        if (refReason) return refused(refReason);
+        try {
+          const mutation = mutator.moveNode(el, ref, tool.position);
+          const stable = pickUnique(el, doc);
+          recorder.record(stable, mutation);
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          // e.g. moving an element into its own descendant (HierarchyRequestError) — a clean
+          // refusal the agent can react to, never a throw out of the turn.
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'removeNode': {
+        // Selector invalidation is recorded EXPLICITLY (#58's design point): the stable selector
+        // is computed BEFORE the detach — post-removal every candidate fails `resolvesToExactly`
+        // and pickUnique would silently degrade to a fragile bare tag. The recorded selector
+        // describes the pre-removal location (which no longer resolves, by design).
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const reason = structuralTargetReason(el, 'target');
+        if (reason) return refused(reason);
+        const stable = pickUnique(el, doc);
+        try {
+          const mutation = mutator.removeNode(el);
+          recorder.record(stable, mutation);
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
       case 'undo': {
-        const event = recorder.undo();
-        // An empty undo log is a valid no-op, not an error: undoing with nothing to revert is a
-        // benign state the agent should not have to treat as a failure.
-        return event ? ok(event) : ok({ undone: false });
+        try {
+          const event = recorder.undo();
+          // An empty undo log is a valid no-op, not an error: undoing with nothing to revert is
+          // a benign state the agent should not have to treat as a failure.
+          return event ? ok(event) : ok({ undone: false });
+        } catch (err) {
+          // A failed revert (e.g. a structural anchor churned away by the page) keeps its log
+          // entry (the recorder re-pushes on throw) and surfaces an honest refusal.
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'discardUndo': {
+        // Pop the top entry WITHOUT reverting it — the deliberate, loud escape when a permanently
+        // churned anchor wedges the LIFO top (every `undo` retries the same failing entry,
+        // bricking the older ones). An empty log is the same benign no-op as `undo`.
+        const event = recorder.drop();
+        return event ? ok({ discarded: event.kind }) : ok({ discarded: false });
       }
     }
   }

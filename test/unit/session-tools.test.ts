@@ -96,6 +96,23 @@ describe('createSessionTools: derivation', () => {
       expect(data.classes).toEqual([]);
     }
   });
+
+  it('accepts an optional structural delta (#58) and leaves it absent otherwise', () => {
+    const schema = harness().tools.recordEdit.inputSchema as unknown as ZodType;
+    const structural = schema.safeParse({
+      ...anEdit('insert a banner'),
+      structural: {
+        op: 'insert',
+        position: 'beforeend',
+        html: '<div class="banner">x</div>',
+        refSelector: { value: '#hero', strategy: 'id', fragile: false },
+      },
+    });
+    expect(structural.success).toBe(true);
+    const plain = schema.safeParse(anEdit('x'));
+    expect(plain.success).toBe(true);
+    if (plain.success) expect((plain.data as Edit).structural).toBeUndefined();
+  });
 });
 
 describe('createSessionTools: changeset mutations persist + stream', () => {
@@ -181,5 +198,42 @@ describe('createSessionTools: handoff proposes but never ships', () => {
     });
     // Execute is reached only post-approval; it routes, it does not dispatch — no task-status.
     expect(events.some((e) => e.type === 'task-status')).toBe(false);
+  });
+});
+
+describe('createSessionTools: StructuralChange coherence (#58 review)', () => {
+  const schema = () => harness().tools.recordEdit.inputSchema as unknown as ZodType;
+
+  it('rejects contradictory structural payloads (insert without html, move without refSelector, remove with html)', () => {
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'insert', position: 'beforeend' } })
+        .success,
+    ).toBe(false);
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'move', position: 'beforeend' } })
+        .success,
+    ).toBe(false);
+    expect(
+      schema().safeParse({ ...anEdit('x'), structural: { op: 'remove', html: '<div/>' } }).success,
+    ).toBe(false);
+  });
+
+  it('accepts the three coherent shapes', () => {
+    expect(
+      schema().safeParse({
+        ...anEdit('x'),
+        structural: { op: 'insert', html: '<div/>', position: 'beforeend' },
+      }).success,
+    ).toBe(true);
+    expect(
+      schema().safeParse({
+        ...anEdit('x'),
+        structural: {
+          op: 'move',
+          refSelector: { value: '#a', strategy: 'id', fragile: false },
+        },
+      }).success,
+    ).toBe(true);
+    expect(schema().safeParse({ ...anEdit('x'), structural: { op: 'remove' } }).success).toBe(true);
   });
 });

