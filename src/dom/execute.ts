@@ -197,6 +197,13 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           return refused(err instanceof Error ? err.message : String(err));
         }
       }
+      case 'discardUndo': {
+        // Pop the top entry WITHOUT reverting it — the deliberate, loud escape when a permanently
+        // churned anchor wedges the LIFO top (every `undo` retries the same failing entry,
+        // bricking the older ones). An empty log is the same benign no-op as `undo`.
+        const event = recorder.drop();
+        return event ? ok({ discarded: event.kind }) : ok({ discarded: false });
+      }
     }
   }
 

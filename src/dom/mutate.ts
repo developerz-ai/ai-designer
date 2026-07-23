@@ -105,10 +105,30 @@ function nodesFromHtml(doc: Document, html: string): Node[] {
 
 // Tags dropped outright from inserted markup: framed-document carriers (iframe/object/embed),
 // document-hijack tags (base rewrites every relative URL; meta refresh navigates; link pulls remote
-// CSS), and script (already inert via the template-parse "already started" flag, but dropped for
-// zero ambiguity). None has a legitimate use in an agent design edit — mockups are built from
-// layout, text, and styled elements.
-const DROPPED_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link']);
+// CSS; a <style> block is a page-WIDE stylesheet — beyond setStyle's per-element scoped grant and a
+// selector+url() exfil channel), script (already inert via the template-parse "already started"
+// flag, dropped for zero ambiguity), and SMIL animation tags (animate/set/animateMotion/
+// animateTransform can rewrite a navigational attribute to a javascript: URL AFTER insertion — the
+// attr pass below can't see a future mutation). None has a legitimate use in an agent design edit —
+// mockups are built from layout, text, and styled elements.
+const DROPPED_TAGS = new Set([
+  'script',
+  'iframe',
+  'object',
+  'embed',
+  'base',
+  'meta',
+  'link',
+  'style',
+  // SMIL — both casings: type selectors match HTML elements case-insensitively but SVG
+  // elements (animateMotion/animateTransform are camelCase) case-sensitively.
+  'animate',
+  'set',
+  'animateMotion',
+  'animateTransform',
+  'animatemotion',
+  'animatetransform',
+]);
 
 // Sanitize one parsed fragment before insertion (CSP-safe by construction):
 // - drop every DROPPED_TAGS element outright,
@@ -125,6 +145,16 @@ function sanitizeFragment(frag: DocumentFragment): void {
   for (const el of frag.querySelectorAll('*')) {
     for (const name of el.getAttributeNames()) {
       if (attrDenyReason(name, el.getAttribute(name) ?? '') !== null) el.removeAttribute(name);
+    }
+    // SVG image/use load their target via href/xlink:href (not src) — the one automatic
+    // remote-load channel the name-based deny-list misses. Refuse http(s): values on these tags;
+    // inline data: images and same-document fragment refs stay (both are inert).
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'image' || tag === 'use') {
+      for (const name of ['href', 'xlink:href']) {
+        const value = el.getAttribute(name);
+        if (value !== null && /^\s*https?:/i.test(value)) el.removeAttribute(name);
+      }
     }
     const tpl = el instanceof HTMLTemplateElement ? el : null;
     if (tpl) sanitizeFragment(tpl.content);

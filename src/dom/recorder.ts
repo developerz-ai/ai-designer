@@ -23,8 +23,13 @@ export interface Recorder {
    *  and returns the emitted event. */
   record(selector: StableSelector, mutation: ElementMutation): MutationEvent;
   /** Reverse the most recent recorded mutation (LIFO), returning its event — or `null` when the
-   *  log is empty. Reverses the exact DOM change via the mutation's own `undo()`. */
+   *  log is empty. Reverses the exact DOM change via the mutation's own `undo()`. A mutation that
+   *  FAILS to revert keeps its entry (re-pushed) and throws — see `drop` for the deliberate
+   *  escape. */
   undo(): MutationEvent | null;
+  /** Pop the most recent entry WITHOUT reverting it (the `discardUndo` tool's escape for a
+   *  permanently churned anchor wedging the LIFO top), returning its event — or `null` when empty. */
+  drop(): MutationEvent | null;
   /** Number of undoable mutations currently on the stack. */
   size(): number;
   /** Drop the undo log without reversing anything (e.g. a session reset). */
@@ -68,16 +73,26 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
       // A failed revert (e.g. a structural undo whose anchor the page churned away) must NOT lose
       // the entry: re-push it and throw, so the executor answers with an honest error instead of
       // silently dropping the entry and letting a retry revert something older. The agent decides
-      // to retry, clear, or move on — the log is never corrupted by a throw.
+      // to retry, `discardUndo`, or move on — the log is never corrupted by a throw.
       stack.push(entry);
       throw err;
     }
     return entry.event;
   }
 
+  // Pop the top entry WITHOUT reverting it — the deliberate escape when a permanently churned
+  // anchor wedges the LIFO top (every undo retries the same failing entry, bricking the older
+  // ones). Agent-surface only via the `discardUndo` tool, so the discard is a loud, chosen act —
+  // never a silent auto-drop.
+  function drop(): MutationEvent | null {
+    const entry = stack.pop();
+    return entry ? entry.event : null;
+  }
+
   return {
     record,
     undo,
+    drop,
     size: () => stack.length,
     clear: () => {
       stack.length = 0;

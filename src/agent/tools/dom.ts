@@ -16,6 +16,7 @@ import {
   A11ySnapshotInput,
   AddClassInput,
   DiagnosticsInput,
+  DiscardUndoInput,
   type DomTool,
   GetStylesInput,
   InsertNodeInput,
@@ -157,6 +158,16 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: UndoInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'undo', ...input }, abortSignal),
+    }),
+    discardUndo: tool({
+      description:
+        'Discard the most recent undo entry WITHOUT reverting it. Use ONLY when its revert ' +
+        'keeps failing (the page changed under the mutation, so its anchor is gone) and it is ' +
+        'blocking older undo entries — the discard is permanent and is never what you want while ' +
+        'a normal `undo` still works. Takes no arguments.',
+      inputSchema: DiscardUndoInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'discardUndo', ...input }, abortSignal),
     }),
     diagnostics: tool({
       description:

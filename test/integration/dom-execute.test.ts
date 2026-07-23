@@ -376,3 +376,41 @@ describe('DomTool execute — structural guards + churn honesty (#58 review)', (
     expect(one?.nextSibling).toBe(two); // before the ORIGINAL sibling, not before the new node
   });
 });
+
+describe('DomTool execute — discardUndo (#144 round-3 review)', () => {
+  it('discardUndo on an empty log is the same benign no-op as undo', () => {
+    const { exec } = setup('<div></div>');
+    expect(exec({ type: 'discardUndo' })).toMatchObject({ ok: true, data: { discarded: false } });
+  });
+
+  it('discardUndo drops the top entry WITHOUT reverting it', () => {
+    const { exec } = setup('<p id="t">x</p>');
+    exec({ type: 'setText', selector: '#t', value: 'y' });
+
+    expect(exec({ type: 'discardUndo' })).toMatchObject({
+      ok: true,
+      data: { discarded: 'setText' },
+    });
+    expect(document.getElementById('t')?.textContent).toBe('y'); // NOT reverted
+    expect(exec({ type: 'undo' })).toMatchObject({ ok: true, data: { undone: false } }); // log now empty
+  });
+
+  it('a wedged (permanently churned) undo entry no longer bricks the older entries', () => {
+    const { exec } = setup('<ul id="list"><li id="x">x</li><li id="y">y</li></ul><p id="t">a</p>');
+
+    exec({ type: 'setText', selector: '#t', value: 'b' }); // older entry
+    exec({ type: 'removeNode', selector: '#x' }); // top entry — its anchor gets churned
+    document.getElementById('list')?.remove(); // permanent churn: the anchor's parent is gone
+
+    expect(exec({ type: 'undo' }).ok).toBe(false); // the wedge: same failing entry every retry
+    expect(exec({ type: 'undo' }).ok).toBe(false);
+
+    // The deliberate escape: discard the stuck entry loudly, then the older one reverts fine.
+    expect(exec({ type: 'discardUndo' })).toMatchObject({
+      ok: true,
+      data: { discarded: 'removeNode' },
+    });
+    expect(exec({ type: 'undo' })).toMatchObject({ ok: true });
+    expect(document.getElementById('t')?.textContent).toBe('a');
+  });
+});

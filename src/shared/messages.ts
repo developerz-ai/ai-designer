@@ -593,6 +593,9 @@ export const A11ySnapshotInput = z.object({
   ...Target.shape,
 });
 export const UndoInput = z.object({ type: z.literal('undo'), ...Target.shape });
+// `discardUndo` drops the top undo entry WITHOUT reverting it — the deliberate escape when a
+// permanently churned anchor wedges the LIFO top (every `undo` retries the same failing entry).
+export const DiscardUndoInput = z.object({ type: z.literal('discardUndo'), ...Target.shape });
 
 // The debug engine's content-side pull (slice 06, complements the `diagnostics-signal` PUSH
 // below): `drain` returns everything the collector has buffered since the last drain (runtime +
@@ -620,6 +623,7 @@ export const DomTool = z.discriminatedUnion('type', [
   RemoveNodeInput,
   A11ySnapshotInput,
   UndoInput,
+  DiscardUndoInput,
   DiagnosticsInput,
 ]);
 export type DomTool = z.infer<typeof DomTool>;
