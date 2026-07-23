@@ -115,6 +115,23 @@ const SCROLL_SETTLE_MS = 200;
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
 
+// The content-routed message types that do NOT ride the per-tab capture lock (#136): the pure reads
+// — they never scroll or mutate the page and their results are scroll-independent, so locking them
+// would only stall them behind a stitch. Everything else (all DomTool mutations/reads, the
+// interact/scroll/widgetAct drivers) locks, so a same-step driver can't corrupt a full-page stitch.
+// Verified scroll-free: readImages/readChart/chartTooltip/pageFacts + the describe family (only
+// widgets.ts's widgetAct scrolls — src/dom/widgets.ts:78 — and it is NOT in this set).
+const UNLOCKED_READS = new Set([
+  'describe',
+  'extractIdentity',
+  'readImageContent',
+  'readImages',
+  'readChart',
+  'chartTooltip',
+  'pageFacts',
+  'checkResponsive',
+]);
+
 // Device-emulation teardown state, persisted to chrome.storage.session so an SW eviction
 // mid-emulation can be reconciled on wake (slice 16 / SW-resilience). `chromeDeviceDriver` records
 // attach/resize here; `activeEmulationOwner` is the id of the turn currently applying emulation, so
@@ -293,32 +310,47 @@ export default defineBackground(() => {
   // `{ frameId }` option (default 0 = top document), and `Target.tabId` re-addresses another tab
   // (copy = user tab + reference tab). A child frame can't learn its own id, so the SW stamps the
   // frame it routed to onto a result that left it off. The content script is the only DOM world; a
+  // The raw content round-trip behind contentDispatchFor — extracted so a lock HOLDER (the
+  // responsive sweep's internal element/viewport captures) can send without re-entering the lock
+  // and self-deadlocking. Everything contentDispatchFor does except the lock itself.
+  async function sendContentRaw(
+    tabId: number,
+    frameId: number,
+    message: DomTool | ControlTool | DescribeCmd | CheckResponsiveInput,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    // Re-checked here (not just at dispatch entry): a locked screenshot may wait out a stitch
+    // holder, and the turn may have aborted during the wait.
+    if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+    try {
+      const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
+      const parsed = ToolResult.safeParse(raw);
+      if (!parsed.success) {
+        return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
+      }
+      return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
+    } catch (err) {
+      return { type: 'tool-result', ok: false, error: String(err) };
+    }
+  }
+
   // send failure degrades to an error ToolResult the model reacts to rather than throwing the turn.
   function contentDispatchFor(defaultTabId: number): ContentDispatch {
     return async (message, signal) => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
       const tabId = message.tabId ?? defaultTabId;
       const frameId = message.frameId ?? 0;
-      const send = async (): Promise<ToolResult> => {
-        // Re-checked here (not just at dispatch entry): a locked screenshot may wait out a stitch
-        // holder, and the turn may have aborted during the wait.
-        if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
-        try {
-          const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
-          const parsed = ToolResult.safeParse(raw);
-          if (!parsed.success) {
-            return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
-          }
-          return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
-        } catch (err) {
-          return { type: 'tool-result', ok: false, error: String(err) };
-        }
-      };
-      // Element screenshots scroll the page (content.ts), so they ride the per-tab capture mutex
-      // against full-page stitches (src/agent/capture-lock.ts). Lock exactly here (not also in
-      // screenshotDispatchFor's element branch, which funnels into this) so one call never
-      // double-locks and self-deadlocks.
-      return message.type === 'screenshot' ? withCaptureLock(tabId, send) : send();
+      const send = (): Promise<ToolResult> => sendContentRaw(tabId, frameId, message, signal);
+      // Page-driver serialization (#136): EVERY DomTool/ControlTool message rides the per-tab
+      // capture lock — not just `screenshot` — so a same-step click/hover/scrollTo/widgetAct/
+      // mutation can no longer scroll or shift layout during a full-page stitch's per-band settle
+      // windows (silently corrupted bands fed to vision). Pure reads stay outside for throughput.
+      // Lock exactly here (not also in screenshotDispatchFor's element branch, which funnels into
+      // this) so one call never double-locks and self-deadlocks.
+      // DEADLOCK INVARIANT: nothing that already holds the lock may re-enter this dispatch —
+      // captureFullPage's sendScrollTo/page-metrics are raw chrome.tabs calls (below), and
+      // runResponsiveCapture's internal captures use `sendContentRaw`, never the locking dispatch.
+      return UNLOCKED_READS.has(message.type) ? send() : withCaptureLock(tabId, send);
     };
   }
 
@@ -667,28 +699,41 @@ export default defineBackground(() => {
           complexSite: content,
           // Device emulation + responsive capture (slice 16): `setDevice`/`responsiveCapture` are
           // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against `chromeDeviceDriver`;
-          // `checkResponsive` is content-routed (the scanner runs in the page's world). The sweep
-          // captures each breakpoint through the same `screenshot` dispatch the vision tools use, and
-          // emulation is restored after the turn (see the `finally` below).
+          // `checkResponsive` is content-routed (the scanner runs in the page's world). Both
+          // emulation entry points ride the per-tab capture lock (#136): a same-step setDevice or
+          // responsive sweep resizing the viewport mid-stitch invalidates every band's planned
+          // geometry. The sweep holds the lock for its WHOLE duration — so its internal captures
+          // must use RAW paths (never the locking dispatches, which would queue it behind itself):
+          // fullPage calls captureFullPage directly (its internals are lock-free by the deadlock
+          // invariant above), element/viewport shots ride the raw content send.
           responsive: {
-            setDevice: (message) => runSetDevice(chromeDeviceDriver, message, tabId),
+            setDevice: (message) =>
+              withCaptureLock(tabId, () => runSetDevice(chromeDeviceDriver, message, tabId)),
             capture: (message, signal) =>
-              runResponsiveCapture(
-                chromeDeviceDriver,
-                (target, opts, sig) =>
-                  screenshot(
-                    {
-                      type: 'screenshot',
-                      selector: opts.selector,
-                      fullPage: opts.fullPage,
-                      tabId: target,
-                    },
-                    sig,
-                  ),
-                (sig) => browseDelay(EMULATION_SETTLE_MS, sig),
-                message,
-                tabId,
-                signal,
+              withCaptureLock(tabId, () =>
+                runResponsiveCapture(
+                  chromeDeviceDriver,
+                  async (target, opts, sig) => {
+                    if (opts.fullPage) {
+                      const t = await chrome.tabs.get(target);
+                      return {
+                        type: 'tool-result',
+                        ok: true,
+                        data: await captureFullPage(target, t.windowId, sig),
+                      } as ToolResult;
+                    }
+                    return sendContentRaw(
+                      target,
+                      0,
+                      { type: 'screenshot', selector: opts.selector, tabId: target },
+                      sig,
+                    );
+                  },
+                  (sig) => browseDelay(EMULATION_SETTLE_MS, sig),
+                  message,
+                  tabId,
+                  signal,
+                ),
               ),
             check: content,
           },
@@ -757,7 +802,11 @@ export default defineBackground(() => {
             // restore the window) so the user's page + the "being debugged" banner don't outlast the
             // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
             if (emulation.owns(tabId, emulationOwner)) {
-              void restoreDevice(chromeDeviceDriver, tabId).catch(() => {});
+              // Ride the capture lock too (#136): a concurrent same-tab stitch (a newer turn's)
+              // must not see its viewport resized mid-capture by this turn's teardown.
+              void withCaptureLock(tabId, () => restoreDevice(chromeDeviceDriver, tabId)).catch(
+                () => {},
+              );
             }
             if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });
           });
