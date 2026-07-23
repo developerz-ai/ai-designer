@@ -118,13 +118,14 @@ function serialize(node: Node): string {
 }
 
 // Security deny-list for `setAttr`: returns a human-readable reason a raw attribute write is
-// refused, or null when it is safe. A bare `setAttribute` is the one mutation primitive that can
-// smuggle executable code or a remote load past our no-remote-code / CSP posture
-// (docs/architecture/mv3-worlds.md), so it is gated at the source. Three vectors, matching the
-// on*-stripping insertNode already does (stripEventHandlers):
+// refused, or null when it is safe. A bare `setAttribute` is a way to smuggle executable code or a
+// remote load past our no-remote-code / CSP posture (docs/architecture/mv3-worlds.md), so the known
+// vectors are gated at the source (matching the on*-stripping insertNode already does). This is NOT
+// an exhaustive XSS filter — it blocks:
 //   - inline event handlers (`on*`)      — run page JS when the event fires;
-//   - `src`                              — points the element at a remote resource we don't control;
+//   - `src` / `srcdoc`                   — a remote-resource load / an inline-script iframe injection;
 //   - `javascript:` URL in ANY value     — executes on activation (href, formaction, xlink:href, …).
+// Not covered (accept-with-follow-up if it ever matters): `data:` navigations, `style` url() loads.
 // The `javascript:` probe strips whitespace + C0 control chars first, since the URL parser ignores
 // them ("java\tscript:", " javascript:", leading NULs all still execute).
 export function attrDenyReason(name: string, value: string): string | null {
@@ -134,6 +135,9 @@ export function attrDenyReason(name: string, value: string): string | null {
   }
   if (attr === 'src') {
     return `Refused: "src" loads a remote resource. Use insertNode for agent-authored markup instead.`;
+  }
+  if (attr === 'srcdoc') {
+    return `Refused: "srcdoc" injects inline HTML/script into an iframe. Use insertNode instead.`;
   }
   // Drop every char at or below U+0020 (space + all C0 control chars) before probing the scheme:
   // the URL parser ignores them, so "java\tscript:", " javascript:", and leading NULs all still

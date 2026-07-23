@@ -106,6 +106,7 @@ describe('DomTool execute — mutations record + reverse', () => {
     const denied = [
       { name: 'onclick', value: 'steal()' },
       { name: 'src', value: 'https://cdn/x.js' },
+      { name: 'srcdoc', value: '<script>x()</script>' },
       { name: 'href', value: 'javascript:alert(1)' },
     ] as const;
     for (const { name, value } of denied) {
@@ -115,8 +116,24 @@ describe('DomTool execute — mutations record + reverse', () => {
     const el = document.getElementById('l');
     expect(el?.hasAttribute('onclick')).toBe(false);
     expect(el?.hasAttribute('src')).toBe(false);
+    expect(el?.hasAttribute('srcdoc')).toBe(false);
     expect(el?.getAttribute('href')).toBeNull();
     expect(emitted).toHaveLength(0); // a refusal is not a mutation
+  });
+
+  it('refuses a DOM-invalid class/attr token with a clean error instead of throwing', () => {
+    const { exec, emitted } = setup('<div id="d"></div>');
+    // classList.add throws on an empty or whitespace-bearing token; setAttribute on an invalid name.
+    // The executor must catch these and answer with an error ToolResult, never let the throw escape.
+    expect(exec({ type: 'addClass', selector: '#d', name: 'btn primary' })).toMatchObject({
+      ok: false,
+    });
+    expect(exec({ type: 'addClass', selector: '#d', name: '' })).toMatchObject({ ok: false });
+    expect(exec({ type: 'setAttr', selector: '#d', name: 'foo bar', value: 'x' })).toMatchObject({
+      ok: false,
+    });
+    expect(document.getElementById('d')?.classList.length).toBe(0); // nothing partially applied
+    expect(emitted).toHaveLength(0);
   });
 
   it('addClass and removeClass toggle a class and record each', () => {

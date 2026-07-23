@@ -72,7 +72,15 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
     if (!el) return notFound(selector);
     const reason = guard?.(el);
     if (reason) return refused(reason);
-    const mutation = apply(el);
+    let mutation: ElementMutation;
+    try {
+      mutation = apply(el);
+    } catch (err) {
+      // exec() never throws out of the turn (see header). A token the DOM rejects — an empty or
+      // whitespace-bearing class (classList.add) or an invalid attribute name (setAttribute) — and
+      // the mutator's safe-at-source deny throw all become a clean refusal the agent can react to.
+      return refused(err instanceof Error ? err.message : String(err));
+    }
     const stable = pickUnique(el, doc);
     recorder.record(stable, mutation);
     return ok(mutation.computed, stable);

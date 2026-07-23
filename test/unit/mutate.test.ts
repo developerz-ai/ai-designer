@@ -153,9 +153,10 @@ describe('attrDenyReason (setAttr security deny-list)', () => {
     expect(attrDenyReason('onmouseover', 'x()')).toBeTruthy();
   });
 
-  it('refuses the src attribute outright', () => {
+  it('refuses src (remote load) and srcdoc (inline-script iframe)', () => {
     expect(attrDenyReason('src', 'https://cdn.example/x.js')).toContain('remote resource');
     expect(attrDenyReason('SRC', '/local.png')).toBeTruthy();
+    expect(attrDenyReason('srcdoc', '<script>x()</script>')).toContain('iframe');
   });
 
   it('refuses javascript: URLs in any value, including whitespace/control-char obfuscation', () => {
