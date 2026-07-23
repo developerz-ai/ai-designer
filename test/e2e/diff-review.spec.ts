@@ -135,11 +135,15 @@ const OWN_PAGE =
   '<button id="cta">Buy now</button>' +
   '</body></html>';
 
+// A second, session-less page for the tab-switch retarget test.
+const OTHER_PAGE = '<!doctype html><html><body><h1>Elsewhere</h1></body></html>';
+
 // Two distinctive edits. Args must satisfy the `Edit` schema (src/shared/changeset.ts) — the
-// recordEdit tool's inputSchema IS that schema (src/agent/tools/session.ts).
+// recordEdit tool's inputSchema IS that schema (src/agent/tools/session.ts). CTA_EDIT is fragile
+// so the Diff tab's fragile-selector badge has a pin.
 const CTA_EDIT = {
   intent: 'Recolor the CTA to the brand accent',
-  selector: { value: '#cta', strategy: 'id' },
+  selector: { value: '#cta', strategy: 'id', fragile: true },
   changes: [{ prop: 'background-color', before: '#e5e7eb', after: '#22c55e' }],
   frameworkHints: [],
 };
@@ -182,6 +186,7 @@ test('diff review shows a recorded edit (#22)', async ({ context, openExtensionP
   const item = panel.locator('.dz-diff__item');
   await expect(item).toHaveCount(1);
   await expect(item.locator('.dz-diff__selector')).toHaveText('#cta · id');
+  await expect(item.locator('.dz-diff__fragile')).toContainText('Fragile selector');
   await expect(item.locator('.dz-diff__intent')).toHaveText('Recolor the CTA to the brand accent');
 
   const change = item.locator('.dz-diff__changes tbody tr');
@@ -321,4 +326,46 @@ test('diff controls disable while a turn streams and re-enable when it lands', a
   await expect(remove).toBeEnabled();
   await expect(panel.getByRole('button', { name: 'Undo last edit' })).toBeEnabled();
   await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
+});
+
+test('the diff view follows tab switches — never curates a tab the user is not looking at (#141)', async ({
+  context,
+  openExtensionPage,
+}) => {
+  await stubModels(context);
+  await stubFixtures(context, { own: OWN_PAGE, other: OTHER_PAGE });
+  const { requests } = stubProvider(context, [
+    toolCallStream('call-record', 'recordEdit', CTA_EDIT),
+    textStream('Recolored your CTA.'),
+  ]);
+
+  const panel = await openExtensionPage('sidepanel.html');
+  await configureProvider(panel);
+  await startSession(panel);
+
+  const ownPage = await context.newPage();
+  await ownPage.goto(`${FIXTURE_PREFIX}own`);
+  await ownPage.bringToFront();
+
+  await sendInstruction(panel, 'Recolor the CTA and record it');
+  await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(2);
+
+  await panel.getByRole('button', { name: 'Diff' }).click();
+  await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
+
+  // Switch to a second tab with no session: the view retargets to THAT tab's (empty) record —
+  // a mutator can therefore only ever land on the record the user is actually seeing (the SW
+  // additionally drift-rejects a forTabId mismatch; integration covers that leg).
+  const otherPage = await context.newPage();
+  await otherPage.goto(`${FIXTURE_PREFIX}other`);
+  await otherPage.bringToFront();
+  await expect(panel.locator('.dz-diff__count')).toHaveText('0 edits');
+  await expect(panel.locator('.dz-diff__empty')).toBeVisible();
+
+  // Back on the first tab its record is intact.
+  await ownPage.bringToFront();
+  await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
+  await expect(panel.locator('.dz-diff__item').locator('.dz-diff__selector')).toHaveText(
+    '#cta · id',
+  );
 });

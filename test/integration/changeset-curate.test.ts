@@ -11,11 +11,13 @@ import { ChangesetResult, PanelToSw } from '@/shared/messages';
 
 // Integration — the diff-review changeset curation RPCs (changeset-get / -undo / -redo / -clear /
 // -remove-edit, slice 10) end to end through the REAL cooperating SW modules the way
-// background.ts wires them (src/entrypoints/background.ts lines ~998-1049): the message switch
+// background.ts wires them (src/entrypoints/background.ts `case 'changeset-*'`): the message switch
 // resolves a target tab, builds a REAL `createSessionChangesetPersister` over the storage area,
-// applies the turn-in-flight busy guard (`turnAbort`), delegates to the REAL panel-ops
-// (`readChangeset` / `applyChangesetOp`), mirrors onto the SessionStore best-effort, and pushes the
-// curated changeset back to the panel. Every reply is parsed with the REAL `ChangesetResult` zod
+// rejects a `forTabId` that drifted from the resolved tab, applies the turn-in-flight busy guard
+// (`turnAbort`, checked before AND after the load via the panel-ops `guard` port), delegates to the
+// REAL panel-ops (`readChangeset` / `applyChangesetOp`), mirrors onto the SessionStore
+// best-effort, pushes the curated changeset (tab-stamped) to the panel, and answers every failure
+// with a schema-conformant reply. Every reply is parsed with the REAL `ChangesetResult` zod
 // schema (and every inbound message with the REAL `PanelToSw`), so schema conformance is enforced
 // on each dispatch — a non-conforming reply throws inside `dispatch`, failing the test.
 //
@@ -45,6 +47,8 @@ const edit = (intent: string): Edit => ({
 
 const intents = (cs: Changeset | null | undefined): string[] =>
   cs?.edits.map((e) => e.intent) ?? [];
+
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Minimal in-memory chrome.storage.session-shaped fake, round-tripping values through JSON to
 // mirror storage serialization (copied from test/unit/changeset-store.test.ts's fakeArea).
@@ -116,63 +120,107 @@ async function dispatch(raw: CurationMsg): Promise<ChangesetResult> {
   const msg = PanelToSw.parse(raw) as CurationMsg;
   switch (msg.type) {
     case 'changeset-get': {
-      const tab = await resolveTargetTab();
-      if (tab?.id === undefined)
+      let tabId: number | null = null;
+      try {
+        const tab = await resolveTargetTab();
+        tabId = tab?.id ?? null;
+        if (tabId === null)
+          return ChangesetResult.parse({
+            ok: true,
+            tabId,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+          });
+        const persister = createSessionChangesetPersister(tabId, area);
+        return ChangesetResult.parse({ ok: true, tabId, ...(await readChangeset(persister.load)) });
+      } catch (e) {
         return ChangesetResult.parse({
-          ok: true,
+          ok: false,
+          tabId,
           changeset: null,
           canUndo: false,
           canRedo: false,
+          error: errText(e),
         });
-      const persister = createSessionChangesetPersister(tab.id, area);
-      return ChangesetResult.parse({ ok: true, ...(await readChangeset(persister.load)) });
+      }
     }
     case 'changeset-undo':
     case 'changeset-redo':
     case 'changeset-clear':
     case 'changeset-remove-edit': {
-      const tab = await resolveTargetTab();
-      if (tab?.id === undefined)
+      let tabId: number | null = null;
+      try {
+        const tab = await resolveTargetTab();
+        tabId = tab?.id ?? null;
+        if (tabId === null)
+          return ChangesetResult.parse({
+            ok: false,
+            tabId,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+          });
+        // The panel curates the record it DISPLAYS (`forTabId`); a drift means its view is stale.
+        if (msg.forTabId !== undefined && msg.forTabId !== tabId)
+          return ChangesetResult.parse({
+            ok: false,
+            tabId,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+            error: 'tab-drift',
+          });
+        const curTabId = tabId;
+        const persister = createSessionChangesetPersister(curTabId, area);
+        // Reject while a turn is in flight: the running turn owns its own ChangesetStore and persists
+        // after every tool call, so a panel op loading a fresh store from storage would clobber it.
+        if (turnAbort)
+          return ChangesetResult.parse({
+            ok: false,
+            busy: true,
+            tabId,
+            ...(await readChangeset(persister.load)),
+          });
+        const op: ChangesetOp =
+          msg.type === 'changeset-undo'
+            ? { kind: 'undo' }
+            : msg.type === 'changeset-redo'
+              ? { kind: 'redo' }
+              : msg.type === 'changeset-clear'
+                ? { kind: 'clear' }
+                : { kind: 'remove', index: msg.index };
+        const result = await applyChangesetOp(
+          {
+            load: persister.load,
+            save: persister.save,
+            // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
+            // Best-effort: a throwing mirror must not fail the curation.
+            mirror: (cs) =>
+              sessions
+                .setChangeset(curTabId, cs)
+                .then(() => undefined)
+                .catch(() => undefined),
+            // The pre-load `turnAbort` check alone is check-then-act: re-check after the load.
+            guard: () => turnAbort === null,
+          },
+          op,
+        );
+        const { busy, ...view } = result;
+        if (busy) return ChangesetResult.parse({ ok: false, busy: true, tabId, ...view });
+        if (view.changeset)
+          postToPanel({ type: 'changeset', changeset: view.changeset, tabId: curTabId });
+        return ChangesetResult.parse({ ok: true, tabId, ...view });
+      } catch (e) {
         return ChangesetResult.parse({
           ok: false,
+          tabId,
           changeset: null,
           canUndo: false,
           canRedo: false,
+          error: errText(e),
         });
-      const tabId = tab.id;
-      const persister = createSessionChangesetPersister(tabId, area);
-      // Reject while a turn is in flight: the running turn owns its own ChangesetStore and persists
-      // after every tool call, so a panel op loading a fresh store from storage would clobber it.
-      if (turnAbort)
-        return ChangesetResult.parse({
-          ok: false,
-          busy: true,
-          ...(await readChangeset(persister.load)),
-        });
-      const op: ChangesetOp =
-        msg.type === 'changeset-undo'
-          ? { kind: 'undo' }
-          : msg.type === 'changeset-redo'
-            ? { kind: 'redo' }
-            : msg.type === 'changeset-clear'
-              ? { kind: 'clear' }
-              : { kind: 'remove', index: msg.index };
-      const result = await applyChangesetOp(
-        {
-          load: persister.load,
-          save: persister.save,
-          // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
-          // Best-effort: a throwing mirror must not fail the curation.
-          mirror: (cs) =>
-            sessions
-              .setChangeset(tabId, cs)
-              .then(() => undefined)
-              .catch(() => undefined),
-        },
-        op,
-      );
-      if (result.changeset) postToPanel({ type: 'changeset', changeset: result.changeset });
-      return ChangesetResult.parse({ ok: true, ...result });
+      }
     }
   }
 }
@@ -201,7 +249,13 @@ beforeEach(() => {
 describe('integration: changeset-get (diff-review curation)', () => {
   it('returns the empty view for a tab with no persisted changeset', async () => {
     const res = await dispatch({ type: 'changeset-get' });
-    expect(res).toEqual({ ok: true, changeset: null, canUndo: false, canRedo: false });
+    expect(res).toEqual({
+      ok: true,
+      tabId: TAB_ID,
+      changeset: null,
+      canUndo: false,
+      canRedo: false,
+    });
   });
 
   it('reports seeded edits with canUndo true, straight from storage', async () => {
@@ -209,6 +263,7 @@ describe('integration: changeset-get (diff-review curation)', () => {
 
     const res = await dispatch({ type: 'changeset-get' });
     expect(res.ok).toBe(true);
+    expect(res.tabId).toBe(TAB_ID);
     expect(intents(res.changeset)).toEqual(['a', 'b']);
     expect(res.canUndo).toBe(true);
     expect(res.canRedo).toBe(false);
@@ -220,12 +275,14 @@ describe('integration: changeset-get (diff-review curation)', () => {
 
     expect(await dispatch({ type: 'changeset-get' })).toEqual({
       ok: true,
+      tabId: null,
       changeset: null,
       canUndo: false,
       canRedo: false,
     });
     expect(await dispatch({ type: 'changeset-undo' })).toEqual({
       ok: false,
+      tabId: null,
       changeset: null,
       canUndo: false,
       canRedo: false,
@@ -238,7 +295,7 @@ describe('integration: changeset mutators walk the durable history', () => {
     await seedEdits('a', 'b');
 
     const res = await dispatch({ type: 'changeset-undo' });
-    expect(res).toMatchObject({ ok: true, canUndo: true, canRedo: true });
+    expect(res).toMatchObject({ ok: true, tabId: TAB_ID, canUndo: true, canRedo: true });
     expect(intents(res.changeset)).toEqual(['a']);
 
     // Durability: a fresh persister sees both the mutation AND the redo tail.
@@ -308,7 +365,7 @@ describe('integration: changeset mutators walk the durable history', () => {
     expect(intents((await freshLoad())?.changeset)).toEqual(['a']);
   });
 
-  it('mirrors the curated record onto the SessionStore and pushes it to the panel', async () => {
+  it('mirrors the curated record onto the SessionStore and pushes it tab-stamped to the panel', async () => {
     await seedEdits('a', 'b');
 
     await dispatch({ type: 'changeset-undo' });
@@ -318,9 +375,39 @@ describe('integration: changeset mutators walk the durable history', () => {
     expect(intents(sessions.setChangesetCalls[0]?.changeset)).toEqual(['a']);
 
     expect(pushed).toHaveLength(1);
-    const push = pushed[0] as { type: string; changeset: Changeset };
+    const push = pushed[0] as { type: string; changeset: Changeset; tabId?: number };
     expect(push.type).toBe('changeset');
+    expect(push.tabId).toBe(TAB_ID);
     expect(intents(push.changeset)).toEqual(['a']);
+  });
+});
+
+describe('integration: forTabId drift guard (#141 review)', () => {
+  it('rejects a mutator whose forTabId drifted from the resolved active tab', async () => {
+    await seedEdits('a', 'b');
+
+    const res = await dispatch({ type: 'changeset-clear', forTabId: 999 });
+    expect(res).toEqual({
+      ok: false,
+      tabId: TAB_ID,
+      changeset: null,
+      canUndo: false,
+      canRedo: false,
+      error: 'tab-drift',
+    });
+
+    // Nothing reached storage, the mirror, or the panel.
+    expect(intents((await freshLoad())?.changeset)).toEqual(['a', 'b']);
+    expect(sessions.setChangesetCalls).toHaveLength(0);
+    expect(pushed).toHaveLength(0);
+  });
+
+  it('accepts a mutator whose forTabId matches the displayed tab', async () => {
+    await seedEdits('a', 'b');
+
+    const res = await dispatch({ type: 'changeset-undo', forTabId: TAB_ID });
+    expect(res).toMatchObject({ ok: true, tabId: TAB_ID });
+    expect(intents(res.changeset)).toEqual(['a']);
   });
 });
 
@@ -338,7 +425,13 @@ describe('integration: busy guard (turn in flight)', () => {
     ] as const;
     for (const msg of mutators) {
       const res = await dispatch(msg);
-      expect(res).toMatchObject({ ok: false, busy: true, canUndo: true, canRedo: false });
+      expect(res).toMatchObject({
+        ok: false,
+        busy: true,
+        tabId: TAB_ID,
+        canUndo: true,
+        canRedo: false,
+      });
       // The current state is echoed back so the panel can reflect it.
       expect(intents(res.changeset)).toEqual(['a', 'b']);
     }
@@ -352,6 +445,29 @@ describe('integration: busy guard (turn in flight)', () => {
     const get = await dispatch({ type: 'changeset-get' });
     expect(get).toMatchObject({ ok: true, canUndo: true, canRedo: false });
     expect(intents(get.changeset)).toEqual(['a', 'b']);
+  });
+
+  it('a turn starting inside the load window aborts the op as busy (post-load guard, #141)', async () => {
+    await seedEdits('a', 'b');
+    // Gate the storage read so the turn can start while the op's load is in flight.
+    const realGet = area.get.bind(area);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((res) => {
+      release = res;
+    });
+    area.get = (keys) => gate.then(() => realGet(keys));
+
+    const pending = dispatch({ type: 'changeset-undo' });
+    turnAbort = new AbortController(); // a turn starts mid-load
+    release();
+    const res = await pending;
+
+    expect(res).toMatchObject({ ok: false, busy: true, tabId: TAB_ID });
+    expect(intents(res.changeset)).toEqual(['a', 'b']); // pre-op view echoed
+    // Storage/mirror/panel untouched — the turn's own store was never clobbered.
+    expect(intents((await freshLoad())?.changeset)).toEqual(['a', 'b']);
+    expect(sessions.setChangesetCalls).toHaveLength(0);
+    expect(pushed).toHaveLength(0);
   });
 });
 
@@ -369,5 +485,21 @@ describe('integration: mirror is best-effort', () => {
     const persisted = await freshLoad();
     expect(intents(persisted?.changeset)).toEqual(['a']);
     expect(persisted?.redoStack.map((e) => e.intent)).toEqual(['b']);
+  });
+});
+
+describe('integration: failure replies stay schema-conformant (#141 review)', () => {
+  it('a throwing storage save answers ok:false + error, parseable as ChangesetResult', async () => {
+    await seedEdits('a');
+    area.set = () => Promise.reject(new Error('session storage quota exceeded'));
+
+    const res = await dispatch({ type: 'changeset-undo' });
+    expect(ChangesetResult.safeParse(res).success).toBe(true);
+    expect(res).toMatchObject({
+      ok: false,
+      tabId: TAB_ID,
+      changeset: null,
+      error: 'session storage quota exceeded',
+    });
   });
 });

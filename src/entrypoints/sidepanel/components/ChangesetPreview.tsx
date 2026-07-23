@@ -7,7 +7,7 @@ import {
   changeset,
   clearChangeset,
   curating,
-  error,
+  diffError,
   initChangesetStore,
   redoEdit,
   refreshChangeset,
@@ -68,9 +68,9 @@ export function ChangesetPreview() {
         </div>
       </header>
 
-      <Show when={error()}>
+      <Show when={diffError()}>
         <p class="dz-diff__error">
-          <Icon name="warning" size="sm" /> {error()}
+          <Icon name="warning" size="sm" /> {diffError()}
         </p>
       </Show>
 
@@ -87,6 +87,12 @@ export function ChangesetPreview() {
     </div>
   );
 }
+
+// Screenshot srcs come from the model's recordEdit args, i.e. from a promptable page — render only
+// inline `data:image/` sources. A remote URL would make opening this tab issue an unsolicited
+// cross-origin fetch from the panel's origin (mirrors the `visionImages` guard in src/agent/report.ts).
+const dataImage = (src: string | undefined): string | undefined =>
+  src?.startsWith('data:image/') ? src : undefined;
 
 function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
   return (
@@ -148,17 +154,17 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
         )}
       </Show>
 
-      <Show when={props.edit.screenshots}>
-        {(shots) => (
-          <div class="dz-diff__shots">
-            <Show when={shots().before}>
-              {(src) => <img class="dz-diff__shot" src={src()} alt={i18n.t('diff.shot.before')} />}
-            </Show>
-            <Show when={shots().after}>
-              {(src) => <img class="dz-diff__shot" src={src()} alt={i18n.t('diff.shot.after')} />}
-            </Show>
-          </div>
-        )}
+      <Show
+        when={dataImage(props.edit.screenshots?.before) || dataImage(props.edit.screenshots?.after)}
+      >
+        <div class="dz-diff__shots">
+          <Show when={dataImage(props.edit.screenshots?.before)}>
+            {(src) => <img class="dz-diff__shot" src={src()} alt={i18n.t('diff.shot.before')} />}
+          </Show>
+          <Show when={dataImage(props.edit.screenshots?.after)}>
+            {(src) => <img class="dz-diff__shot" src={src()} alt={i18n.t('diff.shot.after')} />}
+          </Show>
+        </div>
       </Show>
 
       <Show when={props.edit.frameworkHints.length > 0}>

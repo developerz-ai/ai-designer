@@ -29,6 +29,10 @@ export interface ChangesetPorts {
   readonly save: (state: ChangesetState) => void | Promise<void>;
   /** Mirror the current changeset onto the SessionStore so Ship/report reads see it. Best-effort. */
   readonly mirror: (changeset: Changeset) => Promise<void>;
+  /** Re-checked once AFTER `load` resolves, before any mutation: return `false` to abort the op as
+   *  `busy` (the pre-load guard alone is check-then-act — a turn starting inside the load window
+   *  would otherwise persist over this op's result; #141 review). */
+  readonly guard?: () => boolean;
 }
 
 /** The Diff tab's view of the changeset: the record plus undo/redo availability. `changeset` is
@@ -38,6 +42,10 @@ export interface ChangesetView {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
 }
+
+/** `applyChangesetOp`'s result: the post-op view, or the PRE-op view with `busy: true` when the
+ *  post-load `guard` aborted the mutation (nothing was persisted or mirrored). */
+export type ChangesetOpResult = ChangesetView & { readonly busy?: true };
 
 const EMPTY: ChangesetView = { changeset: null, canUndo: false, canRedo: false };
 
@@ -55,14 +63,16 @@ export async function readChangeset(load: ChangesetPorts['load']): Promise<Chang
 /** Apply one curation op to the tab's changeset, persist the new state, mirror it to the
  *  SessionStore, and return the resulting view. A no-op op (undo with an empty changeset, remove out
  *  of range) still persists idempotently. Returns the empty view when the tab has no changeset — the
- *  op has nothing to act on. Never reverts the live page; the durable record only. */
+ *  op has nothing to act on. A `guard` returning false after the load aborts before any mutation and
+ *  echoes the pre-op view with `busy: true`. Never reverts the live page; the durable record only. */
 export async function applyChangesetOp(
   ports: ChangesetPorts,
   op: ChangesetOp,
-): Promise<ChangesetView> {
+): Promise<ChangesetOpResult> {
   const state = await ports.load();
-  if (!state) return EMPTY;
+  if (!state) return ports.guard && !ports.guard() ? { ...EMPTY, busy: true } : EMPTY;
   const store = ChangesetStore.fromState(state);
+  if (ports.guard && !ports.guard()) return { ...view(store), busy: true };
   switch (op.kind) {
     case 'undo':
       store.undo();

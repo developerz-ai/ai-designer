@@ -246,6 +246,7 @@ describe('reduceChangeset — edit-recorded', () => {
 /** A `ChangesetResult` reply that satisfies the zod schema (all required fields present). */
 const resultFixture = (over: Partial<Record<string, unknown>> = {}) => ({
   ok: true,
+  tabId: 1 as number | null,
   changeset: changesetWith('a'),
   canUndo: true,
   canRedo: false,
@@ -319,7 +320,7 @@ describe('changeset curation RPCs', () => {
     expect(store.canRedo()).toBe(false);
   });
 
-  it('a busy reply surfaces the diff.busy hint but still applies the reported state', async () => {
+  it('a busy reply surfaces the diff.busy hint on the Diff-local error, not the shared one', async () => {
     vi.resetModules();
     const reply = resultFixture({ busy: true, canUndo: false, canRedo: true });
     installChromeFake(() => reply);
@@ -327,7 +328,8 @@ describe('changeset curation RPCs', () => {
 
     await store.undoEdit();
 
-    expect(store.error()).toBe("Can't change the changeset while the agent is working.");
+    expect(store.diffError()).toBe("Can't change the changeset while the agent is working.");
+    expect(store.error()).toBeNull(); // the Ship surface's error is untouched
     expect(store.changeset()).toEqual(reply.changeset);
     expect(store.canUndo()).toBe(false);
     expect(store.canRedo()).toBe(true);
@@ -349,10 +351,11 @@ describe('changeset curation RPCs', () => {
     settle(resultFixture());
     await pending;
     expect(store.curating()).toBe(false);
+    expect(store.diffError()).toBeNull();
     expect(store.error()).toBeNull();
   });
 
-  it('a rejected curation RPC surfaces its message and still settles curating', async () => {
+  it('a rejected curation RPC surfaces its message on diffError and still settles curating', async () => {
     vi.resetModules();
     installChromeFake(() => {
       throw new Error('port closed');
@@ -361,7 +364,8 @@ describe('changeset curation RPCs', () => {
 
     await store.clearChangeset();
 
-    expect(store.error()).toBe('port closed');
+    expect(store.diffError()).toBe('port closed');
+    expect(store.error()).toBeNull();
     expect(store.curating()).toBe(false);
   });
 });
@@ -398,7 +402,7 @@ describe('refreshChangeset', () => {
     expect(store.canRedo()).toBe(false);
   });
 
-  it('a rejected request sets error() instead of throwing', async () => {
+  it('a rejected request sets diffError() instead of throwing', async () => {
     vi.resetModules();
     installChromeFake(() => {
       throw new Error('SW gone');
@@ -407,7 +411,211 @@ describe('refreshChangeset', () => {
 
     await store.refreshChangeset();
 
-    expect(store.error()).toBe('SW gone');
+    expect(store.diffError()).toBe('SW gone');
+    expect(store.error()).toBeNull();
     expect(store.changeset()).toBeNull();
+  });
+});
+
+// --- slice-10 review fix-forward (#141): tab keying, drift, dedupe, settle signals --------------
+
+/** installChromeFake + a long-lived Port double, for the subscribe-side (initChangesetStore) tests.
+ *  `push` feeds one SW->panel message through the captured onMessage listener. */
+function installChromeFakeWithPort(handle: SendMessage): {
+  sendMessage: ReturnType<typeof vi.fn>;
+  push: (msg: unknown) => void;
+} {
+  const sendMessage = vi.fn(async (msg: unknown) => handle(msg as PanelToSw));
+  let portListener: ((msg: unknown) => void) | null = null;
+  (globalThis as { chrome?: unknown }).chrome = {
+    runtime: {
+      sendMessage,
+      connect: () => ({
+        onMessage: {
+          addListener: (fn: (msg: unknown) => void) => {
+            portListener = fn;
+          },
+        },
+        onDisconnect: { addListener: () => {} },
+      }),
+    },
+  };
+  return { sendMessage, push: (msg) => portListener?.(msg) };
+}
+
+const sentTypes = (sendMessage: ReturnType<typeof vi.fn>): string[] =>
+  sendMessage.mock.calls.map(([m]) => (m as { type: string }).type);
+
+describe('reduceChangeset — edit-recorded duplicate guard', () => {
+  it('drops an immediate duplicate append (get reply beat the push to the panel)', () => {
+    const base = changesetWith('a');
+    // The same edit arriving via the push that the get reply already carried: fold is identity.
+    expect(reduceChangeset(base, { type: 'edit-recorded', edit: editFixture('a') })).toBe(base);
+  });
+
+  it('still appends a genuinely different repeat (not a duplicate)', () => {
+    const base = changesetWith('a');
+    const next = reduceChangeset(base, { type: 'edit-recorded', edit: editFixture('b') });
+    expect(next?.edits.map((e) => e.intent)).toEqual(['a', 'b']);
+  });
+});
+
+describe('changeset store — tab keying + settle signals (push side)', () => {
+  it('an edit-recorded push clears canRedo (a record mid-turn forks history)', async () => {
+    vi.resetModules();
+    const { push } = installChromeFakeWithPort(() =>
+      resultFixture({ changeset: changesetWith('a'), canRedo: true }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // seeds changeset + canRedo:true + viewTabId
+    expect(store.canRedo()).toBe(true);
+
+    push({ type: 'edit-recorded', edit: editFixture('b') });
+
+    expect(store.canRedo()).toBe(false);
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a', 'b']);
+  });
+
+  it('a changeset push stamped for another tab is dropped; one for the view tab folds', async () => {
+    vi.resetModules();
+    const { push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 1, changeset: changesetWith('a') }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view to tab 1
+
+    push({ type: 'changeset', changeset: changesetWith('x', 'y'), tabId: 5 });
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']);
+
+    push({ type: 'changeset', changeset: changesetWith('x', 'y'), tabId: 1 });
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['x', 'y']);
+  });
+
+  it('session-state non-running refreshes (covers the Stop path); running does not', async () => {
+    vi.resetModules();
+    const { sendMessage, push } = installChromeFakeWithPort(() => resultFixture());
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+
+    push({ type: 'session-state', state: 'stopped' });
+    await vi.waitFor(() => expect(sentTypes(sendMessage)).toContain('changeset-get'));
+
+    sendMessage.mockClear();
+    push({ type: 'session-state', state: 'running' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get');
+  });
+
+  it('turn-done is skipped while a curation RPC is in flight (its reply is newer)', async () => {
+    vi.resetModules();
+    let settle: (reply: unknown) => void = () => {};
+    const inFlight = new Promise<unknown>((res) => {
+      settle = res;
+    });
+    const { sendMessage, push } = installChromeFakeWithPort((msg) =>
+      msg.type === 'changeset-undo' ? inFlight : resultFixture(),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+
+    const pending = store.undoEdit();
+    expect(store.curating()).toBe(true);
+
+    push({ type: 'turn-done', usage: { steps: 1, tokens: 1 } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get');
+
+    settle(resultFixture());
+    await pending;
+  });
+});
+
+describe('changeset store — curation fix-forward (reply side)', () => {
+  it('a changeset-get reply that lands after a curation started is dropped as stale', async () => {
+    vi.resetModules();
+    let settleGet: (reply: unknown) => void = () => {};
+    const getReply = new Promise<unknown>((res) => {
+      settleGet = res;
+    });
+    installChromeFake((msg) =>
+      msg.type === 'changeset-get'
+        ? getReply
+        : resultFixture({ changeset: changesetWith('b'), canUndo: true }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    const refresh = store.refreshChangeset(); // in flight, pre-op view
+    await store.undoEdit(); // newer truth: applies 'b'
+    settleGet(resultFixture({ changeset: changesetWith('a') })); // stale get reply lands late
+    await refresh;
+
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
+  });
+
+  it('a tab-drift reply hints + auto-refreshes to the newly active tab', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake((msg) =>
+      msg.type === 'changeset-get'
+        ? resultFixture({ tabId: 9, changeset: null, canUndo: false, canRedo: false })
+        : {
+            ok: false,
+            tabId: 9,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+            error: 'tab-drift',
+          },
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.undoEdit();
+
+    expect(store.diffError()).toBe("Tab changed — showing the record of the tab you're on now.");
+    expect(store.error()).toBeNull();
+    expect(sentTypes(sendMessage)).toContain('changeset-get');
+    await vi.waitFor(() => expect(store.viewTabId()).toBe(9));
+  });
+
+  it('a non-ok, non-drift reply surfaces the SW error string on diffError', async () => {
+    vi.resetModules();
+    installChromeFake(() => ({
+      ok: false,
+      tabId: 1,
+      changeset: null,
+      canUndo: false,
+      canRedo: false,
+      error: 'quota exceeded',
+    }));
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.undoEdit();
+
+    expect(store.diffError()).toBe('quota exceeded');
+    expect(store.error()).toBeNull();
+  });
+
+  it('mutators send the displayed tab as forTabId once the view is keyed', async () => {
+    vi.resetModules();
+    // Every reply keys (or re-keys) the view — get AND mutator replies carry tabId 42 here, so the
+    // forTabId the mutators send must stay 42.
+    const { sendMessage } = installChromeFake(() => resultFixture({ tabId: 42 }));
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.refreshChangeset();
+    expect(store.viewTabId()).toBe(42);
+
+    await store.undoEdit();
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-undo', forTabId: 42 });
+
+    await store.removeEdit(0);
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'changeset-remove-edit',
+      index: 0,
+      forTabId: 42,
+    });
   });
 });

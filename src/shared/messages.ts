@@ -311,13 +311,18 @@ export const GetOnboardingDismissed = z.object({ type: z.literal('get-onboarding
 // curate the shippable record ONLY and never revert the live page — live edits are ephemeral (they
 // vanish on reload) regardless. The SW rejects a mutator while a turn is in flight (`turnAbort`), so
 // a panel op can never clobber the running turn's own changeset persist (`ChangesetResult.busy`).
+// The mutators carry an optional `forTabId`: the tab whose record the panel is DISPLAYING. The SW
+// resolves the active tab fresh per RPC, so when the two disagree the panel's view is stale — the
+// op is rejected (`tab-drift`) rather than mutating a tab the user isn't looking at (#141 review).
 export const ChangesetGet = z.object({ type: z.literal('changeset-get') });
-export const ChangesetUndo = z.object({ type: z.literal('changeset-undo') });
-export const ChangesetRedo = z.object({ type: z.literal('changeset-redo') });
-export const ChangesetClear = z.object({ type: z.literal('changeset-clear') });
+const forTabId = { forTabId: z.number().int().nonnegative().optional() } as const;
+export const ChangesetUndo = z.object({ type: z.literal('changeset-undo'), ...forTabId });
+export const ChangesetRedo = z.object({ type: z.literal('changeset-redo'), ...forTabId });
+export const ChangesetClear = z.object({ type: z.literal('changeset-clear'), ...forTabId });
 export const ChangesetRemoveEdit = z.object({
   type: z.literal('changeset-remove-edit'),
   index: z.number().int().nonnegative(),
+  ...forTabId,
 });
 
 export const PanelToSw = z.discriminatedUnion('type', [
@@ -468,9 +473,13 @@ export type OnboardingStateResult = z.infer<typeof OnboardingStateResult>;
 // mirror the ChangesetStore's linear history so the Diff tab can enable/disable its controls without
 // deriving redo-availability (the redo stack isn't carried on a `Changeset`). `busy: true` means the
 // op was rejected because a turn is in flight — the panel shows a hint and leaves its state as-is,
-// rather than treating it as a hard error.
+// rather than treating it as a hard error. `tabId` is the tab the reply describes (null when no tab
+// resolved): the panel keys its Diff view to it, so a curation reply/push for one tab can never
+// overwrite the displayed record of another. `error: 'tab-drift'` means the panel's `forTabId`
+// disagreed with the freshly-resolved active tab — the mutation was refused; the panel refreshes.
 export const ChangesetResult = z.object({
   ok: z.boolean(),
+  tabId: z.number().int().nullable(),
   changeset: Changeset.nullable(),
   canUndo: z.boolean(),
   canRedo: z.boolean(),
@@ -1595,7 +1604,13 @@ export const SwToPanel = z.discriminatedUnion('type', [
     kind: z.enum(['read', 'act', 'info']).optional(),
   }),
   z.object({ type: z.literal('edit-recorded'), edit: Edit }),
-  z.object({ type: z.literal('changeset'), changeset: Changeset }),
+  // `tabId` stamps which tab's durable record this is (set on curation pushes; absent on the turn
+  // path's legacy pushes) — the panel folds it only into a view keyed to the same tab.
+  z.object({
+    type: z.literal('changeset'),
+    changeset: Changeset,
+    tabId: z.number().int().optional(),
+  }),
   // One task's live status on the Ship timeline (slice 07). A multi-task fan-out streams several,
   // each tagged with its own `taskId`/`title` and `index`/`total` so the panel drives one timeline
   // per task; `status` is an open string (`queued → working → pr_open → ci_green/ci_red`, or

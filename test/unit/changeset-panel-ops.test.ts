@@ -107,4 +107,44 @@ describe('applyChangesetOp', () => {
     expect(v.canUndo).toBe(false);
     expect(current()?.changeset.edits).toEqual([]);
   });
+
+  // The post-load guard (background.ts re-checks `turnAbort`): a turn that started inside the load
+  // window must win — the op aborts as busy BEFORE any mutation/persist/mirror (#141 review).
+  it('a guard tripped after load aborts as busy, echoing the pre-op view with no persist/mirror', async () => {
+    const { ports, mirrored, current } = fakePorts(stateWith('a', 'b'));
+    let saves = 0;
+    const guarded: ChangesetPorts = {
+      load: ports.load,
+      save: (s) => {
+        saves++;
+        return ports.save(s);
+      },
+      mirror: ports.mirror,
+      guard: () => false,
+    };
+    const v = await applyChangesetOp(guarded, { kind: 'undo' });
+    expect(v).toEqual({
+      changeset: expect.any(Object),
+      canUndo: true,
+      canRedo: false,
+      busy: true,
+    });
+    expect(intents(v.changeset)).toEqual(['a', 'b']); // pre-op view echoed
+    expect(saves).toBe(0);
+    expect(mirrored).toEqual([]);
+    expect(current()?.changeset.edits.map((e) => e.intent)).toEqual(['a', 'b']);
+  });
+
+  it('a tripped guard on an empty store still reports busy (no state to echo)', async () => {
+    const { ports } = fakePorts();
+    const v = await applyChangesetOp({ ...ports, guard: () => false }, { kind: 'clear' });
+    expect(v).toEqual({ changeset: null, canUndo: false, canRedo: false, busy: true });
+  });
+
+  it('a passing guard lets the op proceed normally', async () => {
+    const { ports } = fakePorts(stateWith('a', 'b'));
+    const v = await applyChangesetOp({ ...ports, guard: () => true }, { kind: 'undo' });
+    expect(intents(v.changeset)).toEqual(['a']);
+    expect(v.busy).toBeUndefined();
+  });
 });

@@ -224,6 +224,8 @@ diff:
     ariaLabel: Remove this edit
   fragile: Fragile selector
   busy: Can't change the changeset while the agent is working.
+  tabDrift: Tab changed — showing the record of the tab you're on now.
+  failed: Couldn't update the changeset.
   changes:
     property: Property
     before: Before
