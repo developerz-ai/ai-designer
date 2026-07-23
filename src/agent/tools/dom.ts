@@ -18,8 +18,11 @@ import {
   DiagnosticsInput,
   type DomTool,
   GetStylesInput,
+  InsertNodeInput,
+  MoveNodeInput,
   QueryInput,
   RemoveClassInput,
+  RemoveNodeInput,
   ScreenshotInput,
   SetAttrInput,
   SetStyleInput,
@@ -118,6 +121,36 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: RemoveClassInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'removeClass', ...input }, abortSignal),
+    }),
+    insertNode: tool({
+      description:
+        'Insert agent-authored `html` relative to the element matching `selector` ' +
+        '(`position`: beforeend = last child, the default; afterbegin = first child; ' +
+        'beforebegin/afterend = as its sibling). Multi-node markup and bare text both work; ' +
+        'inline event handlers are stripped. Reversible and recorded as an edit — record it ' +
+        "with recordEdit's `structural` field.",
+      inputSchema: InsertNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'insertNode', ...input }, abortSignal),
+    }),
+    moveNode: tool({
+      description:
+        'Move the element matching `selector` relative to the element matching `refSelector` ' +
+        '(same `position` vocabulary as insertNode). Node identity, listeners, and state move ' +
+        'with it; undo restores the original parent + next-sibling anchor. Reversible and ' +
+        "recorded as an edit — record it with recordEdit's `structural` field.",
+      inputSchema: MoveNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'moveNode', ...input }, abortSignal),
+    }),
+    removeNode: tool({
+      description:
+        'Remove the element matching `selector` from the page. The node is clipboard-retained, ' +
+        'so undo re-inserts the SAME node (listeners and state intact) at its original anchor. ' +
+        "Reversible and recorded as an edit — record it with recordEdit's `structural` field.",
+      inputSchema: RemoveNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'removeNode', ...input }, abortSignal),
     }),
     undo: tool({
       description: 'Revert the most recent recorded page mutation. Takes no arguments.',

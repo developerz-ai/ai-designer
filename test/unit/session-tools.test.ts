@@ -96,6 +96,23 @@ describe('createSessionTools: derivation', () => {
       expect(data.classes).toEqual([]);
     }
   });
+
+  it('accepts an optional structural delta (#58) and leaves it absent otherwise', () => {
+    const schema = harness().tools.recordEdit.inputSchema as unknown as ZodType;
+    const structural = schema.safeParse({
+      ...anEdit('insert a banner'),
+      structural: {
+        op: 'insert',
+        position: 'beforeend',
+        html: '<div class="banner">x</div>',
+        refSelector: { value: '#hero', strategy: 'id', fragile: false },
+      },
+    });
+    expect(structural.success).toBe(true);
+    const plain = schema.safeParse(anEdit('x'));
+    expect(plain.success).toBe(true);
+    if (plain.success) expect((plain.data as Edit).structural).toBeUndefined();
+  });
 });
 
 describe('createSessionTools: changeset mutations persist + stream', () => {

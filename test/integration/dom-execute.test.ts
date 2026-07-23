@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { createDomExecutor, type DomExecutor } from '@/dom/execute';
 import { createMutator, MARKER_ATTR } from '@/dom/mutate';
 import { createRecorder } from '@/dom/recorder';
-import type { ContentToSw, QueryResult, ToolResult } from '@/shared/messages';
+import {
+  type ContentToSw,
+  InsertNodeInput,
+  type QueryResult,
+  type ToolResult,
+} from '@/shared/messages';
 
 // Integration: a validated DomTool routed through the real executor + mutator + recorder against a
 // live jsdom DOM, asserting the ToolResult shape and that mutations record + reverse. This is the
@@ -161,5 +166,107 @@ describe('DomTool execute — mutations record + reverse', () => {
     exec({ type: 'undo' });
     expect(document.getElementById('cta')?.hasAttribute(MARKER_ATTR)).toBe(false);
     expect(document.getElementById('dz-designer-overrides')?.textContent).toBe('');
+  });
+});
+
+describe('DomTool execute — structural mutations (#58)', () => {
+  it('insertNode inserts markup relative to a reference and records it', () => {
+    const { exec, emitted } = setup('<ul id="list"><li id="a">a</li></ul>');
+    const result = exec({
+      type: 'insertNode',
+      selector: '#list',
+      html: '<li id="b">b</li>',
+      position: 'beforeend',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(document.getElementById('b')).not.toBeNull();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'insertNode' } });
+  });
+
+  it('the insertNode input schema defaults position to beforeend through the real bus parse', () => {
+    const { exec } = setup('<ul id="list"></ul>');
+    // The content listener safe-parses inbound DomTool messages; drive exec through the same
+    // parse so the default materializes exactly as in production.
+    const parsed = InsertNodeInput.parse({
+      type: 'insertNode',
+      selector: '#list',
+      html: '<li id="d" />',
+    });
+    const result = exec(parsed);
+
+    expect(result.ok).toBe(true);
+    expect(document.getElementById('list')?.lastElementChild?.id).toBe('d');
+  });
+
+  it('moveNode moves an element relative to a reference and records it', () => {
+    const { exec, emitted } = setup('<div id="a"><span id="s">x</span></div><div id="b"></div>');
+    const result = exec({
+      type: 'moveNode',
+      selector: '#s',
+      refSelector: '#b',
+      position: 'beforeend',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(document.getElementById('b')?.contains(document.getElementById('s'))).toBe(true);
+    expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'moveNode' } });
+  });
+
+  it('moveNode reports notFound for an unmatched target OR anchor, naming the missing one', () => {
+    const { exec } = setup('<div id="a"></div>');
+
+    expect(
+      exec({ type: 'moveNode', selector: '#ghost', refSelector: '#a', position: 'beforeend' }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('#ghost') });
+    expect(
+      exec({ type: 'moveNode', selector: '#a', refSelector: '#ghost', position: 'beforeend' }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('#ghost') });
+  });
+
+  it('removeNode removes and records; undo re-inserts the SAME node object at its anchor', () => {
+    const { exec } = setup('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const x = document.getElementById('x');
+
+    exec({ type: 'removeNode', selector: '#x' });
+    expect(document.getElementById('x')).toBeNull();
+
+    exec({ type: 'undo' });
+    // Node IDENTITY (not an equal clone — listeners/state survive), back at the original anchor.
+    expect(document.getElementById('x')).toBe(x);
+    expect(
+      Array.from(document.getElementById('list')?.querySelectorAll('li') ?? []).map((li) => li.id),
+    ).toEqual(['x', 'y']);
+  });
+
+  it('undo of a moveNode restores the original parent + nextSibling (a same-tag sibling defeats an index restore)', () => {
+    const { exec } = setup(
+      '<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>',
+    );
+    const [one, two] = [document.getElementById('one'), document.getElementById('two')];
+
+    exec({ type: 'moveNode', selector: '#one', refSelector: '#b', position: 'beforeend' });
+    expect(document.getElementById('b')?.contains(one ?? null)).toBe(true);
+
+    exec({ type: 'undo' });
+    expect(document.getElementById('a')?.contains(one ?? null)).toBe(true);
+    expect(one?.nextSibling).toBe(two); // the anchor, not "index 0"
+  });
+
+  it('undo is LIFO across a mix of property and structural mutations', () => {
+    const { exec } = setup('<p id="t">x</p><ul id="l"></ul>');
+
+    exec({ type: 'setText', selector: '#t', value: 'y' });
+    exec({ type: 'insertNode', selector: '#l', html: '<li id="i">i</li>', position: 'beforeend' });
+
+    exec({ type: 'undo' }); // pops the INSERT first (most recent)
+    expect(document.getElementById('i')).toBeNull();
+    expect(document.getElementById('t')?.textContent).toBe('y');
+
+    exec({ type: 'undo' }); // then the setText
+    expect(document.getElementById('t')?.textContent).toBe('x');
+
+    expect(exec({ type: 'undo' })).toMatchObject({ ok: true, data: { undone: false } });
   });
 });

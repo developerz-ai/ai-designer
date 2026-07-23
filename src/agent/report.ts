@@ -197,9 +197,12 @@ function summarizeEdit(edit: Edit): string {
   const classes = edit.classes.length
     ? `class ${edit.classes.map((c) => `${c.op === 'add' ? '+' : '-'}${c.name}`).join(', ')}`
     : '';
+  const structural = edit.structural
+    ? `struct ${edit.structural.op}${edit.structural.position ? ` ${edit.structural.position}` : ''}`
+    : '';
   const text = edit.text ? ` text "${edit.text.before}"→"${edit.text.after}"` : '';
   const at = edit.breakpoint ? ` @${edit.breakpoint}` : '';
-  const detail = [changes, attrs, classes, text].filter(Boolean).join(';');
+  const detail = [changes, attrs, classes, structural, text].filter(Boolean).join(';');
   return `- ${edit.intent} — \`${edit.selector.value}\`${at}${detail ? `: ${detail}` : ''}`;
 }
 

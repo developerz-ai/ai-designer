@@ -43,6 +43,19 @@ export const ClassChange = z.object({
 });
 export type ClassChange = z.infer<typeof ClassChange>;
 
+// One structural delta (#58): the durable, shippable form of an insertNode/moveNode/removeNode —
+// what happened (`op`), where (`position` + `refSelector`, for insert/move), and what markup
+// (`html`, for insert). Optional on Edit: most edits are property-level, so an absent field beats
+// a null placeholder. The live page itself is never reverted by this record — it maps the change
+// for the coding backend (and the Diff tab) only.
+export const StructuralChange = z.object({
+  op: z.enum(['insert', 'move', 'remove']),
+  position: z.enum(['beforebegin', 'afterbegin', 'beforeend', 'afterend']).optional(),
+  refSelector: StableSelector.optional(),
+  html: z.string().optional(),
+});
+export type StructuralChange = z.infer<typeof StructuralChange>;
+
 export const Edit = z.object({
   // The user's words for *why* — intent, not just the CSS dump.
   intent: z.string(),
@@ -52,6 +65,8 @@ export const Edit = z.object({
   // fields existed still rehydrates (same forward-compat rule as `ChangesetState.redoStack`).
   attrs: z.array(AttrChange).default([]),
   classes: z.array(ClassChange).default([]),
+  // The structural delta (#58) when this edit came from insertNode/moveNode/removeNode.
+  structural: StructuralChange.optional(),
   text: z.object({ before: z.string(), after: z.string() }).optional(),
   screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
   // Tailwind classes / css-module names / styled markers — the source-mapping bridge.

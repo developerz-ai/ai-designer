@@ -117,6 +117,32 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         return mutate(tool.selector, (el) => mutator.addClass(el, tool.name));
       case 'removeClass':
         return mutate(tool.selector, (el) => mutator.removeClass(el, tool.name));
+      // Structural mutations (#58): the mutator clipboard-tracks every inserted/moved/removed
+      // node, so the recorded undo restores node identity + the original parent/nextSibling
+      // anchor (never an index — sibling indices shift under concurrent mutations).
+      case 'insertNode':
+        return mutate(tool.selector, (el) => mutator.insertNode(el, tool.html, tool.position));
+      case 'moveNode': {
+        // Two resolutions: the element to move and the reference anchor — the single-selector
+        // `mutate()` helper can't express the pair, so the flow is spelled out (same
+        // resolve → guard → apply → record → ok contract).
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const ref = queryOne(doc, tool.refSelector);
+        if (!ref) return notFound(tool.refSelector);
+        try {
+          const mutation = mutator.moveNode(el, ref, tool.position);
+          const stable = pickUnique(el, doc);
+          recorder.record(stable, mutation);
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          // e.g. moving an element into its own descendant (HierarchyRequestError) — a clean
+          // refusal the agent can react to, never a throw out of the turn.
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'removeNode':
+        return mutate(tool.selector, (el) => mutator.removeNode(el));
       case 'undo': {
         const event = recorder.undo();
         // An empty undo log is a valid no-op, not an error: undoing with nothing to revert is a

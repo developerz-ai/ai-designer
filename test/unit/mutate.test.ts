@@ -302,3 +302,23 @@ describe('createMutator page ops', () => {
     expect(root.style.getPropertyValue('max-width')).toBe('');
   });
 });
+
+describe('createMutator structural undo anchors (#58)', () => {
+  it('removeNode undo restores the SAME node object (identity, not an equal clone)', () => {
+    mount('<ul id="list"><li id="x">x</li><li id="y">y</li></ul>');
+    const x = byId('x');
+    const mutation = createMutator(document).removeNode(x);
+    mutation.undo();
+    expect(document.getElementById('x')).toBe(x);
+  });
+
+  it('moveNode undo restores the original anchor with a same-tag sibling present (an index restore would fail)', () => {
+    mount('<div id="a"><span id="one">1</span><span id="two">2</span></div><div id="b"></div>');
+    const [one, two, a, b] = [byId('one'), byId('two'), byId('a'), byId('b')];
+    const mutation = createMutator(document).moveNode(one, b, 'beforeend');
+    expect(b.contains(one)).toBe(true);
+    mutation.undo();
+    expect(a.contains(one)).toBe(true);
+    expect(one.nextSibling).toBe(two); // restored at the anchor, not "index 0"
+  });
+});
