@@ -21,6 +21,9 @@ export default defineConfig({
     side_panel: {
       default_path: 'sidepanel/index.html',
     },
+    // Clicking this toolbar action opens/toggles the side panel — wired via
+    // `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` in the service worker
+    // (src/entrypoints/background.ts), not through a manifest flag.
     action: {
       default_title: '__MSG_actionTitle__',
     },
@@ -61,7 +64,6 @@ export default defineConfig({
       '128': '/icon/logo.png',
     },
   },
-  // Open the side panel when the toolbar icon is clicked.
   vite: () => ({
     build: {
       target: 'esnext',
