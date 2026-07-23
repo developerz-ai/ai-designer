@@ -1,5 +1,6 @@
 import { createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
 import { i18n } from '#i18n';
+import { ChangesetPreview } from './components/ChangesetPreview';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Icon } from './components/Icon';
@@ -12,7 +13,7 @@ import { initOnboardingStore, visible as onboardingVisible } from './stores/onbo
 import { sessionState } from './stores/session';
 import './App.scss';
 
-type Tab = 'chat' | 'mcp' | 'history' | 'settings';
+type Tab = 'chat' | 'diff' | 'mcp' | 'history' | 'settings';
 
 // MCP server management is live (slice 02) — connect implement backends the agent
 // ships changesets to. See docs/idea/mcp.md.
@@ -48,6 +49,14 @@ export function App() {
             onClick={() => setTab('chat')}
           >
             {i18n.t('app.tab.chat')}
+          </button>
+          <button
+            type="button"
+            classList={{ 'is-active': tab() === 'diff' }}
+            onClick={() => setTab('diff')}
+            aria-label={i18n.t('app.tab.diff.ariaLabel')}
+          >
+            <Icon name="diff" size="sm" />
           </button>
           <Show when={SHOW_MCP}>
             <button
@@ -85,6 +94,9 @@ export function App() {
             >
               <ChatPanel />
             </Show>
+          </Match>
+          <Match when={tab() === 'diff'}>
+            <ChangesetPreview />
           </Match>
           <Match when={tab() === 'mcp'}>
             <McpPanel />

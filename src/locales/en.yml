@@ -22,6 +22,8 @@ app:
     chat: Chat
     mcp: MCP
     settings: Settings
+    diff:
+      ariaLabel: Diff
     history:
       ariaLabel: History
   chat:
@@ -206,6 +208,37 @@ ship:
   fallback: '{reason} — downloaded a brief instead.'
   error:
     failed: Ship failed.
+
+# ─── Diff review (ChangesetPreview.tsx + stores/changeset.ts) ─────────────────────
+diff:
+  empty: No edits yet — recorded changes show up here as you design.
+  count:
+    1: $1 edit
+    n: $1 edits
+  undo:
+    ariaLabel: Undo last edit
+  redo:
+    ariaLabel: Redo edit
+  clear: Clear session
+  remove:
+    ariaLabel: Remove this edit
+  fragile: Fragile selector
+  busy: Can't change the changeset while the agent is working.
+  tabDrift: Tab changed — showing the record of the tab you're on now.
+  failed: Couldn't update the changeset.
+  changes:
+    property: Property
+    before: Before
+    after: After
+  text:
+    label: Text
+  hints:
+    label: Framework
+  breakpoint:
+    label: Breakpoint
+  shot:
+    before: Before
+    after: After
 
 # ─── Task timeline (TaskTimeline.tsx) ─────────────────────────────────────────────
 task:

@@ -113,6 +113,31 @@ export class ChangesetStore {
     return edit;
   }
 
+  /** Remove the edit at `index` (0-based). Dropping an arbitrary edit forks history — like a fresh
+   *  `record` — so the redo stack is cleared (a redo tail earned before this deletion is no longer
+   *  coherent). Out of range is a no-op returning `undefined`. Returns the removed edit. Panel-driven
+   *  per-edit "remove" from the Diff tab (#10); the durable/shippable record only, never the page. */
+  removeAt(index: number): Edit | undefined {
+    const { edits } = this.changeset;
+    if (index < 0 || index >= edits.length) return undefined;
+    const removed = edits[index];
+    this.changeset = {
+      ...this.changeset,
+      edits: [...edits.slice(0, index), ...edits.slice(index + 1)],
+    };
+    this.redoStack.length = 0;
+    this.flush();
+    return removed;
+  }
+
+  /** Wipe every edit AND the redo stack — the Diff tab's "clear session" (#10). Keeps the same
+   *  changeset identity (url/createdAt/sessionId) so a subsequent record continues the same session. */
+  clear(): void {
+    this.changeset = { ...this.changeset, edits: [] };
+    this.redoStack.length = 0;
+    this.flush();
+  }
+
   // Mirror the new full state through the injected port, best-effort: a rejected async write is
   // swallowed so a storage hiccup can't take down the turn (the in-memory state stays authoritative).
   private flush(): void {

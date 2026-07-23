@@ -303,6 +303,28 @@ export const SetOnboardingDismissed = z.object({
 });
 export const GetOnboardingDismissed = z.object({ type: z.literal('get-onboarding-dismissed') });
 
+// --- diff review: panel-driven changeset curation (slice 10) --------------
+// The Diff tab curates the DURABLE (shippable) changeset the same store the agent's
+// `recordEdit`/`undo`/`redo` tools drive (src/agent/tools/session.ts), persisted per-tab to
+// `chrome.storage.session`. `changeset-get` fetches the current changeset + undo/redo availability
+// on tab mount; the four mutators walk its linear history / drop one edit / wipe the session. They
+// curate the shippable record ONLY and never revert the live page — live edits are ephemeral (they
+// vanish on reload) regardless. The SW rejects a mutator while a turn is in flight (`turnAbort`), so
+// a panel op can never clobber the running turn's own changeset persist (`ChangesetResult.busy`).
+// The mutators carry an optional `forTabId`: the tab whose record the panel is DISPLAYING. The SW
+// resolves the active tab fresh per RPC, so when the two disagree the panel's view is stale — the
+// op is rejected (`tab-drift`) rather than mutating a tab the user isn't looking at (#141 review).
+export const ChangesetGet = z.object({ type: z.literal('changeset-get') });
+const forTabId = { forTabId: z.number().int().nonnegative().optional() } as const;
+export const ChangesetUndo = z.object({ type: z.literal('changeset-undo'), ...forTabId });
+export const ChangesetRedo = z.object({ type: z.literal('changeset-redo'), ...forTabId });
+export const ChangesetClear = z.object({ type: z.literal('changeset-clear'), ...forTabId });
+export const ChangesetRemoveEdit = z.object({
+  type: z.literal('changeset-remove-edit'),
+  index: z.number().int().nonnegative(),
+  ...forTabId,
+});
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -333,6 +355,11 @@ export const PanelToSw = z.discriminatedUnion('type', [
   GetOverlayEnabled,
   SetOnboardingDismissed,
   GetOnboardingDismissed,
+  ChangesetGet,
+  ChangesetUndo,
+  ChangesetRedo,
+  ChangesetClear,
+  ChangesetRemoveEdit,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -440,6 +467,26 @@ export type OverlayEnabledResult = z.infer<typeof OverlayEnabledResult>;
 // RPC response for `set-onboarding-dismissed` / `get-onboarding-dismissed`.
 export const OnboardingStateResult = z.object({ ok: z.boolean(), dismissed: z.boolean() });
 export type OnboardingStateResult = z.infer<typeof OnboardingStateResult>;
+
+// RPC response for the diff-review curation RPCs (`changeset-get` + the four mutators). `changeset`
+// is the active tab's current changeset (null when no session/edits exist yet); `canUndo`/`canRedo`
+// mirror the ChangesetStore's linear history so the Diff tab can enable/disable its controls without
+// deriving redo-availability (the redo stack isn't carried on a `Changeset`). `busy: true` means the
+// op was rejected because a turn is in flight — the panel shows a hint and leaves its state as-is,
+// rather than treating it as a hard error. `tabId` is the tab the reply describes (null when no tab
+// resolved): the panel keys its Diff view to it, so a curation reply/push for one tab can never
+// overwrite the displayed record of another. `error: 'tab-drift'` means the panel's `forTabId`
+// disagreed with the freshly-resolved active tab — the mutation was refused; the panel refreshes.
+export const ChangesetResult = z.object({
+  ok: z.boolean(),
+  tabId: z.number().int().nullable(),
+  changeset: Changeset.nullable(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  busy: z.boolean().optional(),
+  error: z.string().optional(),
+});
+export type ChangesetResult = z.infer<typeof ChangesetResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
@@ -1556,8 +1603,21 @@ export const SwToPanel = z.discriminatedUnion('type', [
     selector: z.string().optional(),
     kind: z.enum(['read', 'act', 'info']).optional(),
   }),
-  z.object({ type: z.literal('edit-recorded'), edit: Edit }),
-  z.object({ type: z.literal('changeset'), changeset: Changeset }),
+  // Record pushes are tab-stamped at the SW emit sites (turn path + curation): the panel folds
+  // them only into a Diff view keyed to the same tab, so a turn on tab A can never bleed phantom
+  // rows into a view of tab B (#141 review).
+  z.object({
+    type: z.literal('edit-recorded'),
+    edit: Edit,
+    tabId: z.number().int().optional(),
+  }),
+  // `tabId` stamps which tab's durable record this is (set on curation + turn-path pushes alike)
+  // — the panel folds it only into a view keyed to the same tab.
+  z.object({
+    type: z.literal('changeset'),
+    changeset: Changeset,
+    tabId: z.number().int().optional(),
+  }),
   // One task's live status on the Ship timeline (slice 07). A multi-task fan-out streams several,
   // each tagged with its own `taskId`/`title` and `index`/`total` so the panel drives one timeline
   // per task; `status` is an open string (`queued → working → pr_open → ci_green/ci_red`, or

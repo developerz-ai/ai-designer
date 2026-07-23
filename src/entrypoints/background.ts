@@ -33,6 +33,7 @@ import { buildSystemPrompt } from '@/agent/system-prompt';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
+import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import { toMarkdown } from '@/changeset/report-md';
 import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
@@ -589,7 +590,16 @@ export default defineBackground(() => {
             await changesetPersister.save(changesetStore.snapshot());
             await sessions.setChangeset(tabId, changesetStore.current);
           },
-          emit: postToPanel,
+          // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
+          // them instead of folding phantom rows (the turn keeps running when the user switches
+          // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
+          emit: (update) => {
+            postToPanel(
+              update.type === 'edit-recorded' || update.type === 'changeset'
+                ? { ...update, tabId }
+                : update,
+            );
+          },
         });
 
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
@@ -993,6 +1003,110 @@ export default defineBackground(() => {
         return { ok: true, dismissed: msg.dismissed };
       case 'get-onboarding-dismissed':
         return { ok: true, dismissed: await readOnboardingDismissed() };
+
+      // --- diff review: changeset curation from the Diff tab (slice 10) ----
+      // Curate the DURABLE, shippable changeset the agent's recordEdit/undo/redo tools also drive
+      // (src/agent/tools/session.ts), per-tab in chrome.storage.session. `changeset-get` is a pure
+      // read; the four mutators walk history / drop one edit / wipe the session — the shippable
+      // record only, never the live page (edits are ephemeral). The op result is BOTH replied and
+      // pushed as a `changeset` so any other open panel stays in sync.
+      case 'changeset-get': {
+        let tabId: number | null = null;
+        try {
+          const tab = await resolveTargetTab();
+          tabId = tab?.id ?? null;
+          if (tabId === null)
+            return { ok: true, tabId, changeset: null, canUndo: false, canRedo: false };
+          const persister = createSessionChangesetPersister(tabId);
+          return { ok: true, tabId, ...(await readChangeset(persister.load)) };
+        } catch (e) {
+          // Schema-conformant error reply — the panel parses every reply with ChangesetResult, so a
+          // bare `{ok:false,error}` from the outer wrapper would surface as "malformed response".
+          return {
+            ok: false,
+            tabId,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+            error: e instanceof Error ? e.message : String(e),
+          };
+        }
+      }
+      case 'changeset-undo':
+      case 'changeset-redo':
+      case 'changeset-clear':
+      case 'changeset-remove-edit': {
+        let tabId: number | null = null;
+        try {
+          const tab = await resolveTargetTab();
+          tabId = tab?.id ?? null;
+          if (tabId === null)
+            return { ok: false, tabId, changeset: null, canUndo: false, canRedo: false };
+          // Closure-stable alias (TS drops a captured `let`'s narrowing inside the mirror closure).
+          const curTabId = tabId;
+          // The panel curates the record it DISPLAYS: it sends that tab as `forTabId`, and the
+          // active tab is re-resolved here per RPC. A disagreement means the panel's view is
+          // stale (a tab switch since mount) — refuse rather than mutate the record of a tab the
+          // user isn't looking at; the panel refreshes to the newly active tab (#141 review).
+          if (msg.forTabId !== undefined && msg.forTabId !== curTabId)
+            return {
+              ok: false,
+              tabId,
+              changeset: null,
+              canUndo: false,
+              canRedo: false,
+              error: 'tab-drift',
+            };
+          const persister = createSessionChangesetPersister(curTabId);
+          // Reject while a turn is in flight: the running turn owns its own ChangesetStore and persists
+          // after every tool call, so a panel op loading a fresh store from storage would clobber it.
+          // Return the current state so the panel can reflect it + show a "busy" hint (never throws).
+          if (turnAbort)
+            return { ok: false, busy: true, tabId, ...(await readChangeset(persister.load)) };
+          const op: ChangesetOp =
+            msg.type === 'changeset-undo'
+              ? { kind: 'undo' }
+              : msg.type === 'changeset-redo'
+                ? { kind: 'redo' }
+                : msg.type === 'changeset-clear'
+                  ? { kind: 'clear' }
+                  : { kind: 'remove', index: msg.index };
+          const result = await applyChangesetOp(
+            {
+              load: persister.load,
+              save: persister.save,
+              // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
+              // Best-effort: `setChangeset` throws if the tab has no live session (evicted mid-edit),
+              // which must not fail the curation — the persister above is the source of truth.
+              mirror: (cs) =>
+                sessions
+                  .setChangeset(curTabId, cs)
+                  .then(() => undefined)
+                  .catch(() => undefined),
+              // Re-checked once after the load resolves: the pre-load `turnAbort` check alone is
+              // check-then-act — a turn that starts inside the load window must win, so abort the
+              // op as busy rather than persist over the turn's rehydrated store (#141 review).
+              guard: () => turnAbort === null,
+            },
+            op,
+          );
+          const { busy, ...view } = result;
+          if (busy) return { ok: false, busy: true, tabId, ...view };
+          // Stamp the tab so a panel showing ANOTHER tab's record can drop this push.
+          if (view.changeset)
+            postToPanel({ type: 'changeset', changeset: view.changeset, tabId: curTabId });
+          return { ok: true, tabId, ...view };
+        } catch (e) {
+          return {
+            ok: false,
+            tabId,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+            error: e instanceof Error ? e.message : String(e),
+          };
+        }
+      }
     }
   }
 
