@@ -89,11 +89,13 @@ export function routeHandoff(args: {
   return { kind: 'tasks', backend, repo };
 }
 
-/** A short, user-facing explanation for a report fallback — shown by the panel beside the download. */
+/** A short, user-facing explanation for a report fallback — shown by the panel beside the download.
+ *  ShipBar composes it with the `ship.fallback` wrapper ('{reason} — downloaded a brief instead.'),
+ *  so keep the reason CLAUSE-FREE: the wrapper already reports the auto-download. */
 export function fallbackMessage(reason: HandoffFallbackReason): string {
   return reason === 'no-backend'
     ? 'No coding backend connected — download the brief and paste it into your coding agent.'
-    : 'No repo is mapped for this page — download the brief, or map a repo in the MCP panel to ship.';
+    : 'No repo is mapped for this page yet.';
 }
 
 // --- the task tool adapter ---------------------------------------------------------------------

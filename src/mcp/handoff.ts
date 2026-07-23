@@ -26,9 +26,9 @@ const MAX_TITLE = 72;
 
 // --- origin → repo mapping ---------------------------------------------------------------------
 
-/** Page origin (`host[:port]`, no scheme/path) → repo slug (`owner/name`). The user maps a page's
- *  origin to a repo once in the MCP panel; Ship reuses it (docs/idea/mcp.md "Connecting"). Persisted
- *  by `src/mcp/store.ts`. */
+/** Page origin (`host[:port]`, no scheme/path) → repo slug (`owner/name`). The user's mapping is
+ *  storage-only today (`mcp:origin-repo` in `src/mcp/store.ts`); a UI for it is tracked in #20.
+ *  Ship reuses the stored mapping (docs/idea/mcp.md "Connecting"). */
 export type OriginRepoMap = Record<string, string>;
 
 /** The map key for a page URL — its lowercased `host:port`, or `null` for an unparseable URL. Scheme

@@ -12,7 +12,7 @@ The full loop, plus the polish that makes it usable day to day. See `docs/plans/
 | Changeset recorder + Ship bar | Stable selectors (incl. shadow-DOM), before/after, per-entry undo/redo |
 | Copy mode | `browse` a reference site, `extractIdentity`, apply palette/type/spacing to the current page |
 | Debug mode | `diagnostics` collector + observe→hypothesize→reproduce→confirm→root-cause→fix loop, agent-authored report |
-| MCP management | Connect ai-dev / developerz.ai / GitHub / custom servers, three-tier auth (admin key, worker key, OAuth+PKCE), origin→repo mapping |
+| MCP management | Connect ai-dev / developerz.ai / GitHub / custom servers, three-tier auth (admin key, worker key, OAuth+PKCE), origin→repo mapping (storage-only today — no writer; UI is #20) |
 | Handoff — ship or report | Changeset/report → `task(action:'create')` when backend+repo mapped, else downloadable Markdown brief — [handoff.md](handoff.md) |
 | History | Last 10 conversations + reports/PR links, read-only replay |
 | FontAwesome icon system | Self-hosted SVG, no runtime fetch, no `eval` |
