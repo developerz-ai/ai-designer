@@ -8,10 +8,11 @@
 // whose results are scroll-independent. Audit trail (2026-07-23): readImages (natural sizes),
 // readChart (bridge probe, read-only), pageFacts (structure read), the describe family
 // (text/identity extraction, no dispatch), checkResponsive (geometry read — scrollWidth/
-// clientWidth, scroll-independent). chartTooltip was REMOVED on review (#144-era had it unlocked):
-// it dispatches synthetic mouseover/mouseout on the chart host (src/dom/charts.ts:350-358) —
-// hover-by-another-name, and page/chart handlers can react with layout-shifting side effects
-// mid-stitch. Only widgets.ts's widgetAct and interact.ts's drivers scroll — all locked.
+// clientWidth, scroll-independent). chartTooltip was introduced unlocked in #145's first cut and
+// REMOVED on review: it dispatches synthetic mouseover/mouseout on the chart host
+// (src/dom/charts.ts:350-358) — hover-by-another-name, and page/chart handlers can react with
+// layout-shifting side effects mid-stitch. Only widgets.ts's widgetAct and interact.ts's drivers
+// scroll — all locked.
 export const UNLOCKED_READS: ReadonlySet<string> = new Set([
   'describe',
   'extractIdentity',

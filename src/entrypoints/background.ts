@@ -319,7 +319,6 @@ export default defineBackground(() => {
     }
   }
 
-  // send failure degrades to an error ToolResult the model reacts to rather than throwing the turn.
   function contentDispatchFor(defaultTabId: number): ContentDispatch {
     return async (message, signal) => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
@@ -546,9 +545,10 @@ export default defineBackground(() => {
         // newer concurrent same-tab turn has since taken over.
         const emulationOwner = crypto.randomUUID();
         activeEmulationOwner = emulationOwner;
-        // The tab this turn ACTUALLY emulated (the model can target another tab, e.g. copy mode's
-        // reference tab) — the teardown below restores + locks THIS tab, not the turn's default.
-        let emulatedTabId = tabId;
+        // Every tab this turn emulated (the model can target other tabs, e.g. copy mode's
+        // reference tab, and can emulate several in one turn) — the teardown below restores each
+        // of them, not just the turn's default tab. A `reset` removes the tab from the set.
+        const emulatedTabs = new Set<number>();
 
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
         const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
@@ -699,14 +699,18 @@ export default defineBackground(() => {
           responsive: {
             setDevice: (message) => {
               const target = message.tabId ?? tabId;
-              emulatedTabId = target;
+              // Track the emulation for the turn's teardown: a real apply adds the tab; a `reset`
+              // restores it immediately (runSetDevice) so it leaves the set (a bare reset must not
+              // clobber the record of a tab still emulated from earlier in the turn).
+              if (message.reset) emulatedTabs.delete(target);
+              else emulatedTabs.add(target);
               return withCaptureLock(target, () =>
                 runSetDevice(chromeDeviceDriver, message, tabId),
               );
             },
             capture: (message, signal) => {
               const target = message.tabId ?? tabId;
-              emulatedTabId = target;
+              emulatedTabs.add(target);
               return withCaptureLock(target, () =>
                 runResponsiveCapture(
                   chromeDeviceDriver,
@@ -814,15 +818,19 @@ export default defineBackground(() => {
             // Tear down device emulation ONLY if this turn still owns it (detach the debugger /
             // restore the window) so the user's page + the "being debugged" banner don't outlast the
             // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
-            if (emulation.owns(emulatedTabId, emulationOwner)) {
+            // Tear down device emulation ONLY for tabs this turn still owns (detach the debugger /
+            // restore the window) so the user's page + the "being debugged" banner don't outlast the
+            // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
+            for (const emuTab of emulatedTabs) {
+              if (!emulation.owns(emuTab, emulationOwner)) continue;
               // Ride the capture lock too (#136): a concurrent same-tab stitch (a newer turn's)
               // must not see its viewport resized mid-capture by this turn's teardown. Ownership
               // is RE-CHECKED inside the lock callback: the queue wait is a TOCTOU window in which
               // a superseding turn's setDevice may have stamped its own owner — restoring now
               // would kill that newer turn's fresh emulation mid-turn.
-              void withCaptureLock(emulatedTabId, () => {
-                if (!emulation.owns(emulatedTabId, emulationOwner)) return Promise.resolve();
-                return restoreDevice(chromeDeviceDriver, emulatedTabId);
+              void withCaptureLock(emuTab, () => {
+                if (!emulation.owns(emuTab, emulationOwner)) return Promise.resolve();
+                return restoreDevice(chromeDeviceDriver, emuTab);
               }).catch(() => {});
             }
             if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });

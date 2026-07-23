@@ -117,39 +117,47 @@ function screenshotDispatchFor(world: World, lock: Lock) {
   };
 }
 
-/** Reproduces the responsiveCapture sweep 1:1 (the #136 form): the WHOLE sweep holds the lock on
- *  the RESOLVED tab; per breakpoint it applies the fake emulation, settles, and captures through
- *  the RAW path with the per-shot try/catch (one failed grab becomes that shot's `error`, never
- *  an aborted sweep — device-emulation.ts's contract). */
+/** The UNLOCKED sweep body, reproducing runResponsiveCapture 1:1: per breakpoint it applies the
+ *  fake emulation, settles, and captures through the RAW path with the per-shot try/catch (one
+ *  failed grab becomes that shot's `error`, never an aborted sweep — device-emulation.ts's
+ *  contract). The LOCK belongs to the wrapper (background.ts's capture wrapper), so callers wrap
+ *  this in the resolved-tab lock — a fused helper would make a wrong-key discriminator test
+ *  impossible. */
+async function sweepBody(
+  world: World,
+  widths: number[],
+  opts: { failWidths?: Set<number>; fullPage?: boolean } = {},
+) {
+  const shots: Array<{ width: number; image?: string; error?: string }> = [];
+  for (const width of widths) {
+    world.page.viewportWidth = width; // applyDevice (fake CDP)
+    await new Promise((r) => setTimeout(r, 1)); // EMULATION_SETTLE
+    // The raw capture branch, mirroring background.ts: fullPage → captureFullPage direct with
+    // try/catch; element → raw sendMessage.
+    let shot: { image?: string; error?: string } = {};
+    try {
+      if (opts.failWidths?.has(width)) throw new Error('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND');
+      shot.image = opts.fullPage
+        ? await captureFullPage(world, [0, 500])
+        : ((await world.sendMessage(world.tabId, { type: 'screenshot' })) as { data: string }).data;
+    } catch (err) {
+      shot = { error: String(err) };
+    }
+    shots.push({ width, ...shot });
+  }
+  world.page.viewportWidth = 1280; // restoreDevice
+  return shots;
+}
+
+/** Reproduces the responsiveCapture WRAPPER 1:1 (the #136 form): resolve the target tab, then
+ *  hold THAT tab's lock for the whole sweep. */
 function responsiveCaptureSweep(
   world: World,
   lock: Lock,
   widths: number[],
   opts: { failWidths?: Set<number>; fullPage?: boolean } = {},
 ) {
-  const shots: Array<{ width: number; image?: string; error?: string }> = [];
-  return lock(world.tabId, async () => {
-    for (const width of widths) {
-      world.page.viewportWidth = width; // applyDevice (fake CDP)
-      await new Promise((r) => setTimeout(r, 1)); // EMULATION_SETTLE
-      // The raw capture branch, mirroring background.ts: fullPage → captureFullPage direct with
-      // try/catch; element → raw sendMessage.
-      let shot: { image?: string; error?: string } = {};
-      try {
-        if (opts.failWidths?.has(width))
-          throw new Error('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND');
-        shot.image = opts.fullPage
-          ? await captureFullPage(world, [0, 500])
-          : ((await world.sendMessage(world.tabId, { type: 'screenshot' })) as { data: string })
-              .data;
-      } catch (err) {
-        shot = { error: String(err) };
-      }
-      shots.push({ width, ...shot });
-    }
-    world.page.viewportWidth = 1280; // restoreDevice
-    return shots;
-  });
+  return lock(world.tabId, () => sweepBody(world, widths, opts));
 }
 
 /** The scroll timeline condensed: every `scroll:`/`driver:click->scroll:` event in order. */
@@ -258,7 +266,8 @@ describe('integration: #136 page-driver vs full-page stitch serialization', () =
   it('REVERT DISCRIMINATOR (emulation): an UNLOCKED sweep resizes mid-stitch and mixes band widths', async () => {
     // The emulation leg of the revert evidence: without the sweep holding the lock, its
     // applyDevice lands between the stitch's bands — some bands capture at phone width, some at
-    // tablet. Deterministic: the width mix is in the sweep's own settle, no timing luck.
+    // tablet. Robust under timer stretch: both chains are macrotask-chained, so the phases
+    // interleave rather than collapsing into one tick.
     const world = fakeWorld(3);
     const lock = createCaptureLock();
     const screenshot = screenshotDispatchFor(world, lock);
@@ -284,24 +293,53 @@ describe('integration: #136 page-driver vs full-page stitch serialization', () =
 
   it('the emulation lock keys on the RESOLVED tab (a cross-tab sweep serializes against that tab’s stitch)', async () => {
     // Copy mode: the turn's default tab is A, but the model sweeps/captures tab B (the reference
-    // tab). Locking A (the pre-fix shape) lets B's stitch interleave with B's sweep; the resolved
-    // key serializes them.
+    // tab). The wrapper's resolution step is reproduced here — `msg.tabId ?? defaultTab` — so a
+    // source revert to locking the default tab fails this test (the discriminator leg proves it).
+    const worldA = fakeWorld(3);
     const worldB = fakeWorld(9);
     const lock = createCaptureLock();
+    const worlds = new Map([
+      [3, worldA],
+      [9, worldB],
+    ]);
     const screenshotB = screenshotDispatchFor(worldB, lock);
 
-    // setDevice/sweep wrapper shape, mirrored 1:1: resolve the target, lock THAT tab.
-    const sweepOnB = responsiveCaptureSweep(worldB, lock, [375, 768]);
+    // The wrapper shape, mirrored 1:1: resolve the target, lock THAT tab, sweep its world.
+    const sweepWrapper = (msg: { tabId?: number }, widths: number[], keyOverride?: number) => {
+      const target = msg.tabId ?? worldA.tabId;
+      return lock(keyOverride ?? target, () => sweepBody(worlds.get(target) ?? worldA, widths));
+    };
+
+    // Leg 1 (the fix): the sweep resolves + locks B; B's same-step stitch serializes behind it.
+    const sweepOnB = sweepWrapper({ tabId: 9 }, [375, 768]);
     const stitchB = (async () => {
       await new Promise((r) => setTimeout(r, 1));
       return screenshotB.fullPage([0, 500, 1000]);
     })();
-
     await Promise.all([sweepOnB, stitchB]);
     await new Promise((r) => setTimeout(r, 10));
 
-    const widths = new Set(worldB.bandGrabs.map((b) => b.width));
-    expect(widths.size).toBe(1); // serialized: no mid-sweep resize landed in B's stitch
+    expect(new Set(worldB.bandGrabs.map((b) => b.width)).size).toBe(1); // serialized
+    expect(worldA.log).toEqual([]); // the default tab was never touched
+
+    // Leg 2 (the discriminator): the pre-fix shape — the sweep runs on B but locks A — and B's
+    // stitch interleaves with it (a width mix). This is the bug the resolution fix closes.
+    const worldB2 = fakeWorld(19);
+    const screenshotB2 = screenshotDispatchFor(worldB2, lock);
+    const buggyWrapper = (msg: { tabId?: number }, widths: number[]) => {
+      const target = msg.tabId ?? worldA.tabId;
+      // The round-1 bug: resolve B for the sweep but take A's lock — B's stitch stays unlocked
+      // against B's sweep.
+      return lock(worldA.tabId, () => sweepBody(target === 19 ? worldB2 : worldA, widths));
+    };
+    const buggySweep = buggyWrapper({ tabId: 19 }, [375, 768]);
+    const stitchB2 = (async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      return screenshotB2.fullPage([0, 500, 1000]);
+    })();
+    await Promise.all([buggySweep, stitchB2]);
+
+    expect(new Set(worldB2.bandGrabs.map((b) => b.width)).size).toBeGreaterThan(1);
   });
 
   it('a failing fullPage grab inside a sweep becomes that shot’s error, never aborts the sweep', async () => {
@@ -358,14 +396,26 @@ describe('integration: #136 emulation teardown re-check (the TOCTOU the lock wid
     };
   }
 
-  function teardown(reg: ReturnType<typeof registry>, lock: Lock, tabId: number, owner: string) {
-    if (reg.owns(tabId, owner)) {
-      return lock(tabId, () => {
-        if (!reg.owns(tabId, owner)) return Promise.resolve();
-        return reg.restore(tabId);
-      });
+  function teardown(
+    reg: ReturnType<typeof registry>,
+    lock: Lock,
+    emulatedTabs: ReadonlySet<number>,
+    owner: string,
+  ) {
+    // Mirrors background.ts's turn-finally teardown 1:1 (the Set form): per emulated tab, an
+    // outer owns-check, then inside the lock callback a SECOND owns-check guards the queue-wait
+    // window.
+    const jobs: Promise<unknown>[] = [];
+    for (const tabId of emulatedTabs) {
+      if (!reg.owns(tabId, owner)) continue;
+      jobs.push(
+        lock(tabId, () => {
+          if (!reg.owns(tabId, owner)) return Promise.resolve();
+          return reg.restore(tabId);
+        }),
+      );
     }
-    return Promise.resolve();
+    return Promise.all(jobs);
   }
 
   it('a superseding setDevice that stamps a new owner during the queue wait is NOT torn down', async () => {
@@ -378,7 +428,7 @@ describe('integration: #136 emulation teardown re-check (the TOCTOU the lock wid
     const applyB = lock(9, async () => {
       reg.stamp(9, 'turn-B');
     });
-    const restoreA = teardown(reg, lock, 9, 'turn-A');
+    const restoreA = teardown(reg, lock, new Set([9]), 'turn-A');
 
     await Promise.all([restoreA, applyB]);
     await new Promise((r) => setTimeout(r, 10));
@@ -394,9 +444,40 @@ describe('integration: #136 emulation teardown re-check (the TOCTOU the lock wid
     const lock = createCaptureLock();
     reg.stamp(9, 'turn-A');
 
-    await teardown(reg, lock, 9, 'turn-A');
+    await teardown(reg, lock, new Set([9]), 'turn-A');
 
     expect(reg.restored).toEqual([9]);
     expect(reg.owners.has(9)).toBe(false);
+  });
+
+  it('a turn that emulated TWO tabs tears BOTH down (the single-slot tracker would leak the first)', async () => {
+    const reg = registry();
+    const lock = createCaptureLock();
+    reg.stamp(9, 'turn-A');
+    reg.stamp(11, 'turn-A');
+
+    await teardown(reg, lock, new Set([9, 11]), 'turn-A');
+
+    expect(reg.restored.slice().sort((a, b) => a - b)).toEqual([9, 11]);
+    expect(reg.owners.size).toBe(0);
+  });
+
+  it('a bare setDevice reset on the default tab does NOT clobber the record of an earlier emulated tab', async () => {
+    // Mirrors the wrapper's Set bookkeeping 1:1: apply adds the resolved tab; reset deletes ONLY
+    // its target. Turn A emulates tab 9, then issues setDevice({reset: true}) with no tabId
+    // (resolving the default tab 3) — the reset must not erase tab 9's record.
+    const reg = registry();
+    const lock = createCaptureLock();
+    reg.stamp(9, 'turn-A');
+    const emulatedTabs = new Set<number>([9]);
+    const defaultTabId = 3;
+    // setDevice({reset:true}) with no tabId:
+    const resetTarget = defaultTabId;
+    emulatedTabs.delete(resetTarget);
+
+    await teardown(reg, lock, emulatedTabs, 'turn-A');
+
+    expect(reg.restored).toEqual([9]); // tab 9 still torn down
+    expect(reg.owners.size).toBe(0);
   });
 });
