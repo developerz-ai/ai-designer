@@ -444,3 +444,32 @@ describe('insertNode sanitizer residuals (#144 round-3 review)', () => {
     expect(document.getElementById('u')?.getAttribute('href')).toBe('#local-shape');
   });
 });
+
+describe('insertNode SVG href allowlist (#144 round-4 review)', () => {
+  it('refuses protocol-relative, C0-obfuscated, tab-obfuscated, and feImage remote loads', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><image id="a" href="//evil.example/beacon.png"/>' +
+        '<image id="b" href="\x0Ehttps://evil.example/x"/>' +
+        '<image id="c" href="h\ttps://evil.example/x"/>' +
+        '<filter id="f"><feImage href="https://evil.example/y"/></filter></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('a')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('b')?.getAttribute('href')).toBeNull();
+    expect(document.getElementById('c')?.getAttribute('href')).toBeNull();
+    expect(document.querySelector('feImage')?.getAttribute('href')).toBeNull();
+  });
+
+  it('keeps same-document fragment refs and inline data:image/ on image/use', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<svg><use id="u" href="#shape"/><image id="i" href="data:image/png;base64,AAA"/></svg>',
+      'beforeend',
+    );
+    expect(document.getElementById('u')?.getAttribute('href')).toBe('#shape');
+    expect(document.getElementById('i')?.getAttribute('href')).toBe('data:image/png;base64,AAA');
+  });
+});

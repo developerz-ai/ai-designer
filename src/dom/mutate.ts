@@ -146,14 +146,21 @@ function sanitizeFragment(frag: DocumentFragment): void {
     for (const name of el.getAttributeNames()) {
       if (attrDenyReason(name, el.getAttribute(name) ?? '') !== null) el.removeAttribute(name);
     }
-    // SVG image/use load their target via href/xlink:href (not src) — the one automatic
-    // remote-load channel the name-based deny-list misses. Refuse http(s): values on these tags;
-    // inline data: images and same-document fragment refs stay (both are inert).
+    // SVG image/use/feImage load their target via href/xlink:href (not src) — automatic
+    // remote-load channels the name-based deny-list misses. ALLOWLIST on the normalized value
+    // (every char ≤ U+0020 stripped, mirroring attrDenyReason's scheme probe — the URL parser
+    // ignores those chars, so C0/tab-obfuscated and protocol-relative URLs must die too): keep
+    // only same-document #fragment refs and inline data:image/ — every other value is refused.
     const tag = el.tagName.toLowerCase();
-    if (tag === 'image' || tag === 'use') {
+    if (tag === 'image' || tag === 'use' || tag === 'feimage') {
       for (const name of ['href', 'xlink:href']) {
         const value = el.getAttribute(name);
-        if (value !== null && /^\s*https?:/i.test(value)) el.removeAttribute(name);
+        if (value === null) continue;
+        const normalized = Array.from(value, (c) => (c.charCodeAt(0) > 0x20 ? c : ''))
+          .join('')
+          .toLowerCase();
+        if (!normalized.startsWith('#') && !normalized.startsWith('data:image/'))
+          el.removeAttribute(name);
       }
     }
     const tpl = el instanceof HTMLTemplateElement ? el : null;
