@@ -254,15 +254,18 @@ const resultFixture = (over: Partial<Record<string, unknown>> = {}) => ({
 });
 
 describe('changeset curation RPCs', () => {
+  // Every curation test keys the view first (a refresh reply), exactly like the UI: the Diff tab
+  // mounts -> refreshChangeset -> viewTabId set — and the store REFUSES to curate an unkeyed view.
   it('undoEdit() dispatches `changeset-undo` and folds the reply into the signals', async () => {
     vi.resetModules();
     const reply = resultFixture({ changeset: changesetWith('a'), canUndo: true, canRedo: true });
     const { sendMessage } = installChromeFake(() => reply);
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.undoEdit();
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-undo' });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-undo', forTabId: 1 });
     expect(store.changeset()).toEqual(reply.changeset);
     expect(store.canUndo()).toBe(true);
     expect(store.canRedo()).toBe(true);
@@ -280,9 +283,10 @@ describe('changeset curation RPCs', () => {
     const { sendMessage } = installChromeFake(() => reply);
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.redoEdit();
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-redo' });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-redo', forTabId: 1 });
     expect(store.changeset()).toEqual(reply.changeset);
     expect(store.canUndo()).toBe(true);
     expect(store.canRedo()).toBe(false);
@@ -294,9 +298,10 @@ describe('changeset curation RPCs', () => {
     const { sendMessage } = installChromeFake(() => reply);
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.clearChangeset();
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-clear' });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-clear', forTabId: 1 });
     expect(store.changeset()).toEqual(reply.changeset);
     expect(store.canUndo()).toBe(false);
     expect(store.canRedo()).toBe(false);
@@ -312,9 +317,14 @@ describe('changeset curation RPCs', () => {
     const { sendMessage } = installChromeFake(() => reply);
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.removeEdit(2);
 
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-remove-edit', index: 2 });
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'changeset-remove-edit',
+      index: 2,
+      forTabId: 1,
+    });
     expect(store.changeset()).toEqual(reply.changeset);
     expect(store.canUndo()).toBe(true);
     expect(store.canRedo()).toBe(false);
@@ -322,18 +332,23 @@ describe('changeset curation RPCs', () => {
 
   it('a busy reply surfaces the diff.busy hint on the Diff-local error, not the shared one', async () => {
     vi.resetModules();
-    const reply = resultFixture({ busy: true, canUndo: false, canRedo: true });
-    installChromeFake(() => reply);
+    const { sendMessage } = installChromeFake((msg) =>
+      msg.type === 'changeset-get'
+        ? resultFixture()
+        : resultFixture({ busy: true, canUndo: false, canRedo: true }),
+    );
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.undoEdit();
 
     expect(store.diffError()).toBe("Can't change the changeset while the agent is working.");
     expect(store.error()).toBeNull(); // the Ship surface's error is untouched
-    expect(store.changeset()).toEqual(reply.changeset);
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']); // busy echo applied
     expect(store.canUndo()).toBe(false);
     expect(store.canRedo()).toBe(true);
     expect(store.curating()).toBe(false);
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'changeset-undo', forTabId: 1 });
   });
 
   it('curating() is true while the RPC is in flight and false after settle', async () => {
@@ -342,9 +357,10 @@ describe('changeset curation RPCs', () => {
     const inFlight = new Promise<unknown>((res) => {
       settle = res;
     });
-    installChromeFake(() => inFlight);
+    installChromeFake((msg) => (msg.type === 'changeset-get' ? resultFixture() : inFlight));
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     const pending = store.undoEdit();
     expect(store.curating()).toBe(true);
 
@@ -357,16 +373,76 @@ describe('changeset curation RPCs', () => {
 
   it('a rejected curation RPC surfaces its message on diffError and still settles curating', async () => {
     vi.resetModules();
-    installChromeFake(() => {
+    installChromeFake((msg) => {
+      if (msg.type === 'changeset-get') return resultFixture();
       throw new Error('port closed');
     });
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
+    await store.refreshChangeset();
     await store.clearChangeset();
 
     expect(store.diffError()).toBe('port closed');
     expect(store.error()).toBeNull();
     expect(store.curating()).toBe(false);
+  });
+
+  it('refuses to curate an unkeyed view — re-keys instead of gambling on the active tab', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(() => resultFixture());
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.undoEdit(); // no refresh ever landed: viewTabId is null
+
+    expect(sentTypes(sendMessage)).toEqual(['changeset-get']); // the re-key, never the mutator
+    await vi.waitFor(() => expect(store.viewTabId()).toBe(1)); // the re-key lands
+    expect(store.diffError()).toBeNull(); // ...and its clean reply clears the refusal hint
+  });
+
+  it('a hard-failure reply keeps the current view (the durable record is intact)', async () => {
+    vi.resetModules();
+    installChromeFake((msg) =>
+      msg.type === 'changeset-get'
+        ? resultFixture({ changeset: changesetWith('a', 'b') })
+        : {
+            ok: false,
+            tabId: 1,
+            changeset: null,
+            canUndo: false,
+            canRedo: false,
+            error: 'quota exceeded',
+          },
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.refreshChangeset();
+    await store.undoEdit();
+
+    expect(store.diffError()).toBe('quota exceeded');
+    // The view was NOT blanked by the failure's null-view reply.
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a', 'b']);
+    expect(store.canUndo()).toBe(true);
+  });
+
+  it('a clean refresh clears a stale Diff hint (no sticky banners)', async () => {
+    vi.resetModules();
+    let busyOnce = true;
+    installChromeFake((msg) => {
+      if (msg.type === 'changeset-get') return resultFixture();
+      if (busyOnce) {
+        busyOnce = false;
+        return resultFixture({ busy: true });
+      }
+      return resultFixture();
+    });
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.refreshChangeset();
+    await store.undoEdit(); // busy -> hint
+    expect(store.diffError()).toBe("Can't change the changeset while the agent is working.");
+
+    await store.refreshChangeset(); // a settle/retarget refresh lands clean -> hint cleared
+    expect(store.diffError()).toBeNull();
   });
 });
 
@@ -521,6 +597,8 @@ describe('changeset store — tab keying + settle signals (push side)', () => {
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
     store.initChangesetStore();
 
+    await store.refreshChangeset(); // keys the view (mutators refuse an unkeyed view)
+    sendMessage.mockClear();
     const pending = store.undoEdit();
     expect(store.curating()).toBe(true);
 
@@ -532,23 +610,44 @@ describe('changeset store — tab keying + settle signals (push side)', () => {
     settle(resultFixture());
     await pending;
   });
+
+  it('an edit-recorded push stamped for another tab is dropped; one for the view tab folds', async () => {
+    vi.resetModules();
+    const { push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 1, changeset: changesetWith('a') }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view to tab 1
+
+    // A turn running on tab 5 keeps emitting while the user looks at tab 1: no phantom rows.
+    push({ type: 'edit-recorded', edit: editFixture('phantom'), tabId: 5 });
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']);
+
+    push({ type: 'edit-recorded', edit: editFixture('b'), tabId: 1 });
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a', 'b']);
+  });
 });
 
 describe('changeset store — curation fix-forward (reply side)', () => {
   it('a changeset-get reply that lands after a curation started is dropped as stale', async () => {
     vi.resetModules();
+    let gets = 0;
     let settleGet: (reply: unknown) => void = () => {};
     const getReply = new Promise<unknown>((res) => {
       settleGet = res;
     });
-    installChromeFake((msg) =>
-      msg.type === 'changeset-get'
-        ? getReply
-        : resultFixture({ changeset: changesetWith('b'), canUndo: true }),
-    );
+    installChromeFake((msg) => {
+      if (msg.type === 'changeset-get') {
+        gets++;
+        return gets === 1 ? resultFixture({ changeset: changesetWith('a') }) : getReply;
+      }
+      return resultFixture({ changeset: changesetWith('b'), canUndo: true });
+    });
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
-    const refresh = store.refreshChangeset(); // in flight, pre-op view
+    await store.refreshChangeset(); // keys the view (settled, 'a')
+    const refresh = store.refreshChangeset(); // second get: in flight, pre-op view
     await store.undoEdit(); // newer truth: applies 'b'
     settleGet(resultFixture({ changeset: changesetWith('a') })); // stale get reply lands late
     await refresh;
@@ -556,46 +655,90 @@ describe('changeset store — curation fix-forward (reply side)', () => {
     expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
   });
 
-  it('a tab-drift reply hints + auto-refreshes to the newly active tab', async () => {
+  it('back-to-back refreshes apply only the newest reply (last-call-wins)', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake((msg) =>
+    const replies: Array<(reply: unknown) => void> = [];
+    installChromeFake((msg) =>
       msg.type === 'changeset-get'
-        ? resultFixture({ tabId: 9, changeset: null, canUndo: false, canRedo: false })
-        : {
-            ok: false,
-            tabId: 9,
-            changeset: null,
-            canUndo: false,
-            canRedo: false,
-            error: 'tab-drift',
-          },
+        ? new Promise((res) => {
+            replies.push(res);
+          })
+        : resultFixture(),
     );
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
-    await store.undoEdit();
+    const r1 = store.refreshChangeset(); // rapid tab switches: two overlapping refreshes
+    const r2 = store.refreshChangeset();
+    replies[1]?.(resultFixture({ changeset: changesetWith('b') })); // newer call replies first
+    await r2;
+    replies[0]?.(resultFixture({ changeset: changesetWith('a') })); // older call replies late — stale
+    await r1;
 
-    expect(store.diffError()).toBe("Tab changed — showing the record of the tab you're on now.");
-    expect(store.error()).toBeNull();
-    expect(sentTypes(sendMessage)).toContain('changeset-get');
-    await vi.waitFor(() => expect(store.viewTabId()).toBe(9));
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
   });
 
-  it('a non-ok, non-drift reply surfaces the SW error string on diffError', async () => {
+  it('a not-ok changeset-get reply surfaces its error and keeps the current view', async () => {
     vi.resetModules();
-    installChromeFake(() => ({
-      ok: false,
-      tabId: 1,
-      changeset: null,
-      canUndo: false,
-      canRedo: false,
-      error: 'quota exceeded',
-    }));
+    let gets = 0;
+    installChromeFake((msg) => {
+      if (msg.type === 'changeset-get') {
+        gets++;
+        return gets === 1
+          ? resultFixture({ changeset: changesetWith('a') })
+          : {
+              ok: false,
+              tabId: null,
+              changeset: null,
+              canUndo: false,
+              canRedo: false,
+              error: 'read failed',
+            };
+      }
+      return resultFixture();
+    });
     const store = await import('@/entrypoints/sidepanel/stores/changeset');
 
-    await store.undoEdit();
+    await store.refreshChangeset(); // keys the view with 'a'
+    await store.refreshChangeset(); // SW-side read failure
 
-    expect(store.diffError()).toBe('quota exceeded');
+    expect(store.diffError()).toBe('read failed');
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']); // not blanked
+  });
+
+  it('a tab-drift reply hints + auto-refreshes to the newly active tab', async () => {
+    vi.resetModules();
+    let gets = 0;
+    let settleSecondGet: (reply: unknown) => void = () => {};
+    const secondGet = new Promise<unknown>((res) => {
+      settleSecondGet = res;
+    });
+    const { sendMessage } = installChromeFake((msg) => {
+      if (msg.type === 'changeset-get') {
+        gets++;
+        return gets === 1 ? resultFixture({ tabId: 42, changeset: changesetWith('a') }) : secondGet;
+      }
+      return {
+        ok: false,
+        tabId: 9,
+        changeset: null,
+        canUndo: false,
+        canRedo: false,
+        error: 'tab-drift',
+      };
+    });
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    await store.refreshChangeset(); // keys the view to tab 42
+    await store.undoEdit(); // forTabId 42 drift-rejected; SW now resolves tab 9
+
+    // Deterministic: the auto-refresh's reply is still parked, so the hint is observable.
+    expect(store.diffError()).toBe("Tab changed — showing the record of the tab you're on now.");
     expect(store.error()).toBeNull();
+    expect(sentTypes(sendMessage)).toEqual(['changeset-get', 'changeset-undo', 'changeset-get']);
+
+    settleSecondGet(resultFixture({ tabId: 9, changeset: null, canUndo: false, canRedo: false }));
+    await vi.waitFor(() => expect(store.viewTabId()).toBe(9));
+    expect(store.diffError()).toBeNull(); // the clean re-key clears the drift banner
   });
 
   it('mutators send the displayed tab as forTabId once the view is keyed', async () => {

@@ -101,9 +101,10 @@ export function initChangesetStore(): void {
   connectPort();
   subscribeToSw((msg) => {
     if (msg.type === 'changeset' || msg.type === 'edit-recorded') {
-      // A curation push stamped for ANOTHER tab must not overwrite this panel's view (the SW
-      // broadcasts to every open panel); unstamped pushes (the turn path) fold as before.
-      if (msg.type === 'changeset' && msg.tabId !== undefined && msg.tabId !== viewTabId()) return;
+      // A record push stamped for ANOTHER tab must not overwrite this panel's view (the SW
+      // broadcasts to every open panel, and a turn keeps running when the user switches tabs
+      // mid-turn — its pushes arrive stamped for the turn's tab). Unstamped pushes fold as before.
+      if (msg.tabId !== undefined && msg.tabId !== viewTabId()) return;
       const next = reduceChangeset(changeset(), msg);
       setChangeset(next);
       // Keep canUndo live off the record; canRedo stays owned by the RPC replies — except on
@@ -142,26 +143,37 @@ export function initChangesetStore(): void {
 // — never the live page. Fold the authoritative reply (`changeset` + undo/redo availability) into
 // local state; a `busy` reply means a turn is in flight, so the op was rejected server-side.
 
-/** Fold an authoritative `ChangesetResult` (RPC reply) into local state. */
+/** Fold an authoritative `ChangesetResult` (RPC reply) into local state. A clean success also
+ *  clears any prior Diff hint (a drift banner / busy hint must not outlive the state that resolved
+ *  it); busy + failure replies leave `diffError` as their caller set it. */
 function applyChangesetView(r: ChangesetResult): void {
   setChangeset(r.changeset);
   setCanUndo(r.canUndo);
   setCanRedo(r.canRedo);
   if (r.tabId !== null) setViewTabId(r.tabId);
+  if (r.ok && !r.busy) setDiffError(null);
 }
 
-// Monotonic curation counter: bumped at every `curate` start, so a `changeset-get` whose reply
-// lands AFTER a mutator began is stale (it read the pre-op record) and must not be applied —
-// the mutator's own reply is the newer truth (#141 review).
+// Monotonic counters making view application last-writer-wins: `viewSeq` is bumped at every
+// `curate` start, so a `changeset-get` whose reply lands AFTER a mutator began is stale (it read
+// the pre-op record) and must not be applied; `refreshSeq` is bumped at every refresh CALL, so
+// back-to-back refreshes (rapid tab switches) apply only the newest reply (#141 review).
 let viewSeq = 0;
+let refreshSeq = 0;
 
 /** Pull the active tab's changeset + undo/redo availability — Diff-tab mount, tab switch, or after
- *  a turn. The reply keys the view to the tab it describes (`viewTabId`). */
+ *  a turn. The reply keys the view to the tab it describes (`viewTabId`). A not-ok reply (SW-side
+ *  read failure) surfaces its error and leaves the current view alone. */
 export async function refreshChangeset(): Promise<void> {
   const seq = viewSeq;
+  const refresh = ++refreshSeq;
   try {
     const r = await request({ type: 'changeset-get' }, ChangesetResult);
-    if (seq !== viewSeq) return;
+    if (seq !== viewSeq || refresh !== refreshSeq) return;
+    if (!r.ok) {
+      setDiffError(r.error ?? i18n.t('diff.failed'));
+      return;
+    }
     applyChangesetView(r);
   } catch (e) {
     setDiffError(errMsg(e));
@@ -171,8 +183,17 @@ export async function refreshChangeset(): Promise<void> {
 /** One curation round-trip (undo/redo/clear/remove). Disables the controls (`curating`) for its
  *  duration; a `busy` reply (turn in flight) surfaces a hint and leaves state as the SW reports it.
  *  A `tab-drift` reply means the view was stale (tab switch) and the op was refused — refresh to
- *  the newly active tab's record. Errors land in the Diff-local `diffError`, never the Ship one. */
+ *  the newly active tab's record. A hard-failure reply (`!ok`, e.g. a storage error) surfaces the
+ *  error and leaves the view alone — the durable record is intact, so blanking the list would lie.
+ *  Errors land in the Diff-local `diffError`, never the Ship one. */
 async function curate(msg: PanelToSw): Promise<void> {
+  // Never curate an unkeyed view: with no confirmed viewTabId the SW's drift check is blind
+  // (`forTabId` undefined) — re-key first instead of gambling on the active tab (#141 review).
+  if (viewTabId() === null) {
+    setDiffError(i18n.t('diff.failed'));
+    void refreshChangeset();
+    return;
+  }
   viewSeq++;
   setCurating(true);
   setDiffError(null);
@@ -183,9 +204,14 @@ async function curate(msg: PanelToSw): Promise<void> {
       void refreshChangeset();
       return;
     }
-    if (r.busy) setDiffError(i18n.t('diff.busy'));
-    else if (!r.ok) setDiffError(r.error ?? i18n.t('diff.failed'));
-    applyChangesetView(r);
+    if (r.busy) {
+      setDiffError(i18n.t('diff.busy'));
+      applyChangesetView(r); // busy echoes the current record — safe to reflect
+    } else if (!r.ok) {
+      setDiffError(r.error ?? i18n.t('diff.failed'));
+    } else {
+      applyChangesetView(r);
+    }
   } catch (e) {
     setDiffError(errMsg(e));
   } finally {

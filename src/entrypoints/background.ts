@@ -590,7 +590,16 @@ export default defineBackground(() => {
             await changesetPersister.save(changesetStore.snapshot());
             await sessions.setChangeset(tabId, changesetStore.current);
           },
-          emit: postToPanel,
+          // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
+          // them instead of folding phantom rows (the turn keeps running when the user switches
+          // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
+          emit: (update) => {
+            postToPanel(
+              update.type === 'edit-recorded' || update.type === 'changeset'
+                ? { ...update, tabId }
+                : update,
+            );
+          },
         });
 
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now

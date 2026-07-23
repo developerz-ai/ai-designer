@@ -1603,9 +1603,16 @@ export const SwToPanel = z.discriminatedUnion('type', [
     selector: z.string().optional(),
     kind: z.enum(['read', 'act', 'info']).optional(),
   }),
-  z.object({ type: z.literal('edit-recorded'), edit: Edit }),
-  // `tabId` stamps which tab's durable record this is (set on curation pushes; absent on the turn
-  // path's legacy pushes) — the panel folds it only into a view keyed to the same tab.
+  // Record pushes are tab-stamped at the SW emit sites (turn path + curation): the panel folds
+  // them only into a Diff view keyed to the same tab, so a turn on tab A can never bleed phantom
+  // rows into a view of tab B (#141 review).
+  z.object({
+    type: z.literal('edit-recorded'),
+    edit: Edit,
+    tabId: z.number().int().optional(),
+  }),
+  // `tabId` stamps which tab's durable record this is (set on curation + turn-path pushes alike)
+  // — the panel folds it only into a view keyed to the same tab.
   z.object({
     type: z.literal('changeset'),
     changeset: Changeset,

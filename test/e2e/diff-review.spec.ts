@@ -369,3 +369,58 @@ test('the diff view follows tab switches — never curates a tab the user is not
     '#cta · id',
   );
 });
+
+test('a turn running on another tab never bleeds phantom rows into the diff view (#141)', async ({
+  context,
+  openExtensionPage,
+}) => {
+  await stubModels(context);
+  await stubFixtures(context, { own: OWN_PAGE, other: OTHER_PAGE });
+
+  // The recordEdit turn is gated: the provider reply (and with it the edit-recorded push) is
+  // withheld until the test releases it — so the push lands WHILE the panel views the other tab.
+  let releaseTurn: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
+  const { requests } = stubProvider(context, [
+    async () => {
+      await gate;
+      return toolCallStream('call-record', 'recordEdit', CTA_EDIT);
+    },
+    textStream('Recolored your CTA.'),
+  ]);
+
+  const panel = await openExtensionPage('sidepanel.html');
+  await configureProvider(panel);
+  await startSession(panel);
+
+  const ownPage = await context.newPage();
+  await ownPage.goto(`${FIXTURE_PREFIX}own`);
+  await ownPage.bringToFront();
+
+  await sendInstruction(panel, 'Recolor the CTA and record it');
+  await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(1);
+
+  // Mid-turn, switch to a session-less tab: the view retargets to its (empty) record.
+  const otherPage = await context.newPage();
+  await otherPage.goto(`${FIXTURE_PREFIX}other`);
+  await otherPage.bringToFront();
+  await panel.getByRole('button', { name: 'Diff' }).click();
+  await expect(panel.locator('.dz-diff__count')).toHaveText('0 edits');
+
+  // The turn's edit-recorded lands — stamped for the FIRST tab, so THIS view drops it. Request 2
+  // starting proves the recordEdit tool call already executed (and its push was emitted); the
+  // turn-done refresh only re-pulls the OTHER tab's empty record, so the count must stay 0.
+  releaseTurn();
+  await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(2);
+  await expect(panel.locator('.dz-diff__count')).toHaveText('0 edits');
+  await expect(panel.locator('.dz-diff__item')).toHaveCount(0);
+
+  // Back on the first tab, the edit the turn recorded is really there.
+  await ownPage.bringToFront();
+  await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
+  await expect(panel.locator('.dz-diff__item').locator('.dz-diff__selector')).toHaveText(
+    '#cta · id',
+  );
+});
