@@ -1,4 +1,4 @@
-import type { ElementMutation, Mutator } from '@/dom/mutate';
+import { attrDenyReason, type ElementMutation, type Mutator } from '@/dom/mutate';
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
 import type { Recorder } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
@@ -42,16 +42,45 @@ function notFound(selector: string): ToolResult {
   return { type: 'tool-result', ok: false, error: `No element matches selector: ${selector}` };
 }
 
+function refused(error: string): ToolResult {
+  return { type: 'tool-result', ok: false, error };
+}
+
+// setText replaces every descendant with a single text node. Refuse a target that has element
+// children: the agent almost never means to delete a whole subtree, and a leaf keeps the edit
+// intent unambiguous. The primitive itself stays lossless (undo restores innerHTML) — this is the
+// agent-facing guard, not a mechanism limit.
+function leafOnly(el: Element): string | null {
+  const n = el.children.length;
+  return n > 0
+    ? `setText would delete ${n} child element(s); target a leaf element (one with no child elements) instead.`
+    : null;
+}
+
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
   const doc = deps.doc ?? document;
   const { mutator, recorder } = deps;
 
   // Resolve `selector` to a single element, apply the mutation, record it, and report its
   // computed result + the resilient selector the agent should keep using.
-  function mutate(selector: string, apply: (el: Element) => ElementMutation): ToolResult {
+  function mutate(
+    selector: string,
+    apply: (el: Element) => ElementMutation,
+    guard?: (el: Element) => string | null,
+  ): ToolResult {
     const el = queryOne(doc, selector);
     if (!el) return notFound(selector);
-    const mutation = apply(el);
+    const reason = guard?.(el);
+    if (reason) return refused(reason);
+    let mutation: ElementMutation;
+    try {
+      mutation = apply(el);
+    } catch (err) {
+      // exec() never throws out of the turn (see header). A token the DOM rejects — an empty or
+      // whitespace-bearing class (classList.add) or an invalid attribute name (setAttribute) — and
+      // the mutator's safe-at-source deny throw all become a clean refusal the agent can react to.
+      return refused(err instanceof Error ? err.message : String(err));
+    }
     const stable = pickUnique(el, doc);
     recorder.record(stable, mutation);
     return ok(mutation.computed, stable);
@@ -76,10 +105,23 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       case 'setStyle':
         return mutate(tool.selector, (el) => mutator.setStyle(el, tool.props));
       case 'setText':
-        return mutate(tool.selector, (el) => mutator.setText(el, tool.value));
+        return mutate(tool.selector, (el) => mutator.setText(el, tool.value), leafOnly);
+      case 'setAttr': {
+        // Security deny-list (on* / src / javascript:) — refuse before touching the DOM so the
+        // agent gets a clean error instead of the primitive's safe-at-source throw.
+        const denied = attrDenyReason(tool.name, tool.value);
+        if (denied) return refused(denied);
+        return mutate(tool.selector, (el) => mutator.setAttr(el, tool.name, tool.value));
+      }
+      case 'addClass':
+        return mutate(tool.selector, (el) => mutator.addClass(el, tool.name));
+      case 'removeClass':
+        return mutate(tool.selector, (el) => mutator.removeClass(el, tool.name));
       case 'undo': {
         const event = recorder.undo();
-        return event ? ok(event) : { type: 'tool-result', ok: false, error: 'Nothing to undo' };
+        // An empty undo log is a valid no-op, not an error: undoing with nothing to revert is a
+        // benign state the agent should not have to treat as a failure.
+        return event ? ok(event) : ok({ undone: false });
       }
     }
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMutator, MARKER_ATTR } from '@/dom/mutate';
+import { attrDenyReason, createMutator, MARKER_ATTR } from '@/dom/mutate';
 
 const SHEET_ID = 'dz-designer-overrides';
 
@@ -107,6 +107,75 @@ describe('createMutator setText / setAttr', () => {
     expect(el.getAttribute('href')).toBe('/new');
     mutation.undo();
     expect(el.getAttribute('href')).toBe('/old');
+  });
+
+  it('setAttr records the attribute name in the event (self-describing, like setStyle)', () => {
+    mount('<a id="l" href="/old">x</a>');
+    const m = createMutator(document).setAttr(byId('l'), 'href', '/new');
+    // before/after carry the name so #9/#10 can reconstruct WHICH attribute changed, not just its value.
+    expect(JSON.parse(m.before)).toEqual({ href: '/old' });
+    expect(JSON.parse(m.after)).toEqual({ href: '/new' });
+  });
+
+  it('setAttr encodes an absent prior attribute as null', () => {
+    mount('<a id="l">x</a>');
+    const m = createMutator(document).setAttr(byId('l'), 'data-x', '1');
+    expect(JSON.parse(m.before)).toEqual({ 'data-x': null });
+    expect(JSON.parse(m.after)).toEqual({ 'data-x': '1' });
+  });
+
+  it('setAttr throws on a denied write and does not touch the DOM (safe at source)', () => {
+    mount('<a id="l">x</a>');
+    const el = byId('l');
+    const mutator = createMutator(document);
+    expect(() => mutator.setAttr(el, 'onclick', 'steal()')).toThrow(/event handler/);
+    expect(() => mutator.setAttr(el, 'href', 'javascript:alert(1)')).toThrow(/javascript:/);
+    expect(() => mutator.setAttr(el, 'src', 'https://cdn/x.js')).toThrow(/remote resource/);
+    expect(el.hasAttribute('onclick')).toBe(false);
+    expect(el.hasAttribute('src')).toBe(false);
+    expect(el.hasAttribute('href')).toBe(false);
+  });
+});
+
+describe('attrDenyReason (setAttr security deny-list)', () => {
+  it('allows safe attribute writes', () => {
+    expect(attrDenyReason('href', '/home')).toBeNull();
+    expect(attrDenyReason('href', 'https://example.com')).toBeNull();
+    expect(attrDenyReason('data-id', '42')).toBeNull(); // data-* is not the bare `data` attr
+    expect(attrDenyReason('alt', 'a photo')).toBeNull();
+    // `javascript:` is inert in a non-navigational attribute, so it must NOT false-refuse legit copy.
+    expect(attrDenyReason('alt', 'JavaScript: The Good Parts')).toBeNull();
+    expect(attrDenyReason('title', 'javascript: a language')).toBeNull();
+    expect(attrDenyReason('title', 'javascript is a language')).toBeNull();
+  });
+
+  it('refuses on* event-handler attributes regardless of casing', () => {
+    expect(attrDenyReason('onclick', 'x()')).toContain('event handler');
+    expect(attrDenyReason('OnError', 'x()')).toContain('event handler');
+    expect(attrDenyReason('onmouseover', 'x()')).toBeTruthy();
+  });
+
+  it('refuses the remote-load / framed-script attribute names outright', () => {
+    expect(attrDenyReason('src', 'https://cdn.example/x.js')).toContain('remote resource');
+    expect(attrDenyReason('SRC', '/local.png')).toBeTruthy(); // case-insensitive
+    expect(attrDenyReason('srcset', 'https://cdn/x.png 2x')).toBeTruthy();
+    expect(attrDenyReason('poster', 'https://cdn/p.png')).toBeTruthy();
+    expect(attrDenyReason('ping', 'https://track/beacon')).toBeTruthy();
+    expect(attrDenyReason('data', 'https://evil/x.html')).toBeTruthy(); // <object data> runs framed JS
+    expect(attrDenyReason('srcdoc', '<script>x()</script>')).toContain('inject');
+  });
+
+  it('refuses writes to the internal setStyle marker', () => {
+    expect(attrDenyReason(MARKER_ATTR, 'dz-99')).toContain('reserved');
+  });
+
+  it('refuses javascript: URLs in navigational attributes (whitespace/control-char tolerant)', () => {
+    expect(attrDenyReason('href', 'javascript:alert(1)')).toContain('javascript:');
+    expect(attrDenyReason('href', '  JavaScript:alert(1)')).toBeTruthy(); // leading ws + casing
+    expect(attrDenyReason('href', 'java\tscript:alert(1)')).toBeTruthy(); // embedded control char
+    expect(attrDenyReason('xlink:href', 'javascript:x')).toBeTruthy();
+    expect(attrDenyReason('formaction', 'javascript:x')).toBeTruthy();
+    expect(attrDenyReason('action', 'javascript:x')).toBeTruthy();
   });
 });
 

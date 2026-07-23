@@ -491,6 +491,27 @@ export const SetTextInput = z.object({
   value: z.string(),
   ...Target.shape,
 });
+// setAttr carries a security deny-list in the executor (on* / src / javascript:, see
+// src/dom/mutate.ts attrDenyReason); the schema stays a plain name/value pair.
+export const SetAttrInput = z.object({
+  type: z.literal('setAttr'),
+  selector: z.string(),
+  name: z.string(),
+  value: z.string(),
+  ...Target.shape,
+});
+export const AddClassInput = z.object({
+  type: z.literal('addClass'),
+  selector: z.string(),
+  name: z.string(),
+  ...Target.shape,
+});
+export const RemoveClassInput = z.object({
+  type: z.literal('removeClass'),
+  selector: z.string(),
+  name: z.string(),
+  ...Target.shape,
+});
 export const A11ySnapshotInput = z.object({
   type: z.literal('a11ySnapshot'),
   selector: z.string(),
@@ -516,6 +537,9 @@ export const DomTool = z.discriminatedUnion('type', [
   ScreenshotInput,
   SetStyleInput,
   SetTextInput,
+  SetAttrInput,
+  AddClassInput,
+  RemoveClassInput,
   A11ySnapshotInput,
   UndoInput,
   DiagnosticsInput,
