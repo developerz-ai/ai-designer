@@ -3,6 +3,7 @@ import { defineBackground } from '#imports';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
 import { withCaptureLock } from '@/agent/capture-lock';
+import { shouldRideCaptureLock } from '@/agent/capture-policy';
 import {
   clearProviderConfig,
   getProviderConfig,
@@ -114,23 +115,6 @@ const SCROLL_SETTLE_MS = 200;
 // A device-emulation change re-evaluates media queries + reflows the whole layout — give it a beat
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
-
-// The content-routed message types that do NOT ride the per-tab capture lock (#136): the pure reads
-// — they never scroll or mutate the page and their results are scroll-independent, so locking them
-// would only stall them behind a stitch. Everything else (all DomTool mutations/reads, the
-// interact/scroll/widgetAct drivers) locks, so a same-step driver can't corrupt a full-page stitch.
-// Verified scroll-free: readImages/readChart/chartTooltip/pageFacts + the describe family (only
-// widgets.ts's widgetAct scrolls — src/dom/widgets.ts:78 — and it is NOT in this set).
-const UNLOCKED_READS = new Set([
-  'describe',
-  'extractIdentity',
-  'readImageContent',
-  'readImages',
-  'readChart',
-  'chartTooltip',
-  'pageFacts',
-  'checkResponsive',
-]);
 
 // Device-emulation teardown state, persisted to chrome.storage.session so an SW eviction
 // mid-emulation can be reconciled on wake (slice 16 / SW-resilience). `chromeDeviceDriver` records
@@ -310,6 +294,7 @@ export default defineBackground(() => {
   // `{ frameId }` option (default 0 = top document), and `Target.tabId` re-addresses another tab
   // (copy = user tab + reference tab). A child frame can't learn its own id, so the SW stamps the
   // frame it routed to onto a result that left it off. The content script is the only DOM world; a
+  // send failure degrades to an error ToolResult the model reacts to rather than throwing the turn.
   // The raw content round-trip behind contentDispatchFor — extracted so a lock HOLDER (the
   // responsive sweep's internal element/viewport captures) can send without re-entering the lock
   // and self-deadlocking. Everything contentDispatchFor does except the lock itself.
@@ -344,25 +329,22 @@ export default defineBackground(() => {
       // Page-driver serialization (#136): EVERY DomTool/ControlTool message rides the per-tab
       // capture lock — not just `screenshot` — so a same-step click/hover/scrollTo/widgetAct/
       // mutation can no longer scroll or shift layout during a full-page stitch's per-band settle
-      // windows (silently corrupted bands fed to vision). Pure reads stay outside for throughput.
-      // Lock exactly here (not also in screenshotDispatchFor's element branch, which funnels into
-      // this) so one call never double-locks and self-deadlocks.
-      // DEADLOCK INVARIANT: nothing that already holds the lock may re-enter this dispatch —
-      // captureFullPage's sendScrollTo/page-metrics are raw chrome.tabs calls (below), and
-      // runResponsiveCapture's internal captures use `sendContentRaw`, never the locking dispatch.
-      return UNLOCKED_READS.has(message.type) ? send() : withCaptureLock(tabId, send);
+      // windows (silently corrupted bands fed to vision). Pure reads stay outside for throughput
+      // (the shared policy set, src/agent/capture-policy.ts). Lock exactly here (not also in
+      // screenshotDispatchFor's element branch, which funnels into this) so one call never
+      // double-locks and self-deadlocks. The deadlock invariant lives with the policy.
+      return shouldRideCaptureLock(message.type) ? withCaptureLock(tabId, send) : send();
     };
   }
 
   // `screenshot` transport (slice 13). An element/viewport crop routes to content (it computes the
   // rect, the SW crops — the slice-05 path); a `fullPage` capture is SW-owned scroll-stitch of the
   // top document (captureVisibleTab grabs the whole tab viewport, so it ignores `frameId`). The
-  // element branch needs no lock of its own — contentDispatchFor mutexes `type:'screenshot'` — but
-  // the stitch must lock: it scrolls the page per band, and an element screenshot dequeued
-  // mid-band-settle would corrupt that band's grab (src/agent/capture-lock.ts). The lock covers
-  // the capture pair only — the wider page-driver-vs-stitch atomicity class (click/hover
-  // scrollIntoView, layout-shifting mutations, CDP emulation resizes mid-stitch) is pre-existing
-  // and tracked in #136.
+  // element branch needs no lock of its own — it funnels into contentDispatchFor, where EVERY
+  // page-driving message now rides the per-tab lock (#136: the wider driver class — click/hover
+  // scrollIntoView, layout-shifting mutations, CDP emulation resizes — is serialized against the
+  // stitch, not just the capture pair from #59) — but the stitch must lock: it scrolls the page
+  // per band, and any driver dequeued mid-band-settle would corrupt that band's grab.
   function screenshotDispatchFor(defaultTabId: number): ScreenshotDispatch {
     const content = contentDispatchFor(defaultTabId);
     return async (input, signal) => {
@@ -564,6 +546,9 @@ export default defineBackground(() => {
         // newer concurrent same-tab turn has since taken over.
         const emulationOwner = crypto.randomUUID();
         activeEmulationOwner = emulationOwner;
+        // The tab this turn ACTUALLY emulated (the model can target another tab, e.g. copy mode's
+        // reference tab) — the teardown below restores + locks THIS tab, not the turn's default.
+        let emulatedTabId = tabId;
 
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
         const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
@@ -702,30 +687,57 @@ export default defineBackground(() => {
           // `checkResponsive` is content-routed (the scanner runs in the page's world). Both
           // emulation entry points ride the per-tab capture lock (#136): a same-step setDevice or
           // responsive sweep resizing the viewport mid-stitch invalidates every band's planned
-          // geometry. The sweep holds the lock for its WHOLE duration — so its internal captures
-          // must use RAW paths (never the locking dispatches, which would queue it behind itself):
-          // fullPage calls captureFullPage directly (its internals are lock-free by the deadlock
-          // invariant above), element/viewport shots ride the raw content send.
+          // geometry. The lock keys on the RESOLVED tab (the model can pass `tabId` — a copy-mode
+          // reference tab), and the turn records which tab it emulated so its teardown (the
+          // `finally` below) restores the right one. The sweep holds the lock for its WHOLE
+          // duration — so its internal captures must use RAW paths (never the locking dispatches,
+          // which would queue it behind itself): fullPage calls captureFullPage directly (its
+          // internals are lock-free by the deadlock invariant), element/viewport shots ride
+          // `sendContentRaw`. The fullPage branch try/catches into a per-shot error ToolResult —
+          // one failed breakpoint must not reject the whole sweep (device-emulation.ts's
+          // "never an aborted sweep" contract).
           responsive: {
-            setDevice: (message) =>
-              withCaptureLock(tabId, () => runSetDevice(chromeDeviceDriver, message, tabId)),
-            capture: (message, signal) =>
-              withCaptureLock(tabId, () =>
+            setDevice: (message) => {
+              const target = message.tabId ?? tabId;
+              emulatedTabId = target;
+              return withCaptureLock(target, () =>
+                runSetDevice(chromeDeviceDriver, message, tabId),
+              );
+            },
+            capture: (message, signal) => {
+              const target = message.tabId ?? tabId;
+              emulatedTabId = target;
+              return withCaptureLock(target, () =>
                 runResponsiveCapture(
                   chromeDeviceDriver,
-                  async (target, opts, sig) => {
+                  async (t, opts, sig) => {
                     if (opts.fullPage) {
-                      const t = await chrome.tabs.get(target);
-                      return {
-                        type: 'tool-result',
-                        ok: true,
-                        data: await captureFullPage(target, t.windowId, sig),
-                      } as ToolResult;
+                      try {
+                        const tab = await chrome.tabs.get(t);
+                        const result: ToolResult = {
+                          type: 'tool-result',
+                          ok: true,
+                          data: await captureFullPage(t, tab.windowId, sig),
+                        };
+                        return result;
+                      } catch (err) {
+                        // The pre-lock path normalized these (closed tab, capture quota, abort) —
+                        // keep the per-shot-error contract (normalize 'Error: aborted' to
+                        // 'aborted', mirroring screenshotDispatchFor).
+                        return {
+                          type: 'tool-result',
+                          ok: false,
+                          error:
+                            err instanceof Error && err.message === 'aborted'
+                              ? 'aborted'
+                              : String(err),
+                        };
+                      }
                     }
                     return sendContentRaw(
-                      target,
+                      t,
                       0,
-                      { type: 'screenshot', selector: opts.selector, tabId: target },
+                      { type: 'screenshot', selector: opts.selector, tabId: t },
                       sig,
                     );
                   },
@@ -734,7 +746,8 @@ export default defineBackground(() => {
                   tabId,
                   signal,
                 ),
-              ),
+              );
+            },
             check: content,
           },
           emit: emitTurn,
@@ -801,12 +814,16 @@ export default defineBackground(() => {
             // Tear down device emulation ONLY if this turn still owns it (detach the debugger /
             // restore the window) so the user's page + the "being debugged" banner don't outlast the
             // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
-            if (emulation.owns(tabId, emulationOwner)) {
+            if (emulation.owns(emulatedTabId, emulationOwner)) {
               // Ride the capture lock too (#136): a concurrent same-tab stitch (a newer turn's)
-              // must not see its viewport resized mid-capture by this turn's teardown.
-              void withCaptureLock(tabId, () => restoreDevice(chromeDeviceDriver, tabId)).catch(
-                () => {},
-              );
+              // must not see its viewport resized mid-capture by this turn's teardown. Ownership
+              // is RE-CHECKED inside the lock callback: the queue wait is a TOCTOU window in which
+              // a superseding turn's setDevice may have stamped its own owner — restoring now
+              // would kill that newer turn's fresh emulation mid-turn.
+              void withCaptureLock(emulatedTabId, () => {
+                if (!emulation.owns(emulatedTabId, emulationOwner)) return Promise.resolve();
+                return restoreDevice(chromeDeviceDriver, emulatedTabId);
+              }).catch(() => {});
             }
             if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });
           });
