@@ -1,9 +1,9 @@
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { i18n } from '#i18n';
-import type { Changeset } from '@/shared/changeset';
-import type { Mode, SwToPanel } from '@/shared/messages';
-import { HandoffResult, type ShipRequest } from '@/shared/messages';
+import { addEdit, type Changeset } from '@/shared/changeset';
+import type { Mode, PanelToSw, SwToPanel } from '@/shared/messages';
+import { ChangesetResult, HandoffResult, type ShipRequest } from '@/shared/messages';
 import { request } from './bus';
 import { connectPort, subscribeToSw } from './sw-stream';
 
@@ -23,8 +23,13 @@ export type TaskStatus = Omit<Extract<SwToPanel, { type: 'task-status' }>, 'type
 /** Pure fold: apply one SW->panel message onto the live changeset. Unrelated message types are a
  *  no-op (identity) — mirrors `stores/mcp.ts` `reduceServers`. Exported for a mock-free unit test. */
 export function reduceChangeset(changeset: Changeset | null, msg: SwToPanel): Changeset | null {
-  if (msg.type !== 'changeset') return changeset;
-  return msg.changeset;
+  if (msg.type === 'changeset') return msg.changeset;
+  // A live `edit-recorded` (the agent's recordEdit mid-turn) appends to the running changeset so the
+  // Diff tab stays live. It carries only the Edit (no url/sessionId), so it can only EXTEND an
+  // existing changeset — the Diff tab seeds the base via `changeset-get` on mount, and a `changeset`
+  // push (agent undo/redo) replaces it wholesale.
+  if (msg.type === 'edit-recorded') return changeset ? addEdit(changeset, msg.edit) : changeset;
+  return changeset;
 }
 
 /** Pure fold: upsert one task's status by `taskId` onto the timeline, preserving arrival order for
@@ -46,8 +51,15 @@ const [error, setError] = createSignal<string | null>(null);
 // Set on a `routed:'report'` reply with a `reason` (e.g. "no backend connected") so ShipBar can
 // show why Ship fell back to a download instead of dispatching — informational, not an error.
 const [fallbackReason, setFallbackReason] = createSignal<string | null>(null);
+// Diff-tab undo/redo availability (#10). `canUndo` is derivable from the record's edit count, but
+// `canRedo` is NOT (a `Changeset` doesn't carry the redo stack), so both are owned by the
+// authoritative `ChangesetResult` RPC replies (`refreshChangeset` / `curate`). `curating` disables
+// the Diff-tab controls while one of those RPCs is in flight.
+const [canUndo, setCanUndo] = createSignal(false);
+const [canRedo, setCanRedo] = createSignal(false);
+const [curating, setCurating] = createSignal(false);
 
-export { changeset, error, fallbackReason, shipping, tasks };
+export { canRedo, canUndo, changeset, curating, error, fallbackReason, shipping, tasks };
 
 let wired = false;
 
@@ -58,13 +70,65 @@ export function initChangesetStore(): void {
   wired = true;
   connectPort();
   subscribeToSw((msg) => {
-    if (msg.type === 'changeset') setChangeset(reduceChangeset(changeset(), msg));
+    if (msg.type === 'changeset' || msg.type === 'edit-recorded') {
+      const next = reduceChangeset(changeset(), msg);
+      setChangeset(next);
+      // Keep canUndo live off the record; canRedo stays owned by the RPC replies (see above).
+      setCanUndo((next?.edits.length ?? 0) > 0);
+    }
     // reconcile (keyed by `taskId`) so a status push updates only the changed task's fields —
     // a plain array replace remounts every keyed `<For>` row in TaskTimeline.
     else if (msg.type === 'task-status')
       setTasks(reconcile(reduceTasks(tasks, msg), { key: 'taskId' }));
+    // A turn just finished — the agent may have recorded/undone edits, so refresh authoritative
+    // undo/redo availability for the now-enabled Diff-tab controls.
+    else if (msg.type === 'turn-done') void refreshChangeset();
   });
 }
+
+// --- diff review: changeset curation (slice 10) --------------------------------------------------
+// The Diff tab's read + mutators. Each is a dispatch-only RPC through the SW, which owns the durable
+// ChangesetStore; `ChangesetPreview` stays render + dispatch only. These curate the shippable record
+// — never the live page. Fold the authoritative reply (`changeset` + undo/redo availability) into
+// local state; a `busy` reply means a turn is in flight, so the op was rejected server-side.
+
+/** Fold an authoritative `ChangesetResult` (RPC reply) into local state. */
+function applyChangesetView(r: ChangesetResult): void {
+  setChangeset(r.changeset);
+  setCanUndo(r.canUndo);
+  setCanRedo(r.canRedo);
+}
+
+/** Pull the active tab's changeset + undo/redo availability — Diff-tab mount, or after a turn. */
+export async function refreshChangeset(): Promise<void> {
+  try {
+    applyChangesetView(await request({ type: 'changeset-get' }, ChangesetResult));
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+/** One curation round-trip (undo/redo/clear/remove). Disables the controls (`curating`) for its
+ *  duration; a `busy` reply (turn in flight) surfaces a hint and leaves state as the SW reports it. */
+async function curate(msg: PanelToSw): Promise<void> {
+  setCurating(true);
+  setError(null);
+  try {
+    const r = await request(msg, ChangesetResult);
+    if (r.busy) setError(i18n.t('diff.busy'));
+    applyChangesetView(r);
+  } catch (e) {
+    setError(errMsg(e));
+  } finally {
+    setCurating(false);
+  }
+}
+
+export const undoEdit = (): Promise<void> => curate({ type: 'changeset-undo' });
+export const redoEdit = (): Promise<void> => curate({ type: 'changeset-redo' });
+export const clearChangeset = (): Promise<void> => curate({ type: 'changeset-clear' });
+export const removeEdit = (index: number): Promise<void> =>
+  curate({ type: 'changeset-remove-edit', index });
 
 export interface ShipOptions {
   /** Raw recorded edits vs. the agent-authored brief. Defaults to `'report'` — the brief is what

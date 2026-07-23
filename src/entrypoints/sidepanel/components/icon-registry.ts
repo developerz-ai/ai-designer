@@ -10,6 +10,7 @@ import {
   faCircleDot,
   faClockRotateLeft,
   faCodeBranch,
+  faCodeCompare,
   faCopy,
   faDownload,
   faEye,
@@ -20,6 +21,8 @@ import {
   faPlug,
   faPlus,
   faRocket,
+  faRotateLeft,
+  faRotateRight,
   faSpinner,
   faTrash,
   faTriangleExclamation,
@@ -57,6 +60,9 @@ const REGISTRY = {
   report: faFileLines,
   repo: faCodeBranch,
   bug: faBug,
+  undo: faRotateLeft,
+  redo: faRotateRight,
+  diff: faCodeCompare,
 } as const satisfies Record<string, IconDefinition>;
 
 /**

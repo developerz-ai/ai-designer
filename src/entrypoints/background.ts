@@ -33,6 +33,7 @@ import { buildSystemPrompt } from '@/agent/system-prompt';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
+import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import { toMarkdown } from '@/changeset/report-md';
 import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
@@ -993,6 +994,59 @@ export default defineBackground(() => {
         return { ok: true, dismissed: msg.dismissed };
       case 'get-onboarding-dismissed':
         return { ok: true, dismissed: await readOnboardingDismissed() };
+
+      // --- diff review: changeset curation from the Diff tab (slice 10) ----
+      // Curate the DURABLE, shippable changeset the agent's recordEdit/undo/redo tools also drive
+      // (src/agent/tools/session.ts), per-tab in chrome.storage.session. `changeset-get` is a pure
+      // read; the four mutators walk history / drop one edit / wipe the session — the shippable
+      // record only, never the live page (edits are ephemeral). The op result is BOTH replied and
+      // pushed as a `changeset` so any other open panel stays in sync.
+      case 'changeset-get': {
+        const tab = await resolveTargetTab();
+        if (tab?.id === undefined)
+          return { ok: true, changeset: null, canUndo: false, canRedo: false };
+        const persister = createSessionChangesetPersister(tab.id);
+        return { ok: true, ...(await readChangeset(persister.load)) };
+      }
+      case 'changeset-undo':
+      case 'changeset-redo':
+      case 'changeset-clear':
+      case 'changeset-remove-edit': {
+        const tab = await resolveTargetTab();
+        if (tab?.id === undefined)
+          return { ok: false, changeset: null, canUndo: false, canRedo: false };
+        const tabId = tab.id;
+        const persister = createSessionChangesetPersister(tabId);
+        // Reject while a turn is in flight: the running turn owns its own ChangesetStore and persists
+        // after every tool call, so a panel op loading a fresh store from storage would clobber it.
+        // Return the current state so the panel can reflect it + show a "busy" hint (never throws).
+        if (turnAbort) return { ok: false, busy: true, ...(await readChangeset(persister.load)) };
+        const op: ChangesetOp =
+          msg.type === 'changeset-undo'
+            ? { kind: 'undo' }
+            : msg.type === 'changeset-redo'
+              ? { kind: 'redo' }
+              : msg.type === 'changeset-clear'
+                ? { kind: 'clear' }
+                : { kind: 'remove', index: msg.index };
+        const result = await applyChangesetOp(
+          {
+            load: persister.load,
+            save: persister.save,
+            // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
+            // Best-effort: `setChangeset` throws if the tab has no live session (evicted mid-edit),
+            // which must not fail the curation — the persister above is the source of truth.
+            mirror: (cs) =>
+              sessions
+                .setChangeset(tabId, cs)
+                .then(() => undefined)
+                .catch(() => undefined),
+          },
+          op,
+        );
+        if (result.changeset) postToPanel({ type: 'changeset', changeset: result.changeset });
+        return { ok: true, ...result };
+      }
     }
   }
 

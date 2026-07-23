@@ -101,6 +101,82 @@ describe('ChangesetStore undo/redo', () => {
   });
 });
 
+describe('ChangesetStore removeAt (diff-tab per-edit remove)', () => {
+  it('removes the edit at an index and returns it', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.record(edit('c'));
+
+    const removed = store.removeAt(1);
+    expect(removed?.intent).toBe('b');
+    expect(intents(store.current)).toEqual(['a', 'c']);
+  });
+
+  it('forks history — removing an edit drops the redo tail', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // b -> redo stack
+    expect(store.canRedo).toBe(true);
+
+    store.removeAt(0); // drop a
+    expect(store.canRedo).toBe(false);
+    expect(intents(store.current)).toEqual([]);
+    expect(store.redo()).toBeUndefined();
+  });
+
+  it('is a no-op for an out-of-range index', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    expect(store.removeAt(5)).toBeUndefined();
+    expect(store.removeAt(-1)).toBeUndefined();
+    expect(intents(store.current)).toEqual(['a']);
+  });
+
+  it('persists the new state via the port after a removal', () => {
+    const states: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), {
+      persist: (s) => {
+        states.push(s);
+      },
+    });
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.removeAt(0);
+    expect(states.at(-1)?.changeset.edits.map((e) => e.intent)).toEqual(['b']);
+  });
+});
+
+describe('ChangesetStore clear (diff-tab clear session)', () => {
+  it('wipes edits and the redo stack, keeping the changeset identity', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // redo stack holds b
+    const id = store.current.sessionId;
+
+    store.clear();
+    expect(store.size).toBe(0);
+    expect(store.canUndo).toBe(false);
+    expect(store.canRedo).toBe(false);
+    expect(store.current.sessionId).toBe(id); // same session — a later record continues it
+  });
+
+  it('persists the cleared state via the port', () => {
+    const states: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), {
+      persist: (s) => {
+        states.push(s);
+      },
+    });
+    store.record(edit('a'));
+    store.clear();
+    expect(states.at(-1)?.changeset.edits).toEqual([]);
+    expect(states.at(-1)?.redoStack).toEqual([]);
+  });
+});
+
 describe('ChangesetStore serialization (full undo/redo state)', () => {
   it('snapshot captures the changeset AND the redo stack', () => {
     const store = new ChangesetStore(seed());

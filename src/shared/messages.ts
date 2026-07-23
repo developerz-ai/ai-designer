@@ -303,6 +303,23 @@ export const SetOnboardingDismissed = z.object({
 });
 export const GetOnboardingDismissed = z.object({ type: z.literal('get-onboarding-dismissed') });
 
+// --- diff review: panel-driven changeset curation (slice 10) --------------
+// The Diff tab curates the DURABLE (shippable) changeset the same store the agent's
+// `recordEdit`/`undo`/`redo` tools drive (src/agent/tools/session.ts), persisted per-tab to
+// `chrome.storage.session`. `changeset-get` fetches the current changeset + undo/redo availability
+// on tab mount; the four mutators walk its linear history / drop one edit / wipe the session. They
+// curate the shippable record ONLY and never revert the live page — live edits are ephemeral (they
+// vanish on reload) regardless. The SW rejects a mutator while a turn is in flight (`turnAbort`), so
+// a panel op can never clobber the running turn's own changeset persist (`ChangesetResult.busy`).
+export const ChangesetGet = z.object({ type: z.literal('changeset-get') });
+export const ChangesetUndo = z.object({ type: z.literal('changeset-undo') });
+export const ChangesetRedo = z.object({ type: z.literal('changeset-redo') });
+export const ChangesetClear = z.object({ type: z.literal('changeset-clear') });
+export const ChangesetRemoveEdit = z.object({
+  type: z.literal('changeset-remove-edit'),
+  index: z.number().int().nonnegative(),
+});
+
 export const PanelToSw = z.discriminatedUnion('type', [
   UserMessage,
   ShipRequest,
@@ -333,6 +350,11 @@ export const PanelToSw = z.discriminatedUnion('type', [
   GetOverlayEnabled,
   SetOnboardingDismissed,
   GetOnboardingDismissed,
+  ChangesetGet,
+  ChangesetUndo,
+  ChangesetRedo,
+  ChangesetClear,
+  ChangesetRemoveEdit,
 ]);
 export type PanelToSw = z.infer<typeof PanelToSw>;
 
@@ -440,6 +462,22 @@ export type OverlayEnabledResult = z.infer<typeof OverlayEnabledResult>;
 // RPC response for `set-onboarding-dismissed` / `get-onboarding-dismissed`.
 export const OnboardingStateResult = z.object({ ok: z.boolean(), dismissed: z.boolean() });
 export type OnboardingStateResult = z.infer<typeof OnboardingStateResult>;
+
+// RPC response for the diff-review curation RPCs (`changeset-get` + the four mutators). `changeset`
+// is the active tab's current changeset (null when no session/edits exist yet); `canUndo`/`canRedo`
+// mirror the ChangesetStore's linear history so the Diff tab can enable/disable its controls without
+// deriving redo-availability (the redo stack isn't carried on a `Changeset`). `busy: true` means the
+// op was rejected because a turn is in flight — the panel shows a hint and leaves its state as-is,
+// rather than treating it as a hard error.
+export const ChangesetResult = z.object({
+  ok: z.boolean(),
+  changeset: Changeset.nullable(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  busy: z.boolean().optional(),
+  error: z.string().optional(),
+});
+export type ChangesetResult = z.infer<typeof ChangesetResult>;
 
 // --- service worker -> content (DOM tools) -------------------------------
 // Shared frame/tab target carried by every DOM/control/vision tool (slice 13). `tabId` picks the
