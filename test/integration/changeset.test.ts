@@ -23,6 +23,8 @@ describe('changeset build', () => {
       intent: 'Make the primary CTA orange',
       selector,
       changes: [{ prop: 'background-color', before: '#2563eb', after: '#f97316' }],
+      attrs: [],
+      classes: [],
       frameworkHints: ['tailwind: bg-blue-600'],
     };
 

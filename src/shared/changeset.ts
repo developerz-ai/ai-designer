@@ -26,11 +26,32 @@ export const StyleChange = z.object({
 });
 export type StyleChange = z.infer<typeof StyleChange>;
 
+// One attribute delta (slice #139): `before: null` = the attribute was absent, `after: null` = it
+// was removed — so a `setAttr` (and its undo) carries a machine-parseable delta, not just intent
+// prose. Mirrors the volatile recorder's self-describing `{name: value}` (src/dom/recorder.ts).
+export const AttrChange = z.object({
+  name: z.string(),
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+});
+export type AttrChange = z.infer<typeof AttrChange>;
+
+// One class add/remove (slice #139) — the durable, shippable form of `addClass`/`removeClass`.
+export const ClassChange = z.object({
+  name: z.string(),
+  op: z.enum(['add', 'remove']),
+});
+export type ClassChange = z.infer<typeof ClassChange>;
+
 export const Edit = z.object({
   // The user's words for *why* — intent, not just the CSS dump.
   intent: z.string(),
   selector: StableSelector,
   changes: z.array(StyleChange).default([]),
+  // Attribute + class deltas (#139). Both default to empty so a changeset persisted before these
+  // fields existed still rehydrates (same forward-compat rule as `ChangesetState.redoStack`).
+  attrs: z.array(AttrChange).default([]),
+  classes: z.array(ClassChange).default([]),
   text: z.object({ before: z.string(), after: z.string() }).optional(),
   screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
   // Tailwind classes / css-module names / styled markers — the source-mapping bridge.

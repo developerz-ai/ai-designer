@@ -25,6 +25,8 @@ const edit = (intent: string, screenshots?: Edit['screenshots']): Edit => ({
   intent,
   selector: { value: `#${intent}`, strategy: 'id', fragile: false },
   changes: [{ prop: 'color', before: '#000', after: '#0af' }],
+  attrs: [],
+  classes: [],
   frameworkHints: [],
   ...(screenshots ? { screenshots } : {}),
 });
@@ -150,6 +152,27 @@ describe('generateReport: assembles a grounded, agent-authored brief', () => {
     await expect(
       generateReport({ model, generate }, { changeset: changesetWith(edit('a')) }),
     ).rejects.toThrow('rate limited');
+  });
+
+  it('grounds structured attr/class deltas in the prompt edit lines (#139)', () => {
+    const rich: Edit = {
+      ...edit('brand the CTA'),
+      attrs: [
+        { name: 'href', before: null, after: '/buy' },
+        { name: 'title', before: 'Buy', after: null },
+      ],
+      classes: [
+        { name: 'btn-primary', op: 'add' },
+        { name: 'btn-ghost', op: 'remove' },
+      ],
+    };
+
+    const messages = buildReportMessages({ changeset: changesetWith(rich) });
+    const text = JSON.stringify(messages);
+
+    expect(text).toContain('attr href ∅→/buy');
+    expect(text).toContain('attr title Buy→∅');
+    expect(text).toContain('class +btn-primary, -btn-ghost');
   });
 });
 

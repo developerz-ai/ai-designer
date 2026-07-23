@@ -18,6 +18,8 @@ const anEdit = (intent: string): Edit => ({
   intent,
   selector: { value: '#cta', strategy: 'id', fragile: false },
   changes: [{ prop: 'color', before: '#000', after: '#fff' }],
+  attrs: [],
+  classes: [],
   frameworkHints: [],
 });
 
@@ -69,6 +71,31 @@ describe('createSessionTools: derivation', () => {
     expect(schema.safeParse(anEdit('x')).success).toBe(true); // still fine with no breakpoint
     expect(schema.safeParse({ ...anEdit('x'), breakpoint: 'iphone-se' }).success).toBe(true);
   });
+
+  it('validates structured attr/class deltas (#139) and defaults them for legacy edits', () => {
+    const schema = harness().tools.recordEdit.inputSchema as unknown as ZodType;
+    const rich = schema.safeParse({
+      ...anEdit('brand the CTA'),
+      attrs: [
+        { name: 'href', before: null, after: '/buy' },
+        { name: 'title', before: 'Buy', after: null },
+      ],
+      classes: [
+        { name: 'btn-primary', op: 'add' },
+        { name: 'btn-ghost', op: 'remove' },
+      ],
+    });
+    expect(rich.success).toBe(true);
+    // A legacy edit (persisted before the fields existed — no attrs/classes keys at all) still
+    // parses: both default to empty, the same forward-compat rule as ChangesetState.redoStack.
+    const legacy = schema.safeParse(anEdit('x'));
+    expect(legacy.success).toBe(true);
+    if (legacy.success) {
+      const data = legacy.data as Edit;
+      expect(data.attrs).toEqual([]);
+      expect(data.classes).toEqual([]);
+    }
+  });
 });
 
 describe('createSessionTools: changeset mutations persist + stream', () => {
@@ -91,6 +118,22 @@ describe('createSessionTools: changeset mutations persist + stream', () => {
     await run(tools.recordEdit.execute, edit);
 
     expect(store.current.edits.at(-1)?.breakpoint).toBe('iphone-se');
+  });
+
+  it('recordEdit persists and streams the structured attr/class delta (#139)', async () => {
+    const { store, persisted, events, tools } = harness();
+    const edit = {
+      ...anEdit('add the brand class'),
+      attrs: [{ name: 'data-variant', before: null, after: 'brand' }],
+      classes: [{ name: 'btn-primary', op: 'add' as const }],
+    };
+
+    await run(tools.recordEdit.execute, edit);
+
+    expect(store.current.edits.at(-1)?.attrs).toEqual(edit.attrs);
+    expect(store.current.edits.at(-1)?.classes).toEqual(edit.classes);
+    expect(persisted.at(-1)?.edits.at(-1)?.attrs).toEqual(edit.attrs);
+    expect(events).toContainEqual({ type: 'edit-recorded', edit });
   });
 
   it('undo removes the last edit and streams the full changeset', async () => {

@@ -92,6 +92,8 @@ describe('changeset fold-back: recorder mutation -> SW ChangesetStore -> panel s
       intent: 'Make the primary CTA blue',
       selector: recorderEvent.event.selector,
       changes: [{ prop: 'color', before: recorderEvent.event.before, after: 'rgb(1, 2, 3)' }],
+      attrs: [],
+      classes: [],
       frameworkHints: [],
     };
     const res = await runTool(tools.recordEdit.execute, edit);
@@ -121,6 +123,8 @@ describe('changeset fold-back: recorder mutation -> SW ChangesetStore -> panel s
       intent: 'Bump the heading size',
       selector: { value: '#h', strategy: 'id', fragile: false },
       changes: [{ prop: 'font-size', before: '16px', after: '24px' }],
+      attrs: [],
+      classes: [],
       frameworkHints: [],
     };
     await runTool(tools.recordEdit.execute, edit);

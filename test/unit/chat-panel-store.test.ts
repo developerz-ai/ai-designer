@@ -15,6 +15,8 @@ const edit: Edit = {
   intent: 'recolor',
   selector: { value: '#hero', strategy: 'id', fragile: false },
   changes: [{ prop: 'color', before: null, after: '#000' }],
+  attrs: [],
+  classes: [],
   frameworkHints: [],
 };
 

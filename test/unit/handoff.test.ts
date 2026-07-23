@@ -21,6 +21,8 @@ const edit = (over: Partial<Edit> = {}): Edit => ({
   intent: 'Make the CTA orange',
   selector: { value: '.cta', strategy: 'css-path', fragile: false },
   changes: [{ prop: 'background', before: '#ffffff', after: '#f97316' }],
+  attrs: [],
+  classes: [],
   frameworkHints: [],
   ...over,
 });
