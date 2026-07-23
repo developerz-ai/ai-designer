@@ -1,6 +1,10 @@
+# HISTORICAL ARTIFACT (2026-07-23): the 16 slices this plan tracks shipped as PRs #71-#105
+# (see git log / the v0 milestone). The per-slice `not_started`/0% fields below were never
+# maintained after kickoff — this folder is retained for the design rationale, not for tracking.
+# Residual drift report: ai-designer#121.
 plan: 101-agentic-designer-vision
 title: "Agentic Designer Vision — Onboarding → Chat → Ship/Report"
-status: not_started        # not_started | in_progress | blocked | complete | superseded
+status: superseded        # not_started | in_progress | blocked | complete | superseded
 created_by: sebi
 worked_by: ""              # executor fills with their git user.name when picked up
 owner: sebi

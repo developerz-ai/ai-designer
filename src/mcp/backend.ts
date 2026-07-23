@@ -93,7 +93,7 @@ export function routeHandoff(args: {
 export function fallbackMessage(reason: HandoffFallbackReason): string {
   return reason === 'no-backend'
     ? 'No coding backend connected — download the brief and paste it into your coding agent.'
-    : 'No repo is mapped for this page — download the brief, or map a repo in the MCP panel to ship.';
+    : 'No repo is mapped for this page yet — download the brief instead.';
 }
 
 // --- the task tool adapter ---------------------------------------------------------------------
