@@ -128,6 +128,13 @@ let activeEmulationOwner = '';
 export default defineBackground(() => {
   initSentry();
 
+  // Clicking the toolbar action opens (and toggles closed) the side panel — the panel's primary
+  // entry point. `openPanelOnActionClick` is a persisted setting, but re-asserting it on every SW
+  // startup keeps it correct across a fresh install or a reset; there is deliberately NO
+  // `chrome.action.onClicked` handler (registering one would suppress this native toggle). Best
+  // effort: a failure just leaves the panel reachable via Chrome's native side-panel menu.
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
   // Port a pre-ProviderConfig OpenRouter install into the named-secret scheme before any
   // settings RPC reads state. `handle` awaits this so a save/read can't race the migration.
   const migrated = migrateLegacyProvider().catch(() => {
