@@ -165,6 +165,12 @@ function sanitizeFragment(frag: DocumentFragment): void {
     }
     const tpl = el instanceof HTMLTemplateElement ? el : null;
     if (tpl) sanitizeFragment(tpl.content);
+    // Defense-in-depth: declarative shadow DOM — if a nested template attached a shadow root
+    // during parsing, querySelectorAll can't cross into it, so sanitize its content too.
+    // (Verified 2026-07-23 in real Chrome-for-Testing: DSD does NOT attach inside
+    // template.content and importNode does not clone a shadow root, so the channel is not live —
+    // the recursion is cheap insurance against engine drift. ShadowRoot extends DocumentFragment.)
+    if (el.shadowRoot) sanitizeFragment(el.shadowRoot);
   }
 }
 
@@ -178,7 +184,9 @@ function serialize(node: Node): string {
 // document, or exfiltrates — none has a legitimate use in an agent design edit. `srcdoc` and
 // `<object data="…text/html">` in particular execute script in a (nested) browsing context, which
 // setStyle's url() cannot. Includes our private setStyle marker so an agent can't corrupt the
-// overrides map. (`src` on iframe/img, `srcset`, `poster`, `ping`, `data` on object/embed.)
+// overrides map. (`src` on iframe/img, `srcset`, `poster`, `ping`, `data` on object/embed, and the
+// legacy presentational `background` — mapped to background-image by the HTML rendering rules on
+// body/table family elements, i.e. an automatic remote load.)
 const DENIED_ATTR_NAMES = new Set([
   'src',
   'srcset',
@@ -186,6 +194,7 @@ const DENIED_ATTR_NAMES = new Set([
   'ping',
   'data',
   'srcdoc',
+  'background',
   MARKER_ATTR,
 ]);
 

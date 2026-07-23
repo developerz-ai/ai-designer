@@ -473,3 +473,20 @@ describe('insertNode SVG href allowlist (#144 round-4 review)', () => {
     expect(document.getElementById('i')?.getAttribute('href')).toBe('data:image/png;base64,AAA');
   });
 });
+
+describe('legacy presentational background attribute (#144 round-4 review)', () => {
+  it('attrDenyReason refuses background (an automatic remote load on table/body family)', () => {
+    expect(attrDenyReason('background', 'https://evil.example/x')).toContain('remote resource');
+  });
+
+  it('insertNode strips the background attribute from inserted markup', () => {
+    mount('<div id="host"></div>');
+    createMutator(document).insertNode(
+      byId('host'),
+      '<table id="t" background="https://evil.example/x"><tr><td>cell</td></tr></table>',
+      'beforeend',
+    );
+    expect(document.getElementById('t')?.getAttribute('background')).toBeNull();
+    expect(document.getElementById('t')?.textContent).toContain('cell');
+  });
+});
