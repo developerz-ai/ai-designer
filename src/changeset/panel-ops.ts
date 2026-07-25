@@ -1,8 +1,11 @@
 // Panel-driven changeset curation (slice 10) — the SW-side core behind the Diff tab's
-// changeset-get / undo / redo / clear / remove-edit RPCs (src/shared/messages.ts). It operates on
-// the SAME per-tab, redo-capable ChangesetStore the agent's recordEdit/undo/redo tools drive
-// (src/agent/tools/session.ts), persisted to chrome.storage.session. It curates the DURABLE,
-// shippable record ONLY — it never reverts the live page (edits are ephemeral; #10).
+// changeset-get / undo / redo / clear / remove-edit RPCs (src/shared/messages.ts), plus the
+// round-4 `retract` op the background recorder-revert path drives (#9: a late revert whose
+// event already left the pending buffer retracts its durable record through the SAME
+// machinery). It operates on the SAME per-tab, redo-capable ChangesetStore the agent's
+// recordEdit/undo/redo tools drive (src/agent/tools/session.ts), persisted to
+// chrome.storage.session. It curates the DURABLE, shippable record ONLY — it never reverts
+// the live page (edits are ephemeral; #10).
 //
 // Chrome-free by construction: persistence + the SessionStore mirror are injected as ports, so a
 // unit test passes an in-memory fake and this stays importable in jsdom/node with no `chrome.*`.
@@ -11,14 +14,20 @@
 // op must not clobber a running turn's own store), so these functions assume it is safe to mutate.
 
 import type { Changeset, ChangesetState } from '@/shared/changeset';
+import type { MutationEvent } from '@/shared/messages';
+import { findLastMatchingEditIndex, stripEventFromEdit } from './revert-match';
 import { ChangesetStore } from './store';
 
-/** One curation op from the Diff tab. `remove` carries the 0-based edit index. */
+/** One curation op from the Diff tab — or, for `retract`, from the background recorder-revert
+ *  path (#9 round-4). `remove` carries the 0-based edit index; `retract` carries the reverted
+ *  recorder event and is matched + stripped internally against THIS op's load, so the match
+ *  can never go stale between two loads (the old background path's double-load TOCTOU). */
 export type ChangesetOp =
   | { readonly kind: 'undo' }
   | { readonly kind: 'redo' }
   | { readonly kind: 'clear' }
-  | { readonly kind: 'remove'; readonly index: number };
+  | { readonly kind: 'remove'; readonly index: number }
+  | { readonly kind: 'retract'; readonly event: MutationEvent };
 
 /** The ports the curation core needs, injected so it stays chrome-free + testable. */
 export interface ChangesetPorts {
@@ -64,7 +73,10 @@ export async function readChangeset(load: ChangesetPorts['load']): Promise<Chang
  *  SessionStore, and return the resulting view. A no-op op (undo with an empty changeset, remove out
  *  of range) still persists idempotently. Returns the empty view when the tab has no changeset — the
  *  op has nothing to act on. A `guard` returning false after the load aborts before any mutation and
- *  echoes the pre-op view with `busy: true`. Never reverts the live page; the durable record only. */
+ *  echoes the pre-op view with `busy: true`. A `retract` whose event matches NO durable edit is a
+ *  true no-op — the pre-op view, with NOTHING persisted or mirrored (the record may have been
+ *  curated or nav-cleared since the event drained, which is not an error). Never reverts the live
+ *  page; the durable record only. */
 export async function applyChangesetOp(
   ports: ChangesetPorts,
   op: ChangesetOp,
@@ -86,6 +98,18 @@ export async function applyChangesetOp(
     case 'remove':
       store.removeAt(op.index);
       break;
+    case 'retract': {
+      // Surgical late-revert retraction (#9 round-4): match + strip against the edits from THIS
+      // load — one load, so the index can never go stale before the mutation lands.
+      const index = findLastMatchingEditIndex(store.current.edits, op.event);
+      if (index === -1) return view(store); // no match ⇒ no-op: nothing persisted/mirrored
+      const edit = store.current.edits[index];
+      const stripped = edit ? stripEventFromEdit(edit, op.event) : null;
+      if (stripped === null)
+        store.removeAt(index); // nothing recorded remains ⇒ the edit dies
+      else store.replaceAt(index, stripped);
+      break;
+    }
   }
   await ports.save(store.snapshot());
   await ports.mirror(store.current);

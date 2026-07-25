@@ -150,6 +150,52 @@ describe('ChangesetStore removeAt (diff-tab per-edit remove)', () => {
   });
 });
 
+describe('ChangesetStore replaceAt (round-4 surgical retract)', () => {
+  it('replaces the edit at an index and returns the old one', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.record(edit('c'));
+
+    const replaced = store.replaceAt(1, edit('b2'));
+    expect(replaced?.intent).toBe('b');
+    expect(intents(store.current)).toEqual(['a', 'b2', 'c']);
+  });
+
+  it('forks history — replacing an edit drops the redo tail', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // b -> redo stack
+    expect(store.canRedo).toBe(true);
+
+    store.replaceAt(0, edit('a2'));
+    expect(store.canRedo).toBe(false);
+    expect(intents(store.current)).toEqual(['a2']);
+    expect(store.redo()).toBeUndefined();
+  });
+
+  it('is a no-op for an out-of-range index', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    expect(store.replaceAt(5, edit('b'))).toBeUndefined();
+    expect(store.replaceAt(-1, edit('b'))).toBeUndefined();
+    expect(intents(store.current)).toEqual(['a']);
+  });
+
+  it('persists the new state via the port after a replacement', () => {
+    const states: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), {
+      persist: (s) => {
+        states.push(s);
+      },
+    });
+    store.record(edit('a'));
+    store.replaceAt(0, edit('a2'));
+    expect(states.at(-1)?.changeset.edits.map((e) => e.intent)).toEqual(['a2']);
+  });
+});
+
 describe('ChangesetStore clear (diff-tab clear session)', () => {
   it('wipes edits and the redo stack, keeping the changeset identity', () => {
     const store = new ChangesetStore(seed());

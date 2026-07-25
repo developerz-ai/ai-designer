@@ -130,6 +130,24 @@ export class ChangesetStore {
     return removed;
   }
 
+  /** Replace the edit at `index` (0-based) with `edit`. Rewriting an arbitrary edit forks
+   *  history — like a fresh `record` — so the redo stack is cleared (same rule as
+   *  {@link removeAt}). Out of range is a no-op returning `undefined`. Returns the replaced
+   *  (old) edit. The surgical half of the round-4 `retract` op (panel-ops.ts): a stripped edit
+   *  takes its predecessor's slot instead of the whole edit dying. */
+  replaceAt(index: number, edit: Edit): Edit | undefined {
+    const { edits } = this.changeset;
+    if (index < 0 || index >= edits.length) return undefined;
+    const replaced = edits[index];
+    this.changeset = {
+      ...this.changeset,
+      edits: [...edits.slice(0, index), edit, ...edits.slice(index + 1)],
+    };
+    this.redoStack.length = 0;
+    this.flush();
+    return replaced;
+  }
+
   /** Wipe every edit AND the redo stack — the Diff tab's "clear session" (#10). Keeps the same
    *  changeset identity (url/createdAt/sessionId) so a subsequent record continues the same session. */
   clear(): void {

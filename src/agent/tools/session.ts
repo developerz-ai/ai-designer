@@ -78,8 +78,10 @@ export function createSessionTools(deps: SessionToolDeps) {
         '(`setDevice`), set `breakpoint` to the device so the changeset and report show which ' +
         'viewport it targets. Set `selector` to the EXACT selector the mutation tool returned ' +
         'for the element — never a paraphrase: the recorder buffers the real deltas under that ' +
-        'selector, and an exact match folds them in as ground truth. This is what Ship hands ' +
-        'off; record after you have applied and visually verified a change.',
+        'selector, and an exact match folds them in as ground truth. When the result has ' +
+        '`rescued: true`, your selector was a paraphrase the recorder healed — adopt the ' +
+        "result's `healedSelector` for subsequent calls on this element. This is what Ship " +
+        'hands off; record after you have applied and visually verified a change.',
       inputSchema: Edit,
       outputSchema: ToolResult,
       execute: async (edit) => {
@@ -111,8 +113,18 @@ export function createSessionTools(deps: SessionToolDeps) {
         emit({ type: 'edit-recorded', edit: recorded });
         for (const extra of spillover) emit({ type: 'edit-recorded', edit: extra });
         // The spillover count rides the result so the model can pair session `undo`s with the
-        // edits ONE recordEdit call created (1 + spillover).
-        return result({ edits: store.size, spillover: spillover.length });
+        // edits ONE recordEdit call created (1 + spillover). `rescued` surfaces the gated
+        // single-group rescue (the drain matched no exact group but adopted the one plausibly-
+        // same group — the model's selector was a paraphrase): with it, `healedSelector`
+        // carries the ground-truth selector the fold adopted, so the model can use it for any
+        // further calls on this element instead of its paraphrase.
+        const rescued = drained?.rescued ?? false;
+        return result({
+          edits: store.size,
+          spillover: spillover.length,
+          rescued,
+          ...(rescued ? { healedSelector: recorded.selector.value } : {}),
+        });
       },
     }),
     undo: tool({

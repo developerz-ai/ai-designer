@@ -131,17 +131,22 @@ function mergeAttrChanges(events: readonly MutationEvent[]): { merged: AttrChang
   return { merged };
 }
 
-/** `classes`: an exact WINDOW set-diff, NOT op parity. Class-relevant events = events with a
- *  `classChange` OR an `attrChange.name === 'class'` (a setAttr('class') rewrites the whole
- *  class list and must feed the same family). For a class-op event the full classAttr strings
- *  are `event.before` / `event.after`; for a setAttr('class') event they are `attrChange.before`
- *  / `attrChange.after` (null ⇒ ''). The window is the FIRST class-relevant event's
- *  before-classAttr and the LAST's after-classAttr; the net per name is the plain set
- *  difference. A diff is immune to ANY interleave — a setAttr('class') in the middle, or page JS
- *  churning the class list between tool calls (parity read a churn-shaped [add, add] as a
- *  canceled pair and dropped a REAL net add). Returns `{ merged: [] }` when the events net
- *  nothing (ground-truth "no net change" — replaces the model's classes), `undefined` when no
- *  class-relevant event exists (family untouched). */
+/** `classes`: an exact WINDOW set-diff, NOT op parity — loss-immune, attribution-filtered.
+ *  Class-relevant events = events with a `classChange` OR an `attrChange.name === 'class'` (a
+ *  setAttr('class') rewrites the whole class list and must feed the same family). For a class-op
+ *  event the full classAttr strings are `event.before` / `event.after`; for a setAttr('class')
+ *  event they are `attrChange.before` / `attrChange.after` (null ⇒ ''). The window is the FIRST
+ *  class-relevant event's before-classAttr and the LAST's after-classAttr; the net per name is
+ *  the plain set difference. A diff loses nothing to an interleave — a setAttr('class') in the
+ *  middle, or page JS churning the class list between tool calls (parity read a churn-shaped
+ *  [add, add] as a canceled pair and dropped a REAL net add) — but loss-immunity alone would
+ *  ATTRIBUTE the page's churn to the agent: a name the page added mid-window nets `add` in the
+ *  diff with no tool call behind it. So the net is INTERSECTED with the events' typed class
+ *  names (see {@link attributedClassNames}). When NO class-relevant event carries typed data
+ *  (all raw pre-#9), the intersect is skipped and the window result stands. Returns
+ *  `{ merged: [] }` when nothing net survives — either the events net nothing, or the churn
+ *  filter dropped every name (ground-truth "no agent change" — replaces the model's classes),
+ *  `undefined` when no class-relevant event exists (family untouched). */
 function mergeClassChanges(
   events: readonly MutationEvent[],
 ): { merged: ClassChange[] } | undefined {
@@ -155,16 +160,46 @@ function mergeClassChanges(
   const afterNames = splitClasses(classAttrOf(last, 'after'));
   const beforeSet = new Set(beforeNames);
   const afterSet = new Set(afterNames);
+  // The attribution filter: names the AGENT actually drove, or undefined when no event carried
+  // typed class data (raw pre-#9 producers) ⇒ skip the intersect.
+  const attributed = attributedClassNames(relevant);
   // Stable order: first-appearance in the after string (adds), then in the before string
   // (removes). The strings are split + deduped above, so iteration is already first-appearance.
   const merged: ClassChange[] = [];
   for (const name of afterNames) {
-    if (!beforeSet.has(name)) merged.push({ name, op: 'add' });
+    if (beforeSet.has(name)) continue;
+    if (attributed && !attributed.has(name)) continue; // page churn, not the agent's
+    merged.push({ name, op: 'add' });
   }
   for (const name of beforeNames) {
-    if (!afterSet.has(name)) merged.push({ name, op: 'remove' });
+    if (afterSet.has(name)) continue;
+    if (attributed && !attributed.has(name)) continue; // page churn, not the agent's
+    merged.push({ name, op: 'remove' });
   }
   return { merged };
+}
+
+/** The union of typed class names over class-relevant events — `classChange.name` over the
+ *  class-op events PLUS, for setAttr('class') events, the tokens of `attrChange.before` ∪
+ *  `attrChange.after` (a wholesale rewrite's full old/new lists ARE agent-attributed) — or
+ *  `undefined` when NO event carried typed data (a raw pre-#9 group, where the window result
+ *  must stand unfiltered for back-compat). */
+function attributedClassNames(relevant: readonly MutationEvent[]): Set<string> | undefined {
+  let saw = false;
+  const names = new Set<string>();
+  for (const event of relevant) {
+    if (event.classChange) {
+      saw = true;
+      names.add(event.classChange.name);
+    }
+    const ac = event.attrChange;
+    if (ac?.name === 'class') {
+      saw = true;
+      for (const name of splitClasses(ac.before ?? '')) names.add(name);
+      for (const name of splitClasses(ac.after ?? '')) names.add(name);
+    }
+  }
+  return saw ? names : undefined;
 }
 
 /** The full classAttr string carried by one class-relevant event. setAttr('class') self-describes

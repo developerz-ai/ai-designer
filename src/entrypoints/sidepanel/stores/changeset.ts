@@ -108,10 +108,16 @@ export function initChangesetStore(): void {
       const next = reduceChangeset(changeset(), msg);
       setChangeset(next);
       // Keep canUndo live off the record; canRedo stays owned by the RPC replies — except on
-      // `edit-recorded`, where a record mid-turn always forks history (clears the redo stack), so
-      // canRedo is derivable: false (store.ts `record`).
+      // pushes that provably fork history server-side (store.ts `record`/`removeAt`/`replaceAt`/
+      // `clear` all drop the redo tail), where canRedo is derivable: false. That is EVERY
+      // `edit-recorded`, and every `changeset` push that is NOT the echo of this store's own
+      // curation RPC — the recorder-revert retract push and the nav-clear wipe both cleared the
+      // redo tail, so leaving canRedo would keep it stale-true (#9 review round 4). The own-RPC
+      // echo is exempt (`curating`): its authoritative reply follows on the RPC channel and
+      // re-asserts canRedo (an undo can leave it true).
       setCanUndo((next?.edits.length ?? 0) > 0);
       if (msg.type === 'edit-recorded') setCanRedo(false);
+      else if (!curating()) setCanRedo(false);
     }
     // reconcile (keyed by `taskId`) so a status push updates only the changed task's fields —
     // a plain array replace remounts every keyed `<For>` row in TaskTimeline.

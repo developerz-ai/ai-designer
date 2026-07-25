@@ -37,7 +37,7 @@ import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/visio
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { toMarkdown } from '@/changeset/report-md';
-import { findLastMatchingEditIndex } from '@/changeset/revert-match';
+import { findLastMatchingEditIndex, stripEventFromEdit } from '@/changeset/revert-match';
 import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
@@ -120,6 +120,25 @@ const SCROLL_SETTLE_MS = 200;
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
 
+// The chrome.storage.session key mirroring a tab's last committed main-frame URL (stamped by the
+// webNavigation.onCommitted listener on every main-frame commit) so the turn-start URL guard
+// survives an SW eviction — the in-memory `lastCommittedUrl` map dies with the worker, this
+// doesn't (#9 review round 4).
+const committedUrlKey = (tabId: number): string => `committedUrl:${tabId}`;
+
+// Read the persisted committed-URL stamp for the turn-start URL guard. Best-effort: a storage
+// hiccup (or a never-stamped tab) yields `undefined` and the guard falls back to the in-memory
+// map, then the live tab.url.
+async function readCommittedUrl(tabId: number): Promise<string | undefined> {
+  try {
+    const got = await chrome.storage.session.get(committedUrlKey(tabId));
+    const value = got[committedUrlKey(tabId)];
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Device-emulation teardown state, persisted to chrome.storage.session so an SW eviction
 // mid-emulation can be reconciled on wake (slice 16 / SW-resilience). `chromeDeviceDriver` records
 // attach/resize here; `activeEmulationOwner` is the id of the turn currently applying emulation, so
@@ -168,8 +187,10 @@ export default defineBackground(() => {
   // re-commits the same document). Hash changes and history.pushState/replaceState are
   // SAME-document: no onCommitted fires, the DOM + live edits survive, so they must never
   // stale the changeset record — comparing against the live tab.url (hash included) would
-  // false-wipe it. In-memory only: an SW eviction loses the stamps and the guard falls back
-  // to the live tab.url (the pre-fix behavior) until the next commit re-seeds them.
+  // false-wipe it. Every stamp is ALSO mirrored to chrome.storage.session (`committedUrl:<tabId>`)
+  // so the guard survives an SW eviction (#9 review round 4): a woken worker's map is empty, but
+  // the persisted stamp still anchors the comparison — without it the guard fell back to the
+  // live tab.url and a same-document hash change after an eviction wiped the record.
   const lastCommittedUrl = new Map<number, string>();
 
   // Last-10-conversations history (slice 08): a durable record of completed turns + their
@@ -226,6 +247,16 @@ export default defineBackground(() => {
   // `turnAbort`; this slice only tracks/pushes the tri-state and aborts if one is set).
   let sessionState: 'idle' | 'running' | 'stopped' = 'idle';
   let turnAbort: AbortController | null = null;
+  // The in-flight turn's changeset store + persist hook, registered at turn start and cleared in
+  // the turn's `.finally` (and on session start/stop) — the mid-turn half of the recorder-revert
+  // retraction (`retractRevertedEdit` below) strips the reverted event from THIS store too, so
+  // the turn's next `persistChangeset` can't resurrect a phantom the page already reverted (#9
+  // review round 4). Keyed by tab so a revert from another tab never touches it.
+  let turnChangeset: {
+    tabId: number;
+    store: ChangesetStore;
+    persist: () => Promise<void>;
+  } | null = null;
 
   function setSessionState(next: typeof sessionState): void {
     sessionState = next;
@@ -620,13 +651,18 @@ export default defineBackground(() => {
         // another page must never fold into this turn's record, so on mismatch BOTH mirrors
         // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
         // references the old record's edits). The comparison runs against the last
-        // CROSS-DOCUMENT committed URL (`lastCommittedUrl`), not the live `tab.url`: a
-        // same-document navigation (hash change, history.pushState) fires no commit, leaves
-        // DOM + live edits intact, and must not wipe the record (#9 review round 2); the
-        // `?? tab.url` fallback covers a woken SW that never saw the commit. This closes the
-        // BETWEEN-turns race only; a mid-turn in-flight rebase is tracked in issue #148.
+        // CROSS-DOCUMENT committed URL, not the live `tab.url`: a same-document navigation
+        // (hash change, history.pushState) fires no commit, leaves DOM + live edits intact, and
+        // must not wipe the record (#9 review round 2). The committed URL is read from
+        // chrome.storage.session FIRST (#9 review round 4): it survives the SW eviction the
+        // in-memory `lastCommittedUrl` map doesn't, so a woken SW no longer falls straight
+        // through to `tab.url` and false-wipes on a hash change; the map then the live
+        // `tab.url` remain the fallbacks for a tab no commit was ever seen for. This closes
+        // the BETWEEN-turns race only; a mid-turn in-flight rebase is tracked in issue #148.
         const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
-        const staleRecord = priorChangeset.url !== (lastCommittedUrl.get(tabId) ?? tab.url);
+        const staleRecord =
+          priorChangeset.url !==
+          ((await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tab.url);
         const changesetStore = new ChangesetStore(
           staleRecord
             ? emptyChangeset(tab.url, new Date().toISOString(), crypto.randomUUID())
@@ -643,6 +679,10 @@ export default defineBackground(() => {
         // mirrors now, so neither the persister nor the session mirror can resurrect the old
         // page's edits on a later load.
         if (staleRecord) await persistChangeset();
+        // Register the turn's store for the mid-turn half of the recorder-revert retraction
+        // (retractRevertedEdit strips the reverted event's contribution here too, so this
+        // store's next persist can't resurrect the phantom over the op's retraction).
+        turnChangeset = { tabId, store: changesetStore, persist: persistChangeset };
         // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
         // them instead of folding phantom rows (the turn keeps running when the user switches
         // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
@@ -892,7 +932,12 @@ export default defineBackground(() => {
             // turn is done, so this natural-completion signal only fires for the turn that's still
             // the one in flight.
             const wasCurrent = turnAbort === controller;
-            if (wasCurrent) turnAbort = null;
+            if (wasCurrent) {
+              turnAbort = null;
+              // Unregister the mid-turn retraction target with the turn — a dead turn's store
+              // must never receive another strip (see retractRevertedEdit).
+              turnChangeset = null;
+            }
             // Tear down device emulation ONLY if this turn still owns it (detach the debugger /
             // restore the window) so the user's page + the "being debugged" banner don't outlast the
             // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
@@ -1105,6 +1150,7 @@ export default defineBackground(() => {
       case 'session-start':
         turnAbort?.abort();
         turnAbort = null;
+        turnChangeset = null;
         setSessionState('running');
         return { ok: true };
       // Aborts the in-flight agent turn (04 sets `turnAbort` at turn-start) without
@@ -1112,6 +1158,7 @@ export default defineBackground(() => {
       case 'session-stop':
         turnAbort?.abort();
         turnAbort = null;
+        turnChangeset = null;
         setSessionState('stopped');
         return { ok: true };
 
@@ -1262,27 +1309,23 @@ export default defineBackground(() => {
     }
   }
 
-  // Cross-turn undo phantom retraction (#9 review round 2): a recorder-revert whose event
-  // already left the pending buffer (drained by `recordEdit`, or auto-finalized at turn end)
-  // means the durable record holds an edit for a page change that no longer exists. Retract
-  // the LAST edit consistent with the reverted event (src/changeset/revert-match.ts) through
-  // the SAME applyChangesetOp machinery the Diff-tab curation RPCs drive — persist +
-  // SessionStore mirror + tab-stamped panel push come with it. Unlike the curation RPCs there
-  // is deliberately NO turn-in-flight guard: the revert is page ground truth (the change is
-  // gone), so the retraction is attempted best-effort even mid-turn — a running turn's next
-  // persist can still resurrect its own in-memory copy, and the buffer-side remove stays the
-  // primary mid-turn defense. A miss only warns: the record may have been curated or
-  // nav-cleared since the event drained, which is not an error worth surfacing.
+  // Cross-turn undo phantom retraction (#9 review round 2; op-ified + mid-turn strip in round
+  // 4): a recorder-revert whose event already left the pending buffer (drained by `recordEdit`,
+  // or auto-finalized at turn end) means the durable record holds an edit for a page change that
+  // no longer exists. Retract it through the SAME applyChangesetOp machinery the Diff-tab
+  // curation RPCs drive — ONE load (the round-2 find-index-then-remove double-load was a TOCTOU
+  // window): the op itself finds the LAST edit consistent with the reverted event and strips
+  // ONLY that event's contribution (`stripEventFromEdit`; a fully-stripped edit is removed), so
+  // a partial revert of a merged fold keeps the rest of the edit. Persist + SessionStore mirror
+  // + tab-stamped panel push come with it. Unlike the curation RPCs there is deliberately NO
+  // turn-in-flight guard: the revert is page ground truth (the change is gone), so the
+  // retraction is attempted best-effort even mid-turn. The MID-TURN case additionally strips
+  // the same event from the turn's OWN in-memory store — otherwise its next `persistChangeset`
+  // would write the phantom straight back over the op's retraction. A miss is a silent no-op:
+  // the record may have been curated or nav-cleared since the event drained, which is not an
+  // error worth surfacing.
   async function retractRevertedEdit(tabId: number, event: MutationEvent): Promise<void> {
     const persister = createSessionChangesetPersister(tabId);
-    const state = await persister.load();
-    const index = state ? findLastMatchingEditIndex(state.changeset.edits, event) : -1;
-    if (index === -1) {
-      console.warn(
-        `[recorder-revert] no durable edit matches the reverted ${event.kind} on tab ${tabId}`,
-      );
-      return;
-    }
     const { changeset } = await applyChangesetOp(
       {
         load: persister.load,
@@ -1295,11 +1338,25 @@ export default defineBackground(() => {
             .then(() => undefined)
             .catch(() => undefined),
       },
-      { kind: 'remove', index },
+      { kind: 'retract', event },
     );
     // Stamp the tab so a panel showing ANOTHER tab's record drops the push (same rule as the
     // curation RPCs, #141 review).
     if (changeset) postToPanel({ type: 'changeset', changeset, tabId });
+    // Mid-turn: the running turn's in-memory store predates the op's retraction, and its next
+    // persist would resurrect the phantom. Strip the same event's contribution there too, then
+    // persist so both mirrors agree. Scoped to the turn's OWN tab — a revert from another tab
+    // must never touch this store (selector values can coincide across tabs).
+    if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
+      const index = findLastMatchingEditIndex(turnChangeset.store.current.edits, event);
+      const target = index === -1 ? undefined : turnChangeset.store.current.edits[index];
+      if (target) {
+        const stripped = stripEventFromEdit(target, event);
+        if (stripped === null) turnChangeset.store.removeAt(index);
+        else turnChangeset.store.replaceAt(index, stripped);
+        await turnChangeset.persist();
+      }
+    }
   }
 
   // Content -> SW push (fire-and-forget forwarding to the panel; no response).
@@ -1356,13 +1413,28 @@ export default defineBackground(() => {
     // Stamp BEFORE the reload early-return: this listener is the document-identity authority
     // the turn-start URL guard compares against (all transitionTypes, reload included — a
     // reload re-commits the same document). Same-document navigations (hash, pushState) never
-    // reach here, so a stale stamp can't survive one.
+    // reach here, so a stale stamp can't survive one. The stamp is ALSO mirrored to
+    // chrome.storage.session so the guard survives an SW eviction (#9 review round 4) —
+    // fire-and-forget: the in-memory stamp already serves this worker's lifetime, and a
+    // rejected write only degrades the post-eviction guard to the pre-fix fallback.
     lastCommittedUrl.set(tabId, url);
+    void chrome.storage.session
+      .set({ [committedUrlKey(tabId)]: url })
+      .catch((err) =>
+        console.warn(`[nav-clear] failed to persist the committed URL for tab ${tabId}:`, err),
+      );
     if (details.transitionType === 'reload') return;
     pendingMutations.clear(tabId);
     void sessionsReady
       .then(async () => {
-        await createSessionChangesetPersister(tabId).clear();
+        // Race re-check (#9 review round 4): this wipe is deferred, and a turn that started
+        // after the commit may have ALREADY re-seeded the persister for this NEW URL (its
+        // turn-start URL guard saw the fresh stamp). Clearing now would wipe that live record
+        // and resurrect the race it closed — skip the clear + reseed + push entirely.
+        const persister = createSessionChangesetPersister(tabId);
+        const current = await persister.load();
+        if (current?.changeset.url === url) return;
+        await persister.clear();
         if (!sessions.get(tabId)) return;
         const reseeded = emptyChangeset(url, new Date().toISOString(), crypto.randomUUID());
         await sessions.setChangeset(tabId, reseeded);
@@ -1377,11 +1449,12 @@ export default defineBackground(() => {
 
   // Tab-close cleanup: a closed tab's buffered recorder events can never fold (no turn will
   // drain them again) — drop the buffer so a recycled tab id never inherits stale mutations.
-  // Same for the document-identity stamp: a recycled id must not compare against the dead
-  // tab's committed URL.
+  // Same for the document-identity stamp (both copies): a recycled id must not compare against
+  // the dead tab's committed URL.
   chrome.tabs.onRemoved.addListener((tabId) => {
     pendingMutations.clear(tabId);
     lastCommittedUrl.delete(tabId);
+    void chrome.storage.session.remove(committedUrlKey(tabId)).catch(() => {});
   });
 
   // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the

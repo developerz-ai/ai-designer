@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSessionTools } from '@/agent/tools/session';
 import { applyChangesetOp } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
-import { findLastMatchingEditIndex } from '@/changeset/revert-match';
+import { findLastMatchingEditIndex, stripEventFromEdit } from '@/changeset/revert-match';
 import { ChangesetStore } from '@/changeset/store';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
@@ -75,16 +75,19 @@ const recorderEventOf = (
 
 // Mirror background.ts's user-message changeset wiring 1:1: `bootTurn` is the turn start (the
 // per-tab ChangesetStore rehydrate + the stale-record guard keyed to the last cross-document
-// committed URL, background.ts's user-message case) and builds the session tools with `emit` =
+// committed URL — read from the PERSISTED committedUrl first, then the in-memory stamp, then the
+// live tabUrl, background.ts's user-message case) and builds the session tools with `emit` =
 // postToPanel (captured), `persist` = BOTH mirrors background.ts writes (the undo/redo persister
 // `changeset:<tabId>` + the SessionStore resume snapshot), and `drainRecorderEvents` = the tab's
 // #9 pending-mutations buffer. `contentPush` is the content->SW push listener (recorder-event
 // append / recorder-revert removal + late-revert retraction / relayToPanel); `finalizeTurn` the
 // turn-done auto-finalize with the structural spillover split + the buffer-cap drop suffix on
 // the FIRST finalized edit; `navClear` the webNavigation onCommitted listener with its
-// document-identity stamp + iframe + reload early returns. The harness omits only
-// `emitRecord`'s tabId stamp on edit-recorded (a #141 Diff-view concern, covered by the panel
-// store tests).
+// document-identity stamps (in-memory + persisted) + iframe + reload early returns and the
+// deferred wipe continuation's racing-turn re-check. `endTurn` clears the in-flight-turn flag
+// (background.ts's turn `.finally`); `evict` simulates an SW eviction (in-memory stamps lost,
+// the storage-backed ones survive). The harness omits only `emitRecord`'s tabId stamp on
+// edit-recorded (a #141 Diff-view concern, covered by the panel store tests).
 function makeSw() {
   const toPanel: SwToPanel[] = [];
   const persisted: Changeset[] = [];
@@ -94,6 +97,14 @@ function makeSw() {
   // on every main-frame commit, reloads included; a same-document hash/pushState navigation
   // never fires a commit and so never stales the record).
   const lastCommitted = new Map<number, string>();
+  // background.ts's `committedUrl:<tabId>` chrome.storage.session mirror of the stamp (#9
+  // review round 4): survives the SW eviction the in-memory map doesn't, so the woken
+  // worker's URL guard still compares against the committed URL, not the live tab.url.
+  const persistedCommitted = new Map<number, string>();
+  // background.ts's `turnAbort !== null`: a turn is in flight from bootTurn until endTurn —
+  // the mid-turn half of the retraction strips the turn's OWN store too (its next persist
+  // would otherwise resurrect the phantom over the op's retraction).
+  let turnInFlight = false;
   // The late-revert retraction runs async in background.ts (fire-and-forget off the push
   // listener); the harness tracks the in-flight promise so tests can await the settle.
   let retraction: Promise<void> = Promise.resolve();
@@ -130,11 +141,14 @@ function makeSw() {
   // current URL and drop the redo stack (it only references the old record's edits). Stale is
   // computed against the last CROSS-DOCUMENT committed URL: a same-document navigation (hash,
   // pushState) never fires a commit, leaves DOM + live edits intact, and must not wipe the
-  // record (#9 review round 2); the live tabUrl is only the fallback when no commit was seen.
+  // record (#9 review round 2). The committed URL is read from the PERSISTED storage mirror
+  // FIRST (#9 review round 4 — it survives the SW eviction the in-memory map doesn't), then the
+  // in-memory stamp; the live tabUrl is only the fallback when no commit was ever seen.
   const bootTurn = (tabUrl: string): void => {
     const priorState = persister.load();
     const prior = priorState?.changeset ?? sessionMirror.changeset;
-    const stale = prior.url !== (lastCommitted.get(TAB_ID) ?? tabUrl);
+    const stale =
+      prior.url !== (persistedCommitted.get(TAB_ID) ?? lastCommitted.get(TAB_ID) ?? tabUrl);
     store = new ChangesetStore(
       stale ? emptyChangeset(tabUrl, '2026-07-16T00:00:00Z', BOOT_SESSION_ID) : prior,
       { redoStack: stale ? undefined : priorState?.redoStack },
@@ -146,22 +160,31 @@ function makeSw() {
       emit: (event) => toPanel.push(event),
       drainRecorderEvents: (selectorValue) => pending.drain(TAB_ID, selectorValue),
     });
+    // background.ts sets `turnAbort` + registers the turn's store for the mid-turn retraction.
+    turnInFlight = true;
   };
-  // background.ts's `retractRevertedEdit`: the buffer remove missed (the event was already
-  // drained by recordEdit / auto-finalized), so the phantom lives in the DURABLE record — find
-  // the LAST edit consistent with the reverted event (revert-match.ts) and route a
-  // `{kind:'remove', index}` through the REAL applyChangesetOp machinery the Diff-tab curation
-  // RPCs drive (persist + SessionStore mirror + tab-stamped panel push come with it). A miss
-  // only warns — the record may have been curated or nav-cleared since the event drained.
+  // background.ts's turn `.finally` (and session start/stop): the in-flight turn is over, so a
+  // later retraction takes the op path alone — the between-turns coverage.
+  const endTurn = (): void => {
+    turnInFlight = false;
+  };
+  // SW-eviction simulator: the worker-lifetime in-memory stamps die with the worker; the
+  // chrome.storage.session-backed records (the persister, the persisted committedUrl) survive.
+  const evict = (): void => {
+    lastCommitted.clear();
+    turnInFlight = false;
+  };
+  // background.ts's `retractRevertedEdit` (#9 review round 4): the buffer remove missed (the
+  // event was already drained by recordEdit / auto-finalized), so the phantom lives in the
+  // DURABLE record. Route `{kind:'retract', event}` through the REAL applyChangesetOp machinery
+  // the Diff-tab curation RPCs drive — ONE load (the round-2 find-then-remove double-load was a
+  // TOCTOU window): the op finds the LAST consistent edit and strips ONLY the reverted event's
+  // contribution (a fully-stripped edit is removed); persist + SessionStore mirror +
+  // tab-stamped panel push come with it. When a turn is IN FLIGHT the same strip then applies
+  // to the turn's own in-memory store + persist — its next persist would otherwise resurrect
+  // the phantom over the op's retraction. A miss is a silent no-op (the record may have been
+  // curated or nav-cleared since the event drained).
   const retractRevertedEdit = async (event: MutationEvent): Promise<void> => {
-    const state = persister.load();
-    const index = state ? findLastMatchingEditIndex(state.changeset.edits, event) : -1;
-    if (index === -1) {
-      console.warn(
-        `[recorder-revert] no durable edit matches the reverted ${event.kind} on tab ${TAB_ID}`,
-      );
-      return;
-    }
     const view = await applyChangesetOp(
       {
         load: () => Promise.resolve(persister.load()),
@@ -171,10 +194,20 @@ function makeSw() {
           return Promise.resolve();
         },
       },
-      { kind: 'remove', index },
+      { kind: 'retract', event },
     );
     if (view.changeset)
       toPanel.push({ type: 'changeset', changeset: view.changeset, tabId: TAB_ID });
+    if (turnInFlight) {
+      const index = findLastMatchingEditIndex(store.current.edits, event);
+      const target = index === -1 ? undefined : store.current.edits[index];
+      if (target) {
+        const stripped = stripEventFromEdit(target, event);
+        if (stripped === null) store.removeAt(index);
+        else store.replaceAt(index, stripped);
+        persistChangeset();
+      }
+    }
   };
   // background.ts's content->SW push listener: buffer recorder events per sender tab; a
   // reverted mutation's event leaves the buffer (a successful undo killed the change — it must
@@ -220,22 +253,34 @@ function makeSw() {
     pending.clear(TAB_ID);
   };
   // background.ts's webNavigation onCommitted nav-clear: EVERY main-frame commit stamps the
-  // tab's document identity FIRST (all transitionTypes, reload included — the turn-start URL
-  // guard compares against it); iframe commits return before the stamp; RELOADS return right
-  // after it (a reload is not a navigation away — the record survives); a main-frame cross-URL
-  // commit wipes the buffer + BOTH changeset mirrors, re-seeds the session mirror EMPTY for the
-  // new URL (fresh sessionId — the handoff idempotency key must not carry over), and pushes the
-  // emptied changeset to the panel so an open Diff tab drops the dead page's edits. Thread
-  // survives.
-  const navClear = (details: { frameId: number; transitionType: string; url: string }): void => {
-    if (details.frameId !== 0) return;
+  // tab's document identity FIRST — BOTH the in-memory map and the chrome.storage.session
+  // `committedUrl:<tabId>` mirror (all transitionTypes, reload included — the turn-start URL
+  // guard compares against them); iframe commits return before the stamps; RELOADS return right
+  // after them (a reload is not a navigation away — the record survives). A main-frame
+  // cross-URL commit wipes the buffer, then the DEFERRED continuation (background.ts's
+  // sessionsReady.then + the #9-round-4 race re-check) re-reads the persister BEFORE wiping:
+  // when a racing turn start already re-seeded it for the NEW URL, the clear + reseed + panel
+  // push are SKIPPED; otherwise BOTH mirrors are wiped and the session mirror is re-seeded
+  // EMPTY for the new URL (fresh sessionId — the handoff idempotency key must not carry over).
+  // Thread survives. Returns the continuation promise so tests can await the settle.
+  const navClear = (details: {
+    frameId: number;
+    transitionType: string;
+    url: string;
+  }): Promise<void> => {
+    if (details.frameId !== 0) return Promise.resolve();
     lastCommitted.set(TAB_ID, details.url);
-    if (details.transitionType === 'reload') return;
+    persistedCommitted.set(TAB_ID, details.url);
+    if (details.transitionType === 'reload') return Promise.resolve();
     pending.clear(TAB_ID);
-    persister.clear();
-    const reseeded = emptyChangeset(details.url, '2026-07-15T00:00:00Z', NAV_SESSION_ID);
-    sessionMirror.changeset = reseeded;
-    toPanel.push({ type: 'changeset', changeset: reseeded, tabId: TAB_ID });
+    return Promise.resolve().then(() => {
+      const current = persister.load();
+      if (current?.changeset.url === details.url) return; // a racing turn re-seeded — skip
+      persister.clear();
+      const reseeded = emptyChangeset(details.url, '2026-07-15T00:00:00Z', NAV_SESSION_ID);
+      sessionMirror.changeset = reseeded;
+      toPanel.push({ type: 'changeset', changeset: reseeded, tabId: TAB_ID });
+    });
   };
   bootTurn(URL);
   return {
@@ -252,8 +297,11 @@ function makeSw() {
     persisted,
     pending,
     persister,
+    persistedCommitted,
     sessionMirror,
     bootTurn,
+    endTurn,
+    evict,
     contentPush,
     finalizeTurn,
     navClear,
@@ -509,6 +557,13 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     };
     const res = await runTool(sw.tools.recordEdit.execute, edit);
     expect(res.ok).toBe(true);
+    // The rescue is SURFACED on the tool result (#9 review round 4): `rescued: true` +
+    // `healedSelector` carrying the ground-truth selector the fold adopted, so the model can
+    // drop its paraphrase for subsequent calls.
+    expect(data<{ rescued: boolean; healedSelector?: string }>(res)).toMatchObject({
+      rescued: true,
+      healedSelector: '#cta',
+    });
 
     expect(sw.store.current.edits).toHaveLength(1);
     const recorded = sw.store.current.edits[0];
@@ -547,7 +602,11 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     };
     const res = await runTool(sw.tools.recordEdit.execute, edit);
     expect(res.ok).toBe(true);
-    expect(data<{ edits: number; spillover: number }>(res)).toEqual({ edits: 1, spillover: 0 });
+    expect(data<{ edits: number; spillover: number; rescued: boolean }>(res)).toEqual({
+      edits: 1,
+      spillover: 0,
+      rescued: false, // the implausible miss drained nothing — no rescue, no healed selector
+    });
 
     expect(sw.store.current.edits[0]).toEqual(edit);
     expect(sw.pending.peekGroups(TAB_ID)).toHaveLength(1);
@@ -785,14 +844,14 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
 
     // background.ts:1288 — a RELOAD is an early return: same URL, so the recorded changeset and
     // the recorder buffer survive (docs/architecture/changeset.md).
-    sw.navClear({ frameId: 0, transitionType: 'reload', url: URL });
+    await sw.navClear({ frameId: 0, transitionType: 'reload', url: URL });
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
     expect(sw.pending.peekGroups(TAB_ID)).toHaveLength(1);
     expect(sw.toPanel).toHaveLength(pushesBefore); // nothing pushed
 
     // Iframe commits (frameId !== 0) never clear the tab's record either.
-    sw.navClear({ frameId: 2, transitionType: 'link', url: 'http://localhost:3000/embed' });
+    await sw.navClear({ frameId: 2, transitionType: 'link', url: 'http://localhost:3000/embed' });
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
     expect(sw.pending.peekGroups(TAB_ID)).toHaveLength(1);
@@ -817,7 +876,9 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
 
-    sw.navClear({ frameId: 0, transitionType: 'link', url: 'http://localhost:3000/other' });
+    // The wipe continuation is deferred in background.ts (sessionsReady.then + the round-4
+    // race re-check) — navClear returns its promise so the test can await the settle.
+    await sw.navClear({ frameId: 0, transitionType: 'link', url: 'http://localhost:3000/other' });
 
     // BOTH mirrors wiped (turn start falls back to the session mirror when the persister is
     // empty — re-seeding it EMPTY for the new URL is what stops the old edits resurrecting).
@@ -883,5 +944,279 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     // The wipe is persisted immediately, so neither mirror can resurrect the old page's edits.
     expect(sw.persisted.at(-1)?.edits).toEqual([]);
     expect(sw.persisted.at(-1)?.url).toBe('http://localhost:3000/other');
+  });
+});
+
+describe('#9 review round 4: retract op / in-turn store / nav-clear race / eviction-safe URL guard', () => {
+  it('a drained-then-reverted edit is retracted from the durable record (persister + mirror + panel push)', async () => {
+    const { emitted, exec } = driveMutation('<button id="cta">Buy</button>');
+    const sw = makeSw();
+    const applied = exec({ type: 'setStyle', selector: '#cta', props: { color: 'rgb(1, 2, 3)' } });
+    expect(applied.ok).toBe(true);
+    const mutation = emitted[0];
+    if (mutation?.type !== 'recorder-event') throw new Error('expected a recorder-event');
+    sw.contentPush(mutation);
+
+    // recordEdit drains the buffered event into the durable edit — the event leaves the buffer.
+    const edit: Edit = {
+      intent: 'Make the primary CTA colorful',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit);
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+
+    // BETWEEN turns (no in-flight turn): the op path alone must cover the retraction.
+    sw.endTurn();
+    // The user undoes the change: the revert's buffer remove MISSES (the event was drained),
+    // so the phantom lives only in the durable record.
+    const undone = exec({ type: 'undo' });
+    expect(undone.ok).toBe(true);
+    const revert = emitted[1];
+    if (revert?.type !== 'recorder-revert') throw new Error('expected a recorder-revert');
+    sw.contentPush(revert);
+    await sw.retraction;
+
+    // The retract op stripped the edit's only family to empty ⇒ the edit is REMOVED from both
+    // mirrors, and the tab-stamped push carries the emptied record to the panel.
+    expect(sw.persister.load()?.changeset.edits).toEqual([]);
+    expect(sw.sessionMirror.changeset.edits).toEqual([]);
+    expect(sw.toPanel.at(-1)).toEqual({
+      type: 'changeset',
+      changeset: sw.sessionMirror.changeset,
+      tabId: TAB_ID,
+    });
+    const folded = sw.toPanel.reduce<Changeset | null>((acc, m) => reduceChangeset(acc, m), null);
+    expect(folded?.edits).toEqual([]);
+  });
+
+  it('mid-turn revert strips the turn’s in-memory store, so the next recordEdit can’t resurrect it', async () => {
+    const { emitted, exec } = driveMutation('<button id="cta">Buy</button><nav id="nav">n</nav>');
+    const sw = makeSw(); // a turn is in flight (bootTurn)
+    expect(exec({ type: 'setStyle', selector: '#cta', props: { color: 'rgb(1, 2, 3)' } }).ok).toBe(
+      true,
+    );
+    const e1 = emitted[0];
+    if (e1?.type !== 'recorder-event') throw new Error('expected a recorder-event');
+    sw.contentPush(e1);
+    const edit1: Edit = {
+      intent: 'Color the CTA',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit1);
+    expect(sw.store.current.edits).toHaveLength(1);
+
+    // Mid-turn revert of the CTA change: the buffer remove misses (drained above), so BOTH the
+    // durable record and the turn's live store hold the phantom.
+    const undone = exec({ type: 'undo' });
+    expect(undone.ok).toBe(true);
+    const revert = emitted[1];
+    if (revert?.type !== 'recorder-revert') throw new Error('expected a recorder-revert');
+    sw.contentPush(revert);
+    await sw.retraction;
+    // The op retracted the durable record AND the in-turn strip caught the live store.
+    expect(sw.persister.load()?.changeset.edits).toEqual([]);
+    expect(sw.store.current.edits).toEqual([]);
+
+    // The turn records another edit: its persist must NOT resurrect the retracted one — the
+    // pre-round-4 failure mode (the turn's store still held the phantom and persisted it back).
+    expect(exec({ type: 'setStyle', selector: '#nav', props: { color: 'rgb(4, 5, 6)' } }).ok).toBe(
+      true,
+    );
+    const e2 = emitted[2];
+    if (e2?.type !== 'recorder-event') throw new Error('expected a recorder-event');
+    sw.contentPush(e2);
+    const edit2: Edit = {
+      intent: 'Color the nav',
+      selector: { value: '#nav', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit2);
+    expect(sw.persisted.at(-1)?.edits).toHaveLength(1);
+    expect(sw.persisted.at(-1)?.edits[0]?.selector.value).toBe('#nav');
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+    expect(sw.sessionMirror.changeset.edits[0]?.selector.value).toBe('#nav');
+  });
+
+  it('partial revert of a merged fold keeps the edit with the prop restored to the first value', async () => {
+    const { emitted, exec } = driveMutation('<button id="cta">Buy</button>');
+    const sw = makeSw();
+    // Two stacked setStyles on ONE prop fold into ONE edit (first before -> last after).
+    expect(
+      exec({ type: 'setStyle', selector: '#cta', props: { color: 'rgb(200, 0, 0)' } }).ok,
+    ).toBe(true);
+    expect(
+      exec({ type: 'setStyle', selector: '#cta', props: { color: 'rgb(0, 0, 200)' } }).ok,
+    ).toBe(true);
+    const [red, blue] = emitted;
+    if (red?.type !== 'recorder-event' || blue?.type !== 'recorder-event')
+      throw new Error('expected recorder-events');
+    sw.contentPush(red);
+    sw.contentPush(blue);
+    const edit: Edit = {
+      intent: 'Recolor the CTA',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit);
+    expect(sw.store.current.edits).toHaveLength(1);
+    expect(sw.store.current.edits[0]?.changes[0]?.after).toBe(blue.event.styleChanges?.[0]?.after);
+
+    // Revert ONLY the second mutation (undo unwinds LIFO — the blue one): the edit SURVIVES —
+    // the red change is still live on the page — with the prop's `after` restored to the red
+    // readback and `before` untouched.
+    const undone = exec({ type: 'undo' });
+    expect(undone.ok).toBe(true);
+    const revert = emitted[2];
+    if (revert?.type !== 'recorder-revert') throw new Error('expected a recorder-revert');
+    expect(revert.event).toEqual(blue.event);
+    sw.contentPush(revert);
+    await sw.retraction;
+
+    const surviving = sw.persister.load()?.changeset.edits;
+    expect(surviving).toHaveLength(1);
+    expect(surviving?.[0]?.changes).toEqual([
+      {
+        prop: 'color',
+        before: red.event.styleChanges?.[0]?.before,
+        after: red.event.styleChanges?.[0]?.after,
+      },
+    ]);
+    // The in-turn store + the session mirror agree with the persister.
+    expect(sw.store.current.edits[0]?.changes[0]?.after).toBe(red.event.styleChanges?.[0]?.after);
+    expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
+  });
+
+  it("reverting a folded setAttr('class') strips the classes family but keeps the others", async () => {
+    const sw = makeSw();
+    // One edit folds a color change AND a whole-class-list rewrite (setAttr('class') feeds the
+    // classes family — the fold's window set-diff — never the attrs family).
+    sw.contentPush({
+      type: 'recorder-event',
+      event: recorderEventOf('setStyle', '#cta', {
+        styleChanges: [{ prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(9, 9, 9)' }],
+        ts: 1,
+      }),
+    });
+    sw.contentPush({
+      type: 'recorder-event',
+      event: recorderEventOf('setAttr', '#cta', {
+        attrChange: { name: 'class', before: null, after: 'btn-primary wide' },
+        ts: 2,
+      }),
+    });
+    const edit: Edit = {
+      intent: 'Brand + recolor the CTA',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit);
+    const foldedEdit = sw.store.current.edits[0];
+    expect(foldedEdit?.changes).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(9, 9, 9)' },
+    ]);
+    expect(foldedEdit?.classes).toEqual([
+      { name: 'btn-primary', op: 'add' },
+      { name: 'wide', op: 'add' },
+    ]);
+    expect(foldedEdit?.attrs).toEqual([]);
+
+    // Revert the setAttr('class') (the recorder-revert carries the original event): its
+    // contribution — the classes it wrote — leaves the edit; the color family stays.
+    sw.contentPush({
+      type: 'recorder-revert',
+      event: recorderEventOf('setAttr', '#cta', {
+        attrChange: { name: 'class', before: null, after: 'btn-primary wide' },
+        ts: 2,
+      }),
+    });
+    await sw.retraction;
+
+    const surviving = sw.persister.load()?.changeset.edits;
+    expect(surviving).toHaveLength(1);
+    expect(surviving?.[0]?.classes).toEqual([]);
+    expect(surviving?.[0]?.changes).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(9, 9, 9)' },
+    ]);
+    expect(sw.store.current.edits[0]?.classes).toEqual([]);
+  });
+
+  it('nav-clear race: the deferred wipe no-ops when a racing turn already re-seeded the persister', async () => {
+    const sw = makeSw();
+    const edit: Edit = {
+      intent: 'Make the primary CTA blue',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit);
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+
+    // The commit stamps the new URL synchronously; the wipe continuation is DEFERRED
+    // (background.ts's sessionsReady.then). A turn starts inside the deferral window: its URL
+    // guard sees the fresh stamp and re-seeds BOTH mirrors EMPTY for the new URL.
+    const continuation = sw.navClear({
+      frameId: 0,
+      transitionType: 'link',
+      url: 'http://localhost:3000/new',
+    });
+    sw.bootTurn('http://localhost:3000/new');
+    expect(sw.persister.load()?.changeset.url).toBe('http://localhost:3000/new');
+    const pushesBefore = sw.toPanel.length;
+    await continuation;
+
+    // The continuation's re-check saw the persister already carrying the new URL and skipped
+    // the clear + reseed + push: the racing turn's record (its sessionId included) survives.
+    expect(sw.persister.load()?.changeset.url).toBe('http://localhost:3000/new');
+    expect(sw.persister.load()?.changeset.sessionId).toBe(BOOT_SESSION_ID);
+    expect(sw.sessionMirror.changeset.sessionId).toBe(BOOT_SESSION_ID);
+    expect(sw.toPanel).toHaveLength(pushesBefore); // no stale wipe push
+  });
+
+  it('the persisted committedUrl anchors the URL guard across an SW eviction (same-document tab.url change keeps the record)', async () => {
+    const sw = makeSw();
+    const edit: Edit = {
+      intent: 'Make the primary CTA blue',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    await runTool(sw.tools.recordEdit.execute, edit);
+    expect(sw.store.current.edits).toHaveLength(1);
+
+    // The committed main-frame URL was persisted to chrome.storage.session by the onCommitted
+    // listener (seeded here — the fake stands in for the storage write), then the SW was
+    // evicted: its in-memory stamps are gone, the storage-backed ones survive.
+    sw.persistedCommitted.set(TAB_ID, URL);
+    sw.evict();
+
+    // A same-document navigation (hash change / pushState) fires NO commit: the live tab.url
+    // gains a hash but the document — and the durable record — must survive. Pre-round-4 the
+    // woken SW fell back to the live tab.url and false-wiped the record on the mismatch.
+    sw.bootTurn(`${URL}#pricing`);
+    expect(sw.store.current.edits).toHaveLength(1);
+    expect(sw.store.current.url).toBe(URL);
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+    expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
   });
 });

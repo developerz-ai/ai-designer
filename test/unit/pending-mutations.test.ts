@@ -10,12 +10,13 @@ import type { MutationEvent, MutationKind } from '@/shared/messages';
 // buffer) / drain's dropped-snapshot-and-reset / per-tab cap with droppedCount / remove
 // (recorder-revert: LIFO ts+selector+kind) / peekGroups / clear. Fold: first-before/last-after per
 // family, class WINDOW SET-DIFF (first class-relevant before-classAttr vs last after-classAttr —
-// immune to setAttr('class') interleaves and page churn), setAttr('class') feeds classes and is
-// SKIPPED in attrs, selector healed to the first event's (ground truth), structural first-folds +
-// additional ops SPILL OVER into their own auto-recorded edits (carrying the model edit's
-// breakpoint), frameworkHints union, ground-truth-wins per family (incl. merged-empty replacing
-// the model's stale delta), and back-compat with pre-#9 events that carry none of the optional
-// mechanical fields.
+// loss-immune to setAttr('class') interleaves and page churn, then ATTRIBUTION-FILTERED so
+// page-churned names no typed delta names drop out, #9 round 4), setAttr('class') feeds classes
+// and is SKIPPED in attrs, selector healed to the first event's (ground truth), structural
+// first-folds + additional ops SPILL OVER into their own auto-recorded edits (carrying the model
+// edit's breakpoint), frameworkHints union, ground-truth-wins per family (incl. merged-empty
+// replacing the model's stale delta), and back-compat with pre-#9 events that carry none of the
+// optional mechanical fields.
 
 const TAB = 7;
 
@@ -539,6 +540,117 @@ describe('foldMutationEvents: per-family merges', () => {
     const { folded } = foldMutationEvents(edit, events);
 
     expect(folded.frameworkHints).toEqual(['tailwind', 'css-module', 'styled', 'emotion']);
+  });
+});
+
+describe('foldMutationEvents: class window attribution intersect (#9 round 4)', () => {
+  // The window diff is loss-immune but not attribution-aware on its own: page JS churning the
+  // class list between tool calls shows up in the window with no tool call behind it. The net is
+  // intersected with the events' typed class names — classChange.name, plus a setAttr('class')
+  // event's full before/after token lists — so only agent-driven names survive.
+  it('drops a page-churned ADD that no typed delta names', () => {
+    const edit = anEdit();
+    const events = [
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+      ev('addClass', '#cta', {
+        before: 'x tracking', // page JS added 'tracking' between the two tool calls
+        after: 'x tracking y',
+        classChange: { name: 'y', op: 'add' },
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    // Window '' → 'x tracking y' diffs to x + tracking + y; 'tracking' is in no typed delta.
+    expect(folded.classes).toEqual([
+      { name: 'x', op: 'add' },
+      { name: 'y', op: 'add' },
+    ]);
+  });
+
+  it('drops a page-churned REMOVE (an existing class vanishing mid-window) too', () => {
+    const edit = anEdit();
+    const events = [
+      ev('addClass', '#cta', {
+        before: 'legacy',
+        after: 'legacy x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+      ev('addClass', '#cta', {
+        before: 'x', // page JS dropped 'legacy' between the calls
+        after: 'x y',
+        classChange: { name: 'y', op: 'add' },
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    // Window 'legacy' → 'x y' diffs to adds x/y + remove legacy; the agent never drove legacy.
+    expect(folded.classes).toEqual([
+      { name: 'x', op: 'add' },
+      { name: 'y', op: 'add' },
+    ]);
+  });
+
+  it('a setAttr(class) rewrite’s full old/new token lists ARE agent-attributed (they survive)', () => {
+    const edit = anEdit();
+    const events = [
+      ev('setAttr', '#cta', { attrChange: { name: 'class', before: 'a', after: 'b' } }),
+      ev('addClass', '#cta', {
+        before: 'b tracking', // churn after the rewrite stays unattributed
+        after: 'b tracking x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    // Window 'a' → 'b tracking x': adds b/tracking/x, remove a. The rewrite's own tokens
+    // (a, b) survive the intersect; 'tracking' does not.
+    expect(folded.classes).toEqual([
+      { name: 'b', op: 'add' },
+      { name: 'x', op: 'add' },
+      { name: 'a', op: 'remove' },
+    ]);
+  });
+
+  it('a MIXED group (typed + raw events) still intersects — the raw event is not class-relevant', () => {
+    const edit = anEdit();
+    const events = [
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+      // A raw (pre-#9-shaped) event whose opaque strings carry page churn: not class-relevant,
+      // so it feeds neither the window nor the name union.
+      ev('addClass', '#cta', { before: 'x tracking', after: 'x tracking y' }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    // 'x' is typed and survives; 'tracking' and 'y' (only in the raw event's strings) never
+    // enter the fold.
+    expect(folded.classes).toEqual([{ name: 'x', op: 'add' }]);
+  });
+
+  it('raw pre-#9 class events (no classChange anywhere) are unaffected — the model’s classes stand', () => {
+    // Back-compat: class-relevance has always required typed data (a classChange, or an
+    // attrChange.name === 'class'), so a raw pre-#9 class op never fed the window — and
+    // round 4's intersect can't reach it either. The family is untouched.
+    const edit = anEdit({ classes: [{ name: 'model-class', op: 'add' }] });
+    const events = [
+      ev('addClass', '#cta', { before: '', after: 'x' }),
+      ev('addClass', '#cta', { before: 'x tracking', after: 'x tracking y' }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    expect(folded.classes).toEqual([{ name: 'model-class', op: 'add' }]);
   });
 });
 
