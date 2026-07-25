@@ -8,6 +8,12 @@
 // auto-finalizes whatever is left into explicit "Auto-recorded" edits, and a page
 // navigation wipes the tab's buffer (the live edits died with the old document).
 //
+// The buffer is IN-MEMORY ONLY: an SW eviction mid-turn loses the pending ground truth (the
+// durable changeset survives in chrome.storage.session — this buffer does not). A resumed
+// turn's `recordEdit` then drains nothing and falls back to the model-supplied values — the
+// pre-#9 behavior — until new mutations arrive and re-seed the buffer. The fold is an
+// accuracy upgrade, never a correctness gate, so the loss degrades gracefully.
+//
 // Pure by construction: no `chrome.*`, no clock (arrival order is mutation order — the bus
 // delivers a tab's events in the order the mutations ran). Instantiated once in
 // background.ts; unit-tested directly.
@@ -29,18 +35,32 @@ export interface PendingGroup {
 }
 
 export interface PendingMutations {
-  /** Buffer one event for a tab. Past the per-tab cap the oldest events are dropped. */
+  /** Buffer one event for a tab. Past the per-tab cap the oldest events are dropped (counted —
+   *  see {@link PendingMutations.droppedCount}). */
   append(tabId: number, event: MutationEvent): void;
   /** Remove and return the buffered events matching `selectorValue` (exact match on
    *  `event.selector.value`). When `selectorValue` is omitted AND the buffer holds exactly
    *  one distinct selector value, drains them all; with several distinct values it drains
-   *  nothing (ambiguous — the caller must name its selector). */
+   *  nothing (ambiguous — the caller must name its selector). The same single-group rule
+   *  rescues an EXPLICIT selector that matched nothing: a model paraphrase of the one
+   *  buffered selector is still unambiguous, so it drains the group rather than splitting
+   *  one visual change into a model Edit + an "Auto-recorded" duplicate. */
   drain(tabId: number, selectorValue?: string): MutationEvent[];
-  /** Forget everything buffered for a tab (turn finalized / page navigated). */
+  /** Remove ONE buffered event — the SW's answer to a `recorder-revert` (the content script
+   *  undid a mutation, so its event must never fold into the durable changeset). Matches by
+   *  `ts` equality first; falls back to the LAST buffered event with the same
+   *  `selector.value` + `kind` (a re-generated clock could collide timestamps). Returns
+   *  whether it removed one. */
+  remove(tabId: number, event: MutationEvent): boolean;
+  /** Forget everything buffered for a tab (turn finalized / page navigated / tab closed) —
+   *  including its drop counter. */
   clear(tabId: number): void;
   /** The remaining buffer grouped by selector value, in first-seen order — the turn-end
    *  auto-finalize iterates this without consuming (drain/clear do the consuming). */
   peekGroups(tabId: number): PendingGroup[];
+  /** How many of the tab's events were dropped at the cap since the last `clear` (0 when
+   *  none) — the turn-end auto-finalize surfaces the loss in the edit intent. */
+  droppedCount(tabId: number): number;
 }
 
 export interface PendingMutationsOptions {
@@ -55,21 +75,27 @@ const DEFAULT_CAP = 200;
 export function createPendingMutations(options: PendingMutationsOptions = {}): PendingMutations {
   const cap = options.cap ?? DEFAULT_CAP;
   const buffers = new Map<number, MutationEvent[]>();
+  // Per-tab count of events dropped at the cap — the auto-finalize intent surfaces the loss.
+  const dropped = new Map<number, number>();
 
   return {
     append(tabId, event) {
       const buf = buffers.get(tabId) ?? [];
       buf.push(event);
-      if (buf.length > cap) buf.splice(0, buf.length - cap);
+      if (buf.length > cap) {
+        const excess = buf.length - cap;
+        buf.splice(0, excess);
+        dropped.set(tabId, (dropped.get(tabId) ?? 0) + excess);
+      }
       buffers.set(tabId, buf);
     },
 
     drain(tabId, selectorValue) {
       const buf = buffers.get(tabId);
       if (!buf || buf.length === 0) return [];
+      const distinct = new Set(buf.map((e) => e.selector.value));
       let target = selectorValue;
       if (target === undefined) {
-        const distinct = new Set(buf.map((e) => e.selector.value));
         if (distinct.size !== 1) return [];
         // Exactly one distinct selector value — the group is unambiguous.
         target = [...distinct][0];
@@ -79,13 +105,48 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
       for (const event of buf) {
         (event.selector.value === target ? matched : rest).push(event);
       }
+      if (matched.length === 0) {
+        // The named selector matched nothing. Same single-group rule as the no-selector
+        // path: when the buffer holds exactly one distinct selector value, that group is
+        // unambiguously what the caller means — drain it all rather than leave it for the
+        // auto-finalize to duplicate.
+        if (distinct.size !== 1) return [];
+        buffers.delete(tabId);
+        return [...buf];
+      }
       if (rest.length === 0) buffers.delete(tabId);
       else buffers.set(tabId, rest);
       return matched;
     },
 
+    remove(tabId, event) {
+      const buf = buffers.get(tabId);
+      if (!buf || buf.length === 0) return false;
+      let index = buf.findIndex((e) => e.ts === event.ts);
+      if (index === -1) {
+        // Fallback: the LAST buffered event with the same selector value + kind (the revert
+        // unwinds LIFO, so the newest matching entry is the one that died).
+        for (let i = buf.length - 1; i >= 0; i--) {
+          const candidate = buf[i];
+          if (
+            candidate &&
+            candidate.selector.value === event.selector.value &&
+            candidate.kind === event.kind
+          ) {
+            index = i;
+            break;
+          }
+        }
+      }
+      if (index === -1) return false;
+      buf.splice(index, 1);
+      if (buf.length === 0) buffers.delete(tabId);
+      return true;
+    },
+
     clear(tabId) {
       buffers.delete(tabId);
+      dropped.delete(tabId);
     },
 
     peekGroups(tabId) {
@@ -106,6 +167,10 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
       }
       return groups;
     },
+
+    droppedCount(tabId) {
+      return dropped.get(tabId) ?? 0;
+    },
   };
 }
 
@@ -117,28 +182,56 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
  * (back-compat with a pre-#9 producer, whose events have none of the optional fields).
  * `frameworkHints` is the exception: a union of the model's + the events', deduped (hints are
  * markers, not deltas — more sources only help source-mapping).
+ *
+ * STRUCTURAL SPILLOVER: one Edit carries ONE structural op, but a selector group can hold
+ * several (insert two children, move-then-remove). The FIRST structural event folds into
+ * `folded`; every ADDITIONAL one becomes its own auto-recorded Edit in `spillover` (never
+ * silently dropped — a dropped op would ship a changeset that can't reconstruct the page).
+ * Groups are keyed by selector, so the caller canNOT pre-split these; the split must happen
+ * here. Spillover edits carry only the structural delta + the group's hint union.
  */
-export function foldMutationEvents(edit: Edit, events: readonly MutationEvent[]): Edit {
-  if (events.length === 0) return edit;
+export function foldMutationEvents(
+  edit: Edit,
+  events: readonly MutationEvent[],
+): { folded: Edit; spillover: Edit[] } {
+  if (events.length === 0) return { folded: edit, spillover: [] };
 
   const changes = mergeStyleChanges(events);
   const attrs = mergeAttrChanges(events);
   const classes = mergeClassChanges(events);
-  // The first drained structural event wins; extras are dropped — one durable structural op per
-  // edit. A second insertNode/moveNode on the same selector belongs to its own Edit (the model
-  // can recordEdit twice, or the turn-end auto-finalize groups it separately).
-  const structuralEvent = events.find((e) => e.structural !== undefined);
+  const structuralEvents = events.filter((e) => e.structural !== undefined);
   const text = mergeTextChanges(events);
 
-  return {
+  const folded: Edit = {
     ...edit,
     changes: changes ? changes.merged : edit.changes,
     attrs: attrs ? attrs.merged : edit.attrs,
     classes: classes ? classes.merged : edit.classes,
-    structural: structuralEvent?.structural ?? edit.structural,
+    structural: structuralEvents[0]?.structural ?? edit.structural,
     text: text ?? edit.text,
     frameworkHints: mergeFrameworkHints(edit.frameworkHints, events),
   };
+
+  // One auto-recorded Edit per ADDITIONAL structural event, in arrival order. Selector =
+  // the group's own (the first event's full selector, same rule peekGroups uses); hints =
+  // the union of the group's (not the model's — this edit is page-grounded only).
+  const groupSelector = events[0]?.selector ?? edit.selector;
+  const groupHints = mergeFrameworkHints([], events);
+  const spillover: Edit[] = [];
+  for (const event of structuralEvents.slice(1)) {
+    if (!event.structural) continue;
+    spillover.push({
+      intent: 'Auto-recorded structural edit (additional op on same selector)',
+      selector: groupSelector,
+      changes: [],
+      attrs: [],
+      classes: [],
+      structural: event.structural,
+      frameworkHints: groupHints,
+    });
+  }
+
+  return { folded, spillover };
 }
 
 // --- per-family merges -----------------------------------------------------
@@ -191,27 +284,28 @@ function mergeAttrChanges(events: readonly MutationEvent[]): { merged: AttrChang
   return { merged };
 }
 
-/** `classes`: per name, opposite ops cancel (add+remove in EITHER order drops both); a name
- *  whose events all agree keeps the single op (repeats dedupe). */
+/** `classes`: PARITY per name. The producer emits a delta ONLY when the op actually changed
+ *  the class list (src/dom/mutate.ts — a no-op addClass of an already-present class emits
+ *  nothing), so the real deltas for a name strictly alternate ops. The net is then the count's
+ *  parity: ODD keeps the FIRST op, EVEN drops the name entirely (the toggles canceled out). */
 function mergeClassChanges(
   events: readonly MutationEvent[],
 ): { merged: ClassChange[] } | undefined {
   let saw = false;
-  // 'conflict' = the name saw both ops at some point — cancels regardless of what follows.
-  const byName = new Map<string, ClassChange['op'] | 'conflict'>();
+  const byName = new Map<string, { first: ClassChange['op']; count: number }>();
   for (const event of events) {
     const cc = event.classChange;
     if (!cc) continue;
     saw = true;
-    const prior = byName.get(cc.name);
-    if (prior === undefined) byName.set(cc.name, cc.op);
-    else if (prior !== cc.op) byName.set(cc.name, 'conflict');
+    const entry = byName.get(cc.name);
+    if (entry) entry.count += 1;
+    else byName.set(cc.name, { first: cc.op, count: 1 });
   }
   if (!saw) return undefined;
   const merged: ClassChange[] = [];
-  for (const [name, op] of byName) {
-    if (op === 'conflict') continue;
-    merged.push({ name, op });
+  for (const [name, { first, count }] of byName) {
+    if (count % 2 === 0) continue;
+    merged.push({ name, op: first });
   }
   return { merged };
 }

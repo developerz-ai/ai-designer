@@ -1177,6 +1177,12 @@ export const ContentToSw = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multi-select-changed'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
+  // The recorder's `undo()` succeeded: the page mutation was REVERTED, so its buffered event
+  // must leave the SW's pending-mutations buffer (else the revert would still fold into the
+  // durable changeset — a phantom edit). Emitted ONLY on a successful revert: a failed undo
+  // re-pushes its entry (the change is still live), and `drop()` deliberately keeps the
+  // change live too, so neither emits this. Consumed SW-side only (relay.ts forwards null).
+  z.object({ type: z.literal('recorder-revert'), event: MutationEvent }),
   // The debug engine's real-time half (slice 06, complements the `diagnostics` DomTool pull
   // above): the content collector (src/dom/diagnostics-collector.ts) pushes each runtime/network
   // signal as it's captured, so a debug-mode turn can observe as the user drives the page instead

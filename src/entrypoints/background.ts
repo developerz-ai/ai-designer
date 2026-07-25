@@ -602,11 +602,20 @@ export default defineBackground(() => {
         // report reads see the edit immediately, without waiting for the turn to finish).
         const changesetPersister = createSessionChangesetPersister(tabId);
         const priorChangesetState = await changesetPersister.load();
+        // Turn-start URL guard (#9 review): the persister record (and the session mirror it
+        // falls back to) can hold a changeset for a URL the tab has since left — the nav-clear
+        // wipe is async and a between-turns navigation can race it. Edits recorded against
+        // another page must never fold into this turn's record, so on mismatch BOTH mirrors
+        // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
+        // references the old record's edits). This closes the BETWEEN-turns race only; a
+        // mid-turn in-flight rebase is tracked in issue #148.
+        const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
+        const staleRecord = priorChangeset.url !== tab.url;
         const changesetStore = new ChangesetStore(
-          priorChangesetState?.changeset ?? session.changeset,
-          {
-            redoStack: priorChangesetState?.redoStack,
-          },
+          staleRecord
+            ? emptyChangeset(tab.url, new Date().toISOString(), crypto.randomUUID())
+            : priorChangeset,
+          { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
         );
         // Named (not inline) so the turn-done auto-finalize below records + persists + streams
         // leftover recorder groups through the exact same path as a model-called `recordEdit`.
@@ -614,6 +623,10 @@ export default defineBackground(() => {
           await changesetPersister.save(changesetStore.snapshot());
           await sessions.setChangeset(tabId, changesetStore.current);
         };
+        // A stale (cross-URL) record was re-seeded above: write the empty changeset to BOTH
+        // mirrors now, so neither the persister nor the session mirror can resurrect the old
+        // page's edits on a later load.
+        if (staleRecord) await persistChangeset();
         // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
         // them instead of folding phantom rows (the turn keeps running when the user switches
         // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
@@ -822,11 +835,18 @@ export default defineBackground(() => {
             // #9 auto-finalize: mutation groups the model never recorded (no `recordEdit` call
             // drained them) still land in the durable changeset — one "Auto-recorded" Edit per
             // remaining selector group, folded from the real events, recorded + persisted +
-            // streamed exactly like a model-recorded edit. Then the tab's buffer is wiped. Runs
-            // only on the still-current turn (the guard above): a superseded turn's leftovers
-            // stay buffered for the turn that replaced it (or the nav-clear below wipes them).
+            // streamed exactly like a model-recorded edit. A group holding several structural
+            // ops splits: the first stays in the folded edit, each additional op becomes its own
+            // auto-recorded spillover Edit. Events dropped at the buffer cap are surfaced as an
+            // intent suffix so a shipped changeset never silently omits mutations. Then the
+            // tab's buffer is wiped. Runs only on the still-current turn (the guard above): a
+            // superseded turn's leftovers stay buffered for the turn that replaced it (or the
+            // nav-clear below wipes them).
+            const droppedAtCap = pendingMutations.droppedCount(tabId);
+            const capNote =
+              droppedAtCap > 0 ? ` (+${droppedAtCap} earlier events dropped at buffer cap)` : '';
             for (const group of pendingMutations.peekGroups(tabId)) {
-              const edit = foldMutationEvents(
+              const { folded, spillover } = foldMutationEvents(
                 {
                   intent: 'Auto-recorded agent edit (no recordEdit call)',
                   selector: group.selector,
@@ -837,9 +857,12 @@ export default defineBackground(() => {
                 },
                 group.events,
               );
-              changesetStore.record(edit);
-              await persistChangeset();
-              emitRecord({ type: 'edit-recorded', edit });
+              for (const edit of [folded, ...spillover]) {
+                const tagged = capNote ? { ...edit, intent: `${edit.intent}${capNote}` } : edit;
+                changesetStore.record(tagged);
+                await persistChangeset();
+                emitRecord({ type: 'edit-recorded', edit: tagged });
+              }
             }
             pendingMutations.clear(tabId);
           })
@@ -1234,6 +1257,15 @@ export default defineBackground(() => {
       if (senderTabId !== undefined) pendingMutations.append(senderTabId, parsed.data.event);
     }
 
+    // #9 undo phantom: the content recorder REVERTED a mutation (successful `undo()`) — its
+    // buffered event must leave the pending buffer, else the turn-end auto-finalize (or a
+    // later recordEdit) would fold a change that no longer exists on the page into the
+    // durable changeset.
+    if (parsed.data.type === 'recorder-revert') {
+      const senderTabId = sender.tab?.id;
+      if (senderTabId !== undefined) pendingMutations.remove(senderTabId, parsed.data.event);
+    }
+
     // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
     // coverage-excluded). null = the event carries nothing to forward.
     const out = relayToPanel(parsed.data);
@@ -1248,21 +1280,33 @@ export default defineBackground(() => {
   // URL with a fresh sessionId (the handoff idempotency key must not carry over); the session's
   // message thread + usage survive — only edits are wiped. `webNavigation` is already a manifest
   // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
-  // (frameId !== 0) never clear the tab's record.
+  // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
+  // is the same URL, so per docs/architecture/changeset.md the live edits die but the recorded
+  // changeset (and the recorder buffer) survive.
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
+    if (details.transitionType === 'reload') return;
     const { tabId, url } = details;
     pendingMutations.clear(tabId);
     void sessionsReady
       .then(async () => {
         await createSessionChangesetPersister(tabId).clear();
         if (!sessions.get(tabId)) return;
-        await sessions.setChangeset(
-          tabId,
-          emptyChangeset(url, new Date().toISOString(), crypto.randomUUID()),
-        );
+        const reseeded = emptyChangeset(url, new Date().toISOString(), crypto.randomUUID());
+        await sessions.setChangeset(tabId, reseeded);
+        // Tell an open Diff tab the record was wiped — otherwise it shows the dead page's
+        // edits until its next refresh.
+        postToPanel({ type: 'changeset', changeset: reseeded, tabId });
       })
-      .catch(() => {});
+      .catch((err) =>
+        console.warn(`[nav-clear] failed to wipe the changeset record for tab ${tabId}:`, err),
+      );
+  });
+
+  // Tab-close cleanup: a closed tab's buffered recorder events can never fold (no turn will
+  // drain them again) — drop the buffer so a recycled tab id never inherits stale mutations.
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    pendingMutations.clear(tabId);
   });
 
   // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the

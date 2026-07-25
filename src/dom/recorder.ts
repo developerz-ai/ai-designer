@@ -6,7 +6,9 @@ import type { ContentToSw, MutationEvent, StableSelector } from '@/shared/messag
 // (src/dom/mutate.ts) is recorded here: the recorder projects it to a serializable MutationEvent
 // (messages.ts) by stamping the target's stable selector + a timestamp, pushes the invertible
 // mutation onto an undo stack, and emits a `recorder-event` over the bus so the SW can fold it
-// into the session Changeset (slice 07). `undo` pops LIFO and reverses the real DOM change.
+// into the session Changeset (slice 07). `undo` pops LIFO and reverses the real DOM change —
+// and, on a successful revert, emits a `recorder-revert` so the SW drops the now-untrue event
+// from its pending buffer (a reverted change must never reach the durable changeset).
 //
 // It records at the mutate call site rather than diffing the DOM with a MutationObserver: our
 // setStyle writes a stylesheet rule (not an inline attribute) that an observer can't attribute to
@@ -37,7 +39,8 @@ export interface Recorder {
   /** Reverse the most recent recorded mutation (LIFO), returning its event — or `null` when the
    *  log is empty. Reverses the exact DOM change via the mutation's own `undo()`. A mutation that
    *  FAILS to revert keeps its entry (re-pushed) and throws — see `drop` for the deliberate
-   *  escape. */
+   *  escape. A SUCCESSFUL revert also emits `recorder-revert` so the SW drops the buffered event:
+   *  the change no longer exists on the page, so it must never fold into the durable changeset. */
   undo(): MutationEvent | null;
   /** Pop the most recent entry WITHOUT reverting it (the `discardUndo` tool's escape for a
    *  permanently churned anchor wedging the LIFO top), returning its event — or `null` when empty. */
@@ -100,6 +103,11 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
       stack.push(entry);
       throw err;
     }
+    // The revert SUCCEEDED — the mutation no longer exists on the page, so its buffered event
+    // must leave the SW's pending buffer (else turn-end would fold a reverted change into the
+    // durable changeset: a phantom edit). Only the success path emits: a failed revert kept the
+    // change live (its event stays truthful), and `drop()` deliberately does too.
+    emit({ type: 'recorder-revert', event: entry.event });
     return entry.event;
   }
 

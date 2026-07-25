@@ -63,8 +63,10 @@ export function createSessionTools(deps: SessionToolDeps) {
         "refSelector?} / {op: 'move', refSelector, position?} / {op: 'remove'}. When " +
         'you made this change under device emulation ' +
         '(`setDevice`), set `breakpoint` to the device so the changeset and report show which ' +
-        'viewport it targets. This is what Ship hands off; record after you have applied and ' +
-        'visually verified a change.',
+        'viewport it targets. Set `selector` to the EXACT selector the mutation tool returned ' +
+        'for the element — never a paraphrase: the recorder buffers the real deltas under that ' +
+        'selector, and an exact match folds them in as ground truth. This is what Ship hands ' +
+        'off; record after you have applied and visually verified a change.',
       inputSchema: Edit,
       outputSchema: ToolResult,
       execute: async (edit) => {
@@ -72,11 +74,17 @@ export function createSessionTools(deps: SessionToolDeps) {
         // the page's own mutation events are ground truth per mechanical family (changes/attrs/
         // classes/structural/text), so the durable record no longer depends on the model
         // restating its tool calls. Buffer empty ⇒ the Edit stands unchanged (back-compat).
+        // SPILLOVER: a group holding several structural ops keeps the first in the folded edit;
+        // each additional op becomes its own auto-recorded Edit (one op per Edit), recorded +
+        // persisted + streamed right alongside.
         const drained = drainRecorderEvents?.(edit.selector.value) ?? [];
-        const folded = drained.length > 0 ? foldMutationEvents(edit, drained) : edit;
+        const { folded, spillover } =
+          drained.length > 0 ? foldMutationEvents(edit, drained) : { folded: edit, spillover: [] };
         store.record(folded);
+        for (const extra of spillover) store.record(extra);
         await persist(store.current);
         emit({ type: 'edit-recorded', edit: folded });
+        for (const extra of spillover) emit({ type: 'edit-recorded', edit: extra });
         return result({ edits: store.size });
       },
     }),

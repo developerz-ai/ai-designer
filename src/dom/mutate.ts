@@ -39,7 +39,9 @@ export interface ElementMutation<C = unknown> extends Reversible {
   styleChanges?: StyleChange[];
   /** setAttr: the single attribute delta (`before: null` = the attribute was absent). */
   attrChange?: AttrChange;
-  /** addClass/removeClass: the single class delta. */
+  /** addClass/removeClass: the single class delta — present ONLY when the op actually changed
+   *  the class list (a no-op add/remove emits nothing, so the SW's parity fold sees strictly
+   *  alternating real ops per name). */
   classChange?: ClassChange;
   /** setText: the text delta; `before` is the prior textContent bounded to
    *  {@link TEXT_CHANGE_BEFORE_CAP} chars (the legacy opaque `before` keeps full innerHTML). */
@@ -405,7 +407,10 @@ export function createMutator(doc: Document = document): Mutator {
       computed: after,
       before,
       after,
-      classChange: { name, op: 'add' },
+      // #9 ground truth ONLY on a real delta: a no-op add (the class was already present)
+      // changed nothing, so it must not emit an op the fold would have to cancel back out
+      // (the SW's class merge is parity over strictly-alternating REAL ops).
+      ...(added ? { classChange: { name, op: 'add' as const } } : {}),
       undo() {
         if (added) el.classList.remove(name);
       },
@@ -422,7 +427,8 @@ export function createMutator(doc: Document = document): Mutator {
       computed: after,
       before,
       after,
-      classChange: { name, op: 'remove' },
+      // Same real-delta rule as addClass: a no-op remove (the class was absent) emits nothing.
+      ...(removed ? { classChange: { name, op: 'remove' as const } } : {}),
       undo() {
         if (removed) el.classList.add(name);
       },
