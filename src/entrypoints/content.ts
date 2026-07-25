@@ -46,6 +46,7 @@ import {
   type ToolResult,
 } from '@/shared/messages';
 import { readOverlayEnabled } from '@/shared/overlay-prefs';
+import { SCROLL_SETTLE_MS } from '@/shared/scroll';
 
 // Content script — the only world with DOM access. It stays a THIN wire: Zod-gate inbound
 // messages, hand them to the testable src/dom modules (executor + picker + recorder), and forward
@@ -53,13 +54,10 @@ import { readOverlayEnabled } from '@/shared/overlay-prefs';
 // coverage-counted); this entrypoint is coverage-excluded, so keep it minimal. Page mutations are
 // EPHEMERAL + reversible (docs/idea/live-edit.md); the only durable output is the changeset (07).
 
-// Paint-settle after scrolling an element into view before the SW captures — captureVisibleTab
-// reads the composited surface, so an un-settled scroll would grab pre-scroll pixels (same value +
-// rationale as the full-page stitch path's SCROLL_SETTLE_MS, background.ts). On a `scroll-behavior:
-// smooth` page the scroll animates, so the settle is best-effort there — matching the repo's own
-// scroll convention (none of interact.ts / widgets.ts / the full-page path forces an instant
-// scroll).
-const SCROLL_SETTLE_MS = 200;
+// Paint-settle after scrolling an element into view before the SW captures (SCROLL_SETTLE_MS,
+// shared/scroll.ts — ONE source for both entrypoints since #137). On a `scroll-behavior: smooth`
+// page the scroll animates, so the settle is best-effort there — matching the repo's own scroll
+// convention (none of interact.ts / widgets.ts / the full-page path forces an instant scroll).
 
 export default defineContentScript({
   matches: ['<all_urls>'],

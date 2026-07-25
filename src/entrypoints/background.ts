@@ -100,6 +100,7 @@ import { overlayLabel } from '@/shared/overlay-step';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import type { Report } from '@/shared/report';
+import { SCROLL_SETTLE_MS } from '@/shared/scroll';
 import { initSentry } from '@/shared/sentry';
 
 // The preset the legacy OpenRouter-only RPCs (save-openrouter-key/set-model) map onto.
@@ -116,8 +117,6 @@ type ContentDispatch = (
   signal?: AbortSignal,
 ) => Promise<ToolResult>;
 
-// Let the page paint after a programmatic scroll before grabbing the viewport for a full-page stitch.
-const SCROLL_SETTLE_MS = 200;
 // A device-emulation change re-evaluates media queries + reflows the whole layout — give it a beat
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
