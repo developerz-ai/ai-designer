@@ -116,6 +116,58 @@ describe('createRecorder.undo', () => {
     const { recorder } = spawn();
     expect(recorder.undo()).toBeNull();
   });
+
+  it('emits recorder-revert after a SUCCESSFUL revert (the SW drops the now-untrue event)', () => {
+    const { emitted, recorder } = spawn(() => 7);
+    const event = recorder.record(selector, fakeMutation());
+
+    const reverted = recorder.undo();
+
+    expect(reverted).toEqual(event);
+    expect(emitted).toEqual([
+      { type: 'recorder-event', event },
+      { type: 'recorder-revert', event },
+    ]);
+  });
+
+  it('a FAILED revert re-pushes the entry, throws, and emits NO recorder-revert', () => {
+    const { emitted, recorder } = spawn();
+    const churned = new Error('Cannot undo removeNode: the original location changed');
+    recorder.record(
+      selector,
+      fakeMutation({
+        kind: 'removeNode',
+        undo: vi.fn(() => {
+          throw churned;
+        }),
+      }),
+    );
+
+    expect(() => recorder.undo()).toThrow(churned);
+
+    // The change is still live on the page, so its event must stay in the SW's buffer: no revert.
+    expect(emitted.filter((m) => m.type === 'recorder-revert')).toEqual([]);
+    expect(recorder.size()).toBe(1); // entry re-pushed, not lost
+  });
+});
+
+describe('createRecorder.drop', () => {
+  it('pops the top entry WITHOUT reverting it and emits no recorder-revert (deliberate escape)', () => {
+    const { emitted, recorder } = spawn();
+    const undo = vi.fn();
+    const event = recorder.record(selector, fakeMutation({ undo }));
+
+    expect(recorder.drop()).toEqual(event);
+
+    expect(undo).not.toHaveBeenCalled(); // the mutation stays applied
+    expect(recorder.size()).toBe(0);
+    expect(emitted).toEqual([{ type: 'recorder-event', event }]); // no revert message
+  });
+
+  it('returns null on an empty log', () => {
+    const { recorder } = spawn();
+    expect(recorder.drop()).toBeNull();
+  });
 });
 
 describe('createRecorder.clear', () => {

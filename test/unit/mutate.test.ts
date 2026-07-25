@@ -551,4 +551,21 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
       op: 'remove',
     });
   });
+
+  // #9 review fix: the SW's class fold is PARITY over strictly-alternating REAL ops, so a no-op
+  // class toggle must emit NO delta at all — emitting one would make the fold cancel a real op
+  // against a phantom. The field is genuinely ABSENT (not undefined), same rule as ruleId.
+  it('a no-op addClass (class already present) carries NO classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutation = createMutator(document).addClass(byId('cta'), 'present');
+    expect(mutation.kind).toBe('addClass');
+    expect('classChange' in mutation).toBe(false);
+  });
+
+  it('a no-op removeClass (class absent) carries NO classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutation = createMutator(document).removeClass(byId('cta'), 'ghost');
+    expect(mutation.kind).toBe('removeClass');
+    expect('classChange' in mutation).toBe(false);
+  });
 });
