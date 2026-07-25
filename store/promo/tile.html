@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Designer promo tile</title>
+<style>
+  /* Fluid composition: all sizing in vw of the TILE's width, so one file renders
+     both the 440x280 small tile and the 1400x560 marquee (same 11:7 ratio family
+     is NOT required — the layout is center-weighted and tolerates ratio change). */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #f7f7f4;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+  }
+  .stage { display: flex; align-items: center; gap: 4.5vw; }
+  .mark { width: 26vw; height: 26vw; flex: none; }
+  .mark img { width: 100%; height: 100%; display: block; }
+  .word { display: flex; flex-direction: column; gap: 1.6vw; }
+  .name {
+    font-size: 8.2vw; font-weight: 800; letter-spacing: -0.03em; color: #1c1c28;
+    line-height: 1;
+  }
+  .name em { font-style: normal; color: #6366f1; }
+  .tag {
+    font-size: 3.4vw; font-weight: 600; color: #6b6b7d; letter-spacing: 0.01em;
+    display: flex; align-items: center; gap: 1.4vw;
+  }
+  .tag .spark { width: 2.6vw; height: 2.6vw; flex: none; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="mark"><img id="icon" alt=""></div>
+    <div class="word">
+      <div class="name">Developerz.ai <em>Designer</em></div>
+      <div class="tag">
+        <svg class="spark" viewBox="0 0 128 128"><path fill="#10b981" d="M 97 10 C 98.4 18.8 104.2 24.6 113 26 C 104.2 27.4 98.4 33.2 97 42 C 95.6 33.2 89.8 27.4 81 26 C 89.8 24.6 95.6 18.8 97 10 Z" transform="translate(-32,22) scale(1.25)"/></svg>
+        Chat. Live-edit. Ship the PR.
+      </div>
+    </div>
+  </div>
+  <script>
+    // The icon is injected by the render script (file:// + relative path keeps
+    // the tile self-contained for Playwright setContent).
+    document.getElementById('icon').src = new URLSearchParams(location.search).get('icon')
+      || '../icons/icon-128.png';
+  </script>
+</body>
+</html>

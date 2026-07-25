@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="ptr" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="spk" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+
+  <!-- soft off-white tile -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#f7f7f4"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="27.25" fill="none" stroke="#e9e9e4" stroke-width="1.5"/>
+
+  <!-- chunky paper-plane / send pointer: tip NE, concave trailing edge (the belly notch) -->
+  <path fill="url(#ptr)" stroke-linejoin="round"
+        d="M 95 41
+           Q 93.4 38.2 90.2 38
+           L 27 54
+           Q 23.4 54.8 24.1 58.3
+           Q 24.6 60.6 26.9 61.3
+           L 51 67.5
+           Q 53 68 53.6 70
+           L 61.5 92.5
+           Q 62.4 94.9 64.9 94.3
+           Q 66.6 93.9 67.3 92.2
+           L 95.5 45.4
+           Q 96.6 43.2 95 41 Z"/>
+
+  <!-- emerald four-point sparkle overlapping the tip -->
+  <path fill="url(#spk)"
+        d="M 97 10
+           C 98.4 18.8 104.2 24.6 113 26
+           C 104.2 27.4 98.4 33.2 97 42
+           C 95.6 33.2 89.8 27.4 81 26
+           C 89.8 24.6 95.6 18.8 97 10 Z"/>
+</svg>
