@@ -1,6 +1,14 @@
 import { modelMessageSchema } from 'ai';
 import { z } from 'zod';
-import { Changeset, Edit, StableSelector } from './changeset';
+import {
+  AttrChange,
+  Changeset,
+  ClassChange,
+  Edit,
+  StableSelector,
+  StructuralChange,
+  StyleChange,
+} from './changeset';
 import { CollectorSignal } from './diagnostics';
 
 // StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
@@ -1125,6 +1133,11 @@ export type MutationKind = z.infer<typeof MutationKind>;
 // #10 (fold/remove). `before`/`after` are the serialized prior/next state; the
 // absent side of an insert/remove is the empty string. `ruleId` ties a setStyle
 // back to its rule in the injected stylesheet so undo can drop it.
+//
+// #9 typed mechanical fields (all optional → back-compat with pre-#9 producers):
+// ground truth captured at mutation time so the SW can fold real deltas into the
+// durable Edit (changes/attrs/classes/structural/text/frameworkHints) instead of
+// relying on the model restating its own tool calls in `recordEdit`.
 export const MutationEvent = z.object({
   kind: MutationKind,
   selector: StableSelector,
@@ -1132,6 +1145,21 @@ export const MutationEvent = z.object({
   after: z.string(),
   ruleId: z.string().optional(),
   ts: z.number(),
+  // setStyle: computed-style readback per changed prop (before = pre-mutation
+  // computed value, after = post-mutation computed value).
+  styleChanges: z.array(StyleChange).optional(),
+  // setAttr: the single attribute delta.
+  attrChange: AttrChange.optional(),
+  // addClass/removeClass: the single class delta.
+  classChange: ClassChange.optional(),
+  // insertNode/moveNode/removeNode: the structural op (insert carries sanitized
+  // html + position + refSelector; move carries refSelector + position).
+  structural: StructuralChange.optional(),
+  // setText: bounded text delta (before may be truncated by the producer).
+  textChange: z.object({ before: z.string(), after: z.string() }).optional(),
+  // Per-element CSS-approach markers detected at mutation time (Tailwind
+  // utility classes, css-module hashes, styled/emotion markers).
+  frameworkHints: z.array(z.string()).optional(),
 });
 export type MutationEvent = z.infer<typeof MutationEvent>;
 
