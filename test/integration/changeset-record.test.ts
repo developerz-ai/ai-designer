@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createSessionTools } from '@/agent/tools/session';
+import { applyChangesetOp } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
+import { findLastMatchingEditIndex } from '@/changeset/revert-match';
 import { ChangesetStore } from '@/changeset/store';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
@@ -28,16 +30,20 @@ import { relayToPanel } from '@/shared/relay';
 // under Vitest, so the wiring is reproduced 1:1).
 //
 // REAL vs faked: real = dom executor/mutator/recorder, ChangesetStore, createSessionTools,
-// relayToPanel, panel reduceChat/reduceChangeset, the #9 pending-mutations buffer + fold, all Zod
-// schemas. Faked = the ContentToSw/SwToPanel capture arrays, the in-memory persister/session
-// mirrors, and the wiring that reproduces background.ts 1:1. Note the actual code path:
-// background.ts folds the intent-tagged `Edit` via the `recordEdit` tool — since #9 draining the
-// tab's buffered recorder events into it (ground truth per mechanical family) — while the raw
-// `recorder-event` itself is never relayed to the panel (relay.ts — asserted here too); the two
-// are distinct records of the one accepted mutation. The second describe covers the #9 SW-side
-// consumer end-to-end: recorder-event buffer → recordEdit fold (incl. structural spillover),
-// turn-end auto-finalize of leftovers (incl. the buffer-cap drop suffix), recorder-revert
-// removal, nav-clear (reload early-return vs cross-URL wipe), and the turn-start URL guard.
+// relayToPanel, panel reduceChat/reduceChangeset, the #9 pending-mutations buffer + fold, the
+// late-revert retraction (revert-match + applyChangesetOp), all Zod schemas. Faked = the
+// ContentToSw/SwToPanel capture arrays, the in-memory persister/session mirrors, and the
+// wiring that reproduces background.ts 1:1. Note the actual code path: background.ts folds
+// the intent-tagged `Edit` via the `recordEdit` tool — since #9 draining the tab's buffered
+// recorder events into it (ground truth per mechanical family) — while the raw
+// `recorder-event` itself is never relayed to the panel (relay.ts — asserted here too); the
+// two are distinct records of the one accepted mutation. The second describe covers the #9
+// SW-side consumer end-to-end: recorder-event buffer → recordEdit fold (incl. structural
+// spillover + buffer-cap drop suffix), turn-end auto-finalize of leftovers (cap loss noted
+// on the FIRST finalized edit only), recorder-revert removal (buffer hit AND the late-revert
+// retraction of an already-drained durable edit), the gated single-group rescue, nav-clear
+// (reload early-return vs cross-URL wipe), and the turn-start URL guard keyed to the last
+// cross-document committed URL (same-document hash navigations keep the record).
 
 const SESSION_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 // The fresh sessionId nav-clear re-seeds the session mirror with (a navigation starts a new
@@ -68,20 +74,29 @@ const recorderEventOf = (
   });
 
 // Mirror background.ts's user-message changeset wiring 1:1: `bootTurn` is the turn start (the
-// per-tab ChangesetStore rehydrate + the cross-URL stale-record guard, background.ts:603-647) and
-// builds the session tools with `emit` = postToPanel (captured), `persist` = BOTH mirrors
-// background.ts writes (the undo/redo persister `changeset:<tabId>` + the SessionStore resume
-// snapshot), and `drainRecorderEvents` = the tab's #9 pending-mutations buffer. `contentPush` is
-// the content->SW push listener (recorder-event append / recorder-revert removal / relayToPanel,
-// background.ts:1248-1273); `finalizeTurn` the turn-done auto-finalize with the structural
-// spillover split + the buffer-cap drop suffix (background.ts:845-867); `navClear` the
-// webNavigation onCommitted listener with its iframe + reload early returns
-// (background.ts:1286-1304). The harness omits only `emitRecord`'s tabId stamp (a #141 Diff-view
-// concern, covered by the panel store tests).
+// per-tab ChangesetStore rehydrate + the stale-record guard keyed to the last cross-document
+// committed URL, background.ts's user-message case) and builds the session tools with `emit` =
+// postToPanel (captured), `persist` = BOTH mirrors background.ts writes (the undo/redo persister
+// `changeset:<tabId>` + the SessionStore resume snapshot), and `drainRecorderEvents` = the tab's
+// #9 pending-mutations buffer. `contentPush` is the content->SW push listener (recorder-event
+// append / recorder-revert removal + late-revert retraction / relayToPanel); `finalizeTurn` the
+// turn-done auto-finalize with the structural spillover split + the buffer-cap drop suffix on
+// the FIRST finalized edit; `navClear` the webNavigation onCommitted listener with its
+// document-identity stamp + iframe + reload early returns. The harness omits only
+// `emitRecord`'s tabId stamp on edit-recorded (a #141 Diff-view concern, covered by the panel
+// store tests).
 function makeSw() {
   const toPanel: SwToPanel[] = [];
   const persisted: Changeset[] = [];
   const pending = createPendingMutations();
+  // background.ts's `lastCommittedUrl`: the last CROSS-DOCUMENT committed main-frame URL per
+  // tab — the document-identity authority the turn-start URL guard compares against (stamped
+  // on every main-frame commit, reloads included; a same-document hash/pushState navigation
+  // never fires a commit and so never stales the record).
+  const lastCommitted = new Map<number, string>();
+  // The late-revert retraction runs async in background.ts (fire-and-forget off the push
+  // listener); the harness tracks the in-flight promise so tests can await the settle.
+  let retraction: Promise<void> = Promise.resolve();
   // In-memory stand-ins for `createSessionChangesetPersister` (save/load/clear) and the
   // SessionStore's per-tab record (changeset mirror + the message thread nav-clear must keep).
   let persisterState: ChangesetState | undefined;
@@ -112,11 +127,14 @@ function makeSw() {
   // background.ts's user-message turn start: rehydrate the undo/redo-capable store from the
   // persister (falling back to the session mirror), and on a STALE record — the persister/mirror
   // holds a changeset for a URL the tab has since left — seed BOTH mirrors EMPTY for the tab's
-  // current URL and drop the redo stack (it only references the old record's edits).
+  // current URL and drop the redo stack (it only references the old record's edits). Stale is
+  // computed against the last CROSS-DOCUMENT committed URL: a same-document navigation (hash,
+  // pushState) never fires a commit, leaves DOM + live edits intact, and must not wipe the
+  // record (#9 review round 2); the live tabUrl is only the fallback when no commit was seen.
   const bootTurn = (tabUrl: string): void => {
     const priorState = persister.load();
     const prior = priorState?.changeset ?? sessionMirror.changeset;
-    const stale = prior.url !== tabUrl;
+    const stale = prior.url !== (lastCommitted.get(TAB_ID) ?? tabUrl);
     store = new ChangesetStore(
       stale ? emptyChangeset(tabUrl, '2026-07-16T00:00:00Z', BOOT_SESSION_ID) : prior,
       { redoStack: stale ? undefined : priorState?.redoStack },
@@ -129,23 +147,55 @@ function makeSw() {
       drainRecorderEvents: (selectorValue) => pending.drain(TAB_ID, selectorValue),
     });
   };
-  // background.ts's content->SW push listener: buffer recorder events per sender tab, drop a
-  // reverted mutation's event (a successful undo killed the change — it must never fold), and
+  // background.ts's `retractRevertedEdit`: the buffer remove missed (the event was already
+  // drained by recordEdit / auto-finalized), so the phantom lives in the DURABLE record — find
+  // the LAST edit consistent with the reverted event (revert-match.ts) and route a
+  // `{kind:'remove', index}` through the REAL applyChangesetOp machinery the Diff-tab curation
+  // RPCs drive (persist + SessionStore mirror + tab-stamped panel push come with it). A miss
+  // only warns — the record may have been curated or nav-cleared since the event drained.
+  const retractRevertedEdit = async (event: MutationEvent): Promise<void> => {
+    const state = persister.load();
+    const index = state ? findLastMatchingEditIndex(state.changeset.edits, event) : -1;
+    if (index === -1) {
+      console.warn(
+        `[recorder-revert] no durable edit matches the reverted ${event.kind} on tab ${TAB_ID}`,
+      );
+      return;
+    }
+    const view = await applyChangesetOp(
+      {
+        load: () => Promise.resolve(persister.load()),
+        save: (next) => persister.save(next),
+        mirror: (cs) => {
+          sessionMirror.changeset = cs;
+          return Promise.resolve();
+        },
+      },
+      { kind: 'remove', index },
+    );
+    if (view.changeset)
+      toPanel.push({ type: 'changeset', changeset: view.changeset, tabId: TAB_ID });
+  };
+  // background.ts's content->SW push listener: buffer recorder events per sender tab; a
+  // reverted mutation's event leaves the buffer (a successful undo killed the change — it must
+  // never fold), and on a buffer MISS the already-drained durable edit is retracted instead;
   // relay whatever relayToPanel maps (never recorder-*) to the panel.
   const contentPush = (msg: ContentToSw, senderTabId: number = TAB_ID): void => {
     if (msg.type === 'recorder-event') pending.append(senderTabId, msg.event);
-    if (msg.type === 'recorder-revert') pending.remove(senderTabId, msg.event);
+    if (msg.type === 'recorder-revert' && !pending.remove(senderTabId, msg.event)) {
+      retraction = retractRevertedEdit(msg.event);
+    }
     const out = relayToPanel(msg);
     if (out) toPanel.push(out);
   };
   // background.ts's turn-done auto-finalize: one "Auto-recorded" Edit per leftover selector
   // group — a group holding several structural ops SPLITS (first op folds, each additional op is
   // its own auto-recorded spillover Edit) — with events dropped at the buffer cap surfaced as an
-  // intent suffix; every edit recorded + persisted + streamed like a model-recorded one. Then
-  // the buffer is wiped.
+  // intent suffix on the FIRST finalized edit only (the loss is tab-level); every edit recorded
+  // + persisted + streamed like a model-recorded one. Then the buffer is wiped.
   const finalizeTurn = (): void => {
     const droppedAtCap = pending.droppedCount(TAB_ID);
-    const capNote =
+    let capNote =
       droppedAtCap > 0 ? ` (+${droppedAtCap} earlier events dropped at buffer cap)` : '';
     for (const group of pending.peekGroups(TAB_ID)) {
       const { folded, spillover } = foldMutationEvents(
@@ -161,6 +211,7 @@ function makeSw() {
       );
       for (const edit of [folded, ...spillover]) {
         const tagged = capNote ? { ...edit, intent: `${edit.intent}${capNote}` } : edit;
+        capNote = ''; // tab-level loss: noted once, on the first finalized edit
         store.record(tagged);
         persistChangeset();
         toPanel.push({ type: 'edit-recorded', edit: tagged });
@@ -168,14 +219,17 @@ function makeSw() {
     }
     pending.clear(TAB_ID);
   };
-  // background.ts's webNavigation onCommitted nav-clear: iframe commits and RELOADS return early
-  // (a reload is not a navigation away — same URL, the record survives); a main-frame cross-URL
+  // background.ts's webNavigation onCommitted nav-clear: EVERY main-frame commit stamps the
+  // tab's document identity FIRST (all transitionTypes, reload included — the turn-start URL
+  // guard compares against it); iframe commits return before the stamp; RELOADS return right
+  // after it (a reload is not a navigation away — the record survives); a main-frame cross-URL
   // commit wipes the buffer + BOTH changeset mirrors, re-seeds the session mirror EMPTY for the
   // new URL (fresh sessionId — the handoff idempotency key must not carry over), and pushes the
   // emptied changeset to the panel so an open Diff tab drops the dead page's edits. Thread
   // survives.
   const navClear = (details: { frameId: number; transitionType: string; url: string }): void => {
     if (details.frameId !== 0) return;
+    lastCommitted.set(TAB_ID, details.url);
     if (details.transitionType === 'reload') return;
     pending.clear(TAB_ID);
     persister.clear();
@@ -190,6 +244,9 @@ function makeSw() {
     },
     get tools() {
       return tools;
+    },
+    get retraction() {
+      return retraction;
     },
     toPanel,
     persisted,
@@ -319,6 +376,9 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
       TAB_ID,
       recorderEventOf('addClass', '#cta', {
         classChange: { name: 'btn-primary', op: 'add' },
+        // The window set-diff reads the legacy classAttr strings (the real producer's shape).
+        before: '',
+        after: 'btn-primary',
         frameworkHints: ['tailwind'],
       }),
     );
@@ -425,7 +485,7 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     expect(Changeset.safeParse(sw.store.current).success).toBe(true);
   });
 
-  it('recordEdit with a paraphrased selector still folds via the single-group fallback (no duplicate)', async () => {
+  it('recordEdit with a plausible paraphrased selector still folds via the gated rescue (no duplicate)', async () => {
     const { emitted, exec } = driveMutation('<button id="cta">Buy</button>');
     const applied = exec({ type: 'addClass', selector: '#cta', name: 'btn-primary' });
     expect(applied.ok).toBe(true);
@@ -436,12 +496,12 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
     const sw = makeSw();
     sw.contentPush(genuine); // buffered under '#cta' — the ONLY group in the buffer
 
-    // The model names its own paraphrase — NOT the buffered '#cta'. The exact match fails, but
-    // with exactly one buffered selector group the drain fallback (pending-mutations.ts) treats
-    // the paraphrase as unambiguous and drains it anyway.
+    // The model names its own paraphrase — NOT the buffered '#cta', but a PLAUSIBLE one (the
+    // group value is a substring of the model value), so the gated single-group rescue
+    // (pending-mutations.ts) treats it as unambiguous and drains anyway.
     const edit: Edit = {
       intent: 'Brand the CTA',
-      selector: { value: 'button.cta', strategy: 'css-path', fragile: false },
+      selector: { value: 'button#cta', strategy: 'css-path', fragile: false },
       changes: [],
       attrs: [],
       classes: [],
@@ -452,15 +512,53 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
 
     expect(sw.store.current.edits).toHaveLength(1);
     const recorded = sw.store.current.edits[0];
-    // Ground truth folded in; the model's own selector stands (the fold never rewrites it).
+    // Ground truth folded in — and the fold HEALS the paraphrased selector to the event's own
+    // (fold-mutations.ts: the page's record beats the model's restatement, strategy included).
     expect(recorded?.classes).toEqual([{ name: 'btn-primary', op: 'add' }]);
-    expect(recorded?.selector.value).toBe('button.cta');
-    // The fallback drain CONSUMED the group — turn end finds nothing to duplicate into an
+    expect(recorded?.selector).toEqual({ value: '#cta', strategy: 'id', fragile: false });
+    // The rescue drain CONSUMED the group — turn end finds nothing to duplicate into an
     // "Auto-recorded" second edit for the one visual change.
     expect(sw.pending.peekGroups(TAB_ID)).toEqual([]);
     sw.finalizeTurn();
     expect(sw.store.current.edits).toHaveLength(1);
     expect(sw.toPanel.filter((m) => m.type === 'edit-recorded')).toHaveLength(1);
+  });
+
+  it('rescue gate: recordEdit for an event-less element does NOT steal an unrelated buffered group', async () => {
+    const sw = makeSw();
+    // One buffered group for '#nav' — the model's recordEdit targets '#cta', which shares NO
+    // substring with it, so the gated rescue refuses: the drain returns empty and the model's
+    // Edit stands untouched.
+    sw.pending.append(
+      TAB_ID,
+      recorderEventOf('addClass', '#nav', {
+        classChange: { name: 'sticky', op: 'add' },
+        before: '',
+        after: 'sticky',
+      }),
+    );
+    const edit: Edit = {
+      intent: 'Brand the CTA',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    };
+    const res = await runTool(sw.tools.recordEdit.execute, edit);
+    expect(res.ok).toBe(true);
+    expect(data<{ edits: number; spillover: number }>(res)).toEqual({ edits: 1, spillover: 0 });
+
+    expect(sw.store.current.edits[0]).toEqual(edit);
+    expect(sw.pending.peekGroups(TAB_ID)).toHaveLength(1);
+
+    // Turn end then records the real group truthfully as its OWN auto-recorded edit.
+    sw.finalizeTurn();
+    expect(sw.store.current.edits).toHaveLength(2);
+    const auto = sw.store.current.edits[1];
+    expect(auto?.intent).toBe('Auto-recorded agent edit (no recordEdit call)');
+    expect(auto?.selector.value).toBe('#nav');
+    expect(auto?.classes).toEqual([{ name: 'sticky', op: 'add' }]);
   });
 
   it('a genuine pre-#9 recorder event leaves the model’s Edit standing (back-compat)', async () => {
@@ -516,6 +614,8 @@ describe('#9 SW-side recorder consumer: buffer -> recordEdit fold / turn-end fin
       TAB_ID,
       recorderEventOf('addClass', '#cta', {
         classChange: { name: 'btn-primary', op: 'add' },
+        before: '',
+        after: 'btn-primary',
         ts: 2,
       }),
     );

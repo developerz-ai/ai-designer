@@ -552,9 +552,9 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
     });
   });
 
-  // #9 review fix: the SW's class fold is PARITY over strictly-alternating REAL ops, so a no-op
-  // class toggle must emit NO delta at all — emitting one would make the fold cancel a real op
-  // against a phantom. The field is genuinely ABSENT (not undefined), same rule as ruleId.
+  // #9 review fix: a no-op class toggle must emit NO delta at all — emitting one would make the
+  // SW's class-fold window diff cancel a real op against a phantom. The field is genuinely
+  // ABSENT (not undefined), same rule as ruleId.
   it('a no-op addClass (class already present) carries NO classChange', () => {
     mount('<button id="cta" class="present">Buy</button>');
     const mutation = createMutator(document).addClass(byId('cta'), 'present');
@@ -567,5 +567,24 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
     const mutation = createMutator(document).removeClass(byId('cta'), 'ghost');
     expect(mutation.kind).toBe('removeClass');
     expect('classChange' in mutation).toBe(false);
+  });
+
+  // #9 round-2 review fix: styleChanges must not stamp UNAPPLIED values. An invalid declaration
+  // is dropped by the CSS parser; the raw-input fallback used to record it as if it took. The
+  // pair is now built from the fallback-free readback and dropped when the after reads empty.
+  // (`gap` pins this in jsdom: it strictly validates the value and defaults to '' — unlike
+  // color, whose UA default always computes non-empty.)
+  it('setStyle drops an invalid declaration from styleChanges but keeps the valid prop', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), {
+      gap: 'not-a-length', // parser drops the declaration → empty readback → pair dropped
+      color: 'rgb(1, 2, 3)', // valid → recorded
+    });
+    expect(mutation.styleChanges).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(1, 2, 3)' },
+    ]);
+    // The model-facing `computed` readback KEEPS the raw-input fallback (pre-existing contract):
+    // it reports the value the model just set, even when the parser dropped it.
+    expect(mutation.computed).toEqual({ gap: 'not-a-length', color: 'rgb(1, 2, 3)' });
   });
 });

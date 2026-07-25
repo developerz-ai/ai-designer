@@ -40,8 +40,8 @@ export interface ElementMutation<C = unknown> extends Reversible {
   /** setAttr: the single attribute delta (`before: null` = the attribute was absent). */
   attrChange?: AttrChange;
   /** addClass/removeClass: the single class delta — present ONLY when the op actually changed
-   *  the class list (a no-op add/remove emits nothing, so the SW's parity fold sees strictly
-   *  alternating real ops per name). */
+   *  the class list (a no-op add/remove emits nothing, so the SW's class-fold window diff never
+   *  has to cancel a phantom op back out). */
   classChange?: ClassChange;
   /** setText: the text delta; `before` is the prior textContent bounded to
    *  {@link TEXT_CHANGE_BEFORE_CAP} chars (the legacy opaque `before` keeps full innerHTML). */
@@ -322,18 +322,28 @@ export function createMutator(doc: Document = document): Mutator {
     renderSheet();
 
     const fallback = Object.fromEntries(entries);
+    // The model-facing ToolResult readback KEEPS the raw-input fallback (pre-existing: a
+    // not-yet-cascaded rule should still report the value the model just set).
     const computed = readComputed(el, touchedProps, fallback);
+    // Ground truth must NOT: an invalid declaration is dropped by the CSS parser, and the
+    // fallback would stamp the UNAPPLIED raw value into styleChanges as if it took. Read back
+    // fallback-free and drop any pair whose after is empty (the declaration didn't take). A
+    // prop with a non-empty UA default (color, gap→normal) instead records that default — the
+    // honest current value, never the raw input.
+    const applied = readComputed(el, touchedProps);
+    const styleChanges: StyleChange[] = [];
+    for (const [prop] of entries) {
+      const after = applied[prop];
+      if (!after) continue;
+      styleChanges.push({ prop, before: preComputed[prop] ?? null, after });
+    }
     return {
       kind: 'setStyle',
       ruleId: id,
       before,
       after: JSON.stringify(fallback),
       computed,
-      styleChanges: entries.map(([prop]) => ({
-        prop,
-        before: preComputed[prop] ?? null,
-        after: computed[prop] ?? fallback[prop] ?? '',
-      })),
+      styleChanges,
       undo() {
         const map = overrides.get(id);
         if (!map) return;
@@ -409,7 +419,7 @@ export function createMutator(doc: Document = document): Mutator {
       after,
       // #9 ground truth ONLY on a real delta: a no-op add (the class was already present)
       // changed nothing, so it must not emit an op the fold would have to cancel back out
-      // (the SW's class merge is parity over strictly-alternating REAL ops).
+      // (the SW's class merge is a window set-diff over the events' classAttr strings).
       ...(added ? { classChange: { name, op: 'add' as const } } : {}),
       undo() {
         if (added) el.classList.remove(name);

@@ -94,3 +94,9 @@ Without hints handoff still works (raw before/after CSS), but with them the resu
 - Lives in `chrome.storage.session`; cleared on tab close or "Clear session".
 - Reload of the page wipes the live edits but **not** the recorded changeset (until session ends).
 - On Ship/Download, the finished session (changeset + report + PR link if shipped) is retained in [history](../idea/ui.md#side-panel-tabs) — up to the last 10 conversations, `chrome.storage.local`.
+
+## Doctrines
+
+- **Reload doctrine** — a reload wipes LIVE edits, never the recorded changeset or the recorder buffer. The nav-clear listener (`webNavigation.onCommitted`, `src/entrypoints/background.ts`) early-returns on `transitionType === 'reload'`; the next turn rehydrates the record against the reloaded page.
+- **Same-document doctrine** — hash changes and `history.pushState`/`replaceState` are same-document: no `onCommitted` fires, the DOM and live edits survive, the record is preserved. Only a cross-document commit clears the record (recorder buffer + both changeset mirrors). The turn-start URL guard therefore compares against the last **cross-document** committed URL per tab (stamped on every main-frame `onCommitted`, reloads included, deleted on tab close) — never the live `tab.url`, whose hash would false-wipe the record. After an SW eviction the stamp is gone and the guard falls back to `tab.url` until the next commit.
+- **Revert doctrine** — a recorder undo removes the mutation's event from the pending buffer; if the event was already drained (`recordEdit` fold or turn-end auto-finalize), the LAST durable edit consistent with the reverted event is retracted instead (`src/changeset/revert-match.ts`, routed through the same `applyChangesetOp` machinery as Diff-tab curation). The record never ships a change the page no longer holds.

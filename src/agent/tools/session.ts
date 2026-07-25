@@ -28,7 +28,20 @@ export interface SessionToolDeps {
   /** Drain this turn tab's buffered recorder MutationEvents matching a selector value (#9 —
    *  `src/changeset/pending-mutations.ts`). Absent ⇒ no recorder fold (the model's Edit stands
    *  as-is) — unit tests and non-tab contexts inject nothing. */
-  readonly drainRecorderEvents?: (selectorValue: string) => MutationEvent[];
+  readonly drainRecorderEvents?: (selectorValue: string) => DrainRecorderResult;
+}
+
+/** One drain of the tab's recorder buffer — the shape `PendingMutations.drain` returns (#9
+ *  review round 2). Declared structurally here so this module stays decoupled from the buffer
+ *  implementation (and unit tests can inject a literal). */
+export interface DrainRecorderResult {
+  /** The drained events — empty on no match, multi-group ambiguity, or a gated rescue refusal. */
+  readonly events: MutationEvent[];
+  /** How many of the tab's events were dropped at the buffer cap since the last drain (the
+   *  drain RESETS the counter — the loss is surfaced once, here, on the folded edit's intent). */
+  readonly dropped: number;
+  /** True when the single-group rescue fired (the exact selector match missed). */
+  readonly rescued: boolean;
 }
 
 // `undo` / `redo` take no arguments; an empty object schema stops the model from inventing any.
@@ -76,16 +89,30 @@ export function createSessionTools(deps: SessionToolDeps) {
         // restating its tool calls. Buffer empty ⇒ the Edit stands unchanged (back-compat).
         // SPILLOVER: a group holding several structural ops keeps the first in the folded edit;
         // each additional op becomes its own auto-recorded Edit (one op per Edit), recorded +
-        // persisted + streamed right alongside.
-        const drained = drainRecorderEvents?.(edit.selector.value) ?? [];
+        // persisted + streamed right alongside. Events dropped at the buffer cap since the last
+        // drain are surfaced ONCE, on the folded edit's intent (the drain reset the counter, so
+        // the turn-end auto-finalize won't double-report) — a shipped changeset never silently
+        // omits mutations.
+        const drained = drainRecorderEvents?.(edit.selector.value);
+        const events = drained?.events ?? [];
+        const dropped = drained?.dropped ?? 0;
         const { folded, spillover } =
-          drained.length > 0 ? foldMutationEvents(edit, drained) : { folded: edit, spillover: [] };
-        store.record(folded);
+          events.length > 0 ? foldMutationEvents(edit, events) : { folded: edit, spillover: [] };
+        const recorded =
+          dropped > 0
+            ? {
+                ...folded,
+                intent: `${folded.intent} (+${dropped} earlier events dropped at buffer cap)`,
+              }
+            : folded;
+        store.record(recorded);
         for (const extra of spillover) store.record(extra);
         await persist(store.current);
-        emit({ type: 'edit-recorded', edit: folded });
+        emit({ type: 'edit-recorded', edit: recorded });
         for (const extra of spillover) emit({ type: 'edit-recorded', edit: extra });
-        return result({ edits: store.size });
+        // The spillover count rides the result so the model can pair session `undo`s with the
+        // edits ONE recordEdit call created (1 + spillover).
+        return result({ edits: store.size, spillover: spillover.length });
       },
     }),
     undo: tool({

@@ -3,13 +3,19 @@ import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-
 import type { Edit, StableSelector } from '@/shared/changeset';
 import type { MutationEvent, MutationKind } from '@/shared/messages';
 
-// pending-mutations unit: the SW-side #9 recorder buffer + the recordEdit fold. Buffer: append /
-// exact-match drain / single-group implicit drain (incl. the unmatched-explicit-selector rescue) /
-// per-tab cap with droppedCount / remove (recorder-revert) / peekGroups / clear. Fold: first-before/
-// last-after per family, class-op PARITY (odd count keeps the first op, even drops), structural
-// first-folds + additional ops SPILL OVER into their own auto-recorded edits, frameworkHints union,
-// ground-truth-wins per family (incl. merged-empty replacing the model's stale delta), and
-// back-compat with pre-#9 events that carry none of the optional mechanical fields.
+// pending-mutations unit: the SW-side #9 recorder buffer + the recordEdit fold (the fold lives in
+// src/changeset/fold-mutations.ts, re-exported here — this suite exercises both through the public
+// import path). Buffer: append / exact-match drain / single-group implicit drain / the gated
+// unmatched-explicit-selector rescue (plausible paraphrase drains, implausible miss leaves the
+// buffer) / drain's dropped-snapshot-and-reset / per-tab cap with droppedCount / remove
+// (recorder-revert: LIFO ts+selector+kind) / peekGroups / clear. Fold: first-before/last-after per
+// family, class WINDOW SET-DIFF (first class-relevant before-classAttr vs last after-classAttr —
+// immune to setAttr('class') interleaves and page churn), setAttr('class') feeds classes and is
+// SKIPPED in attrs, selector healed to the first event's (ground truth), structural first-folds +
+// additional ops SPILL OVER into their own auto-recorded edits (carrying the model edit's
+// breakpoint), frameworkHints union, ground-truth-wins per family (incl. merged-empty replacing
+// the model's stale delta), and back-compat with pre-#9 events that carry none of the optional
+// mechanical fields.
 
 const TAB = 7;
 
@@ -51,12 +57,12 @@ describe('createPendingMutations: buffer semantics', () => {
     pending.append(TAB, c1);
     pending.append(TAB, a2);
 
-    expect(pending.drain(TAB, '#a')).toEqual([a1, a2]);
+    expect(pending.drain(TAB, '#a')).toEqual({ events: [a1, a2], dropped: 0, rescued: false });
     // Consumed — and ambiguous: TWO groups remain, so the unmatched re-drain cannot fall back
     // to the single-group rescue below and drains nothing.
-    expect(pending.drain(TAB, '#a')).toEqual([]);
-    expect(pending.drain(TAB, '#b')).toEqual([b1]);
-    expect(pending.drain(TAB, '#c')).toEqual([c1]);
+    expect(pending.drain(TAB, '#a')).toEqual({ events: [], dropped: 0, rescued: false });
+    expect(pending.drain(TAB, '#b')).toEqual({ events: [b1], dropped: 0, rescued: false });
+    expect(pending.drain(TAB, '#c')).toEqual({ events: [c1], dropped: 0, rescued: false });
     expect(pending.peekGroups(TAB)).toEqual([]);
   });
 
@@ -67,7 +73,7 @@ describe('createPendingMutations: buffer semantics', () => {
     pending.append(TAB, a1);
     pending.append(TAB, a2);
 
-    expect(pending.drain(TAB)).toEqual([a1, a2]);
+    expect(pending.drain(TAB)).toEqual({ events: [a1, a2], dropped: 0, rescued: false });
     expect(pending.peekGroups(TAB)).toEqual([]);
   });
 
@@ -76,7 +82,7 @@ describe('createPendingMutations: buffer semantics', () => {
     pending.append(TAB, ev('setStyle', '#a'));
     pending.append(TAB, ev('setStyle', '#b'));
 
-    expect(pending.drain(TAB)).toEqual([]);
+    expect(pending.drain(TAB)).toEqual({ events: [], dropped: 0, rescued: false });
     expect(pending.peekGroups(TAB)).toHaveLength(2); // buffer untouched
   });
 
@@ -84,23 +90,47 @@ describe('createPendingMutations: buffer semantics', () => {
     const pending = createPendingMutations();
     pending.append(TAB, ev('setStyle', '#a'));
 
-    expect(pending.drain(999)).toEqual([]);
+    expect(pending.drain(999)).toEqual({ events: [], dropped: 0, rescued: false });
     expect(pending.peekGroups(TAB)).toHaveLength(1); // untouched
   });
 
-  // #9 review fix: an EXPLICIT selector that matched nothing used to strand the group for the
-  // auto-finalize to duplicate. When the buffer holds exactly one distinct selector value, the
-  // named selector is unambiguously a paraphrase of it — drain the group anyway.
-  it('an unmatched explicit selector drains the group when the buffer holds exactly one distinct value', () => {
+  // #9 round-2 review fix: the unmatched-explicit-selector rescue is GATED — the one buffered
+  // group drains only when its value is plausibly the same target (one value contains the
+  // other, case-sensitive). An implausible miss leaves the group for the turn-end
+  // auto-finalize, which records it under its real selector.
+  it('an unmatched explicit selector drains the group when it plausibly paraphrases the one buffered value', () => {
     const pending = createPendingMutations();
-    const a1 = ev('setStyle', '#a');
-    const a2 = ev('setStyle', '#a');
+    const a1 = ev('setStyle', '#cta');
+    const a2 = ev('setStyle', '#cta');
     pending.append(TAB, a1);
     pending.append(TAB, a2);
 
-    // The model paraphrased its selector (`.hero button` vs the buffered `#a`) — still unambiguous.
-    expect(pending.drain(TAB, '.hero button')).toEqual([a1, a2]);
+    // The model paraphrased its selector (`.hero #cta` vs the buffered `#cta`) — plausible.
+    expect(pending.drain(TAB, '.hero #cta')).toEqual({
+      events: [a1, a2],
+      dropped: 0,
+      rescued: true,
+    });
     expect(pending.peekGroups(TAB)).toEqual([]); // consumed, not stranded
+  });
+
+  it('the rescue also fires when the buffered value contains the model value', () => {
+    const pending = createPendingMutations();
+    const a1 = ev('setStyle', '.hero .cta');
+    pending.append(TAB, a1);
+
+    expect(pending.drain(TAB, '.cta')).toEqual({ events: [a1], dropped: 0, rescued: true });
+  });
+
+  it('an unmatched explicit selector does NOT drain an unrelated single group (no shared substring)', () => {
+    const pending = createPendingMutations();
+    pending.append(TAB, ev('setStyle', '#sidebar'));
+    pending.append(TAB, ev('addClass', '#sidebar'));
+
+    // recordEdit for '#cta' has NO events; the one buffered group is an unrelated element.
+    // Draining it here would fold the sidebar's ground truth into the CTA's Edit.
+    expect(pending.drain(TAB, '#cta')).toEqual({ events: [], dropped: 0, rescued: false });
+    expect(pending.peekGroups(TAB)).toHaveLength(1); // left for the auto-finalize
   });
 
   it('an unmatched explicit selector drains nothing when several distinct values are buffered (ambiguous)', () => {
@@ -108,7 +138,7 @@ describe('createPendingMutations: buffer semantics', () => {
     pending.append(TAB, ev('setStyle', '#a'));
     pending.append(TAB, ev('setStyle', '#b'));
 
-    expect(pending.drain(TAB, '#nope')).toEqual([]);
+    expect(pending.drain(TAB, '#nope')).toEqual({ events: [], dropped: 0, rescued: false });
     expect(pending.peekGroups(TAB)).toHaveLength(2); // untouched — the caller must name a real one
   });
 
@@ -122,7 +152,11 @@ describe('createPendingMutations: buffer semantics', () => {
     ];
     for (const e of events) pending.append(TAB, e);
 
-    expect(pending.drain(TAB)).toEqual(events.slice(1));
+    expect(pending.drain(TAB)).toEqual({
+      events: events.slice(1),
+      dropped: 1,
+      rescued: false,
+    });
   });
 
   it('clear wipes the tab buffer', () => {
@@ -132,7 +166,7 @@ describe('createPendingMutations: buffer semantics', () => {
     pending.clear(TAB);
 
     expect(pending.peekGroups(TAB)).toEqual([]);
-    expect(pending.drain(TAB, '#a')).toEqual([]);
+    expect(pending.drain(TAB, '#a')).toEqual({ events: [], dropped: 0, rescued: false });
   });
 
   it('peekGroups groups by selector value in first-seen order without consuming', () => {
@@ -191,6 +225,21 @@ describe('createPendingMutations: droppedCount (cap-drop marker)', () => {
 
     expect(pending.droppedCount(TAB)).toBe(0);
   });
+
+  it('drain snapshots the drop count and resets it to 0 (even on a no-match drain)', () => {
+    const pending = createPendingMutations({ cap: 1 });
+    pending.append(TAB, ev('setStyle', '#a'));
+    pending.append(TAB, ev('setStyle', '#a')); // one dropped
+    expect(pending.droppedCount(TAB)).toBe(1);
+
+    // The drain that consumes the group also consumes its loss marker.
+    const result = pending.drain(TAB, '#a');
+    expect(result.dropped).toBe(1);
+    expect(pending.droppedCount(TAB)).toBe(0); // reset
+
+    // A later drain sees a clean counter — the loss is reported exactly once.
+    expect(pending.drain(TAB).dropped).toBe(0);
+  });
 });
 
 describe('createPendingMutations: remove (recorder-revert)', () => {
@@ -203,6 +252,23 @@ describe('createPendingMutations: remove (recorder-revert)', () => {
 
     expect(pending.remove(TAB, a1)).toBe(true);
     expect(pending.peekGroups(TAB)[0]?.events).toEqual([a2]);
+  });
+
+  // #9 round-2 review fix: the ts match is LIFO and requires selector.value + kind too —
+  // Date.now() ms resolution makes same-ts collisions real in a fast tool burst.
+  it('a same-ts burst removes the NEWEST event matching ts + selector + kind; unrelated same-ts events survive', () => {
+    const pending = createPendingMutations();
+    const older = ev('setStyle', '#a', { ts: 100 });
+    const newer = ev('setStyle', '#a', { ts: 100 }); // collided ts (ms clock)
+    const otherKind = ev('addClass', '#a', { ts: 100 }); // same ts, different kind
+    pending.append(TAB, older);
+    pending.append(TAB, newer);
+    pending.append(TAB, otherKind);
+
+    // The revert carries ts=100 + setStyle + #a: the newest FULL match (newer) dies; the
+    // same-ts addClass and the older setStyle survive.
+    expect(pending.remove(TAB, ev('setStyle', '#a', { ts: 100 }))).toBe(true);
+    expect(pending.peekGroups(TAB)[0]?.events).toEqual([older, otherKind]);
   });
 
   it('falls back to the LAST event with the same selector value + kind when ts matches nothing', () => {
@@ -296,17 +362,29 @@ describe('foldMutationEvents: per-family merges', () => {
     ]);
   });
 
-  // #9 review fix: the class merge is PARITY over strictly-alternating real ops (the producer
-  // emits a delta only when the class list actually changed). ODD count keeps the FIRST op,
-  // EVEN drops the name. The old "cancel opposites, dedupe repeats" rule is gone — a repeated
-  // real op (add+add) can only come from a producer violating the no-op contract, and parity
-  // treats it as a canceled pair.
-  it('add→remove→add nets {op:add} (odd count keeps the first op)', () => {
+  // #9 round-2 review fix: the class merge is a WINDOW SET-DIFF — the FIRST class-relevant
+  // event's before-classAttr vs the LAST's after-classAttr — not op parity. Class-relevant =
+  // classChange OR attrChange.name === 'class'. The fixtures below carry the realistic
+  // classAttr strings the producer emits (the old parity fixtures had empty before/after —
+  // their PREMISE no longer pins anything under a diff).
+  it('add→remove→add nets {op:add}', () => {
     const edit = anEdit();
     const events = [
-      ev('addClass', '#cta', { classChange: { name: 'hero', op: 'add' } }),
-      ev('removeClass', '#cta', { classChange: { name: 'hero', op: 'remove' } }),
-      ev('addClass', '#cta', { classChange: { name: 'hero', op: 'add' } }),
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'hero',
+        classChange: { name: 'hero', op: 'add' },
+      }),
+      ev('removeClass', '#cta', {
+        before: 'hero',
+        after: '',
+        classChange: { name: 'hero', op: 'remove' },
+      }),
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'hero',
+        classChange: { name: 'hero', op: 'add' },
+      }),
     ];
 
     const { folded } = foldMutationEvents(edit, events);
@@ -314,38 +392,69 @@ describe('foldMutationEvents: per-family merges', () => {
     expect(folded.classes).toEqual([{ name: 'hero', op: 'add' }]);
   });
 
-  it('add→remove nets nothing (even count cancels out)', () => {
-    const edit = anEdit();
+  it('add→remove nets nothing — and the truthfully-empty family REPLACES the model’s classes', () => {
+    const edit = anEdit({ classes: [{ name: 'model-class', op: 'add' }] });
     const events = [
-      ev('addClass', '#cta', { classChange: { name: 'flip', op: 'add' } }),
-      ev('removeClass', '#cta', { classChange: { name: 'flip', op: 'remove' } }),
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'flip',
+        classChange: { name: 'flip', op: 'add' },
+      }),
+      ev('removeClass', '#cta', {
+        before: 'flip',
+        after: '',
+        classChange: { name: 'flip', op: 'remove' },
+      }),
     ];
 
     const { folded } = foldMutationEvents(edit, events);
 
+    // Window before '' → after '': no net change. Ground truth says so — the model's stale
+    // 'model-class' must NOT stand.
     expect(folded.classes).toEqual([]);
   });
 
   it('a present class + no-op add + remove nets {op:remove} (the no-op emitted no event)', () => {
     const edit = anEdit();
     // The element already had the class, so the model's addClass was a no-op and the producer
-    // emitted NOTHING for it — the only real delta buffered is the remove. Parity over one op.
-    const events = [ev('removeClass', '#cta', { classChange: { name: 'gone', op: 'remove' } })];
+    // emitted NOTHING for it — the only real delta buffered is the remove.
+    const events = [
+      ev('removeClass', '#cta', {
+        before: 'gone',
+        after: '',
+        classChange: { name: 'gone', op: 'remove' },
+      }),
+    ];
 
     const { folded } = foldMutationEvents(edit, events);
 
     expect(folded.classes).toEqual([{ name: 'gone', op: 'remove' }]);
   });
 
-  it('applies parity per class name independently across the group', () => {
+  it('diffs each class name independently across the group', () => {
     const edit = anEdit();
+    // A realistic chain on an element that started with class 'gone'.
     const events = [
-      ev('addClass', '#cta', { classChange: { name: 'keep', op: 'add' } }),
-      ev('addClass', '#cta', { classChange: { name: 'flip', op: 'add' } }),
-      ev('removeClass', '#cta', { classChange: { name: 'flip', op: 'remove' } }), // cancels
-      ev('removeClass', '#cta', { classChange: { name: 'flop', op: 'remove' } }),
-      ev('addClass', '#cta', { classChange: { name: 'flop', op: 'add' } }), // cancels (other order)
-      ev('removeClass', '#cta', { classChange: { name: 'gone', op: 'remove' } }),
+      ev('addClass', '#cta', {
+        before: 'gone',
+        after: 'gone keep',
+        classChange: { name: 'keep', op: 'add' },
+      }),
+      ev('addClass', '#cta', {
+        before: 'gone keep',
+        after: 'gone keep flip',
+        classChange: { name: 'flip', op: 'add' },
+      }),
+      ev('removeClass', '#cta', {
+        before: 'gone keep flip',
+        after: 'gone keep',
+        classChange: { name: 'flip', op: 'remove' }, // cancels
+      }),
+      ev('removeClass', '#cta', {
+        before: 'gone keep',
+        after: 'keep',
+        classChange: { name: 'gone', op: 'remove' },
+      }),
     ];
 
     const { folded } = foldMutationEvents(edit, events);
@@ -354,6 +463,58 @@ describe('foldMutationEvents: per-family merges', () => {
       { name: 'keep', op: 'add' },
       { name: 'gone', op: 'remove' },
     ]);
+  });
+
+  it('a setAttr(class) interleave feeds the same window (x and y both net add)', () => {
+    const edit = anEdit();
+    const events = [
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+      // The model rewrote the whole class list mid-group — a class-relevant event whose
+      // classAttr strings live on the attrChange (null ⇒ '').
+      ev('setAttr', '#cta', { attrChange: { name: 'class', before: 'x', after: 'y' } }),
+      ev('addClass', '#cta', {
+        before: 'y',
+        after: 'y x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    // Window '' → 'y x': both net add, in first-appearance order in the after string.
+    expect(folded.classes).toEqual([
+      { name: 'y', op: 'add' },
+      { name: 'x', op: 'add' },
+    ]);
+    // ...and the setAttr('class') is SKIPPED in attrs (the classes family is canonical —
+    // an attr entry would contradict it). The model's attrs stand untouched.
+    expect(folded.attrs).toEqual([]);
+  });
+
+  it('page churn between two adds ([add, add] shape) still nets add — parity dropped this', () => {
+    const edit = anEdit();
+    // Page JS removed the class between the two addClass calls, so the second add was a REAL
+    // delta again. Parity read the pair as a cancel; the window diff sees '' → 'x'.
+    const events = [
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+      ev('addClass', '#cta', {
+        before: '',
+        after: 'x',
+        classChange: { name: 'x', op: 'add' },
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    expect(folded.classes).toEqual([{ name: 'x', op: 'add' }]);
   });
 
   it('merges textChange first-before / last-after', () => {
@@ -378,6 +539,34 @@ describe('foldMutationEvents: per-family merges', () => {
     const { folded } = foldMutationEvents(edit, events);
 
     expect(folded.frameworkHints).toEqual(['tailwind', 'css-module', 'styled', 'emotion']);
+  });
+});
+
+describe('foldMutationEvents: selector healing', () => {
+  // #9 round-2 review fix: with events in hand, the fold adopts the FIRST event's selector —
+  // the one that actually resolved on the page (strategy + fragile included).
+  it('heals a model paraphrase to the event’s selector (strategy + fragile adopted)', () => {
+    const edit = anEdit({ selector: sel('.hero .cta') }); // the model's paraphrase
+    const eventSelector: StableSelector = { value: '#cta', strategy: 'id', fragile: false };
+    const events = [
+      ev('setStyle', '#cta', {
+        selector: eventSelector,
+        styleChanges: [{ prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(1, 2, 3)' }],
+      }),
+    ];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    expect(folded.selector).toEqual(eventSelector);
+  });
+
+  it('an exact-match drain heals to the same value (no-op-ish)', () => {
+    const edit = anEdit();
+    const events = [ev('setStyle', '#cta')];
+
+    const { folded } = foldMutationEvents(edit, events);
+
+    expect(folded.selector).toEqual(edit.selector);
   });
 });
 
@@ -412,6 +601,23 @@ describe('foldMutationEvents: structural spillover', () => {
     expect(extra?.classes).toEqual([]);
     expect(extra?.selector).toEqual(events[0]?.selector); // the group's own selector
     expect(extra?.frameworkHints).toEqual(['tailwind']); // group hints, NOT the model's
+    expect(extra?.breakpoint).toBeUndefined(); // the model edit had none
+  });
+
+  // #9 round-2 review fix: spillover edits ran under the same device emulation as the model's
+  // edit, so they carry its breakpoint.
+  it('spillover carries the model edit’s breakpoint', () => {
+    const edit = anEdit({ breakpoint: 'iphone-14' });
+    const events = [
+      ev('insertNode', '#cta', { structural: { op: 'insert' as const, html: '<i>1</i>' } }),
+      ev('removeNode', '#cta', { structural: { op: 'remove' as const } }),
+    ];
+
+    const { folded, spillover } = foldMutationEvents(edit, events);
+
+    expect(folded.breakpoint).toBe('iphone-14');
+    expect(spillover).toHaveLength(1);
+    expect(spillover[0]?.breakpoint).toBe('iphone-14');
   });
 
   it('move-then-remove survives as folded move + spillover remove (no op silently dropped)', () => {
