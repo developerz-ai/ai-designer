@@ -11,6 +11,7 @@ const serverA: McpServer = {
   url: 'https://a.example.com/mcp',
   transport: 'http',
   authKind: 'none',
+  enabled: true,
   status: 'disconnected',
   toolCount: 0,
   tools: [],

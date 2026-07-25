@@ -52,6 +52,7 @@ import type { McpConnectionSpec } from '@/mcp/client';
 import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
 import {
+  clearOriginRepo,
   getOAuthConfigs,
   getOriginRepoMap,
   getServer,
@@ -60,6 +61,7 @@ import {
   type StoredServer,
   saveOAuthConfig,
   saveServer,
+  setOriginRepo,
 } from '@/mcp/store';
 import { emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
@@ -226,6 +228,7 @@ export default defineBackground(() => {
       url: stored.url,
       transport: stored.transport,
       authKind: stored.authKind,
+      enabled: stored.enabled,
       status: health?.status ?? 'disconnected',
       toolCount: health?.toolCount ?? 0,
       tools: health?.tools ?? [],
@@ -272,7 +275,7 @@ export default defineBackground(() => {
   const mcpReady = Promise.all([listServers(), getOAuthConfigs()])
     .then(([stored, oauth]) => {
       for (const [id, cfg] of Object.entries(oauth)) oauthConfigs.set(id, cfg);
-      for (const s of stored) mcpManager.register(mcpSpec(s));
+      for (const s of stored) mcpManager.register(mcpSpec(s), { enabled: s.enabled });
     })
     .catch(() => {});
 
@@ -532,7 +535,11 @@ export default defineBackground(() => {
             multiTask: (opts.problems?.length ?? 0) > 0,
             title: opts.title,
           };
-    const target = { repo: route.repo, backend: route.backend.id };
+    const target = {
+      repo: route.repo,
+      backend: route.backend.id,
+      ...(route.branch ? { branch: route.branch } : {}),
+    };
 
     let taskCount: number;
     try {
@@ -1079,7 +1086,7 @@ export default defineBackground(() => {
           transport: msg.transport,
           authKind: msg.authKind,
         });
-        mcpManager.register(mcpSpec(stored));
+        mcpManager.register(mcpSpec(stored), { enabled: stored.enabled });
         pushMcpStatus(stored);
         void pushReadiness().catch(() => {});
         return { ok: true, server: toBusServer(stored) };
@@ -1099,14 +1106,43 @@ export default defineBackground(() => {
       }
       // (Re)open a registered server and refresh its cached health/tool catalog.
       // McpManager.connect never throws — a failed open comes back as status:'error'.
+      // A disabled server (#17) refuses before any open is attempted.
       case 'mcp-connect': {
         const stored = await getServer(msg.id);
         if (!stored) return { ok: false, error: `Unknown MCP server: ${msg.id}` };
+        if (!stored.enabled) return { ok: false, error: `MCP server is disabled: ${stored.label}` };
         if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(stored));
         await mcpManager.connect(msg.id);
         pushMcpStatus(stored);
         void pushReadiness().catch(() => {});
         return { ok: true, server: toBusServer(stored) };
+      }
+      // Enable/disable a backend (#17): persist the flag, flip the manager registration
+      // (disabling tears the live connection down), republish health + readiness (the MCP
+      // row counts ENABLED servers only).
+      case 'mcp-set-enabled': {
+        const stored = await getServer(msg.id);
+        if (!stored) return { ok: false, error: `Unknown MCP server: ${msg.id}` };
+        const next = await saveServer({ ...stored, enabled: msg.enabled });
+        if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(next), { enabled: next.enabled });
+        await mcpManager.setEnabled(msg.id, msg.enabled);
+        pushMcpStatus(next);
+        void pushReadiness().catch(() => {});
+        return { ok: true, server: toBusServer(next) };
+      }
+      // Origin→repo map (#20): the one-click-Ship mapping the panel curates. The SW validates
+      // nothing beyond the bus schema — the map is user-curated by construction, and a bogus
+      // slug only ever fails the user's own backend task create.
+      case 'mcp-origin-repo-get': {
+        return { ok: true, map: await getOriginRepoMap() };
+      }
+      case 'mcp-origin-repo-set': {
+        await setOriginRepo(msg.origin, msg.entry);
+        return { ok: true };
+      }
+      case 'mcp-origin-repo-clear': {
+        await clearOriginRepo(msg.origin);
+        return { ok: true };
       }
       // Submit the chosen auth kind's credential, then reconnect so the new header takes
       // effect immediately. `authKind` on the record is updated to match what was just
@@ -1128,7 +1164,7 @@ export default defineBackground(() => {
           return { ok: false, error: String(err) };
         }
         const next = await saveServer({ ...stored, authKind: msg.authKind });
-        mcpManager.register(mcpSpec(next));
+        mcpManager.register(mcpSpec(next), { enabled: next.enabled });
         await mcpManager.connect(msg.id);
         pushMcpStatus(next);
         void pushReadiness().catch(() => {});

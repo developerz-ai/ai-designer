@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { namespaceTool } from './client';
 import {
   type OriginRepoMap,
-  resolveRepo,
+  resolveOriginEntry,
   type TaskBackend,
   type TaskHandle,
   type TaskStatus,
@@ -68,25 +68,38 @@ export function pickBackend(
 export type HandoffFallbackReason = 'no-backend' | 'no-repo';
 
 /** Where a ship routes: dispatch `task(create)` to a connected backend + mapped repo, or fall back
- *  to a downloadable MD report (no backend connected/targeted, or this origin has no repo mapped). */
+ *  to a downloadable MD report (no backend connected/targeted, or this origin has no repo mapped).
+ *  `branch` comes off the origin's entry when it names one (#20) and rides the task spec. */
 export type HandoffRoute =
-  | { readonly kind: 'tasks'; readonly backend: BackendCandidate; readonly repo: string }
+  | {
+      readonly kind: 'tasks';
+      readonly backend: BackendCandidate;
+      readonly repo: string;
+      readonly branch?: string;
+    }
   | { readonly kind: 'report'; readonly reason: HandoffFallbackReason };
 
 /** Decide a ship's route for one page (pure): a connected backend that can take a `task` AND a repo
  *  mapped to the page's origin ⇒ dispatch tasks; otherwise a downloadable report, with the reason.
- *  Never dispatches on its own — the SW only calls this from a user-triggered Ship/Send RPC. */
+ *  Backend precedence (#20): an explicit `target` (the user's pick) wins; else the origin entry's
+ *  `backendId` pins the dispatching server; else the first connected candidate. Never dispatches on
+ *  its own — the SW only calls this from a user-triggered Ship/Send RPC. */
 export function routeHandoff(args: {
   url: string;
   originRepoMap: OriginRepoMap;
   candidates: readonly BackendCandidate[];
   target?: string;
 }): HandoffRoute {
-  const backend = pickBackend(args.candidates, args.target);
+  const entry = resolveOriginEntry(args.url, args.originRepoMap);
+  const backend = pickBackend(args.candidates, args.target ?? entry?.backendId);
   if (!backend) return { kind: 'report', reason: 'no-backend' };
-  const repo = resolveRepo(args.url, args.originRepoMap);
-  if (!repo) return { kind: 'report', reason: 'no-repo' };
-  return { kind: 'tasks', backend, repo };
+  if (!entry) return { kind: 'report', reason: 'no-repo' };
+  return {
+    kind: 'tasks',
+    backend,
+    repo: entry.repo,
+    ...(entry.branch ? { branch: entry.branch } : {}),
+  };
 }
 
 /** A short, user-facing explanation for a report fallback — shown by the panel beside the download.

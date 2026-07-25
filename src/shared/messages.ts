@@ -163,19 +163,30 @@ export type McpOAuthConfig = z.infer<typeof McpOAuthConfig>;
 
 // A configured server as the panel sees it: `mcp/store.ts`'s persisted record merged
 // with `mcp/manager.ts`'s live connection health. `toolCount`/`tools` are 0/[] until a
-// successful connect; `error` is set only when `status === 'error'`.
+// successful connect; `error` is set only when `status === 'error'`. `enabled` (#17) is the
+// user's per-backend switch — a disabled server never connects and its tools never merge.
 export const McpServer = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   url: z.string().url(),
   transport: McpTransport,
   authKind: AuthKind,
+  enabled: z.boolean(),
   status: McpConnectionStatus,
   toolCount: z.number().int().nonnegative(),
   tools: z.array(z.string()),
   error: z.string().optional(),
 });
 export type McpServer = z.infer<typeof McpServer>;
+
+/** One origin→repo routing entry as it crosses the bus (#20) — mirrors handoff.ts's
+ *  `OriginRepoEntry` (the bus can't import the SW module's type at runtime). */
+export const OriginRepoEntry = z.object({
+  repo: z.string().min(1),
+  backendId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+});
+export type OriginRepoEntry = z.infer<typeof OriginRepoEntry>;
 
 export const McpAdd = z.object({
   type: z.literal('mcp-add'),
@@ -187,6 +198,27 @@ export const McpAdd = z.object({
 export const McpRemove = z.object({ type: z.literal('mcp-remove'), id: z.string().min(1) });
 export const McpList = z.object({ type: z.literal('mcp-list') });
 export const McpConnect = z.object({ type: z.literal('mcp-connect'), id: z.string().min(1) });
+// Per-backend enable/disable (#17): persists the flag on the stored record and flips the
+// manager registration (disabling tears the live connection down). Replies `McpServerResult`.
+export const McpSetEnabled = z.object({
+  type: z.literal('mcp-set-enabled'),
+  id: z.string().min(1),
+  enabled: z.boolean(),
+});
+// Origin→repo map RPCs (#20): the one-click-Ship mapping UI. Get returns the WHOLE map
+// (`McpOriginRepoResult`); set/clear reply `OkResult`. Origins are `host[:port]` keys —
+// the panel derives the current tab's from its URL, the SW validates nothing further
+// (the map is user-curated by construction).
+export const McpOriginRepoGet = z.object({ type: z.literal('mcp-origin-repo-get') });
+export const McpOriginRepoSet = z.object({
+  type: z.literal('mcp-origin-repo-set'),
+  origin: z.string().min(1),
+  entry: OriginRepoEntry,
+});
+export const McpOriginRepoClear = z.object({
+  type: z.literal('mcp-origin-repo-clear'),
+  origin: z.string().min(1),
+});
 
 // Submits the credential for a server's chosen auth kind — one RPC for both `AuthDialog`
 // paths: an API key (stored as-is, Bearer at connect time) or an OAuth PKCE flow the SW
@@ -351,6 +383,10 @@ export const PanelToSw = z.discriminatedUnion('type', [
   McpRemove,
   McpList,
   McpConnect,
+  McpSetEnabled,
+  McpOriginRepoGet,
+  McpOriginRepoSet,
+  McpOriginRepoClear,
   McpAuthStart,
   McpStatusRequest,
   Readiness,
@@ -431,6 +467,15 @@ export const McpListResult = z.object({
   error: z.string().optional(),
 });
 export type McpListResult = z.infer<typeof McpListResult>;
+
+// RPC response for `mcp-origin-repo-get` (#20): the whole origin→entry map.
+// set/clear reply with the plain `OkResult`.
+export const McpOriginRepoResult = z.object({
+  ok: z.boolean(),
+  map: z.record(z.string(), OriginRepoEntry).optional(),
+  error: z.string().optional(),
+});
+export type McpOriginRepoResult = z.infer<typeof McpOriginRepoResult>;
 
 // RPC response for `readiness`. Compute never throws (see `src/agent/readiness.ts`), so
 // `ok` is always true here; the field is kept for the bus's shared response shape.

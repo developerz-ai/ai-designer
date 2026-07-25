@@ -62,7 +62,7 @@ describe('routeHandoff', () => {
   const candidates: BackendCandidate[] = [
     { id: 'ai-dev', label: 'developerz.ai', taskToolName: 'ai-dev__task' },
   ];
-  const originRepoMap = { 'localhost:3000': 'acme/store' };
+  const originRepoMap = { 'localhost:3000': { repo: 'acme/store' } };
 
   it('routes to tasks when a backend + a repo mapping both exist', () => {
     const route = routeHandoff({

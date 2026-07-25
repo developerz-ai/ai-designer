@@ -61,7 +61,10 @@ describe('originOf', () => {
 });
 
 describe('resolveRepo', () => {
-  const map = { 'localhost:3000': 'acme/storefront', 'shop.example.com': 'acme/shop' };
+  const map = {
+    'localhost:3000': { repo: 'acme/storefront' },
+    'shop.example.com': { repo: 'acme/shop' },
+  };
 
   it('maps a page URL to its repo by origin', () => {
     expect(resolveRepo('http://localhost:3000/pricing', map)).toBe('acme/storefront');

@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 import { clearAuth, OAuthConfig } from './auth';
-import type { OriginRepoMap } from './handoff';
+import type { OriginRepoEntry, OriginRepoMap } from './handoff';
 
 // One `storage.local` key holds the whole list (small, always read/written together).
 const SERVERS_KEY = 'mcp:servers';
@@ -35,13 +35,16 @@ export type AuthKind = z.infer<typeof AuthKind>;
 
 /** The non-secret record persisted per server. `transport`/`authKind` default so a minimal
  *  `{id,label,url}` from the Add-server form is accepted; the credential itself never lives
- *  here — it's in the key-store (see ./auth). */
+ *  here — it's in the key-store (see ./auth). `enabled` (#17) gates every connection path —
+ *  a disabled server stays registered (its config + credentials intact) but is never opened,
+ *  merged, or counted reachable; legacy records predate the field and rehydrate as `true`. */
 export const StoredServer = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   url: z.string().url(),
   transport: McpTransport.default('http'),
   authKind: AuthKind.default('none'),
+  enabled: z.boolean().default(true),
 });
 export type StoredServer = z.infer<typeof StoredServer>;
 /** Pre-default input: `transport`/`authKind` optional (the Add-server form supplies `{id,
@@ -117,24 +120,37 @@ export async function removeOAuthConfig(id: string): Promise<void> {
   await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
 }
 
-/** The persisted origin→repo map that backs one-click Ship (`src/mcp/handoff.ts` `resolveRepo`).
- *  Non-string / empty entries are dropped on read so a corrupt write can't break repo resolution —
- *  same defensive posture as `listServers`. */
+/** The persisted origin→repo map that backs one-click Ship (`src/mcp/handoff.ts`
+ *  `resolveOriginEntry`). Back-compat (#20): legacy values are bare repo SLUG STRINGS and read
+ *  as `{repo}`; entry objects validate field-by-field. Unreadable entries are dropped on read so
+ *  a corrupt write can't break repo resolution — same defensive posture as `listServers`. */
 export async function getOriginRepoMap(): Promise<OriginRepoMap> {
   const got = await chrome.storage.local.get(ORIGIN_REPO_KEY);
   const raw = got[ORIGIN_REPO_KEY];
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const map: OriginRepoMap = {};
-  for (const [origin, repo] of Object.entries(raw as Record<string, unknown>)) {
-    if (origin && typeof repo === 'string' && repo) map[origin] = repo;
+  for (const [origin, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!origin) continue;
+    if (typeof value === 'string') {
+      if (value) map[origin] = { repo: value }; // legacy slug-string form
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.repo !== 'string' || !candidate.repo) continue;
+    const entry: { repo: string; backendId?: string; branch?: string } = { repo: candidate.repo };
+    if (typeof candidate.backendId === 'string' && candidate.backendId)
+      entry.backendId = candidate.backendId;
+    if (typeof candidate.branch === 'string' && candidate.branch) entry.branch = candidate.branch;
+    map[origin] = entry;
   }
   return map;
 }
 
-/** Map a page origin (`host[:port]`) to a repo slug (`owner/name`), replacing any prior mapping. */
-export async function setOriginRepo(origin: string, repo: string): Promise<void> {
+/** Map a page origin (`host[:port]`) to a routing entry, replacing any prior mapping. */
+export async function setOriginRepo(origin: string, entry: OriginRepoEntry): Promise<void> {
   const map = await getOriginRepoMap();
-  map[origin] = repo;
+  map[origin] = entry;
   await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
 }
 

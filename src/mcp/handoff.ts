@@ -26,10 +26,21 @@ const MAX_TITLE = 72;
 
 // --- origin → repo mapping ---------------------------------------------------------------------
 
-/** Page origin (`host[:port]`, no scheme/path) → repo slug (`owner/name`). The user's mapping is
- *  storage-only today (`mcp:origin-repo` in `src/mcp/store.ts`); a UI for it is tracked in #20.
- *  Ship reuses the stored mapping (docs/idea/mcp.md "Connecting"). */
-export type OriginRepoMap = Record<string, string>;
+/** One origin's handoff routing record (#20): the repo the page's changes ship to, plus optional
+ *  routing overrides — `backendId` pins WHICH connected backend dispatches (a server id from
+ *  `mcp:servers`), `branch` names the base branch the backend should target (rides the task spec
+ *  to ai-dev; plain string, no validation — the repo owner knows their branches). */
+export interface OriginRepoEntry {
+  readonly repo: string;
+  readonly backendId?: string;
+  readonly branch?: string;
+}
+
+/** Page origin (`host[:port]`, no scheme/path) → routing entry. Persisted under
+ *  `mcp:origin-repo` in `src/mcp/store.ts` (legacy bare-string values read as `{repo}` — the
+ *  store coerces on read); the UI for it is #20. Ship reuses the stored mapping
+ *  (docs/idea/mcp.md "Connecting"). */
+export type OriginRepoMap = Record<string, OriginRepoEntry>;
 
 /** The map key for a page URL — its lowercased `host:port`, or `null` for an unparseable URL. Scheme
  *  and path are dropped: the same repo serves `http` and `https`, and every path under an origin. */
@@ -41,12 +52,17 @@ export function originOf(url: string): string | null {
   }
 }
 
-/** Resolve the repo mapped to a page URL's origin, or `null` when the origin is unmapped (Ship then
- *  routes to a downloadable report instead of a task). */
-export function resolveRepo(url: string, map: OriginRepoMap): string | null {
+/** Resolve the routing entry mapped to a page URL's origin, or `null` when the origin is
+ *  unmapped (Ship then routes to a downloadable report instead of a task). */
+export function resolveOriginEntry(url: string, map: OriginRepoMap): OriginRepoEntry | null {
   const origin = originOf(url);
   if (!origin) return null;
   return map[origin] ?? null;
+}
+
+/** The repo slug of the mapped entry, or `null` when unmapped — the pre-#20 read shape. */
+export function resolveRepo(url: string, map: OriginRepoMap): string | null {
+  return resolveOriginEntry(url, map)?.repo ?? null;
 }
 
 // --- the task spec -----------------------------------------------------------------------------
@@ -65,6 +81,8 @@ export interface TaskSpecPayload {
   readonly problem?: string;
   /** Screenshots for the dev-agent to verify its result against intent; set for a `Report` handoff. */
   readonly images?: readonly ReportImage[];
+  /** The base branch the backend should target (#20 origin→repo entry); omitted = backend default. */
+  readonly branch?: string;
 }
 
 /** One `task(action:'create', …)` to dispatch — the exact `{template,repo,title,spec}` shape from
@@ -91,10 +109,12 @@ export type ShipSource =
     };
 
 /** Where the handoff lands: the resolved repo (via {@link resolveRepo}) and the backend connection id
- *  it dispatches through (informational — the transport itself is the injected {@link TaskBackend}). */
+ *  it dispatches through (informational — the transport itself is the injected {@link TaskBackend}).
+ *  `branch` rides each produced spec's payload when the origin's entry names one (#20). */
 export interface ShipTarget {
   readonly repo: string;
   readonly backend?: string;
+  readonly branch?: string;
 }
 
 // --- planning (pure) ---------------------------------------------------------------------------
@@ -112,7 +132,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
 
   if (source.kind === 'changeset') {
     if (source.changeset.edits.length === 0) throw new Error('ship: changeset has no edits');
-    return [changesetSpec(source.changeset, repo, source.title)];
+    return [changesetSpec(source.changeset, repo, source.title, target.branch)];
   }
 
   const { report, changeset, multiTask } = source;
@@ -121,18 +141,28 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
 
   if (multiTask && report.problems.length > 0) {
     return report.problems.map((problem) =>
-      reportSpec(focusReport(report, problem), repo, url, edits, problem),
+      reportSpec(focusReport(report, problem), repo, url, edits, problem, undefined, target.branch),
     );
   }
-  return [reportSpec(report, repo, url, edits, undefined, source.title)];
+  return [reportSpec(report, repo, url, edits, undefined, source.title, target.branch)];
 }
 
-function changesetSpec(changeset: Changeset, repo: string, title?: string): TaskSpec {
+function changesetSpec(
+  changeset: Changeset,
+  repo: string,
+  title?: string,
+  branch?: string,
+): TaskSpec {
   return {
     template: TASK_TEMPLATE,
     repo,
     title: title ? clampTitle(title) : titleFromEdits(changeset),
-    spec: { source: HANDOFF_SOURCE, url: changeset.url, edits: changeset.edits },
+    spec: {
+      source: HANDOFF_SOURCE,
+      url: changeset.url,
+      edits: changeset.edits,
+      ...(branch ? { branch } : {}),
+    },
   };
 }
 
@@ -143,6 +173,7 @@ function reportSpec(
   edits: readonly Edit[],
   problem?: string,
   title?: string,
+  branch?: string,
 ): TaskSpec {
   return {
     template: TASK_TEMPLATE,
@@ -155,6 +186,7 @@ function reportSpec(
       brief: toMarkdown(report),
       images: report.images,
       ...(problem ? { problem } : {}),
+      ...(branch ? { branch } : {}),
     },
   };
 }

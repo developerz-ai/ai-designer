@@ -75,7 +75,7 @@ function fakeTaskTool(): { execute: TaskToolExecute; calls: Array<Record<string,
   return { execute, calls };
 }
 
-const originRepoMap = { 'localhost:3000': 'acme/storefront' };
+const originRepoMap = { 'localhost:3000': { repo: 'acme/storefront' } };
 
 describe('ship route — connected coding backend', () => {
   const servers = [{ id: 'ai-dev', label: 'developerz.ai' }];

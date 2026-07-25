@@ -99,6 +99,7 @@ function makeHandlers(connect: McpClientFactory) {
       url: stored.url,
       transport: stored.transport,
       authKind: stored.authKind,
+      enabled: stored.enabled,
       status: health?.status ?? 'disconnected',
       toolCount: health?.toolCount ?? 0,
       tools: health?.tools ?? [],
