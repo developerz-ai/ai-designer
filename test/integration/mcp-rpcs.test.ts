@@ -5,10 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
 import type { McpClientFactory, McpConnectionSpec } from '@/mcp/client';
 import { McpManager } from '@/mcp/manager';
-import { getServer, listServers, removeServer, type StoredServer, saveServer } from '@/mcp/store';
+import {
+  clearOriginRepo,
+  getOriginRepoMap,
+  getServer,
+  listServers,
+  removeServer,
+  type StoredServer,
+  saveServer,
+  setOriginRepo,
+} from '@/mcp/store';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type { McpOAuthConfig, McpServer, PanelToSw } from '@/shared/messages';
-import { McpListResult, McpServerResult, OkResult } from '@/shared/messages';
+import { McpListResult, McpOriginRepoResult, McpServerResult, OkResult } from '@/shared/messages';
 
 // Integration: the panel<->SW MCP RPCs (mcp-add/remove/list/connect/auth-start/status),
 // exercised through the *real* cooperating modules (mcp/store + mcp/manager + mcp/auth +
@@ -99,6 +108,7 @@ function makeHandlers(connect: McpClientFactory) {
       url: stored.url,
       transport: stored.transport,
       authKind: stored.authKind,
+      enabled: stored.enabled,
       status: health?.status ?? 'disconnected',
       toolCount: health?.toolCount ?? 0,
       tools: health?.tools ?? [],
@@ -117,7 +127,7 @@ function makeHandlers(connect: McpClientFactory) {
       transport: msg.transport,
       authKind: msg.authKind,
     });
-    mcpManager.register(mcpSpec(stored));
+    mcpManager.register(mcpSpec(stored), { enabled: stored.enabled });
     return McpServerResult.parse({ ok: true, server: toBusServer(stored) });
   }
 
@@ -135,14 +145,49 @@ function makeHandlers(connect: McpClientFactory) {
     return McpListResult.parse({ ok: true, servers });
   }
 
-  // Mirrors background.ts's `case 'mcp-connect'`.
+  // Mirrors background.ts's `case 'mcp-connect'` — a disabled server (#17) refuses
+  // before any open is attempted.
   async function handleConnect(msg: PanelToSw & { type: 'mcp-connect' }) {
     const stored = await getServer(msg.id);
     if (!stored)
       return McpServerResult.parse({ ok: false, error: `Unknown MCP server: ${msg.id}` });
+    if (!stored.enabled)
+      return McpServerResult.parse({
+        ok: false,
+        error: `MCP server is disabled: ${stored.label}`,
+      });
     if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(stored));
     await mcpManager.connect(msg.id);
     return McpServerResult.parse({ ok: true, server: toBusServer(stored) });
+  }
+
+  // Mirrors background.ts's `case 'mcp-set-enabled'` (#17): persist the flag, flip the
+  // manager registration (disabling tears the live connection down), reply the bus record.
+  async function handleSetEnabled(msg: PanelToSw & { type: 'mcp-set-enabled' }) {
+    const stored = await getServer(msg.id);
+    if (!stored)
+      return McpServerResult.parse({ ok: false, error: `Unknown MCP server: ${msg.id}` });
+    const next = await saveServer({ ...stored, enabled: msg.enabled });
+    if (!mcpManager.has(msg.id)) mcpManager.register(mcpSpec(next), { enabled: next.enabled });
+    await mcpManager.setEnabled(msg.id, msg.enabled);
+    return McpServerResult.parse({ ok: true, server: toBusServer(next) });
+  }
+
+  // Mirrors background.ts's `case 'mcp-origin-repo-get'` (#20).
+  async function handleOriginRepoGet() {
+    return McpOriginRepoResult.parse({ ok: true, map: await getOriginRepoMap() });
+  }
+
+  // Mirrors background.ts's `case 'mcp-origin-repo-set'` (#20).
+  async function handleOriginRepoSet(msg: PanelToSw & { type: 'mcp-origin-repo-set' }) {
+    await setOriginRepo(msg.origin, msg.entry);
+    return OkResult.parse({ ok: true });
+  }
+
+  // Mirrors background.ts's `case 'mcp-origin-repo-clear'` (#20).
+  async function handleOriginRepoClear(msg: PanelToSw & { type: 'mcp-origin-repo-clear' }) {
+    await clearOriginRepo(msg.origin);
+    return OkResult.parse({ ok: true });
   }
 
   // Mirrors background.ts's `case 'mcp-auth-start'`.
@@ -166,7 +211,18 @@ function makeHandlers(connect: McpClientFactory) {
     return McpServerResult.parse({ ok: true, server: toBusServer(next) });
   }
 
-  return { mcpManager, handleAdd, handleRemove, handleList, handleConnect, handleAuthStart };
+  return {
+    mcpManager,
+    handleAdd,
+    handleRemove,
+    handleList,
+    handleConnect,
+    handleSetEnabled,
+    handleOriginRepoGet,
+    handleOriginRepoSet,
+    handleOriginRepoClear,
+    handleAuthStart,
+  };
 }
 
 beforeEach(() => {
@@ -373,5 +429,125 @@ describe('integration: mcp-auth-start (apikey + oauth) then reconnect', () => {
       apiKey: 'k',
     });
     expect(result).toEqual({ ok: false, error: 'Unknown MCP server: missing', server: undefined });
+  });
+});
+
+describe('integration: mcp-set-enabled flips the per-backend switch (#17)', () => {
+  it('persists the flag, replies the bus record carrying it, and tears the live connection down', async () => {
+    installChromeFakes();
+    const { mcpManager, handleAdd, handleConnect, handleSetEnabled } = makeHandlers(
+      fakeMcpFactory({ task: {} }),
+    );
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'ai-dev', url: 'https://ai-dev/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+    expect(added.server?.enabled).toBe(true); // new servers default enabled
+
+    await handleConnect({ type: 'mcp-connect', id });
+    expect(mcpManager.health(id)?.status).toBe('connected');
+
+    const disabled = await handleSetEnabled({ type: 'mcp-set-enabled', id, enabled: false });
+    expect(disabled.ok).toBe(true);
+    expect(disabled.server).toMatchObject({ id, enabled: false, status: 'disconnected' });
+    // Persisted, not just in-memory.
+    expect((await getServer(id))?.enabled).toBe(false);
+    expect(mcpManager.isEnabled(id)).toBe(false);
+    expect(mcpManager.health(id)).toMatchObject({ enabled: false, status: 'disconnected' });
+  });
+
+  it('a subsequent mcp-connect on the disabled server replies the disabled error, no open attempted', async () => {
+    installChromeFakes();
+    const connect = vi.fn(async () => ({
+      tools: async () => ({ task: {} }) as never,
+      close: async () => {},
+    })) as unknown as McpClientFactory;
+    const { handleAdd, handleSetEnabled, handleConnect } = makeHandlers(connect);
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'ai-dev', url: 'https://ai-dev/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+    await handleSetEnabled({ type: 'mcp-set-enabled', id, enabled: false });
+    (connect as ReturnType<typeof vi.fn>).mockClear();
+
+    const result = await handleConnect({ type: 'mcp-connect', id });
+    expect(result).toEqual({
+      ok: false,
+      error: 'MCP server is disabled: ai-dev',
+      server: undefined,
+    });
+    expect(connect).not.toHaveBeenCalled(); // credentials/transport never touched
+  });
+
+  it('re-enabling persists true and the next connect opens again', async () => {
+    installChromeFakes();
+    const { handleAdd, handleSetEnabled, handleConnect } = makeHandlers(
+      fakeMcpFactory({ task: {} }),
+    );
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'S', url: 'https://s/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+    await handleSetEnabled({ type: 'mcp-set-enabled', id, enabled: false });
+
+    const enabled = await handleSetEnabled({ type: 'mcp-set-enabled', id, enabled: true });
+    expect(enabled.server).toMatchObject({ enabled: true, status: 'disconnected' }); // lazy — not opened yet
+    expect((await getServer(id))?.enabled).toBe(true);
+
+    const reconnected = await handleConnect({ type: 'mcp-connect', id });
+    expect(reconnected.ok).toBe(true);
+    expect(reconnected.server).toMatchObject({ enabled: true, status: 'connected', toolCount: 1 });
+  });
+
+  it('mcp-set-enabled on an unknown id returns ok:false without throwing', async () => {
+    installChromeFakes();
+    const { handleSetEnabled } = makeHandlers(fakeMcpFactory());
+    const result = await handleSetEnabled({
+      type: 'mcp-set-enabled',
+      id: 'missing',
+      enabled: false,
+    });
+    expect(result).toEqual({ ok: false, error: 'Unknown MCP server: missing', server: undefined });
+  });
+});
+
+describe('integration: mcp-origin-repo RPCs curate the Ship mapping (#20)', () => {
+  it('set/get round-trips entries — including backendId + branch overrides — and clear forgets', async () => {
+    installChromeFakes();
+    const { handleOriginRepoGet, handleOriginRepoSet, handleOriginRepoClear } = makeHandlers(
+      fakeMcpFactory(),
+    );
+
+    expect(await handleOriginRepoGet()).toEqual({ ok: true, map: {} });
+
+    expect(
+      await handleOriginRepoSet({
+        type: 'mcp-origin-repo-set',
+        origin: 'localhost:3000',
+        entry: { repo: 'acme/storefront' },
+      }),
+    ).toEqual({ ok: true, error: undefined });
+    expect(
+      await handleOriginRepoSet({
+        type: 'mcp-origin-repo-set',
+        origin: 'app.acme.com',
+        entry: { repo: 'acme/app', backendId: 'ai-dev', branch: 'develop' },
+      }),
+    ).toEqual({ ok: true, error: undefined });
+
+    const got = await handleOriginRepoGet();
+    expect(got.map).toEqual({
+      'localhost:3000': { repo: 'acme/storefront' },
+      'app.acme.com': { repo: 'acme/app', backendId: 'ai-dev', branch: 'develop' },
+    });
+    // Persisted in the store the Ship route reads.
+    expect(await getOriginRepoMap()).toEqual(got.map);
+
+    expect(
+      await handleOriginRepoClear({ type: 'mcp-origin-repo-clear', origin: 'localhost:3000' }),
+    ).toEqual({ ok: true, error: undefined });
+    expect((await handleOriginRepoGet()).map).toEqual({
+      'app.acme.com': { repo: 'acme/app', backendId: 'ai-dev', branch: 'develop' },
+    });
   });
 });

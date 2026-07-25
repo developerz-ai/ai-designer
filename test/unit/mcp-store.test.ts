@@ -56,6 +56,7 @@ describe('mcp/store', () => {
       url: 'https://ai-dev/mcp',
       transport: 'http',
       authKind: 'none',
+      enabled: true,
     });
     expect(await getServer('ai-dev')).toEqual(saved);
     expect(await listServers()).toEqual([saved]);
@@ -65,7 +66,14 @@ describe('mcp/store', () => {
     await saveServer({ id: 's', label: 'S', url: 'https://s/mcp', authKind: 'apikey' });
     const all = await chrome.storage.local.get(null);
     expect(all['mcp:servers']).toEqual([
-      { id: 's', label: 'S', url: 'https://s/mcp', transport: 'http', authKind: 'apikey' },
+      {
+        id: 's',
+        label: 'S',
+        url: 'https://s/mcp',
+        transport: 'http',
+        authKind: 'apikey',
+        enabled: true,
+      },
     ]);
   });
 
@@ -110,31 +118,92 @@ describe('mcp/store', () => {
     expect(await getServer('missing')).toBeNull();
     await expect(removeServer('missing')).resolves.toBeUndefined();
   });
+
+  it('round-trips an explicit enabled:false (#17)', async () => {
+    const saved = await saveServer({ id: 's', label: 'S', url: 'https://s/mcp', enabled: false });
+    expect(saved.enabled).toBe(false);
+    expect((await getServer('s'))?.enabled).toBe(false);
+    expect((await listServers())[0]?.enabled).toBe(false);
+
+    // The flag is persisted, not just defaulted on read.
+    const all = await chrome.storage.local.get(null);
+    expect(all['mcp:servers']).toEqual([
+      {
+        id: 's',
+        label: 'S',
+        url: 'https://s/mcp',
+        transport: 'http',
+        authKind: 'none',
+        enabled: false,
+      },
+    ]);
+  });
+
+  it('rehydrates a legacy record WITHOUT the enabled field as enabled:true (#17)', async () => {
+    // Pre-#17 persisted shape — no `enabled` key at all. Written raw (straight to storage)
+    // because saveServer would normalize the field in.
+    await chrome.storage.local.set({
+      'mcp:servers': [
+        { id: 'old', label: 'Old', url: 'https://old/mcp', transport: 'http', authKind: 'none' },
+      ],
+    });
+    const list = await listServers();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.enabled).toBe(true);
+  });
 });
 
 describe('mcp/store origin→repo map', () => {
-  it('round-trips an origin→repo mapping', async () => {
+  it('round-trips an origin→entry mapping (#20)', async () => {
     expect(await getOriginRepoMap()).toEqual({});
-    await setOriginRepo('localhost:3000', 'acme/storefront');
-    expect(await getOriginRepoMap()).toEqual({ 'localhost:3000': 'acme/storefront' });
+    await setOriginRepo('localhost:3000', { repo: 'acme/storefront' });
+    expect(await getOriginRepoMap()).toEqual({ 'localhost:3000': { repo: 'acme/storefront' } });
+  });
+
+  it('round-trips routing overrides (backendId + branch)', async () => {
+    await setOriginRepo('app.acme.com', {
+      repo: 'acme/storefront',
+      backendId: 'ai-dev',
+      branch: 'develop',
+    });
+    expect(await getOriginRepoMap()).toEqual({
+      'app.acme.com': { repo: 'acme/storefront', backendId: 'ai-dev', branch: 'develop' },
+    });
+  });
+
+  it('coerces legacy slug-string values on read (pre-#20 shape)', async () => {
+    await chrome.storage.local.set({ 'mcp:origin-repo': { 'localhost:3000': 'acme/storefront' } });
+    expect(await getOriginRepoMap()).toEqual({ 'localhost:3000': { repo: 'acme/storefront' } });
   });
 
   it('upserts by origin and clears a single mapping', async () => {
-    await setOriginRepo('a', 'x/1');
-    await setOriginRepo('b', 'y/2');
-    await setOriginRepo('a', 'x/2'); // upsert, not duplicate
-    expect(await getOriginRepoMap()).toEqual({ a: 'x/2', b: 'y/2' });
+    await setOriginRepo('a', { repo: 'x/1' });
+    await setOriginRepo('b', { repo: 'y/2' });
+    await setOriginRepo('a', { repo: 'x/2' }); // upsert, not duplicate
+    expect(await getOriginRepoMap()).toEqual({ a: { repo: 'x/2' }, b: { repo: 'y/2' } });
 
     await clearOriginRepo('a');
-    expect(await getOriginRepoMap()).toEqual({ b: 'y/2' });
+    expect(await getOriginRepoMap()).toEqual({ b: { repo: 'y/2' } });
     await expect(clearOriginRepo('missing')).resolves.toBeUndefined();
   });
 
   it('drops corrupt/empty entries on read', async () => {
     await chrome.storage.local.set({
-      'mcp:origin-repo': { good: 'o/r', bad: 42, '': 'x/y', blank: '' },
+      'mcp:origin-repo': {
+        good: 'o/r',
+        entry: { repo: 'a/b', backendId: 'be', branch: 'main' },
+        bad: 42,
+        '': 'x/y',
+        blank: '',
+        norepo: { backendId: 'be' },
+        emptyoverrides: { repo: 'c/d', backendId: '', branch: '' },
+      },
     });
-    expect(await getOriginRepoMap()).toEqual({ good: 'o/r' });
+    expect(await getOriginRepoMap()).toEqual({
+      good: { repo: 'o/r' },
+      entry: { repo: 'a/b', backendId: 'be', branch: 'main' },
+      emptyoverrides: { repo: 'c/d' },
+    });
   });
 });
 

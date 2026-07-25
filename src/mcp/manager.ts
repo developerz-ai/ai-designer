@@ -27,6 +27,9 @@ export type McpHealth = {
   tools: string[];
   /** Failure reason when `status === 'error'`. */
   error?: string;
+  /** The server's enabled flag (#17), mirrored onto health so readiness can count ENABLED
+   *  servers only — a disabled backend is neither reachable nor expected capacity. */
+  enabled: boolean;
   /** `now()` at the last status change. */
   checkedAt: number;
 };
@@ -36,7 +39,12 @@ export type McpManagerOptions = CreateConnectionOptions & {
   now?: () => number;
 };
 
-type Entry = { spec: McpConnectionSpec; connection: McpConnection; health: McpHealth };
+type Entry = {
+  spec: McpConnectionSpec;
+  connection: McpConnection;
+  health: McpHealth;
+  enabled: boolean;
+};
 
 /**
  * The service worker's MCP registry. Register the servers the user configured, then call
@@ -56,8 +64,10 @@ export class McpManager {
   }
 
   /** Register (or replace) a server. Replacing closes the previous connection first.
-   *  Nothing connects until `connect()`/`toolsFor()` — registration is cheap. */
-  register(spec: McpConnectionSpec): void {
+   *  Nothing connects until `connect()`/`toolsFor()` — registration is cheap. `enabled`
+   *  (#17, default true) gates every connection path: a disabled server stays registered
+   *  (config + credentials intact) but is never opened or merged. */
+  register(spec: McpConnectionSpec, options: { enabled?: boolean } = {}): void {
     const existing = this.servers.get(spec.id);
     if (existing) void existing.connection.close();
     this.servers.set(spec.id, {
@@ -68,9 +78,29 @@ export class McpManager {
         status: 'disconnected',
         toolCount: 0,
         tools: [],
+        enabled: options.enabled ?? true,
         checkedAt: this.now(),
       },
+      enabled: options.enabled ?? true,
     });
+  }
+
+  /** Flip a server's enabled flag (#17). Disabling also tears the connection down and drops
+   *  health to `disconnected` (a disabled server must never keep a live transport carrying
+   *  auth tokens); enabling is lazy — the next `connect()`/`toolsFor()` opens it. Returns
+   *  false for an unknown id. */
+  async setEnabled(id: string, enabled: boolean): Promise<boolean> {
+    const entry = this.servers.get(id);
+    if (!entry) return false;
+    entry.enabled = enabled;
+    entry.health = { ...entry.health, enabled };
+    if (!enabled) await this.close(id);
+    return true;
+  }
+
+  /** Whether a registered server is enabled (#17). Unknown id → false. */
+  isEnabled(id: string): boolean {
+    return this.servers.get(id)?.enabled ?? false;
   }
 
   /** Forget a server and tear down its connection. No-op for an unknown id. */
@@ -90,10 +120,11 @@ export class McpManager {
   }
 
   /** Open + discover a single server, refreshing its cached health. Never throws — a
-   *  failure is recorded on the returned health. Unknown id → null. */
+   *  failure is recorded on the returned health. Unknown id → null. A DISABLED server (#17)
+   *  refuses: null, no open attempted — the store record (and its credentials) stay put. */
   async connect(id: string): Promise<McpHealth | null> {
     const entry = this.servers.get(id);
-    if (!entry) return null;
+    if (!entry?.enabled) return null;
     await this.discover(entry);
     return entry.health;
   }
@@ -109,14 +140,16 @@ export class McpManager {
   /** The UNFILTERED merge — including write tools like `<id>__task`. ONLY for the
    *  user-clicked Ship route (`runHandoffRoute`), which must see the task tool to dispatch.
    *  Never hand this set to a model turn. Servers are opened lazily and in parallel; any
-   *  that fail are recorded as `error` and omitted from the result. */
+   *  that fail are recorded as `error` and omitted from the result. DISABLED servers (#17)
+   *  are skipped entirely — even when named explicitly in `ids` (a Ship pinned to a disabled
+   *  backend must fall back, never silently open it). */
   async toolsForShip(ids?: string[]): Promise<ToolSet> {
     const targets = ids ?? this.ids();
     const merged: ToolSet = {};
     await Promise.all(
       targets.map(async (id) => {
         const entry = this.servers.get(id);
-        if (!entry) return;
+        if (!entry?.enabled) return;
         const tools = await this.discover(entry);
         if (tools) Object.assign(merged, tools);
       }),
@@ -160,6 +193,7 @@ export class McpManager {
         status: 'connected',
         toolCount: names.length,
         tools: names,
+        enabled: entry.enabled,
         checkedAt: this.now(),
       };
       return tools;
@@ -170,6 +204,7 @@ export class McpManager {
         toolCount: 0,
         tools: [],
         error: err instanceof Error ? err.message : String(err),
+        enabled: entry.enabled,
         checkedAt: this.now(),
       };
       return null;

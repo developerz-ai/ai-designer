@@ -62,7 +62,7 @@ describe('routeHandoff', () => {
   const candidates: BackendCandidate[] = [
     { id: 'ai-dev', label: 'developerz.ai', taskToolName: 'ai-dev__task' },
   ];
-  const originRepoMap = { 'localhost:3000': 'acme/store' };
+  const originRepoMap = { 'localhost:3000': { repo: 'acme/store' } };
 
   it('routes to tasks when a backend + a repo mapping both exist', () => {
     const route = routeHandoff({
@@ -108,6 +108,68 @@ describe('routeHandoff', () => {
     });
     expect(route.kind).toBe('tasks');
     if (route.kind === 'tasks') expect(route.backend.id).toBe('devin');
+  });
+
+  it('prefers the origin entry’s backendId over the first candidate (#20)', () => {
+    const two: BackendCandidate[] = [
+      { id: 'ai-dev', label: 'developerz.ai', taskToolName: 'ai-dev__task' },
+      { id: 'devin', label: 'Devin', taskToolName: 'devin__task' },
+    ];
+    const route = routeHandoff({
+      url: 'http://localhost:3000/x',
+      originRepoMap: { 'localhost:3000': { repo: 'acme/store', backendId: 'devin' } },
+      candidates: two,
+    });
+    expect(route.kind).toBe('tasks');
+    if (route.kind === 'tasks') expect(route.backend.id).toBe('devin');
+  });
+
+  it('an explicit target beats the origin entry’s backendId (#20)', () => {
+    const two: BackendCandidate[] = [
+      { id: 'ai-dev', label: 'developerz.ai', taskToolName: 'ai-dev__task' },
+      { id: 'devin', label: 'Devin', taskToolName: 'devin__task' },
+    ];
+    const route = routeHandoff({
+      url: 'http://localhost:3000/x',
+      originRepoMap: { 'localhost:3000': { repo: 'acme/store', backendId: 'devin' } },
+      candidates: two,
+      target: 'ai-dev',
+    });
+    expect(route.kind).toBe('tasks');
+    if (route.kind === 'tasks') expect(route.backend.id).toBe('ai-dev');
+  });
+
+  it('a backendId naming NO connected candidate falls back to no-backend (#20)', () => {
+    const route = routeHandoff({
+      url: 'http://localhost:3000/x',
+      originRepoMap: { 'localhost:3000': { repo: 'acme/store', backendId: 'ghost' } },
+      candidates,
+    });
+    expect(route).toEqual({ kind: 'report', reason: 'no-backend' });
+  });
+
+  it('carries the origin entry’s branch on the tasks route (#20)', () => {
+    const route = routeHandoff({
+      url: 'http://localhost:3000/x',
+      originRepoMap: { 'localhost:3000': { repo: 'acme/store', branch: 'develop' } },
+      candidates,
+    });
+    expect(route).toEqual({
+      kind: 'tasks',
+      repo: 'acme/store',
+      backend: candidates[0],
+      branch: 'develop',
+    });
+  });
+
+  it('omits the branch key when the entry names none', () => {
+    const route = routeHandoff({
+      url: 'http://localhost:3000/x',
+      originRepoMap,
+      candidates,
+    });
+    expect(route.kind).toBe('tasks');
+    if (route.kind === 'tasks') expect('branch' in route).toBe(false);
   });
 });
 

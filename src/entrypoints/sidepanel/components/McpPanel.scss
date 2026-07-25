@@ -66,6 +66,79 @@
     padding: tokens.$dz-space-3 tokens.$dz-space-4;
     border: 1px solid var(--dz-border);
     border-radius: var(--dz-radius);
+
+    // #17: a disabled backend reads as parked — the row's identity stays visible but muted,
+    // while the toggle itself keeps full contrast so the way back is obvious.
+    &.is-disabled {
+      .dz-mcp__status,
+      .dz-mcp__meta,
+      .dz-mcp__actions {
+        opacity: 0.45;
+      }
+    }
+  }
+
+  // Per-row enable/disable switch (#17). The native checkbox stays the interactive element
+  // (keyboard + AT) but is visually replaced by the track/knob span.
+  &__switch {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+
+    input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+  }
+
+  &__track {
+    display: block;
+    width: tokens.rem(28);
+    height: tokens.rem(16);
+    border-radius: tokens.rem(8);
+    background: var(--dz-surface-overlay);
+    border: 1px solid var(--dz-border);
+    // Purely decorative — clicks must pass through to the checkbox beneath (the input is the
+    // interactive element, and Playwright's hit-target check needs it that way too).
+    pointer-events: none;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease;
+
+    &::after {
+      content: '';
+      display: block;
+      width: tokens.rem(12);
+      height: tokens.rem(12);
+      margin: tokens.rem(1);
+      border-radius: 50%;
+      background: var(--dz-muted);
+      transition:
+        transform 120ms ease,
+        background 120ms ease;
+    }
+
+    input:checked + & {
+      background: var(--dz-accent);
+      border-color: var(--dz-accent);
+
+      &::after {
+        transform: translateX(tokens.rem(12));
+        background: var(--dz-accent-fg);
+      }
+    }
+
+    input:focus-visible + & {
+      outline: 2px solid var(--dz-accent);
+      outline-offset: 1px;
+    }
   }
 
   &__status {

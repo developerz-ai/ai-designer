@@ -129,8 +129,31 @@ mcp:
       n: $1 tools
     connect: Connect
     authorize: Authorize
+    enabled:
+      ariaLabel: Enable or disable {label}
+      hint: A disabled backend never connects and is skipped by Ship.
     remove:
       ariaLabel: Remove {label}
+  originRepo:
+    title: Origin → repo mapping
+    empty: No origins mapped yet — Ship downloads a brief instead until one is.
+    noActivePage: Open a web page to map its origin to a repo.
+    repo:
+      label: Repository
+      placeholder: owner/name
+    backend:
+      label: Backend (optional)
+      any: Any connected
+    branch:
+      label: Branch (optional)
+      placeholder: main
+    save: Save mapping
+    remove:
+      ariaLabel: Remove mapping for {origin}
+    error:
+      loadFailed: Failed to load origin mappings.
+      saveFailed: Failed to save the mapping.
+      removeFailed: Failed to remove the mapping.
   add:
     label: Add server
     labelPlaceholder: Label
@@ -146,6 +169,7 @@ mcp:
     removeFailed: Failed to remove server.
     connectFailed: Failed to connect {id}.
     authFailed: Authorization failed.
+    saveFailed: Failed to update the server.
 
 # ─── Readiness dropdown (ReadinessDropdown.tsx) ───────────────────────────────────
 readiness:
@@ -206,6 +230,8 @@ ship:
   download: Download brief
   sendTo: Send to…
   fallback: '{reason} — downloaded a brief instead.'
+  mapPrompt: Map this origin to a repo once — the next Ship goes straight to your backend.
+  mapAndShip: Save mapping & Ship again
   error:
     failed: Ship failed.
 

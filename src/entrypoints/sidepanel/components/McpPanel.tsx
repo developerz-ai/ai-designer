@@ -10,11 +10,13 @@ import {
   loading,
   removeServer,
   servers,
+  setEnabled,
 } from '../stores/mcp';
 import { AuthDialog } from './AuthDialog';
 import { Icon } from './Icon';
 import type { IconName } from './icon-registry';
 import './McpPanel.scss';
+import { OriginRepoSection } from './OriginRepoSection';
 
 interface BackendPreset {
   id: string;
@@ -119,7 +121,7 @@ export function McpPanel() {
       <ul class="dz-mcp__list">
         <For each={servers}>
           {(s) => (
-            <li class="dz-mcp__item">
+            <li class="dz-mcp__item" classList={{ 'is-disabled': !s.enabled }}>
               <span class={`dz-mcp__status is-${s.status}`}>
                 <Icon name={statusIcon(s.status)} size="sm" />
               </span>
@@ -134,7 +136,7 @@ export function McpPanel() {
                 </Show>
               </div>
               <div class="dz-mcp__actions">
-                <Show when={s.status !== 'connected'}>
+                <Show when={s.enabled && s.status !== 'connected'}>
                   <button type="button" onClick={() => void connectServer(s.id)}>
                     {i18n.t('mcp.server.connect')}
                   </button>
@@ -153,6 +155,15 @@ export function McpPanel() {
                   <Icon name="trash" size="sm" />
                 </button>
               </div>
+              <label class="dz-mcp__switch" title={i18n.t('mcp.server.enabled.hint')}>
+                <input
+                  type="checkbox"
+                  checked={s.enabled}
+                  aria-label={i18n.t('mcp.server.enabled.ariaLabel', { label: s.label })}
+                  onChange={() => void setEnabled(s.id, !s.enabled)}
+                />
+                <span class="dz-mcp__track" aria-hidden="true" />
+              </label>
             </li>
           )}
         </For>
@@ -189,6 +200,8 @@ export function McpPanel() {
           <Icon name="add" size="sm" /> {i18n.t('mcp.add.submit')}
         </button>
       </form>
+
+      <OriginRepoSection />
 
       <Show when={authTarget()}>
         {(s) => <AuthDialog server={s()} onClose={() => setAuthTarget(null)} />}

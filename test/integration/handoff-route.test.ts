@@ -75,7 +75,7 @@ function fakeTaskTool(): { execute: TaskToolExecute; calls: Array<Record<string,
   return { execute, calls };
 }
 
-const originRepoMap = { 'localhost:3000': 'acme/storefront' };
+const originRepoMap = { 'localhost:3000': { repo: 'acme/storefront' } };
 
 describe('ship route — connected coding backend', () => {
   const servers = [{ id: 'ai-dev', label: 'developerz.ai' }];
@@ -168,6 +168,82 @@ describe('ship route — connected coding backend', () => {
     const route = routeHandoff({ url: URL, originRepoMap, candidates, target: 'Devin' });
     expect(route.kind).toBe('tasks');
     if (route.kind === 'tasks') expect(route.backend.id).toBe('devin');
+  });
+});
+
+describe('ship route — origin entry pins the backend + branch (#20)', () => {
+  const two = [
+    { id: 'ai-dev', label: 'developerz.ai' },
+    { id: 'devin', label: 'Devin' },
+  ];
+  // Both backends connected, both exposing a `task` tool — the merged ToolSet the SW routes over.
+  const toolNames = ['ai-dev__task', 'devin__task'];
+
+  it('a map entry pinning backendId dispatches task(create) through THAT backend’s tool, not the first candidate', async () => {
+    const map = { 'localhost:3000': { repo: 'acme/storefront', backendId: 'devin' } };
+    const candidates = taskBackends(two, toolNames);
+    const route = routeHandoff({ url: URL, originRepoMap: map, candidates });
+    expect(route.kind).toBe('tasks');
+    if (route.kind !== 'tasks') throw new Error('expected tasks route');
+    expect(route.backend.id).toBe('devin');
+
+    // Mirrors background.ts: the executor is bound to toolset[route.backend.taskToolName].
+    const aiDev = fakeTaskTool();
+    const devin = fakeTaskTool();
+    const toolset = { 'ai-dev__task': aiDev.execute, devin__task: devin.execute };
+    const backend = createTaskBackend(toolset[route.backend.taskToolName as keyof typeof toolset]);
+
+    const result = await ship(
+      { kind: 'changeset', changeset: changeset() },
+      { repo: route.repo, backend: route.backend.id },
+      { backend },
+    );
+
+    expect(result.tasks).toHaveLength(1);
+    expect(devin.calls.some((c) => c.action === 'create')).toBe(true);
+    expect(aiDev.calls).toHaveLength(0); // the first candidate was never touched
+  });
+
+  it('the dispatched task(create) args carry branch when the entry names one', async () => {
+    const map = {
+      'localhost:3000': { repo: 'acme/storefront', backendId: 'devin', branch: 'develop' },
+    };
+    const candidates = taskBackends(two, toolNames);
+    const route = routeHandoff({ url: URL, originRepoMap: map, candidates });
+    if (route.kind !== 'tasks') throw new Error('expected tasks route');
+    expect(route.branch).toBe('develop');
+
+    const { execute, calls } = fakeTaskTool();
+    // Mirrors background.ts's ShipTarget assembly: `...(route.branch ? { branch: route.branch } : {})`.
+    const result = await ship(
+      { kind: 'changeset', changeset: changeset() },
+      {
+        repo: route.repo,
+        backend: route.backend.id,
+        ...(route.branch ? { branch: route.branch } : {}),
+      },
+      { backend: createTaskBackend(execute) },
+    );
+
+    expect(result.tasks).toHaveLength(1);
+    const spec = calls.find((c) => c.action === 'create')?.spec as { branch?: string };
+    expect(spec.branch).toBe('develop');
+  });
+
+  it('no branch key rides the spec when the entry names none', async () => {
+    const candidates = taskBackends(two, toolNames);
+    const route = routeHandoff({ url: URL, originRepoMap, candidates });
+    if (route.kind !== 'tasks') throw new Error('expected tasks route');
+    expect('branch' in route).toBe(false);
+
+    const { execute, calls } = fakeTaskTool();
+    await ship(
+      { kind: 'changeset', changeset: changeset() },
+      { repo: route.repo, backend: route.backend.id },
+      { backend: createTaskBackend(execute) },
+    );
+    const spec = calls.find((c) => c.action === 'create')?.spec as Record<string, unknown>;
+    expect('branch' in spec).toBe(false);
   });
 });
 

@@ -9,8 +9,9 @@ import {
   ship,
   shipping,
 } from '../stores/changeset';
-import { hydrateMcp, initMcpStore, servers } from '../stores/mcp';
+import { hydrateMcp, initMcpStore, isNoRepoReason, loadOriginRepos, servers } from '../stores/mcp';
 import { Icon } from './Icon';
+import { OriginRepoSection } from './OriginRepoSection';
 import './ShipBar.scss';
 
 // Render + dispatch only (CLAUDE.md "SolidJS + SRP"): Ship / Download brief / Send to… each fire
@@ -25,9 +26,13 @@ export function ShipBar() {
     initChangesetStore();
     initMcpStore();
     void hydrateMcp();
+    void loadOriginRepos();
   });
 
   const connected = createMemo(() => servers.filter((s) => s.status === 'connected'));
+  // #20 one-click promise: a Ship that fell back because this origin has no repo mapped surfaces
+  // the mapping form INLINE (not a dialog) — save once, then the same Ship goes to the backend.
+  const noRepoFallback = createMemo(() => isNoRepoReason(fallbackReason()));
 
   async function handleSend(target: string): Promise<void> {
     setSendOpen(false);
@@ -91,6 +96,16 @@ export function ShipBar() {
           <Icon name="status" size="sm" />{' '}
           {i18n.t('ship.fallback', { reason: fallbackReason() ?? '' })}
         </p>
+      </Show>
+      <Show when={noRepoFallback()}>
+        <div class="dz-shipbar__map">
+          <p class="dz-shipbar__mapHint">{i18n.t('ship.mapPrompt')}</p>
+          <OriginRepoSection
+            compact
+            submitLabel={i18n.t('ship.mapAndShip')}
+            onSaved={() => void ship()}
+          />
+        </div>
       </Show>
       <Show when={error()}>
         <p class="dz-shipbar__error">
