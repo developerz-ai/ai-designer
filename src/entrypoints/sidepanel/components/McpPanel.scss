@@ -62,6 +62,8 @@
   &__item {
     display: flex;
     align-items: center;
+    // The #120 write-tools block wraps to a full-width second line under the row.
+    flex-wrap: wrap;
     gap: tokens.$dz-space-3;
     padding: tokens.$dz-space-3 tokens.$dz-space-4;
     border: 1px solid var(--dz-border);
@@ -76,6 +78,47 @@
         opacity: 0.45;
       }
     }
+  }
+
+  // #120: the per-tool opt-in block — one toggle per write-shaped tool the connected backend
+  // exposes. Full-width under the row's main line; the toggles reuse the #17 switch/track.
+  &__writes {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+    padding-top: tokens.$dz-space-2;
+    border-top: 1px dashed var(--dz-border);
+  }
+
+  &__writes-hint {
+    color: var(--dz-muted);
+
+    strong {
+      color: var(--dz-fg);
+    }
+  }
+
+  &__writes-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-1;
+  }
+
+  &__write {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: tokens.$dz-space-2;
+  }
+
+  &__write-name {
+    font-family: ui-monospace, monospace;
+    font-size: tokens.$dz-font-sm;
+    color: var(--dz-fg);
   }
 
   // Per-row enable/disable switch (#17). The native checkbox stays the interactive element

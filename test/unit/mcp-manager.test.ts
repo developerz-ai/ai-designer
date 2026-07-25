@@ -144,3 +144,182 @@ describe('McpManager enabled flag (#17)', () => {
 function urlsCalled(connect: ReturnType<typeof vi.fn<McpClientFactory>>): string[] {
   return connect.mock.calls.map(([config]) => urlOf(config));
 }
+
+// mcp/manager #120 unit: per-tool opt-in grants flow through the injected `grantsFor` and gate
+// EACH SERVER's write-shaped tools before the design-turn merge. Server A exposes
+// search/deploy/task, server B get_stats/publish — the merge must ungate exactly the granted
+// base names of THAT server, never the sibling's, and `task` stays hard-stripped regardless.
+// The execute pin is the AC's "cannot execute without explicit user opt-in": an ungranted
+// write tool never reaches the merged set, so there is nothing for the loop to call.
+
+const SRV_A = { id: 'srv-a', url: 'https://srv-a/mcp' };
+const SRV_B = { id: 'srv-b', url: 'https://srv-b/mcp' };
+
+type ExecuteSpy = ReturnType<typeof vi.fn<(input: unknown) => Promise<{ ok: boolean }>>>;
+
+/** A trivial static tool whose execute is a spy (the granted/ungranted execution pin). */
+function spyTool(name: string, execute: ExecuteSpy) {
+  return tool({ description: name, inputSchema: z.object({}), execute });
+}
+
+/** Two-server harness: A = search + deploy(+execute spy) + task; B = get_stats + publish(+spy). */
+function twoServerGrants() {
+  const aDeploy = vi.fn(async (_input: unknown) => ({ ok: true }));
+  const bPublish = vi.fn(async (_input: unknown) => ({ ok: true }));
+  const { connect } = factory({
+    [SRV_A.url]: {
+      search: tool({ description: 'search', inputSchema: z.object({}) }),
+      deploy: spyTool('deploy', aDeploy),
+      task: tool({ description: 'task', inputSchema: z.object({}) }),
+    },
+    [SRV_B.url]: {
+      get_stats: tool({ description: 'get_stats', inputSchema: z.object({}) }),
+      publish: spyTool('publish', bPublish),
+    },
+  });
+  return { connect, aDeploy, bPublish };
+}
+
+/** Invoke a merged tool's execute the way the agent loop would (guard mirrors callExecute
+ *  in control-tools.test.ts — a ToolSet member's execute is optional on the type). */
+async function callMerged(
+  tools: ToolSet,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  const entry = tools[name];
+  const execute = entry && 'execute' in entry ? entry.execute : undefined;
+  if (typeof execute !== 'function') throw new Error(`merged tool ${name} has no execute`);
+  return execute(input, { toolCallId: 'call-1', messages: [], context: {} });
+}
+
+describe('McpManager per-tool grants (#120)', () => {
+  it("grants for server A only ungate A's write tool — never B's", async () => {
+    const { connect } = twoServerGrants();
+    const mgr = new McpManager({
+      connect,
+      idleMs: 0,
+      grantsFor: async (id) => (id === SRV_A.id ? ['deploy'] : []),
+    });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    expect(Object.keys(await mgr.toolsFor())).toEqual([
+      'srv-a__search',
+      'srv-a__deploy',
+      'srv-b__get_stats',
+    ]);
+  });
+
+  it('with no grantsFor option, every write-shaped tool is gated but reads still merge', async () => {
+    const { connect } = twoServerGrants();
+    const mgr = new McpManager({ connect, idleMs: 0 });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    expect(Object.keys(await mgr.toolsFor())).toEqual(['srv-a__search', 'srv-b__get_stats']);
+  });
+
+  it('`task` stays hard-stripped even when grantsFor "grants" it; toolsForShip still sees it', async () => {
+    const { connect } = twoServerGrants();
+    const mgr = new McpManager({
+      connect,
+      idleMs: 0,
+      grantsFor: async () => ['task', 'deploy', 'publish'],
+    });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    const design = await mgr.toolsFor();
+    expect(Object.keys(design)).toEqual([
+      'srv-a__search',
+      'srv-a__deploy',
+      'srv-b__get_stats',
+      'srv-b__publish',
+    ]);
+    expect(design['srv-a__task']).toBeUndefined();
+
+    // Ship is the one sanctioned dispatch path — its merge is unfiltered.
+    expect(Object.keys(await mgr.toolsForShip())).toContain('srv-a__task');
+  });
+
+  it('an ungranted write tool never reaches the merge, so its execute cannot fire', async () => {
+    const { connect, aDeploy, bPublish } = twoServerGrants();
+    const mgr = new McpManager({ connect, idleMs: 0 }); // no grantsFor
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    const design = await mgr.toolsFor();
+    expect(design['srv-a__deploy']).toBeUndefined();
+    expect(design['srv-b__publish']).toBeUndefined();
+    await expect(callMerged(design, 'srv-a__deploy', {})).rejects.toThrow(/no execute/);
+    expect(aDeploy).not.toHaveBeenCalled();
+    expect(bPublish).not.toHaveBeenCalled();
+  });
+
+  it('a granted write tool merges and its execute fires when the loop calls it', async () => {
+    const { connect, aDeploy } = twoServerGrants();
+    const mgr = new McpManager({
+      connect,
+      idleMs: 0,
+      grantsFor: async (id) => (id === SRV_A.id ? ['deploy'] : []),
+    });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    const design = await mgr.toolsFor();
+    await expect(callMerged(design, 'srv-a__deploy', { env: 'prod' })).resolves.toEqual({
+      ok: true,
+    });
+    expect(aDeploy).toHaveBeenCalledTimes(1);
+    expect(aDeploy).toHaveBeenCalledWith(
+      { env: 'prod' },
+      expect.objectContaining({ toolCallId: 'call-1' }),
+    );
+  });
+
+  it('grants are re-read on every toolsFor call — a revoke takes effect on the NEXT turn', async () => {
+    const { connect } = twoServerGrants();
+    let granted: Record<string, string[]> = { [SRV_A.id]: ['deploy'] };
+    const mgr = new McpManager({
+      connect,
+      idleMs: 0,
+      grantsFor: async (id) => granted[id] ?? [],
+    });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    expect(Object.keys(await mgr.toolsFor())).toContain('srv-a__deploy');
+
+    granted = {}; // the user revoked between turns
+    expect(Object.keys(await mgr.toolsFor())).not.toContain('srv-a__deploy');
+  });
+
+  it('a granted write tool on a DISABLED server stays out — grants never resurrect it', async () => {
+    const { connect } = twoServerGrants();
+    const mgr = new McpManager({
+      connect,
+      idleMs: 0,
+      grantsFor: async () => ['deploy', 'publish'],
+    });
+    mgr.register(SRV_A);
+    mgr.register(SRV_B, { enabled: false });
+
+    expect(Object.keys(await mgr.toolsFor())).toEqual(['srv-a__search', 'srv-a__deploy']);
+  });
+
+  it("toolsForShip merges every server's tools regardless of grants (Ship semantics unchanged)", async () => {
+    const { connect } = twoServerGrants();
+    const mgr = new McpManager({ connect, idleMs: 0 }); // no grantsFor at all
+    mgr.register(SRV_A);
+    mgr.register(SRV_B);
+
+    expect(Object.keys(await mgr.toolsForShip())).toEqual([
+      'srv-a__search',
+      'srv-a__deploy',
+      'srv-a__task',
+      'srv-b__get_stats',
+      'srv-b__publish',
+    ]);
+  });
+});

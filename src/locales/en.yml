@@ -134,6 +134,11 @@ mcp:
       hint: A disabled backend never connects and is skipped by Ship.
     remove:
       ariaLabel: Remove {label}
+  writeTools:
+    title: Write tools
+    hint: Granted tools reach design turns; ungranted stay blocked.
+    grant:
+      ariaLabel: Allow {tool} in design turns on {label}
   originRepo:
     title: Origin → repo mapping
     empty: No origins mapped yet — Ship downloads a brief instead until one is.

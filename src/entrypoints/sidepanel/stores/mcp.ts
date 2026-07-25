@@ -207,6 +207,21 @@ export async function setEnabled(id: string, enabled: boolean): Promise<void> {
   }
 }
 
+/** Grant/revoke ONE write-shaped tool for the design loop (#120 per-tool opt-in). The SW
+ *  persists the opt-in and replies with the fresh record (its `grantedTools` already
+ *  intersected with the live write-shaped catalog), which folds back into the row — an error
+ *  reply leaves the row untouched. The grant takes effect on the NEXT turn's tool merge. */
+export async function setToolGrant(id: string, tool: string, granted: boolean): Promise<void> {
+  setError(null);
+  try {
+    const r = await request({ type: 'mcp-tool-grant-set', id, tool, granted }, McpServerResult);
+    if (r.server) upsertLocal(r.server);
+    else if (!r.ok) setError(r.error ?? i18n.t('mcp.error.saveFailed'));
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
 // --- origin → repo map (#20) ----------------------------------------------------------------
 // The one-click-Ship routing map the OriginRepoSection curates. Get returns the whole map;
 // set/clear reply a bare ok, so the local fold applies the same mutation the SW persisted —

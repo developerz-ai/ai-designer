@@ -141,11 +141,13 @@ function makeHandlers(connect: McpClientFactory) {
     return McpServerResult.parse({ ok: true, server: toBusServer(stored) });
   }
 
-  // Mirrors background.ts's `case 'mcp-remove'`.
+  // Mirrors background.ts's `case 'mcp-remove'` — including the #120 grant purge
+  // (background calls clearToolGrants; the harness map is its stand-in).
   async function handleRemove(msg: PanelToSw & { type: 'mcp-remove' }) {
     await mcpManager.unregister(msg.id);
     oauthConfigs.delete(msg.id);
     await removeServer(msg.id);
+    delete grants[msg.id]; // no orphaned grant survives a removal
     return OkResult.parse({ ok: true });
   }
 
@@ -221,13 +223,30 @@ function makeHandlers(connect: McpClientFactory) {
     return McpServerResult.parse({ ok: true, server: toBusServer(next) });
   }
 
+  // Mirrors background.ts's `case 'mcp-tool-grant-set'` (#120): persist the grant/revoke
+  // (here: the harness map, with the store's idempotent + last-revoke-drops-the-key semantics
+  // — the REAL store is exercised in test/unit/tool-grants.test.ts), reply the fresh bus record.
+  async function handleToolGrantSet(msg: PanelToSw & { type: 'mcp-tool-grant-set' }) {
+    const stored = await getServer(msg.id);
+    if (!stored)
+      return McpServerResult.parse({ ok: false, error: `Unknown MCP server: ${msg.id}` });
+    const current = new Set(grants[msg.id] ?? []);
+    if (msg.granted) current.add(msg.tool);
+    else current.delete(msg.tool);
+    if (current.size === 0) delete grants[msg.id];
+    else grants[msg.id] = [...current];
+    return McpServerResult.parse({ ok: true, server: toBusServer(stored) });
+  }
+
   return {
     mcpManager,
+    grants,
     handleAdd,
     handleRemove,
     handleList,
     handleConnect,
     handleSetEnabled,
+    handleToolGrantSet,
     handleOriginRepoGet,
     handleOriginRepoSet,
     handleOriginRepoClear,
@@ -559,5 +578,121 @@ describe('integration: mcp-origin-repo RPCs curate the Ship mapping (#20)', () =
     expect((await handleOriginRepoGet()).map).toEqual({
       'app.acme.com': { repo: 'acme/app', backendId: 'ai-dev', branch: 'develop' },
     });
+  });
+});
+
+describe('integration: mcp-tool-grant-set (#120 per-tool opt-in)', () => {
+  it('grant/revoke round-trips through the bus record against the discovered catalog', async () => {
+    installChromeFakes();
+    const { handleAdd, handleConnect, handleToolGrantSet } = makeHandlers(
+      fakeMcpFactory({ deploy: {}, create_pr: {}, kb: {}, task: {} }),
+    );
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'ai-dev', url: 'https://ai-dev/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+
+    // Before connect, no catalog: the gate's view is empty even if a grant exists.
+    const connected = await handleConnect({ type: 'mcp-connect', id });
+    expect(connected.server?.tools).toHaveLength(4);
+    // writeTools = the discovered write-shaped BASE names — `task` excluded (never grantable),
+    // `kb` not write-shaped.
+    expect(connected.server?.writeTools).toEqual(['deploy', 'create_pr']);
+    expect(connected.server?.grantedTools).toEqual([]);
+
+    const granted = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'deploy',
+      granted: true,
+    });
+    expect(granted.ok).toBe(true);
+    expect(granted.server?.grantedTools).toEqual(['deploy']);
+
+    const grantedSecond = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'create_pr',
+      granted: true,
+    });
+    expect(grantedSecond.server?.grantedTools).toEqual(['deploy', 'create_pr']);
+
+    // Idempotent re-grant — no duplicate.
+    const regranted = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'deploy',
+      granted: true,
+    });
+    expect(regranted.server?.grantedTools).toEqual(['deploy', 'create_pr']);
+
+    const revoked = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'deploy',
+      granted: false,
+    });
+    expect(revoked.server?.grantedTools).toEqual(['create_pr']);
+  });
+
+  it('grants never surface for names outside the write-shaped catalog (`task`, reads)', async () => {
+    installChromeFakes();
+    const { handleAdd, handleConnect, handleToolGrantSet } = makeHandlers(
+      fakeMcpFactory({ deploy: {}, kb: {}, task: {} }),
+    );
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'ai-dev', url: 'https://ai-dev/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+    await handleConnect({ type: 'mcp-connect', id });
+
+    // `task` is the hard-denied Ship verb — "granting" it can never make it appear.
+    const taskGranted = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'task',
+      granted: true,
+    });
+    expect(taskGranted.server?.writeTools).toEqual(['deploy']);
+    expect(taskGranted.server?.grantedTools).toEqual([]);
+
+    // A read-shaped name was never gated; a grant for it is stored but never surfaces.
+    const kbGranted = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id,
+      tool: 'kb',
+      granted: true,
+    });
+    expect(kbGranted.server?.grantedTools).toEqual([]);
+  });
+
+  it('mcp-tool-grant-set on an unknown id returns ok:false without throwing', async () => {
+    installChromeFakes();
+    const { handleToolGrantSet } = makeHandlers(fakeMcpFactory());
+    const result = await handleToolGrantSet({
+      type: 'mcp-tool-grant-set',
+      id: 'missing',
+      tool: 'deploy',
+      granted: true,
+    });
+    expect(result).toEqual({ ok: false, error: 'Unknown MCP server: missing', server: undefined });
+  });
+
+  it("mcp-remove purges the server's grants — no orphan survives a removal", async () => {
+    installChromeFakes();
+    const { grants, handleAdd, handleConnect, handleToolGrantSet, handleRemove } = makeHandlers(
+      fakeMcpFactory({ deploy: {}, kb: {} }),
+    );
+
+    const added = await handleAdd({ type: 'mcp-add', label: 'ai-dev', url: 'https://ai-dev/mcp' });
+    const id = added.server?.id;
+    if (!id) throw new Error('mcp-add did not return a server id');
+    await handleConnect({ type: 'mcp-connect', id });
+    await handleToolGrantSet({ type: 'mcp-tool-grant-set', id, tool: 'deploy', granted: true });
+    expect(grants[id]).toEqual(['deploy']);
+
+    const removed = await handleRemove({ type: 'mcp-remove', id });
+    expect(removed).toEqual({ ok: true, error: undefined });
+    expect(grants[id]).toBeUndefined(); // purged — a re-added server starts with zero grants
   });
 });
