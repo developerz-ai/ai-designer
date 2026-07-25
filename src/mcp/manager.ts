@@ -37,6 +37,10 @@ export type McpHealth = {
 export type McpManagerOptions = CreateConnectionOptions & {
   /** Injectable clock for `health.checkedAt` (tests pin it; defaults to `Date.now`). */
   now?: () => number;
+  /** Resolve one server's per-tool opt-in grants (#120) — the tool BASE names the user approved
+   *  for the design loop (src/mcp/tool-grants.ts). Injected so the manager stays chrome-free;
+   *  background.ts wires it to the store. Absent ⇒ no grants (every write-shaped tool gated). */
+  grantsFor?: (serverId: string) => Promise<readonly string[]> | readonly string[];
 };
 
 type Entry = {
@@ -56,11 +60,13 @@ export class McpManager {
   private readonly servers = new Map<string, Entry>();
   private readonly connectionOptions: CreateConnectionOptions;
   private readonly now: () => number;
+  private readonly grantsFor?: McpManagerOptions['grantsFor'];
 
   constructor(options: McpManagerOptions = {}) {
-    const { now, ...connectionOptions } = options;
+    const { now, grantsFor, ...connectionOptions } = options;
     this.connectionOptions = connectionOptions;
     this.now = now ?? (() => Date.now());
+    this.grantsFor = grantsFor;
   }
 
   /** Register (or replace) a server. Replacing closes the previous connection first.
@@ -130,11 +136,25 @@ export class McpManager {
   }
 
   /** Merge the namespaced tools of the given servers (all registered, by default) into one
-   *  ToolSet for the agent loop — DESIGN-SAFE by default (#117): write-shaped backend tools
-   *  (design-gate.ts) are stripped here, at the source, so every model-facing call site —
-   *  present and future — inherits the gate rather than having to remember to apply it. */
+   *  ToolSet for the agent loop — DESIGN-SAFE by default (#117/#120): the Ship dispatch verb is
+   *  hard-stripped, and write-SHAPED tools ride only when the user granted them for THAT server
+   *  (#120 per-tool opt-in — the filter runs per server before merging, since grants are keyed
+   *  per server). Gated here, at the source, so every model-facing call site — present and
+   *  future — inherits the gate rather than having to remember to apply it. */
   async toolsFor(ids?: string[]): Promise<ToolSet> {
-    return designSafeTools(await this.toolsForShip(ids));
+    const targets = ids ?? this.ids();
+    const merged: ToolSet = {};
+    await Promise.all(
+      targets.map(async (id) => {
+        const entry = this.servers.get(id);
+        if (!entry?.enabled) return;
+        const tools = await this.discover(entry);
+        if (!tools) return;
+        const granted = new Set((await this.grantsFor?.(id)) ?? []);
+        Object.assign(merged, designSafeTools(tools, granted));
+      }),
+    );
+    return merged;
   }
 
   /** The UNFILTERED merge — including write tools like `<id>__task`. ONLY for the

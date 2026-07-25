@@ -21,6 +21,8 @@ const serverA: McpServer = {
   status: 'disconnected',
   toolCount: 0,
   tools: [],
+  writeTools: [],
+  grantedTools: [],
 };
 
 describe('reduceServers', () => {
@@ -167,6 +169,61 @@ describe('mcp store: setEnabled (#17)', () => {
     await store.setEnabled('a', false);
 
     expect(store.servers.find((s) => s.id === 'a')?.enabled).toBe(true);
+    expect(store.error()).toBe('Unknown MCP server: a');
+  });
+});
+
+// #120: the per-tool grant toggle round-trips through mcp-tool-grant-set and folds the replied
+// record's grantedTools back into the row (mirrors the setEnabled coverage above).
+describe('mcp store: setToolGrant (#120)', () => {
+  const connectedA: McpServer = {
+    ...serverA,
+    status: 'connected',
+    toolCount: 2,
+    tools: ['a__deploy', 'a__get_status'],
+    writeTools: ['deploy'],
+  };
+
+  it('grants then revokes from the replied server record', async () => {
+    vi.resetModules();
+    const seen: Array<{ tool: string; granted: boolean }> = [];
+    installChromeFake((msg) => {
+      if (msg.type === 'mcp-list') return { ok: true, servers: [connectedA] };
+      if (msg.type === 'mcp-tool-grant-set') {
+        seen.push({ tool: msg.tool, granted: msg.granted });
+        return { ok: true, server: { ...connectedA, grantedTools: msg.granted ? ['deploy'] : [] } };
+      }
+      return { ok: true };
+    });
+    const store = await import('@/entrypoints/sidepanel/stores/mcp');
+
+    await store.hydrateMcp();
+    expect(store.servers.find((s) => s.id === 'a')?.grantedTools).toEqual([]);
+
+    await store.setToolGrant('a', 'deploy', true);
+    expect(store.servers.find((s) => s.id === 'a')?.grantedTools).toEqual(['deploy']);
+
+    await store.setToolGrant('a', 'deploy', false);
+    expect(store.servers.find((s) => s.id === 'a')?.grantedTools).toEqual([]);
+    expect(seen).toEqual([
+      { tool: 'deploy', granted: true },
+      { tool: 'deploy', granted: false },
+    ]);
+  });
+
+  it('surfaces a failure and leaves the row as-is', async () => {
+    vi.resetModules();
+    installChromeFake((msg) => {
+      if (msg.type === 'mcp-list') return { ok: true, servers: [connectedA] };
+      if (msg.type === 'mcp-tool-grant-set') return { ok: false, error: 'Unknown MCP server: a' };
+      return { ok: true };
+    });
+    const store = await import('@/entrypoints/sidepanel/stores/mcp');
+
+    await store.hydrateMcp();
+    await store.setToolGrant('a', 'deploy', true);
+
+    expect(store.servers.find((s) => s.id === 'a')?.grantedTools).toEqual([]);
     expect(store.error()).toBe('Unknown MCP server: a');
   });
 });

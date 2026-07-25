@@ -11,6 +11,7 @@ import {
   removeServer,
   servers,
   setEnabled,
+  setToolGrant,
 } from '../stores/mcp';
 import { AuthDialog } from './AuthDialog';
 import { Icon } from './Icon';
@@ -164,6 +165,42 @@ export function McpPanel() {
                 />
                 <span class="dz-mcp__track" aria-hidden="true" />
               </label>
+              {/* #120 per-tool opt-in: one toggle per write-shaped tool the CONNECTED backend
+                  exposes (tools exist only post-connect; a disabled server is disconnected,
+                  so the status guard hides the block for both). Checked ⇔ granted — granted
+                  tools ride design turns, ungranted stay gated SW-side. */}
+              <Show when={s.status === 'connected' && s.writeTools.length > 0}>
+                <div class="dz-mcp__writes">
+                  <small class="dz-mcp__writes-hint">
+                    <strong>{i18n.t('mcp.writeTools.title')}</strong>
+                    {' — '}
+                    {i18n.t('mcp.writeTools.hint')}
+                  </small>
+                  <ul class="dz-mcp__writes-list">
+                    <For each={s.writeTools}>
+                      {(tool) => (
+                        <li class="dz-mcp__write">
+                          <code class="dz-mcp__write-name">{tool}</code>
+                          <label class="dz-mcp__switch" title={i18n.t('mcp.writeTools.hint')}>
+                            <input
+                              type="checkbox"
+                              checked={s.grantedTools.includes(tool)}
+                              aria-label={i18n.t('mcp.writeTools.grant.ariaLabel', {
+                                tool,
+                                label: s.label,
+                              })}
+                              onChange={() =>
+                                void setToolGrant(s.id, tool, !s.grantedTools.includes(tool))
+                              }
+                            />
+                            <span class="dz-mcp__track" aria-hidden="true" />
+                          </label>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
             </li>
           )}
         </For>
