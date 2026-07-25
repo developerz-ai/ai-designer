@@ -6,9 +6,10 @@ import type {
   McpOAuthConfig,
   McpServer,
   McpTransport,
+  OriginRepoEntry,
   SwToPanel,
 } from '@/shared/messages';
-import { McpListResult, McpServerResult, OkResult } from '@/shared/messages';
+import { McpListResult, McpOriginRepoResult, McpServerResult, OkResult } from '@/shared/messages';
 import { request } from './bus';
 import { connectPort, subscribeToSw } from './sw-stream';
 
@@ -31,6 +32,45 @@ export function reduceServers(servers: McpServer[], msg: SwToPanel): McpServer[]
   return next;
 }
 
+/** Pure fold: apply a saved origin→repo entry onto the map (add-or-replace). Exported for a
+ *  mock-free unit test, mirroring `reduceServers`. */
+export function upsertOriginRepo(
+  map: Record<string, OriginRepoEntry>,
+  origin: string,
+  entry: OriginRepoEntry,
+): Record<string, OriginRepoEntry> {
+  return { ...map, [origin]: entry };
+}
+
+/** Pure fold: drop one origin's entry (a missing key is an identity no-op). */
+export function dropOriginRepo(
+  map: Record<string, OriginRepoEntry>,
+  origin: string,
+): Record<string, OriginRepoEntry> {
+  if (!(origin in map)) return map;
+  const next = { ...map };
+  delete next[origin];
+  return next;
+}
+
+/** The origin→repo map key for a page URL, panel-side (#20): lowercased `host[:port]`, http(s)
+ *  only — the panel's OWN extension origin (or about:blank / chrome://) is never a design target,
+ *  so it yields null and the mapping form stays inert. Mirrors src/mcp/handoff.ts `originOf`. */
+export function pageOriginOf(url: string | undefined): string | null {
+  if (!url || !/^https?:/i.test(url)) return null;
+  try {
+    return new URL(url).host.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The bus carries only the RENDERED fallback sentence (src/mcp/backend.ts `fallbackMessage`),
+ *  not the 'no-repo' enum — so ShipBar's map-now affordance keys off the message text. */
+export function isNoRepoReason(reason: string | null): boolean {
+  return reason !== null && /no repo is mapped/i.test(reason);
+}
+
 const [servers, setServers] = createStore<McpServer[]>([]);
 const [loading, setLoading] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
@@ -38,8 +78,16 @@ const [error, setError] = createSignal<string | null>(null);
 // instance (unlikely, but cheap to support) never cross-talks.
 const [authPending, setAuthPending] = createSignal<string | null>(null);
 const [authError, setAuthError] = createSignal<string | null>(null);
+// The origin→repo routing map (#20) — the whole map, mirrored from the SW (mcp-origin-repo-get;
+// set/clear fold their own mutation in on ok, and reload on failure). Small and user-curated, so
+// a wholesale signal replace beats per-key reconciliation.
+const [originRepos, setOriginRepos] = createSignal<Record<string, OriginRepoEntry>>({});
+// The origin the mapping form edits: the active tab of the last-focused window (the SAME signal
+// the SW ships against — background.ts `resolveTargetTab`), so a mapping saved here is the one the
+// next Ship reads. null on a non-http(s) tab (extension pages, chrome://, about:blank).
+const [activeOrigin, setActiveOrigin] = createSignal<string | null>(null);
 
-export { authError, authPending, error, loading, servers };
+export { activeOrigin, authError, authPending, error, loading, originRepos, servers };
 
 let wired = false;
 
@@ -55,6 +103,27 @@ export function initMcpStore(): void {
     // replace hands every row a wire-fresh object, remounting keyed `<For>` rows in McpPanel.
     setServers(reconcile(reduceServers(servers, msg), { key: 'id' }));
   });
+  // activeOrigin follows tab switches + active-tab navigations so the origin→repo form always
+  // edits the page the user is looking at (all guarded — the unit-test chrome fake carries only
+  // `runtime`; mirrors stores/changeset.ts's own guarded tab listeners).
+  void refreshActiveOrigin();
+  chrome.tabs?.onActivated?.addListener?.(() => void refreshActiveOrigin());
+  chrome.tabs?.onUpdated?.addListener?.((_tabId, changeInfo, tab) => {
+    if (tab?.active && changeInfo.url) setActiveOrigin(pageOriginOf(changeInfo.url));
+  });
+}
+
+/** Re-derive `activeOrigin` from the active tab of the last-focused window. Best-effort: a
+ *  query failure (no window, restricted tab) leaves the prior value. */
+export async function refreshActiveOrigin(): Promise<void> {
+  const query = chrome.tabs?.query?.bind(chrome.tabs);
+  if (!query) return;
+  try {
+    const [tab] = await query({ active: true, lastFocusedWindow: true });
+    setActiveOrigin(pageOriginOf(tab?.url));
+  } catch {
+    // Leave the previous origin — a transient query failure must not blank a filled form.
+  }
 }
 
 /** Pull the full registered-server list from the SW (mount / manual refresh). */
@@ -121,6 +190,73 @@ export async function connectServer(id: string): Promise<void> {
     else if (!r.ok) setError(r.error ?? i18n.t('mcp.error.connectFailed', { id }));
   } catch (e) {
     setError(errMsg(e));
+  }
+}
+
+/** Flip a server's per-backend enabled flag (#17). The SW persists it and flips the manager
+ *  registration (disabling tears the live connection down); the replied record folds back into
+ *  the row. A disabled server never connects and Ship skips it. */
+export async function setEnabled(id: string, enabled: boolean): Promise<void> {
+  setError(null);
+  try {
+    const r = await request({ type: 'mcp-set-enabled', id, enabled }, McpServerResult);
+    if (r.server) upsertLocal(r.server);
+    else if (!r.ok) setError(r.error ?? i18n.t('mcp.error.saveFailed'));
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+// --- origin → repo map (#20) ----------------------------------------------------------------
+// The one-click-Ship routing map the OriginRepoSection curates. Get returns the whole map;
+// set/clear reply a bare ok, so the local fold applies the same mutation the SW persisted —
+// and a failure reloads from the SW rather than trusting a stale local copy.
+
+/** Pull the whole origin→repo map from the SW (mount / after a failed mutation). */
+export async function loadOriginRepos(): Promise<void> {
+  try {
+    const r = await request({ type: 'mcp-origin-repo-get' }, McpOriginRepoResult);
+    if (r.ok) setOriginRepos(r.map ?? {});
+    else setError(r.error ?? i18n.t('mcp.originRepo.error.loadFailed'));
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+/** Save (add-or-replace) one origin's routing entry. Returns true when the SW persisted it —
+ *  ShipBar's map-now affordance re-fires Ship only on true. */
+export async function saveOriginRepo(origin: string, entry: OriginRepoEntry): Promise<boolean> {
+  setError(null);
+  try {
+    const r = await request({ type: 'mcp-origin-repo-set', origin, entry }, OkResult);
+    if (!r.ok) {
+      setError(r.error ?? i18n.t('mcp.originRepo.error.saveFailed'));
+      await loadOriginRepos();
+      return false;
+    }
+    setOriginRepos((map) => upsertOriginRepo(map, origin, entry));
+    return true;
+  } catch (e) {
+    setError(errMsg(e));
+    await loadOriginRepos().catch(() => {});
+    return false;
+  }
+}
+
+/** Drop one origin's routing entry (Ship then falls back to a downloadable brief for it). */
+export async function removeOriginRepo(origin: string): Promise<void> {
+  setError(null);
+  try {
+    const r = await request({ type: 'mcp-origin-repo-clear', origin }, OkResult);
+    if (!r.ok) {
+      setError(r.error ?? i18n.t('mcp.originRepo.error.removeFailed'));
+      await loadOriginRepos();
+      return;
+    }
+    setOriginRepos((map) => dropOriginRepo(map, origin));
+  } catch (e) {
+    setError(errMsg(e));
+    await loadOriginRepos().catch(() => {});
   }
 }
 

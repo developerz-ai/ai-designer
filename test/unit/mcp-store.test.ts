@@ -118,6 +118,39 @@ describe('mcp/store', () => {
     expect(await getServer('missing')).toBeNull();
     await expect(removeServer('missing')).resolves.toBeUndefined();
   });
+
+  it('round-trips an explicit enabled:false (#17)', async () => {
+    const saved = await saveServer({ id: 's', label: 'S', url: 'https://s/mcp', enabled: false });
+    expect(saved.enabled).toBe(false);
+    expect((await getServer('s'))?.enabled).toBe(false);
+    expect((await listServers())[0]?.enabled).toBe(false);
+
+    // The flag is persisted, not just defaulted on read.
+    const all = await chrome.storage.local.get(null);
+    expect(all['mcp:servers']).toEqual([
+      {
+        id: 's',
+        label: 'S',
+        url: 'https://s/mcp',
+        transport: 'http',
+        authKind: 'none',
+        enabled: false,
+      },
+    ]);
+  });
+
+  it('rehydrates a legacy record WITHOUT the enabled field as enabled:true (#17)', async () => {
+    // Pre-#17 persisted shape — no `enabled` key at all. Written raw (straight to storage)
+    // because saveServer would normalize the field in.
+    await chrome.storage.local.set({
+      'mcp:servers': [
+        { id: 'old', label: 'Old', url: 'https://old/mcp', transport: 'http', authKind: 'none' },
+      ],
+    });
+    const list = await listServers();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.enabled).toBe(true);
+  });
 });
 
 describe('mcp/store origin→repo map', () => {

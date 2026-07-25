@@ -37,10 +37,12 @@ export async function computeReadiness(mcpManager: McpHealthSource): Promise<Rea
   const model: ReadinessState['model'] = cfg?.model ? 'ok' : 'missing';
   const hostPermission = await hostPermissionCheck(cfg?.baseURL);
 
-  const health = mcpManager.allHealth();
+  // The mcp row counts ENABLED servers only (#17): a disabled backend is neither reachable
+  // (its tools never merge) nor expected capacity, so it must not inflate `total` either.
+  const enabled = mcpManager.allHealth().filter((h) => h.enabled);
   const mcp = {
-    connected: health.filter((h) => h.status === 'connected').length,
-    total: health.length,
+    connected: enabled.filter((h) => h.status === 'connected').length,
+    total: enabled.length,
   };
 
   return { provider, model, hostPermission, mcp, ready: provider === 'ok' && model === 'ok' };

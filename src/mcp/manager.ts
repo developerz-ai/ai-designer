@@ -27,6 +27,9 @@ export type McpHealth = {
   tools: string[];
   /** Failure reason when `status === 'error'`. */
   error?: string;
+  /** The server's enabled flag (#17), mirrored onto health so readiness can count ENABLED
+   *  servers only — a disabled backend is neither reachable nor expected capacity. */
+  enabled: boolean;
   /** `now()` at the last status change. */
   checkedAt: number;
 };
@@ -75,6 +78,7 @@ export class McpManager {
         status: 'disconnected',
         toolCount: 0,
         tools: [],
+        enabled: options.enabled ?? true,
         checkedAt: this.now(),
       },
       enabled: options.enabled ?? true,
@@ -89,6 +93,7 @@ export class McpManager {
     const entry = this.servers.get(id);
     if (!entry) return false;
     entry.enabled = enabled;
+    entry.health = { ...entry.health, enabled };
     if (!enabled) await this.close(id);
     return true;
   }
@@ -188,6 +193,7 @@ export class McpManager {
         status: 'connected',
         toolCount: names.length,
         tools: names,
+        enabled: entry.enabled,
         checkedAt: this.now(),
       };
       return tools;
@@ -198,6 +204,7 @@ export class McpManager {
         toolCount: 0,
         tools: [],
         error: err instanceof Error ? err.message : String(err),
+        enabled: entry.enabled,
         checkedAt: this.now(),
       };
       return null;

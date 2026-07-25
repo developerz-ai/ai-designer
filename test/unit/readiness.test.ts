@@ -42,8 +42,8 @@ function mcpSource(health: McpHealth[]): McpHealthSource {
   return { allHealth: () => health };
 }
 
-function health(id: string, status: McpHealth['status']): McpHealth {
-  return { id, status, toolCount: 0, tools: [], checkedAt: 0 };
+function health(id: string, status: McpHealth['status'], enabled = true): McpHealth {
+  return { id, status, toolCount: 0, tools: [], enabled, checkedAt: 0 };
 }
 
 beforeEach(() => {
@@ -131,5 +131,35 @@ describe('computeReadiness', () => {
     );
     expect(state.mcp).toEqual({ connected: 1, total: 3 });
     expect(state.ready).toBe(true);
+  });
+
+  it('counts ENABLED servers only (#17): a disabled backend is neither reachable nor capacity', async () => {
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    await saveProviderConfig({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-v1-secret',
+      model: 'anthropic/claude-3.5-sonnet',
+    });
+    // One enabled + connected, one disabled (stale 'connected' health from before the flip —
+    // it must not count toward EITHER number).
+    const state = await computeReadiness(
+      mcpSource([health('a', 'connected'), health('b', 'connected', false)]),
+    );
+    expect(state.mcp).toEqual({ connected: 1, total: 1 });
+    expect(state.ready).toBe(true);
+  });
+
+  it('reads total 0 when every server is disabled', async () => {
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    await saveProviderConfig({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-v1-secret',
+      model: 'anthropic/claude-3.5-sonnet',
+    });
+    const state = await computeReadiness(
+      mcpSource([health('a', 'connected', false), health('b', 'error', false)]),
+    );
+    expect(state.mcp).toEqual({ connected: 0, total: 0 });
+    expect(state.ready).toBe(true); // MCP is optional — 0 enabled backends never gates Start
   });
 });

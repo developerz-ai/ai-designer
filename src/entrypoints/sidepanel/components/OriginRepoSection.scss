@@ -1,0 +1,119 @@
+@use '../../../styles/tokens' as tokens;
+
+.dz-originrepo {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-2;
+  padding-top: tokens.$dz-space-3;
+  border-top: 1px solid var(--dz-border);
+
+  &--compact {
+    padding-top: 0;
+    border-top: none;
+  }
+
+  &__title {
+    margin: 0;
+    color: var(--dz-muted);
+    font-size: tokens.$dz-font-sm;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__hint {
+    margin: 0;
+    color: var(--dz-muted);
+    font-size: tokens.$dz-font-sm;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+  }
+
+  &__meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+
+    strong {
+      color: var(--dz-fg);
+      font-weight: 600;
+    }
+
+    small {
+      color: var(--dz-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__remove {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    background: transparent;
+    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius);
+    color: var(--dz-muted);
+    padding: tokens.$dz-space-1 tokens.$dz-space-2;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  &__origin {
+    align-self: flex-start;
+    color: var(--dz-fg);
+    font-size: tokens.$dz-font-sm;
+    background: var(--dz-surface-overlay);
+    border-radius: var(--dz-radius);
+    padding: tokens.$dz-space-1 tokens.$dz-space-2;
+  }
+
+  &__form {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+
+    input,
+    select {
+      background: var(--dz-surface);
+      border: 1px solid var(--dz-border);
+      border-radius: var(--dz-radius);
+      color: var(--dz-fg);
+      padding: tokens.$dz-space-2 tokens.$dz-space-3;
+      font: inherit;
+    }
+
+    button {
+      align-self: flex-start;
+      background: var(--dz-accent);
+      border: none;
+      border-radius: var(--dz-radius);
+      color: var(--dz-accent-fg);
+      padding: tokens.$dz-space-2 tokens.$dz-space-5;
+      cursor: pointer;
+      font: inherit;
+
+      &:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+    }
+  }
+}

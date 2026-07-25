@@ -3,6 +3,7 @@ import {
   HANDOFF_SOURCE,
   originOf,
   planTasks,
+  resolveOriginEntry,
   resolveRepo,
   type ShipSource,
   ship,
@@ -74,6 +75,25 @@ describe('resolveRepo', () => {
   it('returns null for an unmapped origin or a bad URL', () => {
     expect(resolveRepo('https://unknown.com/', map)).toBeNull();
     expect(resolveRepo('not a url', map)).toBeNull();
+  });
+});
+
+describe('resolveOriginEntry (#20)', () => {
+  const map = {
+    'localhost:3000': { repo: 'acme/storefront', backendId: 'ai-dev', branch: 'develop' },
+  };
+
+  it('returns the FULL routing entry — repo plus backendId/branch overrides', () => {
+    expect(resolveOriginEntry('http://localhost:3000/pricing', map)).toEqual({
+      repo: 'acme/storefront',
+      backendId: 'ai-dev',
+      branch: 'develop',
+    });
+  });
+
+  it('returns null for an unmapped origin or a bad URL', () => {
+    expect(resolveOriginEntry('https://unknown.com/', map)).toBeNull();
+    expect(resolveOriginEntry('not a url', map)).toBeNull();
   });
 });
 
@@ -151,6 +171,38 @@ describe('planTasks', () => {
     const specs = planTasks({ kind: 'report', report: report(), changeset: changeset() }, target);
     expect(specs[0]?.spec.edits).toHaveLength(1);
     expect(specs[0]?.spec.url).toBe('http://localhost:3000/pricing');
+  });
+
+  it('threads target.branch into the changeset task’s spec (#20)', () => {
+    const [spec] = planTasks(
+      { kind: 'changeset', changeset: changeset() },
+      { repo: 'acme/storefront', branch: 'develop' },
+    );
+    expect(spec?.spec.branch).toBe('develop');
+  });
+
+  it('threads target.branch into a single-report task’s spec (#20)', () => {
+    const [spec] = planTasks(
+      { kind: 'report', report: report() },
+      { repo: 'acme/storefront', branch: 'develop' },
+    );
+    expect(spec?.spec.branch).toBe('develop');
+  });
+
+  it('threads target.branch into EVERY multi-task spec (#20)', () => {
+    const specs = planTasks(
+      { kind: 'report', report: report(), multiTask: true },
+      { repo: 'acme/storefront', branch: 'develop' },
+    );
+    expect(specs).toHaveLength(2);
+    expect(specs.map((s) => s.spec.branch)).toEqual(['develop', 'develop']);
+  });
+
+  it('omits the branch KEY entirely when the target names none', () => {
+    const [cs] = planTasks({ kind: 'changeset', changeset: changeset() }, target);
+    expect(cs && 'branch' in cs.spec).toBe(false);
+    const [rp] = planTasks({ kind: 'report', report: report() }, target);
+    expect(rp && 'branch' in rp.spec).toBe(false);
   });
 });
 

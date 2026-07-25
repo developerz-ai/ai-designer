@@ -93,6 +93,23 @@
     margin: 0;
   }
 
+  // #20: the no-repo fallback's inline mapping form — an affordance in the ship area,
+  // not a dialog, so the next Ship is one save away.
+  &__map {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-2;
+    padding: tokens.$dz-space-2;
+    border: 1px dashed var(--dz-border);
+    border-radius: var(--dz-radius);
+  }
+
+  &__mapHint {
+    margin: 0;
+    color: var(--dz-muted);
+    font-size: tokens.$dz-font-sm;
+  }
+
   &__error {
     display: flex;
     align-items: center;
