@@ -45,10 +45,12 @@ import {
   createTaskBackend,
   fallbackMessage,
   routeHandoff,
+  TASK_TOOL,
   type TaskToolExecute,
   taskBackends,
 } from '@/mcp/backend';
 import type { McpConnectionSpec } from '@/mcp/client';
+import { isWriteShaped, toolBaseName } from '@/mcp/design-gate';
 import { originOf, planTasks, type ShipSource, ship } from '@/mcp/handoff';
 import { McpManager } from '@/mcp/manager';
 import {
@@ -63,6 +65,7 @@ import {
   saveServer,
   setOriginRepo,
 } from '@/mcp/store';
+import { clearToolGrants, getToolGrants, setToolGrant } from '@/mcp/tool-grants';
 import { emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
@@ -204,7 +207,11 @@ export default defineBackground(() => {
   // are persisted via mcp/store.ts and rehydrated into this in-memory Map in `mcpReady`, so a
   // refresh after SW eviction can still re-derive headers + refresh a stored token rather than
   // forcing the user to re-authorize. The token itself stays in the encrypted key-store.
-  const mcpManager = new McpManager();
+  // grantsFor wires the #120 per-tool opt-in store into the design-turn gate: toolsFor filters
+  // each server's write-shaped tools against the user's grants before merging.
+  const mcpManager = new McpManager({
+    grantsFor: async (serverId) => (await getToolGrants())[serverId] ?? [],
+  });
   const oauthConfigs = new Map<string, McpOAuthConfig>();
 
   function mcpSpec(stored: StoredServer): McpConnectionSpec {
@@ -219,8 +226,14 @@ export default defineBackground(() => {
     };
   }
 
-  function toBusServer(stored: StoredServer): McpServer {
+  async function toBusServer(stored: StoredServer): Promise<McpServer> {
     const health = mcpManager.health(stored.id);
+    // #120: the panel's per-tool toggles read the gate's view — the discovered tools that are
+    // write-shaped (BASE names; `task` excluded — it can never be granted) + the granted subset.
+    const granted = (await getToolGrants())[stored.id] ?? [];
+    const writeTools = (health?.tools ?? [])
+      .map((name) => toolBaseName(name))
+      .filter((base) => base !== TASK_TOOL && isWriteShaped(base));
     return {
       id: stored.id,
       label: stored.label,
@@ -231,12 +244,14 @@ export default defineBackground(() => {
       status: health?.status ?? 'disconnected',
       toolCount: health?.toolCount ?? 0,
       tools: health?.tools ?? [],
+      writeTools: [...new Set(writeTools)],
+      grantedTools: granted.filter((g) => writeTools.includes(g)),
       error: health?.error,
     };
   }
 
   function pushMcpStatus(stored: StoredServer): void {
-    postToPanel({ type: 'mcp-status', server: toBusServer(stored) });
+    void toBusServer(stored).then((server) => postToPanel({ type: 'mcp-status', server }));
   }
 
   // Readiness (slice 03): pushed unsolicited whenever provider/model/host-permission/MCP
@@ -1145,7 +1160,7 @@ export default defineBackground(() => {
         mcpManager.register(mcpSpec(stored), { enabled: stored.enabled });
         pushMcpStatus(stored);
         void pushReadiness().catch(() => {});
-        return { ok: true, server: toBusServer(stored) };
+        return { ok: true, server: await toBusServer(stored) };
       }
       // Tear down the connection and purge the persisted record + both credential slots
       // (mcp/store.ts removeServer already clears the key-store side).
@@ -1153,11 +1168,12 @@ export default defineBackground(() => {
         await mcpManager.unregister(msg.id);
         oauthConfigs.delete(msg.id);
         await removeServer(msg.id);
+        await clearToolGrants(msg.id); // #120: no orphaned grant survives a removal
         void pushReadiness().catch(() => {});
         return { ok: true };
       }
       case 'mcp-list': {
-        const servers = (await listServers()).map(toBusServer);
+        const servers = await Promise.all((await listServers()).map((s) => toBusServer(s)));
         return { ok: true, servers };
       }
       // (Re)open a registered server and refresh its cached health/tool catalog.
@@ -1171,7 +1187,7 @@ export default defineBackground(() => {
         await mcpManager.connect(msg.id);
         pushMcpStatus(stored);
         void pushReadiness().catch(() => {});
-        return { ok: true, server: toBusServer(stored) };
+        return { ok: true, server: await toBusServer(stored) };
       }
       // Enable/disable a backend (#17): persist the flag, flip the manager registration
       // (disabling tears the live connection down), republish health + readiness (the MCP
@@ -1184,7 +1200,16 @@ export default defineBackground(() => {
         await mcpManager.setEnabled(msg.id, msg.enabled);
         pushMcpStatus(next);
         void pushReadiness().catch(() => {});
-        return { ok: true, server: toBusServer(next) };
+        return { ok: true, server: await toBusServer(next) };
+      }
+      // Per-tool opt-in (#120): grant/revoke one write-shaped tool for the design loop. The
+      // grant takes effect on the NEXT turn's toolsFor merge (a running turn keeps its set).
+      case 'mcp-tool-grant-set': {
+        const stored = await getServer(msg.id);
+        if (!stored) return { ok: false, error: `Unknown MCP server: ${msg.id}` };
+        await setToolGrant(msg.id, msg.tool, msg.granted);
+        pushMcpStatus(stored);
+        return { ok: true, server: await toBusServer(stored) };
       }
       // Origin→repo map (#20): the one-click-Ship mapping the panel curates. The SW validates
       // nothing beyond the bus schema — the map is user-curated by construction, and a bogus
@@ -1224,7 +1249,7 @@ export default defineBackground(() => {
         await mcpManager.connect(msg.id);
         pushMcpStatus(next);
         void pushReadiness().catch(() => {});
-        return { ok: true, server: toBusServer(next) };
+        return { ok: true, server: await toBusServer(next) };
       }
       // Manual refresh: republish every registered server's current health on the
       // mcp-status stream (e.g. a panel that just (re)connected with no cached state).

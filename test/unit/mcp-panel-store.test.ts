@@ -21,6 +21,8 @@ const serverA: McpServer = {
   status: 'disconnected',
   toolCount: 0,
   tools: [],
+  writeTools: [],
+  grantedTools: [],
 };
 
 describe('reduceServers', () => {

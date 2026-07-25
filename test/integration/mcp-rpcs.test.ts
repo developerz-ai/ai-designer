@@ -3,7 +3,9 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
+import { TASK_TOOL } from '@/mcp/backend';
 import type { McpClientFactory, McpConnectionSpec } from '@/mcp/client';
+import { isWriteShaped, toolBaseName } from '@/mcp/design-gate';
 import { McpManager } from '@/mcp/manager';
 import {
   clearOriginRepo,
@@ -87,6 +89,9 @@ function fakeMcpFactory(tools: Record<string, unknown> = { task: {} }): McpClien
 function makeHandlers(connect: McpClientFactory) {
   const mcpManager = new McpManager({ connect, idleMs: 0 });
   const oauthConfigs = new Map<string, McpOAuthConfig>();
+  // #120 grant map — mirrors background.ts's tool-grants store reads; the grant-set harness
+  // case writes it (the real store is exercised in the store unit suite).
+  const grants: Record<string, string[]> = {};
 
   function mcpSpec(stored: StoredServer): McpConnectionSpec {
     return {
@@ -102,6 +107,9 @@ function makeHandlers(connect: McpClientFactory) {
 
   function toBusServer(stored: StoredServer): McpServer {
     const health = mcpManager.health(stored.id);
+    const writeTools = (health?.tools ?? [])
+      .map((name) => toolBaseName(name))
+      .filter((base) => base !== TASK_TOOL && isWriteShaped(base));
     return {
       id: stored.id,
       label: stored.label,
@@ -112,6 +120,8 @@ function makeHandlers(connect: McpClientFactory) {
       status: health?.status ?? 'disconnected',
       toolCount: health?.toolCount ?? 0,
       tools: health?.tools ?? [],
+      writeTools: [...new Set(writeTools)],
+      grantedTools: (grants[stored.id] ?? []).filter((g) => writeTools.includes(g)),
       error: health?.error,
     };
   }

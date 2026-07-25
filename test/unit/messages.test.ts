@@ -567,6 +567,8 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
       status: 'connected' as const,
       toolCount: 2,
       tools: ['create_task', 'get_task'],
+      writeTools: ['create_task'],
+      grantedTools: [],
     };
     expect(SwToPanel.safeParse({ type: 'mcp-status', server }).success).toBe(true);
     expect(McpServer.safeParse(server).success).toBe(true);
@@ -684,6 +686,8 @@ describe('MCP server RPCs (panel <-> service worker)', () => {
       status: 'disconnected' as const,
       toolCount: 0,
       tools: [],
+      writeTools: [],
+      grantedTools: [],
     };
     expect(McpServerResult.safeParse({ ok: true, server }).success).toBe(true);
     expect(McpServerResult.safeParse({ ok: false, error: 'boom' }).success).toBe(true);

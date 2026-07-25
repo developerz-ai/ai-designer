@@ -165,6 +165,10 @@ export type McpOAuthConfig = z.infer<typeof McpOAuthConfig>;
 // with `mcp/manager.ts`'s live connection health. `toolCount`/`tools` are 0/[] until a
 // successful connect; `error` is set only when `status === 'error'`. `enabled` (#17) is the
 // user's per-backend switch — a disabled server never connects and its tools never merge.
+// `writeTools`/`grantedTools` (#120 per-tool opt-in): the server's discovered tools the gate
+// reads as write-shaped (BASE names, the Ship `task` verb excluded — it can never be granted),
+// and the subset the user granted for the design loop. The panel renders a toggle per
+// writeTools entry, checked when it's in grantedTools.
 export const McpServer = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -175,6 +179,8 @@ export const McpServer = z.object({
   status: McpConnectionStatus,
   toolCount: z.number().int().nonnegative(),
   tools: z.array(z.string()),
+  writeTools: z.array(z.string()),
+  grantedTools: z.array(z.string()),
   error: z.string().optional(),
 });
 export type McpServer = z.infer<typeof McpServer>;
@@ -204,6 +210,14 @@ export const McpSetEnabled = z.object({
   type: z.literal('mcp-set-enabled'),
   id: z.string().min(1),
   enabled: z.boolean(),
+});
+// Per-tool opt-in (#120): grant/revoke ONE write-shaped tool (base name) for ONE server —
+// granted tools ride design turns; ungranted stay gated. Replies `McpServerResult`.
+export const McpToolGrantSet = z.object({
+  type: z.literal('mcp-tool-grant-set'),
+  id: z.string().min(1),
+  tool: z.string().min(1),
+  granted: z.boolean(),
 });
 // Origin→repo map RPCs (#20): the one-click-Ship mapping UI. Get returns the WHOLE map
 // (`McpOriginRepoResult`); set/clear reply `OkResult`. Origins are `host[:port]` keys —
@@ -384,6 +398,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   McpList,
   McpConnect,
   McpSetEnabled,
+  McpToolGrantSet,
   McpOriginRepoGet,
   McpOriginRepoSet,
   McpOriginRepoClear,
