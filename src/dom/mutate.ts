@@ -1,4 +1,5 @@
 import { readComputed } from '@/dom/read';
+import type { AttrChange, ClassChange, StyleChange } from '@/shared/changeset';
 import type { MutationKind } from '@/shared/messages';
 
 // Reversible mutation primitives — the content script's write half. Each primitive applies a
@@ -23,6 +24,9 @@ export interface Reversible {
 
 // An element-targeting mutation: it contributes a recorder `MutationEvent` (kind + before/after
 // serialized state, messages.ts). `computed` is the post-change value the model reads back.
+// The optional typed fields (#9) are the GROUND-TRUTH mechanical delta, captured here at
+// mutation time where the prior values still exist — the recorder folds them onto the event so
+// the SW's durable Edit doesn't depend on the model restating its own tool calls.
 export interface ElementMutation<C = unknown> extends Reversible {
   kind: MutationKind;
   computed: C;
@@ -30,6 +34,18 @@ export interface ElementMutation<C = unknown> extends Reversible {
   after: string;
   /** The overrides-sheet rule id (the element marker) for a `setStyle`, so undo can drop it. */
   ruleId?: string;
+  /** setStyle: one entry per prop the call touched — `before` is the PRE-mutation computed
+   *  value (null when the prop had no computed value), `after` the POST-mutation readback. */
+  styleChanges?: StyleChange[];
+  /** setAttr: the single attribute delta (`before: null` = the attribute was absent). */
+  attrChange?: AttrChange;
+  /** addClass/removeClass: the single class delta — present ONLY when the op actually changed
+   *  the class list (a no-op add/remove emits nothing, so the SW's class-fold window diff never
+   *  has to cancel a phantom op back out). */
+  classChange?: ClassChange;
+  /** setText: the text delta; `before` is the prior textContent bounded to
+   *  {@link TEXT_CHANGE_BEFORE_CAP} chars (the legacy opaque `before` keeps full innerHTML). */
+  textChange?: { before: string; after: string };
 }
 
 // A page-level op (injectCss / setViewport): no single element target, so it is NOT a
@@ -72,6 +88,12 @@ function toKebab(prop: string): string {
 function classAttr(el: Element): string {
   return el.getAttribute('class') ?? '';
 }
+
+/** Cap on `textChange.before` (#9): the prior textContent can be arbitrarily long (a whole
+ *  article body), but the event rides the bus and lands in the changeset — 2000 chars is ample
+ *  to identify the replaced copy. The undo path never reads this field (it uses the lossless
+ *  legacy `before` innerHTML), so truncation is safe. */
+export const TEXT_CHANGE_BEFORE_CAP = 2000;
 
 function insertAt(ref: Element, node: Node, position: InsertPosition): void {
   const parent = ref.parentNode;
@@ -282,6 +304,12 @@ export function createMutator(doc: Document = document): Mutator {
     overrides.set(id, map);
 
     const entries = Object.entries(props).map(([prop, value]) => [toKebab(prop), value] as const);
+    const touchedProps = entries.map(([prop]) => prop);
+    // #9 ground truth: the page's PRE-mutation computed value per touched prop, read BEFORE the
+    // sheet re-render (so it reflects prior overrides + page CSS, NOT this call's values — and
+    // never the override-map prior, which only knows our own edits). No fallback: an empty
+    // computed value is the honest pre-state, recorded as null.
+    const preComputed = readComputed(el, touchedProps);
     // Prior value per touched prop; `undefined` = the prop was not previously overridden.
     const prior = new Map<string, string | undefined>(
       entries.map(([prop]) => [prop, map.get(prop)]),
@@ -294,16 +322,28 @@ export function createMutator(doc: Document = document): Mutator {
     renderSheet();
 
     const fallback = Object.fromEntries(entries);
+    // The model-facing ToolResult readback KEEPS the raw-input fallback (pre-existing: a
+    // not-yet-cascaded rule should still report the value the model just set).
+    const computed = readComputed(el, touchedProps, fallback);
+    // Ground truth must NOT: an invalid declaration is dropped by the CSS parser, and the
+    // fallback would stamp the UNAPPLIED raw value into styleChanges as if it took. Read back
+    // fallback-free and drop any pair whose after is empty (the declaration didn't take). A
+    // prop with a non-empty UA default (color, gap→normal) instead records that default — the
+    // honest current value, never the raw input.
+    const applied = readComputed(el, touchedProps);
+    const styleChanges: StyleChange[] = [];
+    for (const [prop] of entries) {
+      const after = applied[prop];
+      if (!after) continue;
+      styleChanges.push({ prop, before: preComputed[prop] ?? null, after });
+    }
     return {
       kind: 'setStyle',
       ruleId: id,
       before,
       after: JSON.stringify(fallback),
-      computed: readComputed(
-        el,
-        entries.map(([prop]) => prop),
-        fallback,
-      ),
+      computed,
+      styleChanges,
       undo() {
         const map = overrides.get(id);
         if (!map) return;
@@ -325,12 +365,16 @@ export function createMutator(doc: Document = document): Mutator {
     // Capture the element's full markup (innerHTML), not the flattened textContent: an element with
     // child nodes must round-trip its structure on undo, and the recorded before-state stays lossless.
     const before = el.innerHTML;
+    // #9: the typed delta carries the flattened TEXT (what the model sees as changing), bounded —
+    // the lossless innerHTML above stays the undo/record state.
+    const textBefore = (el.textContent ?? '').slice(0, TEXT_CHANGE_BEFORE_CAP);
     el.textContent = value;
     return {
       kind: 'setText',
       computed: value,
       before,
       after: value,
+      textChange: { before: textBefore, after: value },
       undo() {
         el.innerHTML = before;
       },
@@ -354,6 +398,8 @@ export function createMutator(doc: Document = document): Mutator {
       // setAttr value is not enough to reconstruct the edit. `null` = the attribute was absent.
       before: JSON.stringify({ [name]: prev }),
       after: JSON.stringify({ [name]: value }),
+      // #9: the same delta in typed form — the durable Edit.attrs[] entry needs no JSON.parse.
+      attrChange: { name, before: prev, after: value },
       undo() {
         if (prev !== null) el.setAttribute(name, prev);
         else el.removeAttribute(name);
@@ -371,6 +417,10 @@ export function createMutator(doc: Document = document): Mutator {
       computed: after,
       before,
       after,
+      // #9 ground truth ONLY on a real delta: a no-op add (the class was already present)
+      // changed nothing, so it must not emit an op the fold would have to cancel back out
+      // (the SW's class merge is a window set-diff over the events' classAttr strings).
+      ...(added ? { classChange: { name, op: 'add' as const } } : {}),
       undo() {
         if (added) el.classList.remove(name);
       },
@@ -387,6 +437,8 @@ export function createMutator(doc: Document = document): Mutator {
       computed: after,
       before,
       after,
+      // Same real-delta rule as addClass: a no-op remove (the class was absent) emits nothing.
+      ...(removed ? { classChange: { name, op: 'remove' as const } } : {}),
       undo() {
         if (removed) el.classList.add(name);
       },

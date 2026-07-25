@@ -12,9 +12,10 @@
 
 import { tool } from 'ai';
 import { z } from 'zod';
+import { foldMutationEvents } from '@/changeset/pending-mutations';
 import type { ChangesetStore } from '@/changeset/store';
 import { type Changeset, Edit } from '@/shared/changeset';
-import { type SwToPanel, ToolResult } from '@/shared/messages';
+import { type MutationEvent, type SwToPanel, ToolResult } from '@/shared/messages';
 
 /** Everything the session tools need, injected so the module stays chrome-free and testable. */
 export interface SessionToolDeps {
@@ -24,6 +25,23 @@ export interface SessionToolDeps {
   readonly persist: (changeset: Changeset) => Promise<void> | void;
   /** Stream changeset events to the side-panel port (`edit-recorded` / `changeset`). */
   readonly emit: (event: SwToPanel) => void;
+  /** Drain this turn tab's buffered recorder MutationEvents matching a selector value (#9 —
+   *  `src/changeset/pending-mutations.ts`). Absent ⇒ no recorder fold (the model's Edit stands
+   *  as-is) — unit tests and non-tab contexts inject nothing. */
+  readonly drainRecorderEvents?: (selectorValue: string) => DrainRecorderResult;
+}
+
+/** One drain of the tab's recorder buffer — the shape `PendingMutations.drain` returns (#9
+ *  review round 2). Declared structurally here so this module stays decoupled from the buffer
+ *  implementation (and unit tests can inject a literal). */
+export interface DrainRecorderResult {
+  /** The drained events — empty on no match, multi-group ambiguity, or a gated rescue refusal. */
+  readonly events: MutationEvent[];
+  /** How many of the tab's events were dropped at the buffer cap since the last drain (the
+   *  drain RESETS the counter — the loss is surfaced once, here, on the folded edit's intent). */
+  readonly dropped: number;
+  /** True when the single-group rescue fired (the exact selector match missed). */
+  readonly rescued: boolean;
 }
 
 // `undo` / `redo` take no arguments; an empty object schema stops the model from inventing any.
@@ -44,7 +62,7 @@ const result = (data: unknown): ToolResult => ({ type: 'tool-result', ok: true, 
  * inert until the user approves it in the loop.
  */
 export function createSessionTools(deps: SessionToolDeps) {
-  const { store, persist, emit } = deps;
+  const { store, persist, emit, drainRecorderEvents } = deps;
 
   return {
     recordEdit: tool({
@@ -58,15 +76,55 @@ export function createSessionTools(deps: SessionToolDeps) {
         "refSelector?} / {op: 'move', refSelector, position?} / {op: 'remove'}. When " +
         'you made this change under device emulation ' +
         '(`setDevice`), set `breakpoint` to the device so the changeset and report show which ' +
-        'viewport it targets. This is what Ship hands off; record after you have applied and ' +
-        'visually verified a change.',
+        'viewport it targets. Set `selector` to the EXACT selector the mutation tool returned ' +
+        'for the element — never a paraphrase: the recorder buffers the real deltas under that ' +
+        'selector, and an exact match folds them in as ground truth. When the result has ' +
+        '`rescued: true`, your selector was a paraphrase the recorder healed — adopt the ' +
+        "result's `healedSelector` for subsequent calls on this element. This is what Ship " +
+        'hands off; record after you have applied and visually verified a change.',
       inputSchema: Edit,
       outputSchema: ToolResult,
       execute: async (edit) => {
-        store.record(edit);
+        // #9: fold the real recorder deltas buffered for this selector into the model's Edit —
+        // the page's own mutation events are ground truth per mechanical family (changes/attrs/
+        // classes/structural/text), so the durable record no longer depends on the model
+        // restating its tool calls. Buffer empty ⇒ the Edit stands unchanged (back-compat).
+        // SPILLOVER: a group holding several structural ops keeps the first in the folded edit;
+        // each additional op becomes its own auto-recorded Edit (one op per Edit), recorded +
+        // persisted + streamed right alongside. Events dropped at the buffer cap since the last
+        // drain are surfaced ONCE, on the folded edit's intent (the drain reset the counter, so
+        // the turn-end auto-finalize won't double-report) — a shipped changeset never silently
+        // omits mutations.
+        const drained = drainRecorderEvents?.(edit.selector.value);
+        const events = drained?.events ?? [];
+        const dropped = drained?.dropped ?? 0;
+        const { folded, spillover } =
+          events.length > 0 ? foldMutationEvents(edit, events) : { folded: edit, spillover: [] };
+        const recorded =
+          dropped > 0
+            ? {
+                ...folded,
+                intent: `${folded.intent} (+${dropped} earlier events dropped at buffer cap)`,
+              }
+            : folded;
+        store.record(recorded);
+        for (const extra of spillover) store.record(extra);
         await persist(store.current);
-        emit({ type: 'edit-recorded', edit });
-        return result({ edits: store.size });
+        emit({ type: 'edit-recorded', edit: recorded });
+        for (const extra of spillover) emit({ type: 'edit-recorded', edit: extra });
+        // The spillover count rides the result so the model can pair session `undo`s with the
+        // edits ONE recordEdit call created (1 + spillover). `rescued` surfaces the gated
+        // single-group rescue (the drain matched no exact group but adopted the one plausibly-
+        // same group — the model's selector was a paraphrase): with it, `healedSelector`
+        // carries the ground-truth selector the fold adopted, so the model can use it for any
+        // further calls on this element instead of its paraphrase.
+        const rescued = drained?.rescued ?? false;
+        return result({
+          edits: store.size,
+          spillover: spillover.length,
+          rescued,
+          ...(rescued ? { healedSelector: recorded.selector.value } : {}),
+        });
       },
     }),
     undo: tool({

@@ -490,3 +490,101 @@ describe('legacy presentational background attribute (#144 round-4 review)', () 
     expect(document.getElementById('t')?.textContent).toContain('cell');
   });
 });
+
+describe('#9 typed mutation fields (recorder ground truth)', () => {
+  it('setStyle carries styleChanges: the pre-mutation computed value as before, applied after', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'rgb(1, 2, 3)' });
+    // A real browser (and jsdom) always computes SOME color — here the canvas default black.
+    // `before: null` is reserved for props with no computed value at all (e.g. unsupported).
+    expect(mutation.styleChanges).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(1, 2, 3)' },
+    ]);
+  });
+
+  it('setStyle records the page’s PRE-mutation computed value (inline style), not the override prior', () => {
+    mount('<button id="cta" style="color: green">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'rgb(1, 2, 3)' });
+    expect(mutation.styleChanges?.[0]?.prop).toBe('color');
+    // getComputedStyle resolves color names to rgb (browsers and jsdom alike).
+    expect(mutation.styleChanges?.[0]?.before).toBe('rgb(0, 128, 0)');
+    expect(mutation.styleChanges?.[0]?.after).toBe('rgb(1, 2, 3)');
+  });
+
+  it('setStyle carries one styleChanges entry per touched prop', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), {
+      color: 'rgb(1, 2, 3)',
+      backgroundColor: 'blue',
+    });
+    expect(mutation.styleChanges?.map((c) => c.prop)).toEqual(['color', 'background-color']);
+  });
+
+  it('setText carries a textChange delta and bounds a long before to 2000 chars', () => {
+    mount(`<p id="copy">${'lorem '.repeat(500)}</p>`);
+    const mutation = createMutator(document).setText(byId('copy'), 'short');
+    expect(mutation.textChange?.after).toBe('short');
+    expect(mutation.textChange?.before).toHaveLength(2000);
+    // The legacy opaque `before` stays the lossless innerHTML for undo.
+    expect(mutation.before.length).toBeGreaterThan(2000);
+  });
+
+  it('setAttr carries attrChange (null before when the attribute was absent)', () => {
+    mount('<button id="cta">Buy</button>');
+    const added = createMutator(document).setAttr(byId('cta'), 'data-variant', 'brand');
+    expect(added.attrChange).toEqual({ name: 'data-variant', before: null, after: 'brand' });
+
+    mount('<button id="cta" data-variant="old">Buy</button>');
+    const changed = createMutator(document).setAttr(byId('cta'), 'data-variant', 'brand');
+    expect(changed.attrChange).toEqual({ name: 'data-variant', before: 'old', after: 'brand' });
+  });
+
+  it('addClass/removeClass carry the single classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutator = createMutator(document);
+    expect(mutator.addClass(byId('cta'), 'btn-primary').classChange).toEqual({
+      name: 'btn-primary',
+      op: 'add',
+    });
+    expect(mutator.removeClass(byId('cta'), 'present').classChange).toEqual({
+      name: 'present',
+      op: 'remove',
+    });
+  });
+
+  // #9 review fix: a no-op class toggle must emit NO delta at all — emitting one would make the
+  // SW's class-fold window diff cancel a real op against a phantom. The field is genuinely
+  // ABSENT (not undefined), same rule as ruleId.
+  it('a no-op addClass (class already present) carries NO classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutation = createMutator(document).addClass(byId('cta'), 'present');
+    expect(mutation.kind).toBe('addClass');
+    expect('classChange' in mutation).toBe(false);
+  });
+
+  it('a no-op removeClass (class absent) carries NO classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutation = createMutator(document).removeClass(byId('cta'), 'ghost');
+    expect(mutation.kind).toBe('removeClass');
+    expect('classChange' in mutation).toBe(false);
+  });
+
+  // #9 round-2 review fix: styleChanges must not stamp UNAPPLIED values. An invalid declaration
+  // is dropped by the CSS parser; the raw-input fallback used to record it as if it took. The
+  // pair is now built from the fallback-free readback and dropped when the after reads empty.
+  // (`gap` pins this in jsdom: it strictly validates the value and defaults to '' — unlike
+  // color, whose UA default always computes non-empty.)
+  it('setStyle drops an invalid declaration from styleChanges but keeps the valid prop', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), {
+      gap: 'not-a-length', // parser drops the declaration → empty readback → pair dropped
+      color: 'rgb(1, 2, 3)', // valid → recorded
+    });
+    expect(mutation.styleChanges).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(1, 2, 3)' },
+    ]);
+    // The model-facing `computed` readback KEEPS the raw-input fallback (pre-existing contract):
+    // it reports the value the model just set, even when the parser dropped it.
+    expect(mutation.computed).toEqual({ gap: 'not-a-length', color: 'rgb(1, 2, 3)' });
+  });
+});
