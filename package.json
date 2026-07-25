@@ -1,6 +1,6 @@
 {
   "name": "@developerz-ai/designer",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Chrome extension: chat with an agent, redesign the live page in real time, ship the real code via MCP.",
