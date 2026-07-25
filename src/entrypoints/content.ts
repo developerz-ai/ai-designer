@@ -15,6 +15,9 @@ import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import {
   captureScrollOptions,
+  clipVerdict,
+  isFixedPosition,
+  isInnerScrollContainer,
   pageMetrics,
   queryOne,
   screenshotRect,
@@ -151,18 +154,42 @@ export default defineContentScript({
         ? captureScrollOptions(el.getBoundingClientRect(), window.innerWidth, window.innerHeight)
         : null;
       const scrollContainers = el ? scrollableAncestors(el) : [];
+      // One clip-intersection answers both container-reveal questions (#137 item 2): an element
+      // fully painted through every clipping ancestor needs NO reveal (skip the no-op scroll +
+      // its settle below), and one clipped to zero pixels by a non-scrollable (overflow:clip)
+      // ancestor with no scroller between can NEVER paint — error rather than crop whatever
+      // unrelated pixels sit at those coordinates. Top frame only: child frames keep their
+      // documented empty-crop → full-frame fallback (no reveal machinery there to restore).
+      const clip = el ? clipVerdict(el, window) : null;
+      if (el && selfFrameId === 0 && clip?.neverPaintable) {
+        return {
+          type: 'tool-result',
+          ok: false,
+          error: `Element is fully clipped by a non-scrollable (overflow: clip) ancestor — no pixels can ever paint: ${selector}`,
+        };
+      }
       // Container-clipped blind spot: getBoundingClientRect is UNCLIPPED layout geometry, so an
       // element fully clipped by a scrollable ancestor keeps an in-window rect (null options
       // above) while zero pixels of it are painted — the crop would silently capture whatever
-      // else sits at those coordinates. With a scrollable ancestor beyond the document scroller,
-      // do a minimal 'nearest' reveal instead: a true no-op when the element is genuinely visible
-      // in every scrolling box, so the common in-view case pays only the settle.
+      // else sits at those coordinates. With an inner scroll container beyond the page's own
+      // scroller (isInnerScrollContainer — #137 item 3: body counts only when it IS the
+      // document's scrollingElement), do a minimal 'nearest' reveal instead — unless clipVerdict
+      // already proved every pixel painted, in which case the reveal AND its settle are skipped.
       const containerClipped =
         !scrollOpts &&
-        scrollContainers.some((a) => a !== document.documentElement && a !== document.body);
+        !clip?.fullyPainted &&
+        scrollContainers.some((a) => isInnerScrollContainer(a, document));
       const effectiveOpts: ScrollIntoViewOptions | null =
         scrollOpts ?? (containerClipped ? { block: 'nearest', inline: 'nearest' } : null);
-      if (el && selfFrameId === 0 && typeof el.scrollIntoView === 'function' && effectiveOpts) {
+      // Fixed-position targets: scrollIntoView no-ops for them, so skip the bounded ~200ms
+      // scroll+settle cycle (#137 item 6) — the crop still falls back, same as pre-PR.
+      if (
+        el &&
+        selfFrameId === 0 &&
+        typeof el.scrollIntoView === 'function' &&
+        effectiveOpts &&
+        !isFixedPosition(el)
+      ) {
         ancestors = scrollContainers.map((a) => ({
           el: a,
           top: a.scrollTop,

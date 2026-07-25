@@ -209,6 +209,31 @@ describe('scrollableAncestors', () => {
     // inside the shadow root must be found even though it is NOT a DOM ancestor.
     expect(scrollableAncestors(byId('slotted')).map((a) => a.id)).toContain('shadowscroller');
   });
+
+  // #137 item 2: an overflow:clip box overflows but has NO scroll mechanism, so the size
+  // heuristic alone must not promote it to a scroll container. jsdom fixtures set the overflow-x/y
+  // LONGHANDS — cssstyle doesn't propagate the `overflow` shorthand to them.
+  it('excludes an overflow:clip container despite overflowing sizes', () => {
+    mount(
+      '<div id="clipper" style="overflow-x: clip; overflow-y: clip"><div id="target"></div></div>',
+    );
+    fakeSizes(byId('clipper'), { scrollHeight: 900, clientHeight: 200 });
+    expect(scrollableAncestors(byId('target'))).toEqual([]);
+  });
+
+  it('excludes a container clipped on the only overflowing axis', () => {
+    mount('<div id="clipx" style="overflow-x: clip"><div id="target"></div></div>');
+    fakeSizes(byId('clipx'), { scrollWidth: 500, clientWidth: 100 });
+    expect(scrollableAncestors(byId('target'))).toEqual([]);
+  });
+
+  it('keeps a container whose overflowing axis permits scrolling', () => {
+    mount(
+      '<div id="mixed" style="overflow-x: clip; overflow-y: auto"><div id="target"></div></div>',
+    );
+    fakeSizes(byId('mixed'), { scrollHeight: 900, clientHeight: 200 });
+    expect(scrollableAncestors(byId('target')).map((a) => a.id)).toEqual(['mixed']);
+  });
 });
 
 describe('scrollAxesForCapture', () => {

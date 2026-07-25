@@ -279,7 +279,9 @@ test('curation round-trip: per-edit remove forks history, then undo/redo/clear w
   await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
   await expect(items.nth(0).locator('.dz-diff__selector')).toHaveText('#cta · id');
 
+  // Two-click confirm (#142 item 5): the first click only arms.
   await panel.getByRole('button', { name: 'Clear session' }).click();
+  await panel.getByRole('button', { name: 'Clear session? Sure' }).click();
   await expect(items).toHaveCount(0);
   await expect(panel.locator('.dz-diff__count')).toHaveText('0 edits');
   await expect(panel.locator('.dz-diff__empty')).toBeVisible();

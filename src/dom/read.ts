@@ -235,7 +235,7 @@ export function needsScrollIntoView(
 /** Per-axis scroll verdicts for a single-viewport capture of `rect`: on each axis, an element
  *  that FITS benefits when it's clipped there; one LARGER than the viewport benefits only when
  *  NONE of it is visible — centering it otherwise just swaps the currently visible band (the
- *  top/left, usually the header/title) for a middle band at the same capture size, plus a
+ *  start-edge band, usually the header/title) for a middle band at the same capture size, plus a
  *  pointless scroll/restore cycle. */
 export function scrollAxesForCapture(
   rect: { top: number; left: number; bottom: number; right: number },
@@ -255,10 +255,10 @@ export function scrollAxesForCapture(
 
 /** The scrollIntoView options for capturing `rect`, or `null` when scrolling wouldn't improve the
  *  capture at all ({@link scrollAxesForCapture} on both axes). On each axis: an element LARGER
- *  than the viewport aligns 'start' — the capture keeps the top/left band (usually the
- *  header/title), never swaps in a middle or bottom band. One that fits centers when scrolling
- *  benefits (shows the whole thing) and stays put ('nearest', a true no-op when fully visible)
- *  when it doesn't. */
+ *  than the viewport aligns 'start' — the capture keeps the start-edge band (block/inline start,
+ *  direction-correct in RTL; usually the header/title), never swaps in a middle or bottom band.
+ *  One that fits centers when scrolling benefits (shows the whole thing) and stays put
+ *  ('nearest', a true no-op when fully visible) when it doesn't. */
 export function captureScrollOptions(
   rect: { top: number; left: number; bottom: number; right: number },
   viewportWidth: number,
@@ -273,24 +273,123 @@ export function captureScrollOptions(
   };
 }
 
+/** The composed-tree parent of `node`: assignedSlot → parentElement → shadow host. Shared by
+ *  {@link scrollableAncestors} and {@link clipVerdict} so both walk the same flat tree. */
+function composedParent(node: Element): Element | null {
+  if (node.assignedSlot) return node.assignedSlot;
+  if (node.parentElement) return node.parentElement;
+  const root = node.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
 /** The overflow containers `scrollIntoView` will also move, nearest-first: per CSSOM View it
  *  scrolls EVERY scrollable ancestor in the flat tree, not just the document scroller. Snapshot
  *  their offsets before scrolling so the caller can restore them after — else a read-only
  *  screenshot strands a nested panel at a new scroll position. Walks the COMPOSED tree
- *  (assignedSlot → parentElement → shadow host) so a slotted element's in-shadow scroll containers
- *  are covered too. Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
+ *  ({@link composedParent}) so a slotted element's in-shadow scroll containers are covered too.
+ *  Pure + jsdom-friendly (jsdom reports 0 sizes, yielding `[]`). */
 export function scrollableAncestors(el: Element): Element[] {
-  const up = (node: Element): Element | null => {
-    if (node.assignedSlot) return node.assignedSlot;
-    if (node.parentElement) return node.parentElement;
-    const root = node.getRootNode();
-    return root instanceof ShadowRoot ? root.host : null;
-  };
   const out: Element[] = [];
-  for (let p = up(el); p; p = up(p)) {
-    if (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth) out.push(p);
+  for (let p = composedParent(el); p; p = composedParent(p)) {
+    // The size heuristic alone over-reports: an `overflow: clip` box overflows yet has NO scroll
+    // mechanism (scrollIntoView can't move it — #137 item 2), so an axis only counts when its
+    // computed overflow permits scrolling. (`visible` keeps the historical pass: not a scroll
+    // container either, but pre-existing behavior and harmless — the reveal just no-ops there.)
+    const { overflowX, overflowY } = getComputedStyle(p);
+    const scrollsY = overflowY !== 'clip' && p.scrollHeight > p.clientHeight;
+    const scrollsX = overflowX !== 'clip' && p.scrollWidth > p.clientWidth;
+    if (scrollsY || scrollsX) out.push(p);
   }
   return out;
+}
+
+/** How much of an element's rect is genuinely painted, accounting for clipping ancestors — one
+ *  computation answering both container-reveal questions in `content.ts`'s screenshot (#137
+ *  item 2). */
+export interface ClipVerdict {
+  /** Every pixel of the element's rect is painted in the viewport: it survives every clipping
+   *  ancestor's client rect AND sits fully on screen. A reveal would be a pure no-op — the
+   *  caller skips it AND its paint-settle. */
+  fullyPainted: boolean;
+  /** Zero pixels are painted AND no scroll can change that: a non-scrollable (`overflow: clip`)
+   *  ancestor clips the element to empty with no scroll container between them that could move
+   *  the element back inside. Cropping there would capture unrelated pixels — the caller errors
+   *  instead. */
+  neverPaintable: boolean;
+}
+
+/** The client rect of an overflow-clipping ancestor — its painted clip window: the border box
+ *  inset by the border (clientTop/clientLeft), at client size. */
+function clientRectOf(el: Element): { top: number; left: number; bottom: number; right: number } {
+  const r = el.getBoundingClientRect();
+  const left = r.left + el.clientLeft;
+  const top = r.top + el.clientTop;
+  return { top, left, bottom: top + el.clientHeight, right: left + el.clientWidth };
+}
+
+/** Intersect `el`'s rect with every clipping ancestor's client rect (per clipping axis) up to —
+ *  but excluding — the document element, then judge paintability. An ancestor clips an axis when
+ *  its computed overflow isn't `visible`; whether scrolling can still reveal the element comes
+ *  from {@link scrollableAncestors} (real scroll mechanisms only — `overflow: clip` excluded).
+ *  Pure DOM reads (rects + computed overflow), so the whole decision runs under jsdom. */
+export function clipVerdict(el: Element, win: Window): ClipVerdict {
+  const rect = el.getBoundingClientRect();
+  let { top, left, bottom, right } = rect;
+  let neverPaintable = false;
+  // A zero-size rect can't be "clipped away" — skip the walk (the crop falls back as before).
+  if (rect.width > 0 && rect.height > 0) {
+    const scrollables = new Set(scrollableAncestors(el));
+    const docEl = el.ownerDocument.documentElement;
+    let scrollerBetween = false;
+    for (let p = composedParent(el); p && p !== docEl; p = composedParent(p)) {
+      const { overflowX, overflowY } = getComputedStyle(p);
+      if (scrollables.has(p)) scrollerBetween = true;
+      if (overflowX === 'visible' && overflowY === 'visible') continue;
+      const clip = clientRectOf(p);
+      const wasPainted = bottom > top && right > left;
+      if (overflowY !== 'visible') {
+        top = Math.max(top, clip.top);
+        bottom = Math.min(bottom, clip.bottom);
+      }
+      if (overflowX !== 'visible') {
+        left = Math.max(left, clip.left);
+        right = Math.min(right, clip.right);
+      }
+      if (bottom <= top || right <= left) {
+        // Only an emptying AT p can be unrecoverable. Scrolling still reveals the element when p
+        // itself scrolls, or when a scroll container between the element and p can move it back
+        // inside p's client rect — with neither escape (`overflow: clip` has no scroll
+        // mechanism) zero pixels can EVER paint.
+        neverPaintable = wasPainted && !scrollables.has(p) && !scrollerBetween;
+        break;
+      }
+    }
+  }
+  const fullyPainted =
+    top === rect.top &&
+    left === rect.left &&
+    bottom === rect.bottom &&
+    right === rect.right &&
+    !needsScrollIntoView(rect, win.innerWidth, win.innerHeight);
+  return { fullyPainted, neverPaintable };
+}
+
+/** Whether scrollable ancestor `a` is an INNER container for the container-reveal trigger (vs
+ *  the page's own scroller, which `captureScrollOptions` already handles). documentElement never
+ *  counts; body counts only when it IS the document's scrollingElement — the quirks-style setup
+ *  (html overflow non-visible + constrained scrollable body) makes body a genuine inner scroller
+ *  that the unconditional skip would strand (#137 item 3). */
+export function isInnerScrollContainer(a: Element, doc: Document): boolean {
+  if (a === doc.documentElement) return false;
+  if (a === doc.body) return doc.scrollingElement === doc.body;
+  return true;
+}
+
+/** Whether `el` is fixed-positioned — scrollIntoView is a no-op for fixed elements (they don't
+ *  move with scroll), so the caller skips the scroll+settle cycle entirely (#137 item 6); the
+ *  crop still falls back, same as pre-PR. */
+export function isFixedPosition(el: Element): boolean {
+  return getComputedStyle(el).position === 'fixed';
 }
 
 /** The crop rect the SW needs to capture `el` (or the whole viewport when omitted). Pure geometry —

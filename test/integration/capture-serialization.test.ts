@@ -109,9 +109,13 @@ async function captureFullPage(
   return frames.join('|');
 }
 
-/** Reproduces screenshotDispatchFor's fullPage branch 1:1: the stitch holds the lock. */
+/** Reproduces screenshotDispatchFor 1:1 (background.ts:399-434, modulo signal/tab resolution):
+ *  the element branch funnels into contentDispatchFor — no lock of its own, the dispatch's policy
+ *  ternary does the waiting; the fullPage branch wraps the raw stitch in the lock. */
 function screenshotDispatchFor(world: World, lock: Lock) {
+  const content = contentDispatchFor(world, lock);
   return {
+    element: (selector: string) => content({ type: 'screenshot', selector }),
     fullPage: (bands: number[], onSettle?: (bandIndex: number) => void) =>
       lock(world.tabId, () => captureFullPage(world, bands, onSettle)),
   };
@@ -479,5 +483,57 @@ describe('integration: #136 emulation teardown re-check (the TOCTOU the lock wid
 
     expect(reg.restored).toEqual([9]); // tab 9 still torn down
     expect(reg.owners.size).toBe(0);
+  });
+});
+
+describe('integration: #137 item 8 — the screenshot glue riding the lock', () => {
+  it('an element screenshot issued mid-stitch WAITS — its sendMessage fires only after the stitch completes', async () => {
+    const world = fakeWorld(3);
+    const lock = createCaptureLock();
+    const screenshot = screenshotDispatchFor(world, lock);
+    const bands = [0, 500, 1000];
+
+    // The stitch starts; during band 1's settle an element capture is issued through the element
+    // branch — which funnels into contentDispatchFor, whose policy ternary puts it on the lock.
+    // (`shot` is captured, not void-fired, so the assertions need no timer margin.)
+    let shot: Promise<ToolResult> | undefined;
+    const stitch = screenshot.fullPage(bands, (i) => {
+      if (i === 1) shot = screenshot.element('#hero');
+    });
+    await stitch;
+    await shot; // assigned during band 1's settle, long before the stitch could settle
+
+    // The stitch grabbed exactly its planned bands — the waiting shot never landed mid-settle.
+    expect(world.bandGrabs.map((b) => b.scrollY)).toEqual(bands);
+    // The element capture's sendMessage fired exactly once, at the post-restore scrollY (0) —
+    // AFTER the stitch's last band AND its restore scroll. (Unlocked it would have fired during
+    // band 1's settle, at scrollY 500, before band 1000's grab.)
+    expect(world.log.filter((l) => l.startsWith('element-shot@'))).toEqual(['element-shot@0']);
+    const shotAt = world.log.indexOf('element-shot@0');
+    expect(shotAt).toBeGreaterThan(world.log.lastIndexOf('band@1000w1280'));
+    expect(shotAt).toBeGreaterThan(world.log.lastIndexOf('scroll:0')); // the restore
+  });
+
+  it('a contended second stitch queues behind the first — the two band runs never interleave', async () => {
+    const world = fakeWorld(3);
+    const lock = createCaptureLock();
+    const screenshot = screenshotDispatchFor(world, lock);
+
+    let second: Promise<string> | undefined;
+    const first = screenshot.fullPage([0, 500, 1000], (i) => {
+      if (i === 0) second = screenshot.fullPage([250, 750]); // contends mid-settle
+    });
+    await first;
+    await second; // assigned during band 0's settle, before the first stitch could settle
+
+    // Six bands in two uninterrupted runs: the queued stitch's bands all follow the first's
+    // restore — never spliced between the first's bands (the fullPage wrap's FIFO).
+    expect(world.log.filter((l) => l.startsWith('band@'))).toEqual([
+      'band@0w1280',
+      'band@500w1280',
+      'band@1000w1280',
+      'band@250w1280',
+      'band@750w1280',
+    ]);
   });
 });

@@ -182,8 +182,10 @@ describe('fallbackMessage', () => {
   it('never claims the origin→repo mapping has a UI (#121), and stays clause-free for the wrapper', () => {
     expect(fallbackMessage('no-repo')).not.toMatch(/MCP panel/i);
     // ShipBar appends ' — downloaded a brief instead.' itself (en.yml ship.fallback) — the reason
-    // must not repeat the download guidance or the rendered line doubles it up.
+    // must not repeat the download guidance or the rendered line doubles it up (#142: the
+    // no-backend branch carried a "download the brief" clause and did exactly that).
     expect(fallbackMessage('no-repo')).not.toMatch(/download/i);
+    expect(fallbackMessage('no-backend')).not.toMatch(/download/i);
   });
 });
 

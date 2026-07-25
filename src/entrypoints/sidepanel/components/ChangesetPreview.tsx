@@ -1,6 +1,6 @@
-import { createMemo, For, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
-import type { Edit } from '@/shared/changeset';
+import type { Edit, StableSelector, StructuralChange } from '@/shared/changeset';
 import {
   canRedo,
   canUndo,
@@ -19,6 +19,19 @@ import './ChangesetPreview.scss';
 import { describeSelector } from './chat/ContextChip';
 import { Icon } from './Icon';
 
+// How long an armed "Clear session" stays armed before it disarms itself — long enough to read
+// the armed label, short enough that a stray first click can't fire much later.
+export const CLEAR_CONFIRM_MS = 4000;
+
+/** The clear-session confirm step (#142): clear wipes the record AND the redo stack,
+ *  irreversibly, so one click never fires it — the first click ARMS (the button re-labels and
+ *  the auto-disarm timer starts), only a click while armed FIRES. The component disarms on
+ *  timeout or pointer-leave. Exported for unit coverage (mirrors ReadinessDropdown's
+ *  `sessionButton` seam). */
+export function clearClick(armed: boolean): { fire: boolean; armed: boolean } {
+  return armed ? { fire: true, armed: false } : { fire: false, armed: true };
+}
+
 // Render + dispatch only (CLAUDE.md "SolidJS + SRP"): the edit list, per-edit formatting, and the
 // undo/redo/clear/remove click handlers live here; every read + mutation is an RPC through
 // ../stores/changeset, the thin reflection of the SW's durable ChangesetStore. This curates the
@@ -26,6 +39,30 @@ import { Icon } from './Icon';
 // controls are disabled while a turn is streaming (the SW rejects a mid-turn op anyway — the turn
 // owns the live store) or a curation RPC is already in flight.
 export function ChangesetPreview() {
+  const [clearArmed, setClearArmed] = createSignal(false);
+  let clearTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const disarmClear = () => {
+    if (clearTimer !== undefined) {
+      clearTimeout(clearTimer);
+      clearTimer = undefined;
+    }
+    setClearArmed(false);
+  };
+  onCleanup(disarmClear);
+
+  // Two-click inline confirm (no modal): arm on the first click, fire on the second; the timer
+  // and the button's pointer-leave disarm (see `clearClick`).
+  function handleClear(): void {
+    if (!clearClick(clearArmed()).fire) {
+      setClearArmed(true);
+      clearTimer = setTimeout(disarmClear, CLEAR_CONFIRM_MS);
+      return;
+    }
+    disarmClear();
+    void clearChangeset();
+  }
+
   onMount(() => {
     initChangesetStore();
     void refreshChangeset();
@@ -59,11 +96,13 @@ export function ChangesetPreview() {
           </button>
           <button
             type="button"
-            class="dz-diff__action dz-diff__action--danger"
+            class={`dz-diff__action dz-diff__action--danger${clearArmed() ? ' dz-diff__action--armed' : ''}`}
             disabled={busy() || edits().length === 0}
-            onClick={() => void clearChangeset()}
+            onClick={handleClear}
+            onPointerLeave={disarmClear}
           >
-            <Icon name="trash" size="sm" /> {i18n.t('diff.clear')}
+            <Icon name="trash" size="sm" />{' '}
+            {clearArmed() ? i18n.t('diff.clearArmed') : i18n.t('diff.clear')}
           </button>
         </div>
       </header>
@@ -93,6 +132,16 @@ export function ChangesetPreview() {
 // cross-origin fetch from the panel's origin (mirrors the `visionImages` guard in src/agent/report.ts).
 const dataImage = (src: string | undefined): string | undefined =>
   src?.startsWith('data:image/') ? src : undefined;
+
+// Per-variant accessors for the discriminated StructuralChange union (#142) — `insert` carries
+// `html` (+ optional position/refSelector), `move` a required refSelector (+ optional position),
+// `remove` neither. Keeps the JSX's `in`-narrowing out of the Show callbacks.
+const structuralPosition = (s: StructuralChange): string | undefined =>
+  'position' in s ? s.position : undefined;
+const structuralRef = (s: StructuralChange): StableSelector | undefined =>
+  'refSelector' in s ? s.refSelector : undefined;
+const structuralHtml = (s: StructuralChange): string | undefined =>
+  'html' in s ? s.html : undefined;
 
 function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
   return (
@@ -134,7 +183,7 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
                 {(c) => (
                   <tr>
                     <td class="dz-diff__prop">{c.prop}</td>
-                    <td class="dz-diff__before">{c.before ?? '—'}</td>
+                    <td class="dz-diff__before">{c.before ?? '∅'}</td>
                     <td class="dz-diff__after">{c.after}</td>
                   </tr>
                 )}
@@ -181,6 +230,32 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
             </tbody>
           </table>
         </div>
+      </Show>
+
+      <Show when={props.edit.structural}>
+        {(s) => (
+          <div class="dz-diff__structural">
+            <span class="dz-diff__structural-label">{i18n.t('diff.structural.label')}</span>
+            <span class={`dz-diff__structural-op dz-diff__structural-op--${s().op}`}>{s().op}</span>
+            <Show when={structuralPosition(s())}>
+              {(pos) => <span class="dz-diff__structural-position">{pos()}</span>}
+            </Show>
+            <Show when={structuralRef(s())}>
+              {(ref) => (
+                <code class="dz-diff__structural-ref" title={ref().value}>
+                  → {describeSelector(ref(), 60)}
+                </code>
+              )}
+            </Show>
+            <Show when={structuralHtml(s())}>
+              {(html) => (
+                <code class="dz-diff__structural-html" title={html()}>
+                  {html()}
+                </code>
+              )}
+            </Show>
+          </div>
+        )}
       </Show>
 
       <Show when={props.edit.text}>

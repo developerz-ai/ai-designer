@@ -41,9 +41,24 @@ export function reduceChangeset(changeset: Changeset | null, msg: SwToPanel): Ch
 }
 
 /** Structural equality for the duplicate-append guard above: both copies derive from the same
- *  recorded Edit object (storage round-trip vs live push), so key order is stable in practice. */
+ *  recorded Edit object (storage round-trip vs live push), so key order is stable in practice.
+ *  Accepted residual (#142 item 7): two genuinely byte-identical consecutive recordEdits in one
+ *  turn read as a delivery-duplicate — the second push is dropped, and the view heals at settle. */
 function sameEdit(a: Changeset['edits'][number], b: Changeset['edits'][number]): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Undo-shape test for a `changeset` push against the view it replaces (#142 item 15): same
+ *  session, exactly one edit shorter, the survivor a strict prefix. An agent session-undo always
+ *  has this shape — and so can a fork that drops the last edit (another panel's remove-last, a
+ *  preserveRedo retract of it), which the panel cannot tell apart without a new bus field. */
+function isUndoShaped(prior: Changeset | null, incoming: Changeset): boolean {
+  if (!prior || prior.sessionId !== incoming.sessionId) return false;
+  if (incoming.edits.length !== prior.edits.length - 1) return false;
+  return incoming.edits.every((e, i) => {
+    const before = prior.edits[i];
+    return before !== undefined && sameEdit(before, e);
+  });
 }
 
 /** Pure fold: upsert one task's status by `taskId` onto the timeline, preserving arrival order for
@@ -91,6 +106,26 @@ export {
   viewTabId,
 };
 
+// Set when a tab-switch retarget (onActivated/onFocusChanged) or a settle signal (turn-done /
+// session-state non-running) arrived while a curation RPC was in flight: the in-flight reply is
+// newer, so the trigger is swallowed — but if the curate then fails or rejects without refreshing
+// the view, the skipped trigger is lost until the next event (#142 items 3+4). `curate`'s settle
+// path re-fires whatever its own outcome didn't already cover (see its `finally`).
+let pendingRetarget = false;
+let pendingTurnRefresh = false;
+
+/** Shared fold for the settle signals (turn-done / session-state non-running): refresh now, or —
+ *  while a curation RPC is in flight (its reply is newer) — remember the skip so the curate's
+ *  settle path can re-fire it if the curate fails to land a fresh view (#142 item 4). */
+function onSettleSignal(): void {
+  if (curating()) {
+    pendingTurnRefresh = true;
+    return;
+  }
+  pendingTurnRefresh = false; // a direct refresh covers any earlier skip
+  void refreshChangeset();
+}
+
 let wired = false;
 
 /** Open the SW port and fold incoming `changeset`/`task-status` pushes into local state. Idempotent
@@ -104,20 +139,35 @@ export function initChangesetStore(): void {
       // A record push stamped for ANOTHER tab must not overwrite this panel's view (the SW
       // broadcasts to every open panel, and a turn keeps running when the user switches tabs
       // mid-turn — its pushes arrive stamped for the turn's tab). Unstamped pushes fold as before.
-      if (msg.tabId !== undefined && msg.tabId !== viewTabId()) return;
-      const next = reduceChangeset(changeset(), msg);
+      // A stamped push arriving while the view was NEVER keyed (viewTabId null — a fresh panel's
+      // first turn) would be dropped until turn-done re-keys, leaving the edit count/Diff view
+      // dark for the whole turn: fire the re-key refresh instead of silently dropping (recordEdit
+      // persists before emitting, so the get reply carries the pushed edit; #142 item 6).
+      if (msg.tabId !== undefined && msg.tabId !== viewTabId()) {
+        if (viewTabId() === null) void refreshChangeset();
+        return;
+      }
+      const prior = changeset(); // the pre-fold view — the undo-shape check below compares against it
+      const next = reduceChangeset(prior, msg);
       setChangeset(next);
       // Keep canUndo live off the record; canRedo stays owned by the RPC replies — except on
       // pushes that provably fork history server-side (store.ts `record`/`removeAt`/`replaceAt`/
       // `clear` all drop the redo tail), where canRedo is derivable: false. That is EVERY
-      // `edit-recorded`, and every `changeset` push that is NOT the echo of this store's own
-      // curation RPC — the recorder-revert retract push and the nav-clear wipe both cleared the
-      // redo tail, so leaving canRedo would keep it stale-true (#9 review round 4). The own-RPC
-      // echo is exempt (`curating`): its authoritative reply follows on the RPC channel and
-      // re-asserts canRedo (an undo can leave it true).
+      // `edit-recorded`, and every non-undo-shaped `changeset` push that is NOT the echo of this
+      // store's own curation RPC — the nav-clear wipe cleared the redo tail, so leaving canRedo
+      // would keep it stale-true (#9 review round 4). The own-RPC echo is exempt (`curating`):
+      // its authoritative reply follows on the RPC channel and re-asserts canRedo (an undo can
+      // leave it true). An agent session-UNDO push GROWS the redo tail instead of forking it —
+      // forcing false there sent Redo stale-false for the rest of the turn (#142 item 15), so an
+      // undo-shaped push asserts canRedo: true outright (an undone edit is always redoable).
+      // Accepted residual: a redo-ORIGIN push (the tail shrinks but may stay >0) keeps
+      // force-false — stale-false heals at the settle refresh — and a fork wearing the undo
+      // shape (another panel's remove-last-edit, a preserveRedo retract of the last edit with an
+      // empty tail) can leave Redo stale-true — a click no-ops server-side and the reply
+      // re-asserts false. Distinguishing those needs a bus field the push schema doesn't carry.
       setCanUndo((next?.edits.length ?? 0) > 0);
       if (msg.type === 'edit-recorded') setCanRedo(false);
-      else if (!curating()) setCanRedo(false);
+      else if (!curating()) setCanRedo(isUndoShaped(prior, msg.changeset));
     }
     // reconcile (keyed by `taskId`) so a status push updates only the changed task's fields —
     // a plain array replace remounts every keyed `<For>` row in TaskTimeline.
@@ -128,16 +178,22 @@ export function initChangesetStore(): void {
     // recorded/undone edits, so refresh authoritative undo/redo availability for the now-enabled
     // Diff-tab controls. Skipped while a curation RPC is in flight: its reply is newer.
     else if (msg.type === 'turn-done') {
-      if (!curating()) void refreshChangeset();
+      onSettleSignal();
     } else if (msg.type === 'session-state' && msg.state !== 'running') {
-      if (!curating()) void refreshChangeset();
+      onSettleSignal();
     }
   });
   // The side panel is window-scoped but the changeset is per-tab: follow tab switches so the Diff
   // view always shows the record of the tab the user is looking at (guarded — the unit-test chrome
-  // fake carries only `runtime`; #141 review).
+  // fake carries only `runtime`; #141 review). A switch landing mid-curate is remembered and
+  // re-fired when the curate settles, or the view would stay keyed to the pre-switch tab until
+  // the next trigger (#142 item 3).
   const retarget = (): void => {
-    if (!curating()) void refreshChangeset();
+    if (curating()) {
+      pendingRetarget = true;
+      return;
+    }
+    void refreshChangeset();
   };
   chrome.tabs?.onActivated?.addListener?.(retarget);
   chrome.windows?.onFocusChanged?.addListener?.(retarget);
@@ -182,6 +238,9 @@ export async function refreshChangeset(): Promise<void> {
     }
     applyChangesetView(r);
   } catch (e) {
+    // The same staleness guard as the success path: a superseded refresh's failure must not post
+    // the error banner over a newer view that already landed clean (#142 item 8).
+    if (seq !== viewSeq || refresh !== refreshSeq) return;
     setDiffError(errMsg(e));
   }
 }
@@ -203,10 +262,15 @@ async function curate(msg: PanelToSw): Promise<void> {
   viewSeq++;
   setCurating(true);
   setDiffError(null);
+  // True when this settle landed an authoritative fresh view (a clean reply applied, or the
+  // tab-drift auto-refresh re-keyed) — a settle that covers a turn-refresh skipped mid-curate
+  // (#142 item 4). A busy echo, a hard failure, or a transport throw does NOT cover it.
+  let landedFreshView = false;
   try {
     const r = await request(msg, ChangesetResult);
     if (!r.ok && r.error === 'tab-drift') {
       setDiffError(i18n.t('diff.tabDrift'));
+      landedFreshView = true; // the auto-refresh below re-keys the view
       void refreshChangeset();
       return;
     }
@@ -217,11 +281,21 @@ async function curate(msg: PanelToSw): Promise<void> {
       setDiffError(r.error ?? i18n.t('diff.failed'));
     } else {
       applyChangesetView(r);
+      landedFreshView = true;
     }
   } catch (e) {
     setDiffError(errMsg(e));
   } finally {
     setCurating(false);
+    // Re-fire whatever was swallowed mid-curate and NOT covered by this settle (#142 items 3+4):
+    // a skipped retarget is never covered by the curate's own reply (the view is still keyed to
+    // the pre-switch tab); a skipped turn-refresh is covered only when this settle landed a fresh
+    // view — on a failure (transport throw, busy/hard-failure reply) it must be retried, or the
+    // panel shows the pre-turn record until the next event.
+    const refire = pendingRetarget || (pendingTurnRefresh && !landedFreshView);
+    pendingRetarget = false;
+    pendingTurnRefresh = false;
+    if (refire) void refreshChangeset();
   }
 }
 

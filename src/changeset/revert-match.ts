@@ -106,7 +106,7 @@ export function stripEventFromEdit(edit: Edit, event: MutationEvent): Edit | nul
       if (!ac) return finalize(edit); // a pre-#9 raw setAttr never matched (see isConsistent)
       if (ac.name === 'class') {
         // A wholesale class rewrite's revert invalidates the window computation that produced
-        // `classes` (fold-mutations.ts): the drained events the window was diffed over are gone,
+        // `classes` (fold-classes.ts): the drained events the window was diffed over are gone,
         // so which names the rewrite contributed can no longer be reconstructed. The ENTIRE
         // classes family is stripped. Approximation: unrelated class deltas folded into the same
         // edit go with it — the truthful partial answer needs data the durable record doesn't keep.
