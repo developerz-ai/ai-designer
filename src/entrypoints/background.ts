@@ -35,6 +35,7 @@ import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
+import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { toMarkdown } from '@/changeset/report-md';
 import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
@@ -59,6 +60,7 @@ import {
   saveOAuthConfig,
   saveServer,
 } from '@/mcp/store';
+import { emptyChangeset } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -152,6 +154,11 @@ export default defineBackground(() => {
   // Per-tab design sessions: in-flight turn thread + accumulated changeset, mirrored to
   // chrome.storage.session so an SW eviction mid-turn resumes with context (src/agent/session).
   const sessions = new SessionStore();
+
+  // #9 recorder buffer: content-side MutationEvents per tab. The user-message turn wires it into
+  // `recordEdit` (ground-truth fold per selector group) and the turn-done path auto-finalizes
+  // what's left; a main-frame navigation wipes the tab's buffer (nav-clear below).
+  const pendingMutations = createPendingMutations();
 
   // Last-10-conversations history (slice 08): a durable record of completed turns + their
   // shipped report/PR, mirrored to chrome.storage.local. Distinct from `sessions` above (the
@@ -601,22 +608,29 @@ export default defineBackground(() => {
             redoStack: priorChangesetState?.redoStack,
           },
         );
+        // Named (not inline) so the turn-done auto-finalize below records + persists + streams
+        // leftover recorder groups through the exact same path as a model-called `recordEdit`.
+        const persistChangeset = async (): Promise<void> => {
+          await changesetPersister.save(changesetStore.snapshot());
+          await sessions.setChangeset(tabId, changesetStore.current);
+        };
+        // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
+        // them instead of folding phantom rows (the turn keeps running when the user switches
+        // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
+        const emitRecord = (update: SwToPanel): void => {
+          postToPanel(
+            update.type === 'edit-recorded' || update.type === 'changeset'
+              ? { ...update, tabId }
+              : update,
+          );
+        };
         const sessionTools = createSessionTools({
           store: changesetStore,
-          persist: async () => {
-            await changesetPersister.save(changesetStore.snapshot());
-            await sessions.setChangeset(tabId, changesetStore.current);
-          },
-          // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
-          // them instead of folding phantom rows (the turn keeps running when the user switches
-          // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
-          emit: (update) => {
-            postToPanel(
-              update.type === 'edit-recorded' || update.type === 'changeset'
-                ? { ...update, tabId }
-                : update,
-            );
-          },
+          persist: persistChangeset,
+          emit: emitRecord,
+          // #9: `recordEdit` drains this tab's buffered recorder events for its selector and
+          // folds their real mechanical deltas into the Edit (ground truth wins per family).
+          drainRecorderEvents: (selectorValue) => pendingMutations.drain(tabId, selectorValue),
         });
 
         // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
@@ -805,6 +819,29 @@ export default defineBackground(() => {
                 messages: newMessages,
               })
               .catch((err) => postToPanel({ type: 'error', message: String(err) }));
+            // #9 auto-finalize: mutation groups the model never recorded (no `recordEdit` call
+            // drained them) still land in the durable changeset — one "Auto-recorded" Edit per
+            // remaining selector group, folded from the real events, recorded + persisted +
+            // streamed exactly like a model-recorded edit. Then the tab's buffer is wiped. Runs
+            // only on the still-current turn (the guard above): a superseded turn's leftovers
+            // stay buffered for the turn that replaced it (or the nav-clear below wipes them).
+            for (const group of pendingMutations.peekGroups(tabId)) {
+              const edit = foldMutationEvents(
+                {
+                  intent: 'Auto-recorded agent edit (no recordEdit call)',
+                  selector: group.selector,
+                  changes: [],
+                  attrs: [],
+                  classes: [],
+                  frameworkHints: [],
+                },
+                group.events,
+              );
+              changesetStore.record(edit);
+              await persistChangeset();
+              emitRecord({ type: 'edit-recorded', edit });
+            }
+            pendingMutations.clear(tabId);
           })
           .catch((err) => postToPanel({ type: 'error', message: String(err) }))
           .finally(() => {
@@ -1185,14 +1222,47 @@ export default defineBackground(() => {
   }
 
   // Content -> SW push (fire-and-forget forwarding to the panel; no response).
-  chrome.runtime.onMessage.addListener((raw) => {
+  chrome.runtime.onMessage.addListener((raw, sender) => {
     const parsed = ContentToSw.safeParse(raw);
     if (!parsed.success) return; // PanelToSw RPC handled by the listener above
+
+    // #9: buffer recorder events per sender tab so the turn's `recordEdit` can fold the real
+    // mechanical deltas into the durable Edit (and turn-end can auto-finalize leftovers).
+    // relayToPanel still returns null for this type — nothing goes to the panel from here.
+    if (parsed.data.type === 'recorder-event') {
+      const senderTabId = sender.tab?.id;
+      if (senderTabId !== undefined) pendingMutations.append(senderTabId, parsed.data.event);
+    }
 
     // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
     // coverage-excluded). null = the event carries nothing to forward.
     const out = relayToPanel(parsed.data);
     if (out) postToPanel(out);
+  });
+
+  // Nav-clear (#9): a main-frame commit ends the tab's design-session record — the live edits
+  // were ephemeral (they died with the old document), so the durable record must not ship edits
+  // for a page that no longer exists. Wipe the recorder buffer + BOTH changeset mirrors: the
+  // undo/redo persister (`changeset:<tabId>`) AND the SessionStore resume snapshot (turn start
+  // falls back to it when no persister record exists). The mirror is re-seeded EMPTY for the new
+  // URL with a fresh sessionId (the handoff idempotency key must not carry over); the session's
+  // message thread + usage survive — only edits are wiped. `webNavigation` is already a manifest
+  // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
+  // (frameId !== 0) never clear the tab's record.
+  chrome.webNavigation.onCommitted.addListener((details) => {
+    if (details.frameId !== 0) return;
+    const { tabId, url } = details;
+    pendingMutations.clear(tabId);
+    void sessionsReady
+      .then(async () => {
+        await createSessionChangesetPersister(tabId).clear();
+        if (!sessions.get(tabId)) return;
+        await sessions.setChangeset(
+          tabId,
+          emptyChangeset(url, new Date().toISOString(), crypto.randomUUID()),
+        );
+      })
+      .catch(() => {});
   });
 
   // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the

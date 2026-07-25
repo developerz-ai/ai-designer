@@ -12,9 +12,10 @@
 
 import { tool } from 'ai';
 import { z } from 'zod';
+import { foldMutationEvents } from '@/changeset/pending-mutations';
 import type { ChangesetStore } from '@/changeset/store';
 import { type Changeset, Edit } from '@/shared/changeset';
-import { type SwToPanel, ToolResult } from '@/shared/messages';
+import { type MutationEvent, type SwToPanel, ToolResult } from '@/shared/messages';
 
 /** Everything the session tools need, injected so the module stays chrome-free and testable. */
 export interface SessionToolDeps {
@@ -24,6 +25,10 @@ export interface SessionToolDeps {
   readonly persist: (changeset: Changeset) => Promise<void> | void;
   /** Stream changeset events to the side-panel port (`edit-recorded` / `changeset`). */
   readonly emit: (event: SwToPanel) => void;
+  /** Drain this turn tab's buffered recorder MutationEvents matching a selector value (#9 —
+   *  `src/changeset/pending-mutations.ts`). Absent ⇒ no recorder fold (the model's Edit stands
+   *  as-is) — unit tests and non-tab contexts inject nothing. */
+  readonly drainRecorderEvents?: (selectorValue: string) => MutationEvent[];
 }
 
 // `undo` / `redo` take no arguments; an empty object schema stops the model from inventing any.
@@ -44,7 +49,7 @@ const result = (data: unknown): ToolResult => ({ type: 'tool-result', ok: true, 
  * inert until the user approves it in the loop.
  */
 export function createSessionTools(deps: SessionToolDeps) {
-  const { store, persist, emit } = deps;
+  const { store, persist, emit, drainRecorderEvents } = deps;
 
   return {
     recordEdit: tool({
@@ -63,9 +68,15 @@ export function createSessionTools(deps: SessionToolDeps) {
       inputSchema: Edit,
       outputSchema: ToolResult,
       execute: async (edit) => {
-        store.record(edit);
+        // #9: fold the real recorder deltas buffered for this selector into the model's Edit —
+        // the page's own mutation events are ground truth per mechanical family (changes/attrs/
+        // classes/structural/text), so the durable record no longer depends on the model
+        // restating its tool calls. Buffer empty ⇒ the Edit stands unchanged (back-compat).
+        const drained = drainRecorderEvents?.(edit.selector.value) ?? [];
+        const folded = drained.length > 0 ? foldMutationEvents(edit, drained) : edit;
+        store.record(folded);
         await persist(store.current);
-        emit({ type: 'edit-recorded', edit });
+        emit({ type: 'edit-recorded', edit: folded });
         return result({ edits: store.size });
       },
     }),
