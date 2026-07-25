@@ -1,7 +1,9 @@
+import { detectFrameworkHints } from '@/dom/framework-hints';
 import { attrDenyReason, type ElementMutation, type Mutator, SHEET_ID } from '@/dom/mutate';
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
-import type { Recorder } from '@/dom/recorder';
+import type { RecordExtras, Recorder } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
+import type { StructuralChange } from '@/shared/changeset';
 import type { DomTool, StableSelector, ToolResult } from '@/shared/messages';
 
 // Synchronous DOM-tool executor — the content script's dispatch core. Routes a validated DomTool
@@ -79,11 +81,18 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
   const { mutator, recorder } = deps;
 
   // Resolve `selector` to a single element, apply the mutation, record it, and report its
-  // computed result + the resilient selector the agent should keep using.
+  // computed result + the resilient selector the agent should keep using. Every element-targeting
+  // record carries the target's framework hints (#9); `structural` lets a case add the
+  // StructuralChange its tool input describes (insert/move/remove).
   function mutate(
     selector: string,
     apply: (el: Element) => ElementMutation,
     guard?: (el: Element) => string | null,
+    structural?: (args: {
+      el: Element;
+      mutation: ElementMutation;
+      stable: StableSelector;
+    }) => StructuralChange,
   ): ToolResult {
     const el = queryOne(doc, selector);
     if (!el) return notFound(selector);
@@ -99,8 +108,17 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       return refused(err instanceof Error ? err.message : String(err));
     }
     const stable = pickUnique(el, doc);
-    recorder.record(stable, mutation);
+    recorder.record(stable, mutation, extras(el, structural?.({ el, mutation, stable })));
     return ok(mutation.computed, stable);
+  }
+
+  // The RecordExtras every element-targeting record shares (#9): the target's framework hints,
+  // plus the structural delta when the op has one.
+  function extras(el: Element, structural?: StructuralChange): RecordExtras {
+    return {
+      frameworkHints: detectFrameworkHints(el),
+      ...(structural ? { structural } : {}),
+    };
   }
 
   // Resolve `selector` to a single element and project it through a pure reader.
@@ -139,10 +157,18 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       // anchor (never an index — sibling indices shift under concurrent mutations).
       case 'insertNode':
         // The resolved selector is the insertion REFERENCE (destination) — body is legal here.
+        // The structural delta's html is the mutation's `after`: the SANITIZED, serialized markup
+        // actually inserted (never the raw tool input, which the sanitizer may have cut down).
         return mutate(
           tool.selector,
           (el) => mutator.insertNode(el, tool.html, tool.position),
           (el) => structuralTargetReason(el, 'ref'),
+          ({ mutation, stable }) => ({
+            op: 'insert',
+            html: mutation.after,
+            position: tool.position,
+            refSelector: stable,
+          }),
         );
       case 'moveNode': {
         // Two resolutions: the element to move and the reference anchor — the single-selector
@@ -159,7 +185,16 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         try {
           const mutation = mutator.moveNode(el, ref, tool.position);
           const stable = pickUnique(el, doc);
-          recorder.record(stable, mutation);
+          // The event target is the MOVED element; the structural delta's refSelector identifies
+          // the anchor it moved relative to (its own stable selector, not the raw tool string).
+          recorder.record(stable, mutation, {
+            ...extras(el),
+            structural: {
+              op: 'move',
+              refSelector: pickUnique(ref, doc),
+              position: tool.position,
+            },
+          });
           return ok(mutation.computed, stable);
         } catch (err) {
           // e.g. moving an element into its own descendant (HierarchyRequestError) — a clean
@@ -179,7 +214,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const stable = pickUnique(el, doc);
         try {
           const mutation = mutator.removeNode(el);
-          recorder.record(stable, mutation);
+          recorder.record(stable, mutation, { ...extras(el), structural: { op: 'remove' } });
           return ok(mutation.computed, stable);
         } catch (err) {
           return refused(err instanceof Error ? err.message : String(err));

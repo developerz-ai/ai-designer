@@ -490,3 +490,65 @@ describe('legacy presentational background attribute (#144 round-4 review)', () 
     expect(document.getElementById('t')?.textContent).toContain('cell');
   });
 });
+
+describe('#9 typed mutation fields (recorder ground truth)', () => {
+  it('setStyle carries styleChanges: the pre-mutation computed value as before, applied after', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'rgb(1, 2, 3)' });
+    // A real browser (and jsdom) always computes SOME color — here the canvas default black.
+    // `before: null` is reserved for props with no computed value at all (e.g. unsupported).
+    expect(mutation.styleChanges).toEqual([
+      { prop: 'color', before: 'rgb(0, 0, 0)', after: 'rgb(1, 2, 3)' },
+    ]);
+  });
+
+  it('setStyle records the page’s PRE-mutation computed value (inline style), not the override prior', () => {
+    mount('<button id="cta" style="color: green">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'rgb(1, 2, 3)' });
+    expect(mutation.styleChanges?.[0]?.prop).toBe('color');
+    // getComputedStyle resolves color names to rgb (browsers and jsdom alike).
+    expect(mutation.styleChanges?.[0]?.before).toBe('rgb(0, 128, 0)');
+    expect(mutation.styleChanges?.[0]?.after).toBe('rgb(1, 2, 3)');
+  });
+
+  it('setStyle carries one styleChanges entry per touched prop', () => {
+    mount('<button id="cta">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), {
+      color: 'rgb(1, 2, 3)',
+      backgroundColor: 'blue',
+    });
+    expect(mutation.styleChanges?.map((c) => c.prop)).toEqual(['color', 'background-color']);
+  });
+
+  it('setText carries a textChange delta and bounds a long before to 2000 chars', () => {
+    mount(`<p id="copy">${'lorem '.repeat(500)}</p>`);
+    const mutation = createMutator(document).setText(byId('copy'), 'short');
+    expect(mutation.textChange?.after).toBe('short');
+    expect(mutation.textChange?.before).toHaveLength(2000);
+    // The legacy opaque `before` stays the lossless innerHTML for undo.
+    expect(mutation.before.length).toBeGreaterThan(2000);
+  });
+
+  it('setAttr carries attrChange (null before when the attribute was absent)', () => {
+    mount('<button id="cta">Buy</button>');
+    const added = createMutator(document).setAttr(byId('cta'), 'data-variant', 'brand');
+    expect(added.attrChange).toEqual({ name: 'data-variant', before: null, after: 'brand' });
+
+    mount('<button id="cta" data-variant="old">Buy</button>');
+    const changed = createMutator(document).setAttr(byId('cta'), 'data-variant', 'brand');
+    expect(changed.attrChange).toEqual({ name: 'data-variant', before: 'old', after: 'brand' });
+  });
+
+  it('addClass/removeClass carry the single classChange', () => {
+    mount('<button id="cta" class="present">Buy</button>');
+    const mutator = createMutator(document);
+    expect(mutator.addClass(byId('cta'), 'btn-primary').classChange).toEqual({
+      name: 'btn-primary',
+      op: 'add',
+    });
+    expect(mutator.removeClass(byId('cta'), 'present').classChange).toEqual({
+      name: 'present',
+      op: 'remove',
+    });
+  });
+});

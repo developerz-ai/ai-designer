@@ -50,6 +50,49 @@ describe('createRecorder.record', () => {
     const withoutRule = recorder.record(selector, fakeMutation());
     expect('ruleId' in withoutRule).toBe(false);
   });
+
+  it('folds the mutation’s own typed #9 fields onto the event', () => {
+    const { recorder } = spawn();
+    const event = recorder.record(
+      selector,
+      fakeMutation({
+        kind: 'setStyle',
+        styleChanges: [{ prop: 'color', before: null, after: 'rgb(1, 2, 3)' }],
+      }),
+    );
+    expect(event.styleChanges).toEqual([{ prop: 'color', before: null, after: 'rgb(1, 2, 3)' }]);
+  });
+
+  it('folds caller extras (structural / frameworkHints) onto the event', () => {
+    const { recorder } = spawn();
+    const event = recorder.record(selector, fakeMutation({ kind: 'removeNode' }), {
+      structural: { op: 'remove' },
+      frameworkHints: ['tailwind:flex'],
+    });
+    expect(event.structural).toEqual({ op: 'remove' });
+    expect(event.frameworkHints).toEqual(['tailwind:flex']);
+  });
+
+  it('keeps an explicitly-empty extras.frameworkHints array (detected-none ≠ pre-#9)', () => {
+    const { recorder } = spawn();
+    const event = recorder.record(selector, fakeMutation(), { frameworkHints: [] });
+    expect(event.frameworkHints).toEqual([]);
+  });
+
+  it('omits every #9 field when neither the mutation nor extras carry them (pre-#9 shape)', () => {
+    const { recorder } = spawn();
+    const event = recorder.record(selector, fakeMutation());
+    for (const key of [
+      'styleChanges',
+      'attrChange',
+      'classChange',
+      'structural',
+      'textChange',
+      'frameworkHints',
+    ]) {
+      expect(key in event).toBe(false);
+    }
+  });
 });
 
 describe('createRecorder.undo', () => {
