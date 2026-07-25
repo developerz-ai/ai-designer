@@ -53,6 +53,7 @@ An ordered list of recorded edits = one design session's diff.
 {
   "url": "http://localhost:3000/pricing",
   "createdAt": "2026-06-21T12:00:00Z",
+  "sessionId": "a3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70",
   "edits": [
     {
       "intent": "Make the primary CTA orange and larger",
@@ -61,8 +62,16 @@ An ordered list of recorded edits = one design session's diff.
         { "prop": "background-color", "before": "#2563eb", "after": "#f97316" },
         { "prop": "padding", "before": "8px 16px", "after": "12px 24px" }
       ],
+      // Attribute + class deltas (#139). null = the attribute was absent / is removed.
+      "attrs": [{ "name": "href", "before": null, "after": "/buy" }],
+      "classes": [{ "name": "btn-primary", "op": "add" }],
+      // One structural op (#58), only on insertNode/moveNode/removeNode edits.
+      "structural": { "op": "insert", "html": "<div class=\"banner\">…</div>", "position": "beforeend" },
+      "text": { "before": "Buy", "after": "Buy now" },
       "screenshots": { "before": "blob:...", "after": "blob:..." },
-      "frameworkHints": ["react", "tailwind: bg-blue-600 px-4 py-2"]
+      "frameworkHints": ["react", "tailwind: bg-blue-600 px-4 py-2"],
+      // Only when the edit was made under device emulation.
+      "breakpoint": "iphone-se"
     }
   ]
 }

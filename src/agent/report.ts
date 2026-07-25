@@ -204,9 +204,9 @@ function summarizeEdit(edit: Edit): string {
           : ''
       }`
     : '';
-  const text = edit.text ? ` text "${edit.text.before}"→"${edit.text.after}"` : '';
+  const text = edit.text ? `text "${edit.text.before}"→"${edit.text.after}"` : '';
   const at = edit.breakpoint ? ` @${edit.breakpoint}` : '';
-  const detail = [changes, attrs, classes, structural, text].filter(Boolean).join(';');
+  const detail = [changes, attrs, classes, structural, text].filter(Boolean).join('; ');
   return `- ${edit.intent} — \`${edit.selector.value}\`${at}${detail ? `: ${detail}` : ''}`;
 }
 

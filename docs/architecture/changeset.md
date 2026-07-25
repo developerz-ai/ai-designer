@@ -8,8 +8,12 @@ The portable diff of a design session. Page mutations are ephemeral — the chan
 erDiagram
     CHANGESET ||--o{ EDIT : contains
     EDIT ||--|| SELECTOR : targets
-    EDIT ||--o{ CHANGE : has
-    EDIT ||--|| SCREENSHOTS : captures
+    EDIT ||--o{ CHANGE : "style deltas"
+    EDIT ||--o{ ATTR : "attribute deltas"
+    EDIT ||--o{ CLASS : "class deltas"
+    EDIT ||--o| STRUCTURAL : "structural op (optional)"
+    EDIT ||--o| TEXT : "text delta (optional)"
+    EDIT ||--o| SCREENSHOTS : "captures (optional)"
 
     CHANGESET {
         string url
@@ -28,6 +32,25 @@ erDiagram
     }
     CHANGE {
         string prop
+        string before "nullable — prop previously unset"
+        string after
+    }
+    ATTR {
+        string name
+        string before "nullable — attribute was absent"
+        string after "nullable — attribute was removed"
+    }
+    CLASS {
+        string name
+        enum op "add | remove"
+    }
+    STRUCTURAL {
+        enum op "insert | move | remove"
+        string html "insert only"
+        enum position "optional — beforebegin | afterbegin | beforeend | afterend"
+        selector refSelector "move: required; insert: optional"
+    }
+    TEXT {
         string before
         string after
     }
@@ -49,8 +72,16 @@ erDiagram
       { "prop": "background-color", "before": "#2563eb", "after": "#f97316" },
       { "prop": "padding", "before": "8px 16px", "after": "12px 24px" }
     ],
+    // #139: attribute + class deltas. null = the attribute was absent / is removed.
+    "attrs": [{ "name": "href", "before": null, "after": "/buy" }],
+    "classes": [{ "name": "btn-primary", "op": "add" }],
+    // #58: one structural op, present only on insertNode/moveNode/removeNode edits.
+    "structural": { "op": "insert", "html": "<div class=\"banner\">…</div>", "position": "beforeend" },
+    "text": { "before": "Buy", "after": "Buy now" },
     "screenshots": { "before": "blob:…", "after": "blob:…" },
-    "frameworkHints": ["react", "tailwind: bg-blue-600 px-4 py-2"]
+    "frameworkHints": ["react", "tailwind: bg-blue-600 px-4 py-2"],
+    // Present only when the edit was made under device emulation (slice 16).
+    "breakpoint": "iphone-se"
   }]
 }
 ```

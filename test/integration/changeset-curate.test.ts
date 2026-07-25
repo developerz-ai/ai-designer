@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import {
   ChangesetStore,
@@ -14,7 +14,9 @@ import { ChangesetResult, PanelToSw } from '@/shared/messages';
 // background.ts wires them (src/entrypoints/background.ts `case 'changeset-*'`): the message switch
 // resolves a target tab, builds a REAL `createSessionChangesetPersister` over the storage area,
 // rejects a `forTabId` that drifted from the resolved tab, applies the turn-in-flight busy guard
-// (`turnAbort`, checked before AND after the load via the panel-ops `guard` port), delegates to the
+// (`turnAbort`, checked before AND after the load via the panel-ops `guard` port), serializes the
+// mutation through the per-tab chain (`enqueueChangesetMutation`, #142 item 1 — reproduced here,
+// with a `startTurn` mirroring the `user-message` case's chained rehydration), delegates to the
 // REAL panel-ops (`readChangeset` / `applyChangesetOp`), mirrors onto the SessionStore
 // best-effort, pushes the curated changeset (tab-stamped) to the panel, and answers every failure
 // with a schema-conformant reply. Every reply is parsed with the REAL `ChangesetResult` zod
@@ -100,6 +102,26 @@ const sessions = {
 };
 
 const resolveTargetTab = (): Promise<{ id: number } | undefined> => Promise.resolve(activeTab);
+
+// The per-tab mutation chain (#142 item 1), reproduced 1:1 from background.ts
+// (`enqueueChangesetMutation`): every durable-changeset mutation path — the curation ops AND the
+// turn's rehydration (`startTurn` below) — appends here so a turn starting inside a curation op's
+// save→mirror tail seeds from the POST-op record instead of clobbering it.
+let changesetMutations: Map<number, Promise<void>>;
+
+function enqueueChangesetMutation<T>(tabId: number, run: () => Promise<T>): Promise<T> {
+  const prior = changesetMutations.get(tabId) ?? Promise.resolve();
+  const result = prior.then(run, run);
+  const link = result.then(
+    () => {},
+    () => {},
+  );
+  changesetMutations.set(tabId, link);
+  void link.then(() => {
+    if (changesetMutations.get(tabId) === link) changesetMutations.delete(tabId);
+  });
+  return result;
+}
 
 // The five curation messages, narrowed off the real PanelToSw union.
 type CurationMsg = Extract<
@@ -192,21 +214,23 @@ async function dispatch(raw: CurationMsg): Promise<ChangesetResult> {
               : msg.type === 'changeset-clear'
                 ? { kind: 'clear' }
                 : { kind: 'remove', index: msg.index };
-        const result = await applyChangesetOp(
-          {
-            load: persister.load,
-            save: persister.save,
-            // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
-            // Best-effort: a throwing mirror must not fail the curation.
-            mirror: (cs) =>
-              sessions
-                .setChangeset(curTabId, cs)
-                .then(() => undefined)
-                .catch(() => undefined),
-            // The pre-load `turnAbort` check alone is check-then-act: re-check after the load.
-            guard: () => turnAbort === null,
-          },
-          op,
+        const result = await enqueueChangesetMutation(curTabId, () =>
+          applyChangesetOp(
+            {
+              load: persister.load,
+              save: persister.save,
+              // Mirror onto the SessionStore so a subsequent Ship/report read sees the curated record.
+              // Best-effort: a throwing mirror must not fail the curation.
+              mirror: (cs) =>
+                sessions
+                  .setChangeset(curTabId, cs)
+                  .then(() => undefined)
+                  .catch(() => undefined),
+              // The pre-load `turnAbort` check alone is check-then-act: re-check after the load.
+              guard: () => turnAbort === null,
+            },
+            op,
+          ),
         );
         const { busy, ...view } = result;
         if (busy) return ChangesetResult.parse({ ok: false, busy: true, tabId, ...view });
@@ -239,6 +263,24 @@ async function seedEdits(...edits: string[]): Promise<void> {
 // A FRESH persister over the same area — proves a mutation went through storage, not just memory.
 const freshLoad = () => createSessionChangesetPersister(TAB_ID, area).load();
 
+// Reproduces the turn-rehydration segment of background.ts's `user-message` case (#142 item 1):
+// the turn's abort controller registers FIRST (a curation dispatched after this point rejects
+// busy at its pre-load check, exactly like the SW), then the load → store-build → registration
+// rides the SAME per-tab chain the curation ops append to. Returns the turn's store + persist so
+// a test can play the rest of the turn (record an edit, persist it).
+async function startTurn(): Promise<{ store: ChangesetStore; persist: () => Promise<void> }> {
+  turnAbort = new AbortController();
+  return enqueueChangesetMutation(TAB_ID, async () => {
+    const persister = createSessionChangesetPersister(TAB_ID, area);
+    const prior = await persister.load();
+    const store = new ChangesetStore(prior?.changeset ?? seed(), { redoStack: prior?.redoStack });
+    const persist = async (): Promise<void> => {
+      await persister.save(store.snapshot());
+    };
+    return { store, persist };
+  });
+}
+
 beforeEach(() => {
   area = fakeArea();
   activeTab = { id: TAB_ID };
@@ -246,6 +288,7 @@ beforeEach(() => {
   pushed = [];
   sessions.setChangesetCalls = [];
   sessions.failSetChangeset = false;
+  changesetMutations = new Map();
 });
 
 describe('integration: changeset-get (diff-review curation)', () => {
@@ -470,6 +513,66 @@ describe('integration: busy guard (turn in flight)', () => {
     expect(intents((await freshLoad())?.changeset)).toEqual(['a', 'b']);
     expect(sessions.setChangesetCalls).toHaveLength(0);
     expect(pushed).toHaveLength(0);
+  });
+});
+
+describe('integration: per-tab mutation chain (#142 item 1)', () => {
+  it('a turn starting inside the save→mirror tail builds on the curated record, not over it', async () => {
+    await seedEdits('a', 'b');
+    // Park the undo's save tail: the op has loaded, passed the post-load guard, and mutated —
+    // the exact sliver the chain closes (a pre-chain turn rehydration loaded the pre-op record
+    // here and persisted over the curation).
+    const realSet = area.set.bind(area);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((res) => {
+      release = res;
+    });
+    let saveParked: () => void = () => {};
+    const parked = new Promise<void>((res) => {
+      saveParked = res;
+    });
+    area.set = (items) => {
+      saveParked(); // the op is now inside its save tail — the guard is already behind it
+      return gate.then(() => realSet(items));
+    };
+
+    const op = dispatch({ type: 'changeset-undo' });
+    await parked; // deterministic: the op passed its post-load guard and is parked in the tail
+    const turn = startTurn(); // turnAbort registers now; the rehydration queues BEHIND the op
+    release();
+    const [{ store, persist }, res] = await Promise.all([turn, op]);
+
+    // The curation completed fully (its tail was never clobbered)…
+    expect(res).toMatchObject({ ok: true, canUndo: true, canRedo: true });
+    expect(intents(res.changeset)).toEqual(['a']);
+    // …and the turn seeded from the POST-op record: recording 'c' yields the union ['a', 'c'],
+    // not the pre-chain clobber ['a', 'b', 'c'] (the undone 'b' resurrected over the curation).
+    store.record(edit('c'));
+    await persist();
+    const persisted = await freshLoad();
+    expect(intents(persisted?.changeset)).toEqual(['a', 'c']);
+    expect(persisted?.redoStack).toEqual([]); // the turn's record forked, dropping the redo tail
+  });
+
+  it('a curation dispatched mid-turn still rejects busy without touching the chain', async () => {
+    await seedEdits('a', 'b');
+    const { store } = await startTurn(); // rehydration settles; the chain is empty again
+
+    const res = await dispatch({ type: 'changeset-undo' });
+    expect(res).toMatchObject({ ok: false, busy: true, tabId: TAB_ID });
+    expect(intents(res.changeset)).toEqual(['a', 'b']);
+    // The busy path never enqueued — once the turn's settled link self-evicts, the map is empty.
+    await vi.waitFor(() => expect(changesetMutations.size).toBe(0));
+    expect(intents((await freshLoad())?.changeset)).toEqual(['a', 'b']);
+    expect(store.size).toBe(2); // the turn's own store was never clobbered
+  });
+
+  it('the chain link self-evicts on settle (compare-and-delete)', async () => {
+    await seedEdits('a', 'b');
+    await dispatch({ type: 'changeset-undo' });
+    await dispatch({ type: 'changeset-redo' }); // two ops serialized through the same tab's chain
+    await vi.waitFor(() => expect(changesetMutations.size).toBe(0));
+    expect(intents((await freshLoad())?.changeset)).toEqual(['a', 'b']);
   });
 });
 

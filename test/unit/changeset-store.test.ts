@@ -388,11 +388,32 @@ describe('createSessionChangesetPersister (chrome.storage.session)', () => {
 
   it('load tolerates a legacy bare-Changeset record (empty redo tail)', async () => {
     const area = fakeArea();
-    const bare: Changeset = { ...seed(), edits: [edit('a')] };
-    area.backing.set('changeset:5', JSON.parse(JSON.stringify(bare)));
+    // A TRULY keyless pre-#139 record, written as an explicit JSON literal: no attrs/classes/
+    // frameworkHints keys on the edit, no text/structural anywhere. Building the edit from the
+    // shared `edit()` helper would smuggle the defaulted keys in and stop exercising the
+    // rehydration defaulting this test pins (#142 item 13).
+    const legacy = {
+      url: 'https://example.com/pricing',
+      createdAt: '2026-07-13T00:00:00Z',
+      sessionId: SESSION_ID,
+      edits: [
+        {
+          intent: 'a',
+          selector: { value: '#a', strategy: 'id', fragile: false },
+          changes: [{ prop: 'color', before: null, after: '#000' }],
+        },
+      ],
+    };
+    area.backing.set('changeset:5', JSON.parse(JSON.stringify(legacy)));
 
     const loaded = await createSessionChangesetPersister(5, area).load();
     expect(loaded?.changeset.edits.map((e) => e.intent)).toEqual(['a']);
+    // The schema defaults materialize on rehydration — this is what the keyless fixture pins.
+    expect(loaded?.changeset.edits[0]?.attrs).toEqual([]);
+    expect(loaded?.changeset.edits[0]?.classes).toEqual([]);
+    expect(loaded?.changeset.edits[0]?.frameworkHints).toEqual([]);
+    expect(loaded?.changeset.edits[0]?.structural).toBeUndefined();
+    expect(loaded?.changeset.edits[0]?.text).toBeUndefined();
     expect(loaded?.redoStack).toEqual([]);
   });
 

@@ -71,27 +71,50 @@ export const StructuralChange = z.discriminatedUnion('op', [
 ]);
 export type StructuralChange = z.infer<typeof StructuralChange>;
 
-export const Edit = z.object({
-  // The user's words for *why* — intent, not just the CSS dump.
-  intent: z.string(),
-  selector: StableSelector,
-  changes: z.array(StyleChange).default([]),
-  // Attribute + class deltas (#139). Both default to empty so a changeset persisted before these
-  // fields existed still rehydrates (same forward-compat rule as `ChangesetState.redoStack`).
-  attrs: z.array(AttrChange).default([]),
-  classes: z.array(ClassChange).default([]),
-  // The structural delta (#58) when this edit came from insertNode/moveNode/removeNode.
-  structural: StructuralChange.optional(),
-  text: z.object({ before: z.string(), after: z.string() }).optional(),
-  screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
-  // Tailwind classes / css-module names / styled markers — the source-mapping bridge.
-  frameworkHints: z.array(z.string()).default([]),
-  // Which breakpoint this edit targeted, when made under device emulation (slice 16) — a device
-  // preset id or a custom label (e.g. "iphone-se" / "Tablet 768px"), set by `recordEdit` so the
-  // changeset (and the report) show which viewport an edit was made for. Undefined = the page's
-  // natural, non-emulated viewport.
-  breakpoint: z.string().max(60).optional(),
-});
+export const Edit = z
+  .object({
+    // The user's words for *why* — intent, not just the CSS dump.
+    intent: z.string(),
+    selector: StableSelector,
+    changes: z.array(StyleChange).default([]),
+    // Attribute + class deltas (#139). Both default to empty so a changeset persisted before these
+    // fields existed still rehydrates (same forward-compat rule as `ChangesetState.redoStack`).
+    attrs: z.array(AttrChange).default([]),
+    classes: z.array(ClassChange).default([]),
+    // The structural delta (#58) when this edit came from insertNode/moveNode/removeNode.
+    structural: StructuralChange.optional(),
+    text: z.object({ before: z.string(), after: z.string() }).optional(),
+    screenshots: z.object({ before: z.string(), after: z.string() }).partial().optional(),
+    // Tailwind classes / css-module names / styled markers — the source-mapping bridge.
+    frameworkHints: z.array(z.string()).default([]),
+    // Which breakpoint this edit targeted, when made under device emulation (slice 16) — a device
+    // preset id or a custom label (e.g. "iphone-se" / "Tablet 768px"), set by `recordEdit` so the
+    // changeset (and the report) show which viewport an edit was made for. Undefined = the page's
+    // natural, non-emulated viewport.
+    breakpoint: z.string().max(60).optional(),
+  })
+  // Degenerate deltas can't be truthful (#142): a null→null attr is a no-op, and one edit can't
+  // both add and remove the same class. No producer emits these — the fold drops before===after
+  // pairs and diffs each class name once; setAttr always sets a string; revert-match only strips
+  // entries. The refines guard the one free-form producer: the model's `recordEdit` args (rejected
+  // at the tool boundary, before the edit ever reaches the store).
+  .refine((edit) => !edit.attrs.some((a) => a.before === null && a.after === null), {
+    message: 'degenerate attr delta: before and after are both null (a no-op, not a change)',
+  })
+  .refine(
+    (edit) => {
+      const ops = new Map<string, 'add' | 'remove'>();
+      for (const c of edit.classes) {
+        const prev = ops.get(c.name);
+        if (prev !== undefined && prev !== c.op) return false;
+        ops.set(c.name, c.op);
+      }
+      return true;
+    },
+    {
+      message: 'contradictory class deltas: one edit cannot both add and remove the same class',
+    },
+  );
 export type Edit = z.infer<typeof Edit>;
 
 export const Changeset = z.object({

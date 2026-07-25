@@ -764,3 +764,273 @@ describe('changeset store — curation fix-forward (reply side)', () => {
     });
   });
 });
+
+// --- #142 sweep: unkeyed re-key (item 6), undo-shape canRedo (item 15), stale-refresh failure
+// guard (item 8), pending retarget (item 3) + skipped turn-refresh re-fire (item 4) -------------
+
+describe('changeset store — unkeyed first-turn re-key (#142 item 6)', () => {
+  it('a stamped push on a never-keyed view fires the re-key refresh instead of dropping', async () => {
+    vi.resetModules();
+    const { sendMessage, push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 7, changeset: changesetWith('a'), canUndo: true }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore(); // no refreshChangeset: the view was never keyed
+    expect(store.viewTabId()).toBeNull();
+
+    // The first turn's record pushes arrive tab-stamped before any get reply could key the view.
+    push({ type: 'edit-recorded', edit: editFixture('b'), tabId: 7 });
+
+    await vi.waitFor(() => expect(sentTypes(sendMessage)).toContain('changeset-get'));
+    await vi.waitFor(() => expect(store.viewTabId()).toBe(7));
+    // The push itself was dropped, but the re-key's reply carries the persisted record.
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']);
+  });
+
+  it('a stamped push for ANOTHER tab on a keyed view still drops without a re-key', async () => {
+    vi.resetModules();
+    const { sendMessage, push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 1, changeset: changesetWith('a') }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view to tab 1
+    sendMessage.mockClear();
+
+    push({ type: 'edit-recorded', edit: editFixture('phantom'), tabId: 5 });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get'); // no re-key — keyed deliberately
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']);
+  });
+});
+
+describe('changeset store — undo-shape canRedo rule (#142 item 15)', () => {
+  it('an undo-shaped changeset push asserts canRedo true (an agent undo GROWS the redo tail)', async () => {
+    vi.resetModules();
+    const { push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 1, changeset: changesetWith('a', 'b'), canRedo: false }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keyed to 1, view [a, b], canRedo false
+    expect(store.canRedo()).toBe(false);
+
+    // The agent's session-undo push mid-turn: same session, one edit shorter, strict prefix.
+    push({ type: 'changeset', changeset: changesetWith('a'), tabId: 1 });
+
+    expect(store.canRedo()).toBe(true); // the undone 'b' is redoable — no more stale-false
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['a']);
+  });
+
+  it('a non-undo-shaped changeset push still forces canRedo false (fork / nav-clear residual)', async () => {
+    vi.resetModules();
+    const { push } = installChromeFakeWithPort(() =>
+      resultFixture({ tabId: 1, changeset: changesetWith('a', 'b'), canRedo: true }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keyed to 1, canRedo true
+    expect(store.canRedo()).toBe(true);
+
+    // Append shape (a redo-origin push — the tail may stay >0, but the panel can't tell: the
+    // conservative force-false stays; the settle refresh heals it).
+    push({ type: 'changeset', changeset: changesetWith('a', 'b', 'c'), tabId: 1 });
+    expect(store.canRedo()).toBe(false);
+
+    // Re-arm via an undo-shaped push, then a nav-clear wipe (fresh sessionId) must force false.
+    push({ type: 'changeset', changeset: changesetWith('a', 'b'), tabId: 1 });
+    expect(store.canRedo()).toBe(true);
+    push({
+      type: 'changeset',
+      changeset: { ...changesetWith(), sessionId: '22222222-2222-4222-8222-222222222222' },
+      tabId: 1,
+    });
+    expect(store.canRedo()).toBe(false);
+  });
+
+  it('the own-RPC echo stays exempt while curating (the reply re-asserts canRedo)', async () => {
+    vi.resetModules();
+    let settle: (reply: unknown) => void = () => {};
+    const inFlight = new Promise<unknown>((res) => {
+      settle = res;
+    });
+    const { push } = installChromeFakeWithPort((msg) =>
+      msg.type === 'changeset-undo'
+        ? inFlight
+        : resultFixture({ tabId: 1, changeset: changesetWith('a'), canRedo: true }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keyed to 1, canRedo true
+
+    const pending = store.undoEdit();
+    expect(store.curating()).toBe(true);
+
+    // A non-undo-shaped push (a clear) landing mid-curate must NOT touch canRedo.
+    push({ type: 'changeset', changeset: changesetWith(), tabId: 1 });
+    expect(store.canRedo()).toBe(true);
+
+    settle(resultFixture({ tabId: 1, changeset: changesetWith(), canRedo: false }));
+    await pending;
+    expect(store.canRedo()).toBe(false); // the authoritative reply re-asserted
+  });
+});
+
+describe('changeset store — stale refresh failure guard (#142 item 8)', () => {
+  it("a superseded refresh's rejection does not post the banner over the newer clean view", async () => {
+    vi.resetModules();
+    const replies: Array<{ res: (r: unknown) => void; rej: (e: unknown) => void }> = [];
+    installChromeFake((msg) =>
+      msg.type === 'changeset-get'
+        ? new Promise((res, rej) => {
+            replies.push({ res, rej });
+          })
+        : resultFixture(),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+
+    const r1 = store.refreshChangeset(); // older call — will reject late
+    const r2 = store.refreshChangeset(); // newer call — wins the seq race
+    replies[1]?.res(resultFixture({ changeset: changesetWith('b') }));
+    await r2;
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
+
+    replies[0]?.rej(new Error('SW gone')); // the stale call's failure lands AFTER the clean view
+    await r1;
+
+    expect(store.diffError()).toBeNull(); // no banner over the newer successful view
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
+  });
+});
+
+/** installChromeFakeWithPort + a captured `chrome.tabs.onActivated` listener, for the retarget
+ *  (item 3) tests: `fireRetarget` plays a tab switch. */
+function installChromeFakeWithRetarget(handle: SendMessage): {
+  sendMessage: ReturnType<typeof vi.fn>;
+  push: (msg: unknown) => void;
+  fireRetarget: () => void;
+} {
+  const sendMessage = vi.fn(async (msg: unknown) => handle(msg as PanelToSw));
+  let portListener: ((msg: unknown) => void) | null = null;
+  let retargetListener: (() => void) | null = null;
+  (globalThis as { chrome?: unknown }).chrome = {
+    runtime: {
+      sendMessage,
+      connect: () => ({
+        onMessage: {
+          addListener: (fn: (msg: unknown) => void) => {
+            portListener = fn;
+          },
+        },
+        onDisconnect: { addListener: () => {} },
+      }),
+    },
+    tabs: {
+      onActivated: {
+        addListener: (fn: () => void) => {
+          retargetListener = fn;
+        },
+      },
+    },
+  };
+  return {
+    sendMessage,
+    push: (msg) => portListener?.(msg),
+    fireRetarget: () => retargetListener?.(),
+  };
+}
+
+describe('changeset store — pending retarget + skipped settle refresh (#142 items 3+4)', () => {
+  it('a tab switch swallowed mid-curate re-fires when the curate settles', async () => {
+    vi.resetModules();
+    let settle: (reply: unknown) => void = () => {};
+    const inFlight = new Promise<unknown>((res) => {
+      settle = res;
+    });
+    const { sendMessage, fireRetarget } = installChromeFakeWithRetarget((msg) =>
+      msg.type === 'changeset-undo' ? inFlight : resultFixture({ tabId: 1 }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view
+    sendMessage.mockClear();
+
+    const pending = store.undoEdit();
+    expect(store.curating()).toBe(true);
+
+    fireRetarget(); // a tab switch landing between SW tab-resolution and the reply
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get'); // swallowed while curating
+
+    settle(resultFixture({ tabId: 1 }));
+    await pending;
+    await vi.waitFor(() => expect(sentTypes(sendMessage)).toContain('changeset-get')); // re-fired
+  });
+
+  it('a tab switch while NOT curating refreshes immediately (no pending carry-over)', async () => {
+    vi.resetModules();
+    const { sendMessage, fireRetarget } = installChromeFakeWithRetarget(() => resultFixture());
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset();
+    sendMessage.mockClear();
+
+    fireRetarget();
+
+    await vi.waitFor(() => expect(sentTypes(sendMessage)).toEqual(['changeset-get']));
+  });
+
+  it('a turn-done skipped during a FAILING curate re-fires on settle (transport throw)', async () => {
+    vi.resetModules();
+    let fail: (e: unknown) => void = () => {};
+    const inFlight = new Promise<unknown>((_res, rej) => {
+      fail = rej;
+    });
+    const { sendMessage, push } = installChromeFakeWithPort((msg) =>
+      msg.type === 'changeset-undo' ? inFlight : resultFixture({ tabId: 1 }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view
+    sendMessage.mockClear();
+
+    const pending = store.undoEdit();
+    push({ type: 'turn-done', usage: { steps: 1, tokens: 1 } }); // skipped: the curate is newer
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get');
+
+    fail(new Error('port closed')); // the curate dies without refreshing — the skip must retry
+    await pending;
+    await vi.waitFor(() => expect(sentTypes(sendMessage)).toContain('changeset-get'));
+    await vi.waitFor(() => expect(store.diffError()).toBeNull()); // the landing refresh heals it
+  });
+
+  it('a turn-done skipped during a SUCCESSFUL curate does not re-fire (the reply covered it)', async () => {
+    vi.resetModules();
+    let settle: (reply: unknown) => void = () => {};
+    const inFlight = new Promise<unknown>((res) => {
+      settle = res;
+    });
+    const { sendMessage, push } = installChromeFakeWithPort((msg) =>
+      msg.type === 'changeset-undo' ? inFlight : resultFixture({ tabId: 1 }),
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    store.initChangesetStore();
+    await store.refreshChangeset(); // keys the view
+    sendMessage.mockClear();
+
+    const pending = store.undoEdit();
+    push({ type: 'turn-done', usage: { steps: 1, tokens: 1 } }); // skipped: the curate is newer
+
+    settle(resultFixture({ tabId: 1, changeset: changesetWith('b') }));
+    await pending; // the applied reply IS the authoritative post-turn view — no re-fire
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sentTypes(sendMessage)).not.toContain('changeset-get');
+    expect(store.changeset()?.edits.map((e) => e.intent)).toEqual(['b']);
+  });
+});

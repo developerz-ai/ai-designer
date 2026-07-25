@@ -246,6 +246,7 @@ diff:
   redo:
     ariaLabel: Redo edit
   clear: Clear session
+  clearArmed: Clear session? Sure
   remove:
     ariaLabel: Remove this edit
   fragile: Fragile selector
@@ -260,6 +261,8 @@ diff:
     attribute: Attribute
   classes:
     label: Classes
+  structural:
+    label: Structural
   text:
     label: Text
   hints:

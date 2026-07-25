@@ -107,7 +107,7 @@ export function routeHandoff(args: {
  *  so keep the reason CLAUSE-FREE: the wrapper already reports the auto-download. */
 export function fallbackMessage(reason: HandoffFallbackReason): string {
   return reason === 'no-backend'
-    ? 'No coding backend connected — download the brief and paste it into your coding agent.'
+    ? 'No coding backend connected — paste the brief into your coding agent.'
     : 'No repo is mapped for this page yet.';
 }
 

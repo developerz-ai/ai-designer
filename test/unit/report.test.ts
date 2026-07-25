@@ -185,6 +185,18 @@ describe('generateReport: assembles a grounded, agent-authored brief', () => {
 
     expect(text).toContain('struct insert beforeend');
   });
+
+  it('joins an edit’s detail segments with "; " uniformly — no self-padded segment (#142)', () => {
+    const rich: Edit = {
+      ...edit('restyle cta'),
+      attrs: [{ name: 'href', before: null, after: '/buy' }],
+      text: { before: 'Buy', after: 'Buy now' },
+    };
+
+    const context = buildReportContext({ changeset: changesetWith(rich) });
+
+    expect(context).toContain('color #000→#0af; attr href ∅→/buy; text "Buy"→"Buy now"');
+  });
 });
 
 describe('report grounding helpers (pure)', () => {
