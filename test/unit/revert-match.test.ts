@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { findLastMatchingEditIndex, stripEventFromEdit } from '@/changeset/revert-match';
+import {
+  findLastMatchingEditIndex,
+  retractFromEdits,
+  stripEventFromEdit,
+} from '@/changeset/revert-match';
+import { TEXT_CHANGE_BEFORE_CAP } from '@/dom/mutate';
 import type { Edit } from '@/shared/changeset';
 import type { MutationEvent, MutationKind } from '@/shared/messages';
 
-// revert-match unit (#9 rounds 3+4): the durable-record half of recorder-revert. A late revert
+// revert-match unit (#9 rounds 3+4+5): the durable-record half of recorder-revert. A late revert
 // (event already drained/finalized) must retract the LAST kind-consistent edit on the SAME
 // selector — and never touch other elements or other kinds. Round 4: the retraction is SURGICAL
 // (stripEventFromEdit removes only the reverted event's contribution; an all-empty result removes
-// the edit), and the setAttr matcher mirrors the fold's class routing.
+// the edit), and the setAttr matcher mirrors the fold's class routing. Round 5: a capped
+// textChange.before makes the one-hop restore un-reconstructable (drop the family, never write a
+// maybe-truncated value), and retractFromEdits is the ONE shared matcher both callers drive —
+// scanning for the newest consistent edit whose strip CHANGES something and failing CLOSED
+// (dropping the covered entries) when no consistent edit value-matches (a broken LIFO).
 
 const sel = (value: string) => ({ value, strategy: 'id' as const, fragile: false });
 
@@ -267,6 +276,34 @@ describe('stripEventFromEdit (surgical retraction)', () => {
     expect(stripEventFromEdit(edit, drifted)?.text).toEqual({ before: 'Buy', after: 'Shop now' });
   });
 
+  // #9 round 5: the producer caps textChange.before at TEXT_CHANGE_BEFORE_CAP — a capped value
+  // may be truncated, so the one-hop restore would write a maybe-truncated value into the
+  // durable record as if it were the full text. Fail closed: drop the text family instead.
+  it('a capped textChange.before drops the text family instead of restoring a maybe-truncated value', () => {
+    const edit = anEdit({
+      text: { before: 'Buy', after: 'Shop now' },
+      changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+    });
+    // Exactly AT the cap — what the producer ships when it truncated the prior textContent.
+    const capped = ev('setText', '#cta', {
+      textChange: { before: 'x'.repeat(TEXT_CHANGE_BEFORE_CAP), after: 'Shop now' },
+    });
+    const stripped = stripEventFromEdit(edit, capped);
+    expect(stripped?.text).toBeUndefined(); // the family dies — no truncated restore
+    expect(stripped?.changes).toEqual(edit.changes); // other families untouched
+  });
+
+  it('an uncapped textChange.before still one-hop restores normally', () => {
+    const edit = anEdit({ text: { before: 'Buy', after: 'Shop now' } });
+    const short = ev('setText', '#cta', {
+      textChange: { before: 'x'.repeat(TEXT_CHANGE_BEFORE_CAP - 1), after: 'Shop now' },
+    });
+    expect(stripEventFromEdit(edit, short)?.text).toEqual({
+      before: 'Buy',
+      after: 'x'.repeat(TEXT_CHANGE_BEFORE_CAP - 1),
+    });
+  });
+
   it('structural kinds delete the structural family; a structural-only edit becomes null', () => {
     const mixed = anEdit({
       structural: { op: 'remove' },
@@ -304,5 +341,153 @@ describe('stripEventFromEdit (surgical retraction)', () => {
     const snapshot = JSON.parse(JSON.stringify(edit));
     stripEventFromEdit(edit, ev('addClass', '#cta', { classChange: { name: 'hero', op: 'add' } }));
     expect(edit).toEqual(snapshot);
+  });
+});
+
+// #9 round 5: the ONE match+strip entry point BOTH retraction callers drive (the panel-ops
+// `retract` op + the background mid-turn in-memory strip). Scan from the end for the newest
+// consistent edit whose strip CHANGES something; when no consistent edit value-matches (a broken
+// LIFO), fail closed — drop the entries the event covers from the NEWEST consistent edit, never
+// keep the phantom.
+describe('retractFromEdits (shared match + fail-closed drop)', () => {
+  it('two-edit chain: reverting E1 kills edit1 (its pair nets to orig) and leaves edit2 standing', () => {
+    // edit1 {color orig→red}, edit2 {color red→green}; the revert of E1 (sc.after = red) matches
+    // NOTHING in edit2 (its after is green) — the scan walks past it to edit1, whose pair dies.
+    const edit1 = anEdit({
+      intent: 'e1',
+      changes: [{ prop: 'color', before: 'orig', after: 'red' }],
+    });
+    const edit2 = anEdit({
+      intent: 'e2',
+      changes: [{ prop: 'color', before: 'red', after: 'green' }],
+    });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: 'orig', after: 'red' }],
+    });
+
+    const result = retractFromEdits([edit1, edit2], event);
+
+    expect(result?.changedIndex).toBe(0);
+    expect(result?.edits).toEqual([edit2]); // edit1 removed outright; edit2 untouched
+  });
+
+  it('merged fold: reverting E1 against the value-mismatched entry DROPS it (fail closed), never keeps it', () => {
+    // E1 red + E2 green folded into ONE edit {color orig→green}; the revert of E1 (sc.after =
+    // red) value-mismatches — a broken LIFO. Pre-round-5 the mismatched entry was silently kept.
+    const merged = anEdit({ changes: [{ prop: 'color', before: 'orig', after: 'green' }] });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: 'orig', after: 'red' }],
+    });
+
+    const result = retractFromEdits([merged], event);
+
+    // color was the only family ⇒ dropping it removes the edit outright.
+    expect(result).toEqual({ edits: [], changedIndex: 0 });
+  });
+
+  it('the fail-closed drop covers ONLY the event’s props — sibling props + other families survive', () => {
+    const edit = anEdit({
+      changes: [
+        { prop: 'color', before: 'orig', after: 'green' },
+        { prop: 'margin', before: null, after: '8px' },
+      ],
+      attrs: [{ name: 'data-x', before: null, after: '1' }],
+    });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: 'orig', after: 'red' }],
+    });
+
+    const result = retractFromEdits([edit], event);
+
+    expect(result?.changedIndex).toBe(0);
+    expect(result?.edits).toHaveLength(1);
+    expect(result?.edits[0]?.changes).toEqual([{ prop: 'margin', before: null, after: '8px' }]);
+    expect(result?.edits[0]?.attrs).toEqual([{ name: 'data-x', before: null, after: '1' }]);
+  });
+
+  it('attr analogue: a value-mismatched setAttr revert drops the named attr from the newest consistent edit', () => {
+    const edit = anEdit({
+      attrs: [{ name: 'href', before: '/a', after: '/c' }],
+      classes: [{ name: 'hero', op: 'add' }],
+    });
+    const event = ev('setAttr', '#cta', {
+      attrChange: { name: 'href', before: '/b', after: '/x' }, // the edit holds after '/c'
+    });
+
+    const result = retractFromEdits([edit], event);
+
+    expect(result?.changedIndex).toBe(0);
+    expect(result?.edits[0]?.attrs).toEqual([]); // dropped, not kept
+    expect(result?.edits[0]?.classes).toEqual([{ name: 'hero', op: 'add' }]);
+  });
+
+  it('text analogue: a value-mismatched setText revert drops the text family', () => {
+    const edit = anEdit({
+      text: { before: 'Buy', after: 'Shop' },
+      changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+    });
+    const event = ev('setText', '#cta', { textChange: { before: 'x', after: 'y' } });
+
+    const result = retractFromEdits([edit], event);
+
+    expect(result?.changedIndex).toBe(0);
+    expect(result?.edits[0]?.text).toBeUndefined();
+    expect(result?.edits[0]?.changes).toEqual(edit.changes);
+  });
+
+  it('fail closed targets the NEWEST consistent edit when none value-matches', () => {
+    const older = anEdit({
+      intent: 'older',
+      changes: [{ prop: 'color', before: 'a', after: 'b' }],
+    });
+    const newer = anEdit({
+      intent: 'newer',
+      changes: [{ prop: 'color', before: 'c', after: 'd' }],
+    });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: 'x', after: 'y' }],
+    });
+
+    const result = retractFromEdits([older, newer], event);
+
+    expect(result?.changedIndex).toBe(1);
+    expect(result?.edits).toEqual([older]); // the newer edit's sole family dropped ⇒ it died
+  });
+
+  it('a value-matched one-hop restore still wins over the fail-closed drop', () => {
+    // Merged fold {color #000→#00f}, revert of the SECOND mutation (#f00→#00f): the strip
+    // changes the edit (one hop back), so the fail-closed tier never engages.
+    const edit = anEdit({ changes: [{ prop: 'color', before: '#000', after: '#00f' }] });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: '#f00', after: '#00f' }],
+    });
+
+    const result = retractFromEdits([edit], event);
+
+    expect(result?.changedIndex).toBe(0);
+    expect(result?.edits[0]?.changes).toEqual([{ prop: 'color', before: '#000', after: '#f00' }]);
+  });
+
+  it('returns null when no edit is consistent at all (the caller no-ops)', () => {
+    const edit = anEdit({
+      selector: sel('#other'),
+      changes: [{ prop: 'color', before: 'a', after: 'b' }],
+    });
+    const event = ev('setStyle', '#cta', {
+      styleChanges: [{ prop: 'color', before: 'a', after: 'b' }],
+    });
+    expect(retractFromEdits([edit], event)).toBeNull(); // selector mismatch
+    expect(retractFromEdits([], event)).toBeNull(); // nothing to match
+  });
+
+  it('never mutates the input list or its edits', () => {
+    const edit = anEdit({ changes: [{ prop: 'color', before: 'orig', after: 'green' }] });
+    const edits = [edit];
+    const snapshot = JSON.parse(JSON.stringify(edits));
+    retractFromEdits(
+      edits,
+      ev('setStyle', '#cta', { styleChanges: [{ prop: 'color', before: 'orig', after: 'red' }] }),
+    );
+    expect(edits).toEqual(snapshot);
   });
 });

@@ -37,7 +37,7 @@ import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/visio
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { toMarkdown } from '@/changeset/report-md';
-import { findLastMatchingEditIndex, stripEventFromEdit } from '@/changeset/revert-match';
+import { retractFromEdits } from '@/changeset/revert-match';
 import { ChangesetStore, createSessionChangesetPersister } from '@/changeset/store';
 import { cropBox, planStitch, type StitchPlan } from '@/dom/read';
 import { headerResolverFor, saveApiKey, startOAuth } from '@/mcp/auth';
@@ -1310,20 +1310,23 @@ export default defineBackground(() => {
   }
 
   // Cross-turn undo phantom retraction (#9 review round 2; op-ified + mid-turn strip in round
-  // 4): a recorder-revert whose event already left the pending buffer (drained by `recordEdit`,
-  // or auto-finalized at turn end) means the durable record holds an edit for a page change that
-  // no longer exists. Retract it through the SAME applyChangesetOp machinery the Diff-tab
-  // curation RPCs drive — ONE load (the round-2 find-index-then-remove double-load was a TOCTOU
-  // window): the op itself finds the LAST edit consistent with the reverted event and strips
-  // ONLY that event's contribution (`stripEventFromEdit`; a fully-stripped edit is removed), so
-  // a partial revert of a merged fold keeps the rest of the edit. Persist + SessionStore mirror
-  // + tab-stamped panel push come with it. Unlike the curation RPCs there is deliberately NO
-  // turn-in-flight guard: the revert is page ground truth (the change is gone), so the
-  // retraction is attempted best-effort even mid-turn. The MID-TURN case additionally strips
-  // the same event from the turn's OWN in-memory store — otherwise its next `persistChangeset`
-  // would write the phantom straight back over the op's retraction. A miss is a silent no-op:
-  // the record may have been curated or nav-cleared since the event drained, which is not an
-  // error worth surfacing.
+  // 4; shared matcher + fail-closed drop + redo-tail preservation in round 5): a recorder-revert
+  // whose event already left the pending buffer (drained by `recordEdit`, or auto-finalized at
+  // turn end) means the durable record holds an edit for a page change that no longer exists.
+  // Retract it through the SAME applyChangesetOp machinery the Diff-tab curation RPCs drive —
+  // ONE load (the round-2 find-index-then-remove double-load was a TOCTOU window): the op calls
+  // retractFromEdits, the ONE matcher both paths share, which strips ONLY the reverted event's
+  // contribution from the newest consistent edit whose strip changes something (a fully-stripped
+  // edit is removed), and — when NO consistent edit value-matches, a broken LIFO — fails closed
+  // by dropping the entries the event covers from the newest consistent edit instead of keeping
+  // the phantom. Both splices pass `{ preserveRedo: true }`: a retract of an unrelated edit must
+  // not silently kill a redo tail earned before it. Persist + SessionStore mirror + tab-stamped
+  // panel push come with it. Unlike the curation RPCs there is deliberately NO turn-in-flight
+  // guard: the revert is page ground truth (the change is gone), so the retraction is attempted
+  // best-effort even mid-turn. The MID-TURN case additionally retracts the same event from the
+  // turn's OWN in-memory store — otherwise its next `persistChangeset` would write the phantom
+  // straight back over the op's retraction. A miss is a silent no-op: the record may have been
+  // curated or nav-cleared since the event drained, which is not an error worth surfacing.
   async function retractRevertedEdit(tabId: number, event: MutationEvent): Promise<void> {
     const persister = createSessionChangesetPersister(tabId);
     const { changeset } = await applyChangesetOp(
@@ -1344,16 +1347,20 @@ export default defineBackground(() => {
     // curation RPCs, #141 review).
     if (changeset) postToPanel({ type: 'changeset', changeset, tabId });
     // Mid-turn: the running turn's in-memory store predates the op's retraction, and its next
-    // persist would resurrect the phantom. Strip the same event's contribution there too, then
-    // persist so both mirrors agree. Scoped to the turn's OWN tab — a revert from another tab
-    // must never touch this store (selector values can coincide across tabs).
+    // persist would resurrect the phantom. Retract the same event there too (the SAME shared
+    // matcher — never a divergent match+strip copy), then persist so both mirrors agree. Scoped
+    // to the turn's OWN tab — a revert from another tab must never touch this store (selector
+    // values can coincide across tabs).
     if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
-      const index = findLastMatchingEditIndex(turnChangeset.store.current.edits, event);
-      const target = index === -1 ? undefined : turnChangeset.store.current.edits[index];
-      if (target) {
-        const stripped = stripEventFromEdit(target, event);
-        if (stripped === null) turnChangeset.store.removeAt(index);
-        else turnChangeset.store.replaceAt(index, stripped);
+      const result = retractFromEdits(turnChangeset.store.current.edits, event);
+      if (result !== null) {
+        if (result.edits.length < turnChangeset.store.current.edits.length) {
+          turnChangeset.store.removeAt(result.changedIndex, { preserveRedo: true });
+        } else {
+          const stripped = result.edits[result.changedIndex];
+          if (stripped)
+            turnChangeset.store.replaceAt(result.changedIndex, stripped, { preserveRedo: true });
+        }
         await turnChangeset.persist();
       }
     }

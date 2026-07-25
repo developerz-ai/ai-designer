@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSessionTools } from '@/agent/tools/session';
 import { applyChangesetOp } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
-import { findLastMatchingEditIndex, stripEventFromEdit } from '@/changeset/revert-match';
+import { retractFromEdits } from '@/changeset/revert-match';
 import { ChangesetStore } from '@/changeset/store';
 import { createDomExecutor } from '@/dom/execute';
 import { createMutator } from '@/dom/mutate';
@@ -174,16 +174,20 @@ function makeSw() {
     lastCommitted.clear();
     turnInFlight = false;
   };
-  // background.ts's `retractRevertedEdit` (#9 review round 4): the buffer remove missed (the
-  // event was already drained by recordEdit / auto-finalized), so the phantom lives in the
-  // DURABLE record. Route `{kind:'retract', event}` through the REAL applyChangesetOp machinery
-  // the Diff-tab curation RPCs drive — ONE load (the round-2 find-then-remove double-load was a
-  // TOCTOU window): the op finds the LAST consistent edit and strips ONLY the reverted event's
-  // contribution (a fully-stripped edit is removed); persist + SessionStore mirror +
-  // tab-stamped panel push come with it. When a turn is IN FLIGHT the same strip then applies
-  // to the turn's own in-memory store + persist — its next persist would otherwise resurrect
-  // the phantom over the op's retraction. A miss is a silent no-op (the record may have been
-  // curated or nav-cleared since the event drained).
+  // background.ts's `retractRevertedEdit` (#9 review round 4; shared matcher + fail-closed drop
+  // + redo-tail preservation round 5): the buffer remove missed (the event was already drained by
+  // recordEdit / auto-finalized), so the phantom lives in the DURABLE record. Route
+  // `{kind:'retract', event}` through the REAL applyChangesetOp machinery the Diff-tab curation
+  // RPCs drive — ONE load (the round-2 find-then-remove double-load was a TOCTOU window): the op
+  // calls retractFromEdits, the ONE matcher both paths share (the newest consistent edit whose
+  // strip CHANGES something wins; a fully-stripped edit is removed; when NO consistent edit
+  // value-matches — a broken LIFO — the entries the event covers drop from the newest consistent
+  // edit instead of keeping the phantom). Both splices pass `{ preserveRedo: true }` so a retract
+  // of an unrelated edit never kills a redo tail. Persist + SessionStore mirror + tab-stamped
+  // panel push come with it. When a turn is IN FLIGHT the same retraction then applies to the
+  // turn's own in-memory store + persist — its next persist would otherwise resurrect the phantom
+  // over the op's retraction. A miss is a silent no-op (the record may have been curated or
+  // nav-cleared since the event drained).
   const retractRevertedEdit = async (event: MutationEvent): Promise<void> => {
     const view = await applyChangesetOp(
       {
@@ -199,12 +203,14 @@ function makeSw() {
     if (view.changeset)
       toPanel.push({ type: 'changeset', changeset: view.changeset, tabId: TAB_ID });
     if (turnInFlight) {
-      const index = findLastMatchingEditIndex(store.current.edits, event);
-      const target = index === -1 ? undefined : store.current.edits[index];
-      if (target) {
-        const stripped = stripEventFromEdit(target, event);
-        if (stripped === null) store.removeAt(index);
-        else store.replaceAt(index, stripped);
+      const result = retractFromEdits(store.current.edits, event);
+      if (result !== null) {
+        if (result.edits.length < store.current.edits.length) {
+          store.removeAt(result.changedIndex, { preserveRedo: true });
+        } else {
+          const stripped = result.edits[result.changedIndex];
+          if (stripped) store.replaceAt(result.changedIndex, stripped, { preserveRedo: true });
+        }
         persistChangeset();
       }
     }
@@ -1218,5 +1224,72 @@ describe('#9 review round 4: retract op / in-turn store / nav-clear race / evict
     expect(sw.store.current.url).toBe(URL);
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
+  });
+});
+
+describe('#9 review round 5: a retract preserves the redo tail (preserveRedo end-to-end)', () => {
+  it('recordEdit ×2 → session undo (tail populated) → DOM-undo retract of the OTHER edit → session redo still re-applies', async () => {
+    const { emitted, exec } = driveMutation('<button id="cta">Buy</button><nav id="nav">n</nav>');
+    const sw = makeSw(); // a turn is in flight (bootTurn)
+    expect(exec({ type: 'setStyle', selector: '#cta', props: { color: 'rgb(1, 2, 3)' } }).ok).toBe(
+      true,
+    );
+    expect(exec({ type: 'setStyle', selector: '#nav', props: { color: 'rgb(4, 5, 6)' } }).ok).toBe(
+      true,
+    );
+    const [eCta, eNav] = emitted;
+    if (eCta?.type !== 'recorder-event' || eNav?.type !== 'recorder-event')
+      throw new Error('expected recorder-events');
+    sw.contentPush(eCta);
+    sw.contentPush(eNav);
+
+    const mk = (intent: string, selectorValue: string): Edit => ({
+      intent,
+      selector: { value: selectorValue, strategy: 'id', fragile: false },
+      changes: [],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    });
+    await runTool(sw.tools.recordEdit.execute, mk('Color the CTA', '#cta'));
+    await runTool(sw.tools.recordEdit.execute, mk('Color the nav', '#nav'));
+    expect(sw.store.current.edits).toHaveLength(2);
+
+    // Session undo pops the nav edit onto the redo stack — the tail this test protects.
+    const undone = await runTool(sw.tools.undo.execute, {});
+    expect(data<{ undone: boolean }>(undone).undone).toBe(true);
+    expect(sw.store.current.edits).toHaveLength(1);
+    expect(sw.store.canRedo).toBe(true);
+
+    // DOM-undo BOTH mutations (the recorder unwinds LIFO: nav first, then the CTA). The nav
+    // revert no-ops — its edit sits on the redo stack, not in the record (no consistent edit);
+    // the CTA revert retracts the remaining edit from BOTH the durable record and the turn's
+    // in-memory store. Pre-round-5 both removeAt calls wiped the redo tail with them.
+    expect(exec({ type: 'undo' }).ok).toBe(true);
+    expect(exec({ type: 'undo' }).ok).toBe(true);
+    const [navRevert, ctaRevert] = emitted.slice(2);
+    if (navRevert?.type !== 'recorder-revert' || ctaRevert?.type !== 'recorder-revert')
+      throw new Error('expected recorder-reverts');
+    expect(navRevert.event.selector.value).toBe('#nav');
+    expect(ctaRevert.event.selector.value).toBe('#cta');
+    sw.contentPush(navRevert);
+    await sw.retraction;
+    sw.contentPush(ctaRevert);
+    await sw.retraction;
+
+    // The OTHER edit was retracted; the redo tail SURVIVED in the live store AND the persister.
+    expect(sw.store.current.edits).toEqual([]);
+    expect(sw.store.canRedo).toBe(true);
+    expect(sw.persister.load()?.changeset.edits).toEqual([]);
+    expect(sw.persister.load()?.redoStack).toHaveLength(1);
+
+    // Session redo still re-applies the undone nav edit.
+    const redone = await runTool(sw.tools.redo.execute, {});
+    expect(data<{ redone: boolean }>(redone).redone).toBe(true);
+    expect(sw.store.current.edits).toHaveLength(1);
+    expect(sw.store.current.edits[0]?.selector.value).toBe('#nav');
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+    expect(sw.persister.load()?.redoStack).toEqual([]);
+    expect(sw.sessionMirror.changeset.edits[0]?.selector.value).toBe('#nav');
   });
 });

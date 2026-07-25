@@ -128,6 +128,31 @@ describe('ChangesetStore removeAt (diff-tab per-edit remove)', () => {
     expect(store.redo()).toBeUndefined();
   });
 
+  // #9 round 5: the recorder-revert retraction removes an edit UNRELATED to the undone ones —
+  // clearing the tail would silently kill redoable edits (redo re-appends whole edits
+  // positionally, so the tail stays coherent across the removal).
+  it('preserveRedo keeps the redo tail across a removal', () => {
+    const states: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), {
+      persist: (s) => {
+        states.push(s);
+      },
+    });
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // b -> redo stack
+    expect(store.canRedo).toBe(true);
+
+    const removed = store.removeAt(0, { preserveRedo: true });
+    expect(removed?.intent).toBe('a');
+    expect(intents(store.current)).toEqual([]);
+    expect(store.canRedo).toBe(true); // the tail survived
+    expect(states.at(-1)?.redoStack.map((e) => e.intent)).toEqual(['b']); // …and persisted
+
+    expect(store.redo()?.intent).toBe('b'); // redo still re-applies the undone edit
+    expect(intents(store.current)).toEqual(['b']);
+  });
+
   it('is a no-op for an out-of-range index', () => {
     const store = new ChangesetStore(seed());
     store.record(edit('a'));
@@ -173,6 +198,24 @@ describe('ChangesetStore replaceAt (round-4 surgical retract)', () => {
     expect(store.canRedo).toBe(false);
     expect(intents(store.current)).toEqual(['a2']);
     expect(store.redo()).toBeUndefined();
+  });
+
+  // #9 round 5: same rule as removeAt — the retraction's stripped-edit replacement must not kill
+  // a redo tail earned before the revert.
+  it('preserveRedo keeps the redo tail across a replacement', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.record(edit('b'));
+    store.undo(); // b -> redo stack
+    expect(store.canRedo).toBe(true);
+
+    const replaced = store.replaceAt(0, edit('a2'), { preserveRedo: true });
+    expect(replaced?.intent).toBe('a');
+    expect(intents(store.current)).toEqual(['a2']);
+    expect(store.canRedo).toBe(true);
+
+    expect(store.redo()?.intent).toBe('b');
+    expect(intents(store.current)).toEqual(['a2', 'b']);
   });
 
   it('is a no-op for an out-of-range index', () => {

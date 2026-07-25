@@ -293,4 +293,88 @@ describe('applyChangesetOp retract (round-4 surgical late-revert)', () => {
 
     expect(intents(v.changeset)).toEqual([]); // classes was the only family ⇒ the edit died
   });
+
+  // #9 round 5: the retract's strip/removal targets an edit UNRELATED to the undone ones, and
+  // redo re-appends whole edits positionally — clearing the tail would silently kill redoable
+  // edits (the pre-round-5 MAJOR).
+  it('a retract preserves the redo tail — both the strip and the removal form', async () => {
+    // Removal form: edit('x')'s only family dies ⇒ removeAt must keep the tail.
+    const removed = fakePorts({
+      changeset: { ...seed(), edits: [edit('x')] },
+      redoStack: [edit('y')],
+    });
+    const v1 = await applyChangesetOp(removed.ports, {
+      kind: 'retract',
+      event: styleEvent('#x', 'color', null, '#000'),
+    });
+    expect(intents(v1.changeset)).toEqual([]);
+    expect(v1.canRedo).toBe(true);
+    expect(removed.current()?.redoStack.map((e) => e.intent)).toEqual(['y']);
+
+    // Strip form: one prop of two dies ⇒ replaceAt must keep the tail too.
+    const base = editWith('a', {
+      changes: [
+        { prop: 'color', before: '#000', after: '#00f' },
+        { prop: 'margin', before: null, after: '8px' },
+      ],
+    });
+    const stripped = fakePorts({
+      changeset: { ...seed(), edits: [base] },
+      redoStack: [edit('y')],
+    });
+    const v2 = await applyChangesetOp(stripped.ports, {
+      kind: 'retract',
+      event: styleEvent('#a', 'color', '#000', '#00f'),
+    });
+    expect(v2.changeset?.edits[0]?.changes).toEqual([
+      { prop: 'margin', before: null, after: '8px' },
+    ]);
+    expect(v2.canRedo).toBe(true);
+    expect(stripped.current()?.redoStack.map((e) => e.intent)).toEqual(['y']);
+  });
+
+  // #9 round 5: a value-mismatched revert can only mean a broken LIFO — fail closed and drop
+  // the covered entries from the newest consistent edit instead of silently keeping the phantom.
+  it('a value-mismatched revert fails closed: the covered entry drops from the newest consistent edit', async () => {
+    // Merged fold {color orig→green} (E1 red + E2 green folded); the revert of E1 (sc.after =
+    // red) matches nothing by value — pre-round-5 the entry was silently KEPT.
+    const merged = editWith('m', { changes: [{ prop: 'color', before: 'orig', after: 'green' }] });
+    const { ports, mirrored, current } = fakePorts({
+      changeset: { ...seed(), edits: [merged] },
+      redoStack: [],
+    });
+
+    const v = await applyChangesetOp(ports, {
+      kind: 'retract',
+      event: styleEvent('#m', 'color', 'orig', 'red'),
+    });
+
+    expect(intents(v.changeset)).toEqual([]); // the sole family dropped ⇒ the edit died
+    expect(current()?.changeset.edits).toEqual([]);
+    expect(intents(mirrored.at(-1) ?? null)).toEqual([]);
+  });
+
+  it('broken LIFO heals: the scan walks past a newer value-mismatch to the edit whose strip changes something', async () => {
+    const e1 = editWith('e1', {
+      selector: { value: '#dup', strategy: 'id', fragile: false },
+      changes: [{ prop: 'color', before: 'orig', after: 'red' }],
+    });
+    const e2 = editWith('e2', {
+      selector: { value: '#dup', strategy: 'id', fragile: false },
+      changes: [{ prop: 'color', before: 'red', after: 'green' }],
+    });
+    const { ports, current } = fakePorts({
+      changeset: { ...seed(), edits: [e1, e2] },
+      redoStack: [],
+    });
+
+    // Revert E1 (sc.after = red): e2's after (green) mismatches, e1's pair nets to orig ⇒ dies.
+    const v = await applyChangesetOp(ports, {
+      kind: 'retract',
+      event: styleEvent('#dup', 'color', 'orig', 'red'),
+    });
+
+    expect(intents(v.changeset)).toEqual(['e2']);
+    expect(current()?.changeset.edits.map((e) => e.intent)).toEqual(['e2']);
+  });
 });

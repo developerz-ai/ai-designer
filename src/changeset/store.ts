@@ -32,6 +32,16 @@ export interface ChangesetStoreOptions {
   readonly persist?: PersistChangesetState;
 }
 
+/** Options for {@link ChangesetStore.removeAt} / {@link ChangesetStore.replaceAt}. */
+export interface SpliceOptions {
+  /** Keep the redo tail across the splice. Default false: dropping/rewriting an arbitrary edit
+   *  forks history like a fresh `record`, so the tail is cleared. The recorder-revert retraction
+   *  passes true (#9 round 5): the strip/removal targets an edit UNRELATED to the undone ones,
+   *  and `redo` re-appends whole edits positionally, so a tail earned before the revert stays
+   *  coherent across it — clearing it would silently kill redoable edits. */
+  readonly preserveRedo?: boolean;
+}
+
 /**
  * A single session's changeset with a linear undo/redo history. `record` appends an edit and forks
  * history (drops any redo tail); `undo` moves the most recent edit onto the redo stack; `redo`
@@ -114,10 +124,12 @@ export class ChangesetStore {
   }
 
   /** Remove the edit at `index` (0-based). Dropping an arbitrary edit forks history — like a fresh
-   *  `record` — so the redo stack is cleared (a redo tail earned before this deletion is no longer
-   *  coherent). Out of range is a no-op returning `undefined`. Returns the removed edit. Panel-driven
-   *  per-edit "remove" from the Diff tab (#10); the durable/shippable record only, never the page. */
-  removeAt(index: number): Edit | undefined {
+   *  `record` — so the redo stack is cleared UNLESS `options.preserveRedo` holds (a redo tail earned
+   *  before this deletion is no longer coherent; see {@link SpliceOptions}). Out of range is a no-op
+   *  returning `undefined`. Returns the removed edit. Panel-driven per-edit "remove" from the Diff
+   *  tab (#10) and the recorder-revert retraction (#9); the durable/shippable record only, never
+   *  the page. */
+  removeAt(index: number, options: SpliceOptions = {}): Edit | undefined {
     const { edits } = this.changeset;
     if (index < 0 || index >= edits.length) return undefined;
     const removed = edits[index];
@@ -125,17 +137,18 @@ export class ChangesetStore {
       ...this.changeset,
       edits: [...edits.slice(0, index), ...edits.slice(index + 1)],
     };
-    this.redoStack.length = 0;
+    if (!options.preserveRedo) this.redoStack.length = 0;
     this.flush();
     return removed;
   }
 
   /** Replace the edit at `index` (0-based) with `edit`. Rewriting an arbitrary edit forks
-   *  history — like a fresh `record` — so the redo stack is cleared (same rule as
-   *  {@link removeAt}). Out of range is a no-op returning `undefined`. Returns the replaced
-   *  (old) edit. The surgical half of the round-4 `retract` op (panel-ops.ts): a stripped edit
-   *  takes its predecessor's slot instead of the whole edit dying. */
-  replaceAt(index: number, edit: Edit): Edit | undefined {
+   *  history — like a fresh `record` — so the redo stack is cleared UNLESS
+   *  `options.preserveRedo` holds (same rule as {@link removeAt}). Out of range is a no-op
+   *  returning `undefined`. Returns the replaced (old) edit. The surgical half of the round-4
+   *  `retract` op (panel-ops.ts): a stripped edit takes its predecessor's slot instead of the
+   *  whole edit dying. */
+  replaceAt(index: number, edit: Edit, options: SpliceOptions = {}): Edit | undefined {
     const { edits } = this.changeset;
     if (index < 0 || index >= edits.length) return undefined;
     const replaced = edits[index];
@@ -143,7 +156,7 @@ export class ChangesetStore {
       ...this.changeset,
       edits: [...edits.slice(0, index), edit, ...edits.slice(index + 1)],
     };
-    this.redoStack.length = 0;
+    if (!options.preserveRedo) this.redoStack.length = 0;
     this.flush();
     return replaced;
   }

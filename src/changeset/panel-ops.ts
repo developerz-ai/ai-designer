@@ -15,7 +15,7 @@
 
 import type { Changeset, ChangesetState } from '@/shared/changeset';
 import type { MutationEvent } from '@/shared/messages';
-import { findLastMatchingEditIndex, stripEventFromEdit } from './revert-match';
+import { retractFromEdits } from './revert-match';
 import { ChangesetStore } from './store';
 
 /** One curation op from the Diff tab — or, for `retract`, from the background recorder-revert
@@ -99,15 +99,20 @@ export async function applyChangesetOp(
       store.removeAt(op.index);
       break;
     case 'retract': {
-      // Surgical late-revert retraction (#9 round-4): match + strip against the edits from THIS
-      // load — one load, so the index can never go stale before the mutation lands.
-      const index = findLastMatchingEditIndex(store.current.edits, op.event);
-      if (index === -1) return view(store); // no match ⇒ no-op: nothing persisted/mirrored
-      const edit = store.current.edits[index];
-      const stripped = edit ? stripEventFromEdit(edit, op.event) : null;
-      if (stripped === null)
-        store.removeAt(index); // nothing recorded remains ⇒ the edit dies
-      else store.replaceAt(index, stripped);
+      // Surgical late-revert retraction (#9 round-4; shared matcher round-5): retractFromEdits
+      // matches + strips (or, on a value-mismatched broken LIFO, fails closed and drops the
+      // covered entries) against the edits from THIS load — one load, so the index can never go
+      // stale before the mutation lands. `{ preserveRedo: true }`: the strip/removal targets an
+      // edit unrelated to the undone ones, and redo re-appends whole edits positionally, so a
+      // redo tail earned before the revert stays coherent across it (round-5 MAJOR).
+      const result = retractFromEdits(store.current.edits, op.event);
+      if (result === null) return view(store); // no match ⇒ no-op: nothing persisted/mirrored
+      if (result.edits.length < store.current.edits.length) {
+        store.removeAt(result.changedIndex, { preserveRedo: true }); // stripped to nothing ⇒ the edit dies
+      } else {
+        const stripped = result.edits[result.changedIndex];
+        if (stripped) store.replaceAt(result.changedIndex, stripped, { preserveRedo: true });
+      }
       break;
     }
   }

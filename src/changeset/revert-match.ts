@@ -1,12 +1,17 @@
-// Late-revert retraction match + surgical strip (#9 review rounds 2 + 4) — the durable-record
+// Late-revert retraction match + surgical strip (#9 review rounds 2 + 4 + 5) — the durable-record
 // half of `recorder-revert`. The content recorder's undo emits a revert for a mutation whose event
 // is USUALLY still in the SW's pending buffer (pending-mutations.ts `remove` drops it there).
 // But once `recordEdit` has drained the event (or turn-end auto-finalize folded it), the
 // buffer answer comes back false and the change — already reverted on the page — would ship
 // as a phantom edit. background.ts then routes a `{kind:'retract', event}` through the same
-// applyChangesetOp machinery the Diff-tab curation RPCs use, which matches + strips in ONE load
-// (no double-load TOCTOU): findLastMatchingEditIndex finds the edit, stripEventFromEdit removes
-// ONLY the reverted event's contribution, and an all-empty result removes the edit outright.
+// applyChangesetOp machinery the Diff-tab curation RPCs use, which retracts in ONE load (no
+// double-load TOCTOU): retractFromEdits (round 5 — the ONE matcher both the op path and the
+// mid-turn in-memory strip share) scans for the newest consistent edit whose strip CHANGES
+// something, stripEventFromEdit removes ONLY the reverted event's contribution, and an all-empty
+// result removes the edit outright. When NO consistent edit value-matches, the revert can only
+// mean a broken LIFO — retractFromEdits then fails CLOSED, dropping the entries the event covers
+// from the newest consistent edit rather than keeping a phantom the page provably no longer
+// carries (round-5 MAJOR).
 //
 // "Consistent" = SAME selector value + kind-consistent payload. Selector equality is safe to
 // require: every edit a drained event can become carries that event's own selector (the fold
@@ -19,6 +24,7 @@
 //
 // Pure by construction: no `chrome.*`, no clock. Unit-tested directly.
 
+import { TEXT_CHANGE_BEFORE_CAP } from '@/dom/mutate';
 import type { Edit } from '@/shared/changeset';
 import type { MutationEvent } from '@/shared/messages';
 
@@ -134,6 +140,14 @@ export function stripEventFromEdit(edit: Edit, event: MutationEvent): Edit | nul
         const { text: _text, ...stripped } = edit;
         return finalize(stripped);
       }
+      // The producer caps textChange.before at TEXT_CHANGE_BEFORE_CAP (dom/mutate.ts) — a
+      // capped value may be TRUNCATED, so the one-hop restore is un-reconstructable. Fail
+      // closed (#9 round 5): DROP the text family rather than write a maybe-truncated value
+      // into the durable record as if it were the full text.
+      if (tc.before.length >= TEXT_CHANGE_BEFORE_CAP) {
+        const { text: _text, ...stripped } = edit;
+        return finalize(stripped);
+      }
       return finalize({ ...edit, text: { ...text, after: tc.before } });
     }
     case 'insertNode':
@@ -156,4 +170,103 @@ function finalize(edit: Edit): Edit | null {
     edit.text === undefined &&
     edit.structural === undefined;
   return empty ? null : edit;
+}
+
+// --- shared retract (#9 review round 5) ---------------------------------------
+// The ONE match+strip entry point BOTH retraction callers drive (the panel-ops `retract` op and
+// the background mid-turn in-memory strip — their duplicated match+strip blocks disagreed on the
+// value-mismatch case, which silently kept a phantom). Two tiers:
+//  1. Scan from the end: the first consistent edit whose strip CHANGES something wins (replace
+//     with the stripped edit, or remove when the strip empties every family). A strip "changes
+//     nothing" = the stripped edit is deeply equal to the input — no recorded value matched.
+//  2. NO consistent edit value-matched ⇒ broken LIFO (the revert killed a change buried under
+//     newer ones, and the page provably no longer carries ANY recorded value for it). Fail
+//     closed: drop the entries the event covers from the NEWEST consistent edit — the same
+//     per-family removal rules as stripEventFromEdit but WITHOUT the value gates (the mismatch
+//     IS the signal). Never write a mismatched value back; never keep the phantom.
+
+/** The fail-closed half of {@link retractFromEdits}: stripEventFromEdit's per-family removal
+ *  rules with the value gates dropped — a covered entry dies however its recorded value reads. */
+function dropEventFromEdit(edit: Edit, event: MutationEvent): Edit | null {
+  switch (event.kind) {
+    case 'setStyle': {
+      // A pre-#9 event names no props: every recorded prop is a candidate (same rule as the
+      // strip, which kills every pair in that case).
+      const props = event.styleChanges?.map((sc) => sc.prop);
+      const changes =
+        props === undefined ? [] : edit.changes.filter((entry) => !props.includes(entry.prop));
+      return finalize({ ...edit, changes });
+    }
+    case 'setAttr': {
+      const ac = event.attrChange;
+      if (!ac) return finalize(edit); // a pre-#9 raw setAttr never matched (see isConsistent)
+      // The fold routes setAttr('class') into the classes family — same mirror as the strip.
+      if (ac.name === 'class') return finalize({ ...edit, classes: [] });
+      return finalize({ ...edit, attrs: edit.attrs.filter((attr) => attr.name !== ac.name) });
+    }
+    case 'addClass':
+    case 'removeClass': {
+      const cc = event.classChange;
+      if (!cc) return finalize(edit);
+      return finalize({ ...edit, classes: edit.classes.filter((cls) => cls.name !== cc.name) });
+    }
+    case 'setText': {
+      const { text: _text, ...stripped } = edit;
+      return finalize(stripped);
+    }
+    case 'insertNode':
+    case 'moveNode':
+    case 'removeNode': {
+      const { structural: _structural, ...stripped } = edit;
+      return finalize(stripped);
+    }
+  }
+}
+
+/** Deep equality over the plain-JSON Edit record (it round-trips through chrome.storage). Both
+ *  compared values descend from the SAME input edit via key-order-preserving spreads, so the
+ *  serialized strings differ ONLY on a content difference — this detects "the strip changed
+ *  nothing", the no-value-matched signal {@link retractFromEdits} fails closed on. */
+function editsEqual(a: Edit, b: Edit): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Retract the reverted `event` from `edits` — see the round-5 header above. Returns the new
+ *  edit list plus the index of the edit it replaced (same length) or removed (length - 1), or
+ *  null when NO edit is consistent at all (the caller no-ops: the record may have been curated
+ *  or nav-cleared since the event drained, which is not an error). Never mutates the inputs. */
+export function retractFromEdits(
+  edits: readonly Edit[],
+  event: MutationEvent,
+): { edits: Edit[]; changedIndex: number } | null {
+  let newestConsistent = -1;
+  for (let i = edits.length - 1; i >= 0; i--) {
+    const edit = edits[i];
+    if (!edit || !isConsistent(edit, event)) continue;
+    if (newestConsistent === -1) newestConsistent = i;
+    const stripped = stripEventFromEdit(edit, event);
+    if (stripped === null) {
+      return { edits: [...edits.slice(0, i), ...edits.slice(i + 1)], changedIndex: i };
+    }
+    if (!editsEqual(stripped, edit)) {
+      return { edits: [...edits.slice(0, i), stripped, ...edits.slice(i + 1)], changedIndex: i };
+    }
+  }
+  if (newestConsistent === -1) return null;
+  const target = edits[newestConsistent];
+  if (!target) return null;
+  const dropped = dropEventFromEdit(target, event);
+  // The event names nothing the edit carries (e.g. an empty styleChanges list): there is no
+  // covered entry to drop, so there is nothing to retract — no-op like the no-match case.
+  if (dropped !== null && editsEqual(dropped, target)) return null;
+  if (dropped === null) {
+    return {
+      edits: [...edits.slice(0, newestConsistent), ...edits.slice(newestConsistent + 1)],
+      changedIndex: newestConsistent,
+    };
+  }
+  return {
+    edits: [...edits.slice(0, newestConsistent), dropped, ...edits.slice(newestConsistent + 1)],
+    changedIndex: newestConsistent,
+  };
 }
