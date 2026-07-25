@@ -537,3 +537,71 @@ describe('integration: #137 item 8 — the screenshot glue riding the lock', () 
     ]);
   });
 });
+
+describe('integration: #146 nav drivers ride the lock', () => {
+  // background.ts's new wiring reproduced 1:1: `nav` wraps runNav in withCaptureLock on the
+  // RESOLVED tab (msg.tabId ?? turn tab); `tabs` wraps ONLY close (on cmd.tabId). The fake
+  // drivers log when the op actually runs — the assertions read the timeline.
+  function navWiring(world: World, lock: Lock) {
+    const runNav = async (intent: { type: string; tabId?: number }) => {
+      world.log.push(`nav:${intent.type}`);
+      return { type: 'tool-result', ok: true } as ToolResult;
+    };
+    const runTabs = async (cmd: { action: string; tabId?: number }) => {
+      world.log.push(`tabs:${cmd.action}`);
+      return { type: 'tool-result', ok: true } as ToolResult;
+    };
+    return {
+      nav: (msg: { type: string; tabId?: number }) =>
+        lock(msg.tabId ?? world.tabId, () => runNav(msg)),
+      tabs: (cmd: { action: string; tabId?: number }) =>
+        cmd.action === 'close' && cmd.tabId !== undefined
+          ? lock(cmd.tabId, () => runTabs(cmd))
+          : runTabs(cmd),
+    };
+  }
+
+  it('a navigate issued mid-stitch WAITS for the stitch — it never unloads mid-band', async () => {
+    const world = fakeWorld(3);
+    const lock = createCaptureLock();
+    const screenshot = screenshotDispatchFor(world, lock);
+    const { nav } = navWiring(world, lock);
+
+    let navOp: Promise<ToolResult> | undefined;
+    const stitch = screenshot.fullPage([0, 500, 1000], (i) => {
+      if (i === 1) navOp = nav({ type: 'navigate' });
+    });
+    await stitch;
+    await navOp;
+
+    expect(world.bandGrabs.map((b) => b.scrollY)).toEqual([0, 500, 1000]);
+    // The navigation ran exactly once, AFTER the last band AND the restore scroll — an
+    // unlocked navigate would have run during band 1's settle.
+    const navAt = world.log.indexOf('nav:navigate');
+    expect(navAt).toBeGreaterThan(world.log.lastIndexOf('band@1000w1280'));
+    expect(navAt).toBeGreaterThan(world.log.lastIndexOf('scroll:0'));
+  });
+
+  it('tabs.close on the stitching tab queues behind the stitch; open/list do not lock', async () => {
+    const world = fakeWorld(3);
+    const lock = createCaptureLock();
+    const screenshot = screenshotDispatchFor(world, lock);
+    const { tabs } = navWiring(world, lock);
+
+    let close: Promise<ToolResult> | undefined;
+    let list: Promise<ToolResult> | undefined;
+    const stitch = screenshot.fullPage([0, 500, 1000], (i) => {
+      if (i === 0) list = tabs({ action: 'list' }); // pure — must NOT stall
+      if (i === 1) close = tabs({ action: 'close', tabId: 3 });
+    });
+    await stitch;
+    await close;
+    await list;
+
+    // list ran during the stitch (before band 1000); close waited for the restore.
+    expect(world.log.indexOf('tabs:list')).toBeLessThan(world.log.indexOf('band@1000w1280'));
+    const closeAt = world.log.indexOf('tabs:close');
+    expect(closeAt).toBeGreaterThan(world.log.lastIndexOf('band@1000w1280'));
+    expect(closeAt).toBeGreaterThan(world.log.lastIndexOf('scroll:0'));
+  });
+});

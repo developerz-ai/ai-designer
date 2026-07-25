@@ -763,10 +763,27 @@ export default defineBackground(() => {
           browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
           interact: {
             control: content,
-            nav: (msg, signal) => runNav(chromeBrowserDriver, msg, tabId, signal),
+            // Same-tab nav drivers ride the per-tab capture lock (#146): a navigate/back/
+            // reload issued while a full-page stitch is in flight would unload the content
+            // script mid-stitch — and captureVisibleTab inside the navigation window can grab
+            // a stale/transition frame into a band SILENTLY. The lock keys on the RESOLVED
+            // tab (the model can pass `tabId` — a copy-mode reference tab), exactly like the
+            // emulation wrappers below. Deadlock-invariant-safe: runNav's internals are raw
+            // chrome.tabs calls that never re-enter the locking dispatch.
+            nav: (msg, signal) =>
+              withCaptureLock(msg.tabId ?? tabId, () =>
+                runNav(chromeBrowserDriver, msg, tabId, signal),
+              ),
           },
           tabsFrames: {
-            tabs: (msg) => runTabs(chromeBrowserDriver, msg),
+            // tabs.close rides the target tab's lock too (#146) — closing a stitching tab
+            // mid-band is the same corruption class; the close queues behind the stitch
+            // instead. open/activate/list mutate no captured tab (activate targets the
+            // WINDOW, which a per-tab lock can't express — documented residual, pre-#146).
+            tabs: (msg) =>
+              msg.action === 'close' && msg.tabId !== undefined
+                ? withCaptureLock(msg.tabId, () => runTabs(chromeBrowserDriver, msg))
+                : runTabs(chromeBrowserDriver, msg),
             frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
           },
           vision: {
