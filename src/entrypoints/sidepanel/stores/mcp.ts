@@ -162,7 +162,14 @@ export async function addServer(input: {
   try {
     const access = await ensureHostAccess(input.url);
     if (!access.ok) {
-      setError(access.error ?? i18n.t('mcp.error.hostDenied'));
+      // A user denial renders the localized message; other failures (invalid URL, a thrown
+      // request) keep ensureHostAccess's detailed `error`. #157 (+ CR: every failure branch
+      // sets `error`, so the i18n fallback was unreachable — the `reason` discriminator fixes it).
+      setError(
+        access.reason === 'denied'
+          ? i18n.t('mcp.error.hostDenied')
+          : (access.error ?? i18n.t('mcp.error.addFailed')),
+      );
       return false;
     }
     const r = await request({ type: 'mcp-add', ...input }, McpServerResult);

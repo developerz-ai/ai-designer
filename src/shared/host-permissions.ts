@@ -16,7 +16,13 @@
 // `chrome.permissions` is available in the SW and extension pages (side panel, popup,
 // options) alike — never import this from content.ts (page world, no extension APIs).
 
-export type HostAccess = { ok: boolean; error?: string };
+export type HostAccess = { ok: boolean; reason?: HostAccessReason; error?: string };
+
+/** Why an `ensureHostAccess` failure can be classified. `'denied'` = the user dismissed the
+ *  host-permission prompt; the other failure branches (invalid URL, a thrown `request`) stay
+ *  unclassified and carry a detailed `error` instead, so a caller can render a localized
+ *  message for the common denial and the raw detail for the rare unexpected failure. */
+export type HostAccessReason = 'denied';
 
 /**
  * The `https://host/*` match pattern covering a base URL's origin, or null when the URL is
@@ -40,8 +46,9 @@ export function originPattern(baseURL: string): string | null {
  * it isn't already held. Returns `{ ok: true }` when the origin is covered by a static
  * `host_permissions` entry (e.g. OpenRouter) or an existing runtime grant — in that case no
  * prompt is shown. For a not-yet-granted custom host it calls `chrome.permissions.request`;
- * a user denial (or a call outside a user gesture) surfaces as `{ ok: false, error }` so the
- * caller can avoid persisting a config it can never fetch.
+ * a user denial surfaces as `{ ok: false, reason: 'denied', error }` so the caller can render
+ * a localized message, while an invalid URL or a thrown `request` (e.g. no user gesture in
+ * the SW) surfaces as `{ ok: false, error }` with the raw detail.
  */
 export async function ensureHostAccess(baseURL: string): Promise<HostAccess> {
   const pattern = originPattern(baseURL);
@@ -49,7 +56,9 @@ export async function ensureHostAccess(baseURL: string): Promise<HostAccess> {
   try {
     if (await chrome.permissions.contains({ origins: [pattern] })) return { ok: true };
     const granted = await chrome.permissions.request({ origins: [pattern] });
-    return granted ? { ok: true } : { ok: false, error: `Host access denied for ${pattern}` };
+    return granted
+      ? { ok: true }
+      : { ok: false, reason: 'denied', error: `Host access denied for ${pattern}` };
   } catch (err) {
     return { ok: false, error: `Could not request host access for ${pattern}: ${String(err)}` };
   }

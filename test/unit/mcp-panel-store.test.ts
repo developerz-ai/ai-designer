@@ -130,7 +130,8 @@ describe('mcp store actions', () => {
     expect(dispatched).toBe(false); // ...but mcp-add never went out
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.servers).toHaveLength(0);
-    expect(store.error()).toMatch(/host access/i);
+    // The denial renders the localized message, not ensureHostAccess's raw English detail (CR #158).
+    expect(store.error()).toBe('Host access denied.');
   });
 
   it('addServer surfaces a failure without adding anything', async () => {
