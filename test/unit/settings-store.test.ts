@@ -111,7 +111,9 @@ describe('settings store: saveProvider requests a custom host grant from the Sav
     const sentTypes = sendMessage.mock.calls.map((c) => (c[0] as PanelToSw).type);
     expect(sentTypes).not.toContain('save-provider');
     expect(store.settings.saveStatus).toBe('invalid');
-    expect(store.settings.error).toContain('http://localhost/*');
+    // The denial renders the localized message, not the raw detail with the origin (parity
+    // with mcp addServer #158). The reject path below still surfaces the raw "Could not...".
+    expect(store.settings.error).toBe('Host access denied.');
   });
 
   it('surfaces a request rejection (called outside a live user gesture) the same way', async () => {
