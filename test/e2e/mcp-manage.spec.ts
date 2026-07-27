@@ -422,3 +422,29 @@ test('Ship #20: no mapping → inline mapping form → save & Ship again routes 
   await expect(row).toBeVisible();
   await expect(row).toContainText('acme/storefront');
 });
+
+test('MCP add #157: a server on a non-openrouter origin adds + connects end to end', async ({
+  context,
+  openExtensionPage,
+}) => {
+  // #157 regressed silently because every add-server e2e used the openrouter.ai origin — the one
+  // host the manifest statically grants — so chrome.permissions.request was never reached. This
+  // broadens that to a SECOND statically-granted origin (glitchtip.infra.developerz.ai, also in
+  // host_permissions) and asserts the full add -> connect -> tools-discovered flow on it.
+  //
+  // The native chrome.permissions.request prompt for a NOT-yet-granted host is undrivable under
+  // Playwright (see settings.spec.ts's documented carve-out), so the panel-side gesture path that
+  // is the actual #157 fix is locked by test/unit/mcp-panel-store.test.ts, not by this spec.
+  const url = 'https://glitchtip.infra.developerz.ai/e2e-mcp-157/mcp';
+  await stubMcpServer(context, url, ['task', 'kb']);
+  const page = await openExtensionPage('sidepanel.html');
+
+  await addMcpServer(page, 'Non-OR MCP', url);
+  const item = page.locator('.dz-mcp__item', { hasText: 'Non-OR MCP' });
+
+  await item.getByRole('button', { name: 'Connect' }).click();
+  await expect(item.locator('.dz-mcp__status')).toHaveClass(/is-connected/, { timeout: 10_000 });
+
+  // mcp-list carries the connected record end to end for the non-openrouter origin.
+  await expect.poll(async () => (await listServers(page))[0]?.status).toBe('connected');
+});

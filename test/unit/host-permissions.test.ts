@@ -75,6 +75,7 @@ describe('host-permissions: ensureHostAccess', () => {
     installPermissions({ grant: false });
     const res = await ensureHostAccess('https://api.openai.com/v1');
     expect(res.ok).toBe(false);
+    expect(res.reason).toBe('denied'); // classified, so a caller can render the localized message
     expect(res.error).toContain('https://api.openai.com/*');
   });
 
@@ -82,6 +83,7 @@ describe('host-permissions: ensureHostAccess', () => {
     installPermissions({ rejectRequest: true });
     const res = await ensureHostAccess('http://localhost:1234/v1');
     expect(res.ok).toBe(false);
+    expect(res.reason).toBeUndefined(); // unclassified — keep the raw detail
     expect(res.error).toContain('Could not request host access');
   });
 
@@ -89,6 +91,7 @@ describe('host-permissions: ensureHostAccess', () => {
     const perm = installPermissions({ grant: true });
     const res = await ensureHostAccess('not a url');
     expect(res.ok).toBe(false);
+    expect(res.reason).toBeUndefined(); // unclassified — keep the raw detail
     expect(res.error).toContain('Invalid provider URL');
     expect(perm.request).not.toHaveBeenCalled();
   });

@@ -55,10 +55,10 @@ function installChromeFakes(opts: { grantedOrigins?: string[] } = {}): void {
   const permissions = {
     contains: (p: { origins?: string[] }) =>
       Promise.resolve((p.origins ?? []).every((o) => grantedOrigins.has(o))),
-    request: (p: { origins?: string[] }) => {
+    request: vi.fn((p: { origins?: string[] }) => {
       for (const o of p.origins ?? []) grantedOrigins.add(o); // this suite always grants
       return Promise.resolve(true);
-    },
+    }),
   };
   const identity = {
     launchWebAuthFlow: vi.fn(async ({ url }: { url: string }) => {
@@ -316,6 +316,30 @@ describe('integration: mcp-add -> mcp-list -> mcp-connect through the bus', () =
     expect(result.ok).toBe(false);
     expect(result.error).toContain('https://blocked.example.com/*');
     expect(await listServers()).toEqual([]);
+  });
+
+  it('a panel-side pre-grant makes the SW re-check a no-op — no second permission request (#157)', async () => {
+    installChromeFakes();
+    const { handleAdd } = makeHandlers(fakeMcpFactory({ task: {} }));
+    const request = (
+      globalThis as unknown as {
+        chrome: { permissions: { request: ReturnType<typeof vi.fn> } };
+      }
+    ).chrome.permissions.request;
+
+    // The panel requests the host permission inside the Add gesture, before the mcp-add RPC.
+    expect(await ensureHostAccess('https://ai-dev.example.com/mcp')).toEqual({ ok: true });
+    expect(request).toHaveBeenCalledTimes(1);
+
+    // The SW handler re-checks (belt-and-braces): contains() is now true, so it does NOT prompt
+    // again and the add succeeds. The panel-side grant + the SW-side re-check share ONE request.
+    const added = await handleAdd({
+      type: 'mcp-add',
+      label: 'ai-dev',
+      url: 'https://ai-dev.example.com/mcp',
+    });
+    expect(added.ok).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('mcp-connect on an unknown id returns ok:false without throwing', async () => {
