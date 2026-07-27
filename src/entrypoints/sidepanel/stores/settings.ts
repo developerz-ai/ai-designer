@@ -171,7 +171,15 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
   set({ saveStatus: 'saving', error: null });
   const access = await ensureHostAccess(settings.baseURL);
   if (!access.ok) {
-    set({ saveStatus: 'invalid', error: access.error ?? i18n.t('settings.error.hostDenied') });
+    // A user denial renders the localized message; other failures (invalid URL, a thrown
+    // request) keep ensureHostAccess's detailed `error`. Parity with mcp addServer (#158),
+    // which classifies denials via HostAccess.reason — the i18n fallback was unreachable
+    // before (every failure branch sets `error`).
+    set({
+      saveStatus: 'invalid',
+      error:
+        access.reason === 'denied' ? i18n.t('settings.error.hostDenied') : (access.error ?? null),
+    });
     return;
   }
   try {
