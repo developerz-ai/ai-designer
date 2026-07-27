@@ -1,6 +1,7 @@
 import { createSignal } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { i18n } from '#i18n';
+import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   AuthKind,
   McpOAuthConfig,
@@ -143,7 +144,14 @@ export async function hydrateMcp(): Promise<void> {
 
 /** Register a new backend (optionally from a `DEFAULT_BACKENDS` preset). Registers with
  *  `authKind: 'none'` unless given — auth is set later via `submitApiKey`/`startOAuth`,
- *  which also flips the stored `authKind` to match (see background.ts `mcp-auth-start`). */
+ *  which also flips the stored `authKind` to match (see background.ts `mcp-auth-start`).
+ *
+ *  A not-yet-granted origin needs `chrome.permissions.request`, which only succeeds called
+ *  synchronously within a live user gesture — it does NOT survive the hop across
+ *  `chrome.runtime.sendMessage` to the service worker (see shared/host-permissions.ts). So
+ *  the grant is requested HERE, inside the Add-submit gesture, before the `mcp-add` RPC goes
+ *  out; the SW re-checks (a no-op once this has granted it) before persisting. Mirrors
+ *  `stores/settings.ts` `saveProvider` (the provider save already does the same). #157. */
 export async function addServer(input: {
   label: string;
   url: string;
@@ -152,6 +160,11 @@ export async function addServer(input: {
 }): Promise<boolean> {
   setError(null);
   try {
+    const access = await ensureHostAccess(input.url);
+    if (!access.ok) {
+      setError(access.error ?? i18n.t('mcp.error.hostDenied'));
+      return false;
+    }
     const r = await request({ type: 'mcp-add', ...input }, McpServerResult);
     if (!r.ok) {
       setError(r.error ?? i18n.t('mcp.error.addFailed'));

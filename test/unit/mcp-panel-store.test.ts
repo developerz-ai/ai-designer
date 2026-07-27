@@ -51,10 +51,34 @@ describe('reduceServers', () => {
 // (fake, no real extension context), mirroring test/unit/settings-store.test.ts's pattern.
 type SendMessage = (msg: PanelToSw) => unknown;
 
-function installChromeFake(handle: SendMessage): { sendMessage: ReturnType<typeof vi.fn> } {
+interface ChromeFakeOptions {
+  // Origins `chrome.permissions.contains()` reports as already held (skips the request).
+  grantedOrigins?: string[];
+  // Simulate the user dismissing the host-permission prompt (request resolves false).
+  denyRequest?: boolean;
+}
+
+// Fake extension context: chrome.runtime.sendMessage (the bus) + chrome.permissions (the
+// host-grant gate stores/mcp.ts addServer now calls panel-side, #157 — mirrors the integration
+// suite's installChromeFakes). `request` is a spy so a test can assert the panel pre-granted.
+function installChromeFake(
+  handle: SendMessage,
+  opts: ChromeFakeOptions = {},
+): { sendMessage: ReturnType<typeof vi.fn>; requestPermission: ReturnType<typeof vi.fn> } {
   const sendMessage = vi.fn(async (msg: unknown) => handle(msg as PanelToSw));
-  (globalThis as { chrome?: unknown }).chrome = { runtime: { sendMessage } };
-  return { sendMessage };
+  const granted = new Set(opts.grantedOrigins ?? []);
+  const requestPermission = vi.fn((p: { origins?: string[] }) => {
+    if (opts.denyRequest) return false;
+    for (const o of p.origins ?? []) granted.add(o);
+    return true;
+  });
+  const contains = (p: { origins?: string[] }) =>
+    Promise.resolve((p.origins ?? []).every((o) => granted.has(o)));
+  (globalThis as { chrome?: unknown }).chrome = {
+    runtime: { sendMessage },
+    permissions: { contains, request: requestPermission },
+  };
+  return { sendMessage, requestPermission };
 }
 
 afterEach(() => {
@@ -65,7 +89,7 @@ afterEach(() => {
 describe('mcp store actions', () => {
   it('addServer dispatches mcp-add and applies the returned server', async () => {
     vi.resetModules();
-    installChromeFake((msg) => {
+    const { sendMessage, requestPermission } = installChromeFake((msg) => {
       if (msg.type === 'mcp-add') {
         return {
           ok: true,
@@ -79,7 +103,34 @@ describe('mcp store actions', () => {
     const ok = await store.addServer({ label: 'B', url: 'https://b.example.com/mcp' });
 
     expect(ok).toBe(true);
+    // #157: the panel pre-grants the not-yet-held origin inside the Add-submit gesture, THEN
+    // dispatches mcp-add (not the other way round — the grant can't ride the bus to the SW).
+    expect(requestPermission).toHaveBeenCalledWith({ origins: ['https://b.example.com/*'] });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect((sendMessage.mock.calls[0]?.[0] as PanelToSw).type).toBe('mcp-add');
     expect(store.servers.some((s) => s.id === 'b')).toBe(true);
+  });
+
+  it('addServer short-circuits mcp-add when the host grant is denied (#157)', async () => {
+    vi.resetModules();
+    let dispatched = false;
+    const { sendMessage, requestPermission } = installChromeFake(
+      (msg) => {
+        if (msg.type === 'mcp-add') dispatched = true;
+        return { ok: true };
+      },
+      { denyRequest: true },
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/mcp');
+
+    const ok = await store.addServer({ label: 'B', url: 'https://b.example.com/mcp' });
+
+    expect(ok).toBe(false);
+    expect(requestPermission).toHaveBeenCalled(); // panel-side gesture request fired
+    expect(dispatched).toBe(false); // ...but mcp-add never went out
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.servers).toHaveLength(0);
+    expect(store.error()).toMatch(/host access/i);
   });
 
   it('addServer surfaces a failure without adding anything', async () => {

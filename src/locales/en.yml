@@ -171,6 +171,7 @@ mcp:
   error:
     listFailed: Failed to list MCP servers.
     addFailed: Failed to add server.
+    hostDenied: Host access denied.
     removeFailed: Failed to remove server.
     connectFailed: Failed to connect {id}.
     authFailed: Authorization failed.
