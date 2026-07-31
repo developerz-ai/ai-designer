@@ -574,6 +574,35 @@ strong {
   line-height: 1.6;
 }
 
+// ─── World tour teaser (static poster band into /world, #161) ──
+.teaser__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $space-4;
+  text-align: center;
+}
+.teaser__poster-link {
+  display: block;
+  width: 100%;
+  max-width: 56rem;
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: $radius-lg;
+  overflow: hidden;
+  transition: transform $dur-3 $ease-out, border-color $dur-3 $ease-out;
+
+  &:hover {
+    transform: translateY(-4px);
+    border-color: $slate-700;
+  }
+}
+.teaser__poster {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 // ─── Notify band (minimal, lots of air) ───────────────────────
 .notify__inner {
   display: flex;
