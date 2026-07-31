@@ -2,8 +2,21 @@ name: CI
 
 on:
   pull_request:
+    # `site/**` and `waitlist/**` are self-contained sub-projects with their own workflows,
+    # and prose cannot break the extension. paths-ignore only skips when EVERY changed file
+    # matches, so a PR touching docs *and* src still runs the full gate.
+    paths-ignore:
+      - 'site/**'
+      - 'waitlist/**'
+      - 'docs/**'
+      - '**/*.md'
   push:
     branches: [main]
+    paths-ignore:
+      - 'site/**'
+      - 'waitlist/**'
+      - 'docs/**'
+      - '**/*.md'
 
 permissions:
   contents: read
@@ -43,41 +56,32 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-  test-unit:
-    name: Test (unit)
-    # vitest leaves maxWorkers unset on CI (vitest.config.ts), so it fans out over
-    # every core — more vCPU converts straight into a shorter job.
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+  test:
+    name: Test (unit + integration)
+    # ONE job, not two. Unit and integration used to run as separate 8-vCPU jobs at ~27s and
+    # ~24s each — two runner setups, and each fanned out over only half the suite. A single
+    # `vitest run` shares one worker pool across every spec, which costs roughly half the
+    # vCPU-seconds for about the same wall clock. 4 vCPU because the suite is jsdom-bound:
+    # the step from 4 to 8 bought ~14s and cost 2x.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Unit tests
-        run: bun run test:unit
-
-  test-integration:
-    name: Test (integration)
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: ./.github/actions/bun-setup
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - name: Integration tests
-        run: bun run test:integration
+      - name: Unit + integration tests
+        run: bun run test
 
   build:
     name: Build extension
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
-    # No `needs:`. Gating the build behind lint+typecheck+tests added their full
-    # duration to the critical path before this job's own setup even began, and a
-    # build failure is independent of a lint failure — we want both reported in one
-    # run, not one after the other. Costs some runner minutes on a red PR; buys back
-    # several minutes of wall clock on every green one.
+    needs: [lint, typecheck]
+    # Gated on the two CHEAPEST jobs only (~20s each), never on the test jobs. The old
+    # `needs: [lint, typecheck, test-unit, test-integration]` put the whole test suite on
+    # the critical path before this job's setup began; dropping the gate entirely was the
+    # other extreme and burned a full build + e2e on every lint-red PR.
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: ./.github/actions/bun-setup
@@ -96,13 +100,14 @@ jobs:
 
   test-e2e:
     name: Test (e2e)
-    # E2E is the long pole: a build, a Chromium download, then N persistent-context
-    # browser launches. On 2 vCPU the Playwright worker count (see playwright.config.ts)
-    # floors at 1, so the suite ran fully serial. More cores buy real parallelism here.
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # E2E is the long pole and by far the most expensive job: a build, a Chromium download,
+    # then N persistent-context browser launches. It ran 138s serial on 2 vCPU because the
+    # local worker formula floors at 1 there; on CI playwright.config.ts now asks for 50% of
+    # cores, so 4 vCPU gives 2 real workers — about half the wall clock of the 2-vCPU run at
+    # the same vCPU-seconds, and half the cost of doing it on 8.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
-    # No `needs:` — see the build job. This was the single biggest chunk of CI wall
-    # clock: the slowest job waited on all four fast ones before starting.
+    needs: [lint, typecheck]
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: ./.github/actions/bun-setup
@@ -136,50 +141,6 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
           include-hidden-files: true
-
-  site:
-    # The standalone landing sub-project (site/) is self-contained and NOT covered
-    # by the jobs above: root `bun run lint` excludes **/site and root typecheck is
-    # the extension's tsc. Gate site/ on its own lint/typecheck/build here, and pin
-    # the hCaptcha fail-closed guard so a future weakening can't silently reship the
-    # always-pass test key (#128).
-    name: Site (landing)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: ./.github/actions/bun-setup
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-          # site/ has its own package.json + bun.lock; skip the root install.
-          install: 'false'
-      - name: Install site deps
-        working-directory: site
-        run: bun install --frozen-lockfile
-      - name: Lint
-        working-directory: site
-        run: bun run lint
-      - name: Typecheck
-        working-directory: site
-        run: bun run typecheck
-      - name: Build (no key -> allowed, mirrors a local build)
-        working-directory: site
-        run: bun run build
-      - name: hCaptcha guard fails closed (#128 regression pin)
-        working-directory: site
-        run: |
-          # The build MUST abort when VITE_HCAPTCHA_SITEKEY is defined-but-empty or the
-          # always-pass test key (site/vite.config.ts hcaptcha-key-guard). If a future
-          # change weakens the guard, one of these builds succeeds and this job fails.
-          if VITE_HCAPTCHA_SITEKEY="" bun run build; then
-            echo "::error::hcaptcha-key-guard did not abort on an empty VITE_HCAPTCHA_SITEKEY (fail-open regression, #128)"
-            exit 1
-          fi
-          if VITE_HCAPTCHA_SITEKEY="10000000-ffff-ffff-ffff-000000000001" bun run build; then
-            echo "::error::hcaptcha-key-guard did not abort on the hCaptcha test key (fail-open regression, #128)"
-            exit 1
-          fi
-          echo "hcaptcha-key-guard correctly aborts empty and test-key builds"
 
   actionlint:
     name: actionlint

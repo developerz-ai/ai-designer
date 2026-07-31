@@ -1,8 +1,10 @@
-# actionlint ships a hard-coded list of known runner labels and does not know Blacksmith's
-# larger tiers — it accepts 2vcpu/4vcpu but rejects 8vcpu, even though the runner exists and
-# schedules fine (the unit/integration/e2e jobs run on it). Declaring it here is what
-# actionlint's own error message asks for, and keeps the check honest for real typos.
+# actionlint validates `runs-on` against a hard-coded label list. Its list knows Blacksmith's
+# 2/4-vCPU tiers but not the larger ones — and declaring labels here REPLACES the Blacksmith
+# entries rather than adding to them, so every tier this repo uses must be listed, not just
+# the new ones. Keep this in sync when a job changes tier; the rule still catches real typos.
 self-hosted-runner:
   labels:
+    - blacksmith-2vcpu-ubuntu-2404
+    - blacksmith-4vcpu-ubuntu-2404
     - blacksmith-8vcpu-ubuntu-2404
     - blacksmith-16vcpu-ubuntu-2404
