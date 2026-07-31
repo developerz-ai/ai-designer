@@ -50,6 +50,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 |--|--|
 | dev | `bun run dev` (WXT, HMR) · `bun run dev:firefox` |
 | build | `bun run build` · release: `bun run release` (build + zip, minified) |
+| local | `bun run local` — install/prepare if needed, build, print load-unpacked path (`--firefox`, `--check`, `--zip`) |
 | test | `bun run test` · unit: `test:unit` · integration: `test:integration` · e2e: `test:e2e` |
 | check | `bun run typecheck` · `bun run lint` (fix: `lint:fix`) |
 

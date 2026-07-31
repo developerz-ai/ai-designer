@@ -18,6 +18,7 @@
   },
   "scripts": {
     "dev": "wxt",
+    "local": "bash scripts/build-local.sh",
     "dev:firefox": "wxt -b firefox",
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",

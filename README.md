@@ -47,9 +47,17 @@ The gap: **what you see** (the rendered page) and **what you change** (the sourc
 ## Quickstart
 
 ```bash
-bun install
-bun run dev                 # WXT dev server, HMR
+bun run local               # install if needed → build → prints the load-unpacked path
 ```
+
+Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
+
+| `bun run local` | |
+|--|--|
+| *(no flags)* | chrome, plain build → `.output/chrome-mv3` |
+| `--firefox` | firefox MV2 → `.output/firefox-mv2` |
+| `--check` | run the gate (lint + typecheck + unit + integration) first |
+| `--zip` | also produce the distributable `.zip` |
 
 1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `.output/chrome-mv3`.
 2. **Add your OpenRouter key** — side panel → settings (BYOK, stored encrypted, used only in the service worker).
