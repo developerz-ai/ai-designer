@@ -15,9 +15,12 @@ keys/*
 # landing site (site/) build output
 site/dist
 
-# local secrets / env
+# local secrets / env — .env holds a real BYOK provider key for `bun run debug:live`
+# (see .env.example). Never commit one; the extension itself never reads these.
 *.local
-.env*.local
+.env
+.env.*
+!.env.example
 
 # test artifacts
 test-results

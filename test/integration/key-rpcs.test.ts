@@ -9,7 +9,7 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
-import { listModels, validateProvider } from '@/agent/provider';
+import { listModels, REJECTED_KEY_ERROR, validateProvider } from '@/agent/provider';
 import type { PanelToSw } from '@/shared/messages';
 import { KeyStatusResult, ModelsResult, OkResult, SaveKeyResult } from '@/shared/messages';
 
@@ -161,7 +161,8 @@ describe('integration: save-openrouter-key -> key-status -> set-model -> clear l
     const saved = await handlers.saveKey({ type: 'save-openrouter-key', text: 'sk-bad' });
     expect(saved.ok).toBe(true);
     expect(saved.valid).toBe(false);
-    expect(saved.error).toBe('Provider /models responded 401');
+    // A 401/403 is the KEY being rejected, not a bare transport status — the panel says so.
+    expect(saved.error).toBe(REJECTED_KEY_ERROR);
     // Nothing persisted on an invalid save.
     expect(await hasProviderKey()).toBe(false);
     expect(await getOpenRouterKey()).toBeNull();

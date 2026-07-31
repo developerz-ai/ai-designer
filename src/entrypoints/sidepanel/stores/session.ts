@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { requestPageAccess } from '@/shared/host-permissions';
 import type { SwToPanel } from '@/shared/messages';
 import { OkResult, SessionStateResult } from '@/shared/messages';
 import { request } from './bus';
@@ -62,9 +63,26 @@ export async function hydrateSession(): Promise<void> {
 }
 
 /** Start the session (only meaningful once `ReadinessState.ready` — the caller gates
- *  the button). A stale in-flight turn is aborted SW-side before the new one primes. */
+ *  the button). A stale in-flight turn is aborted SW-side before the new one primes.
+ *
+ *  Page access is asked for FIRST, and it has to happen here rather than in the service worker:
+ *  `chrome.permissions.request` only prompts inside the user gesture's own call stack, and Start
+ *  is a real click. Without it the agent's very first `screenshot` fails with Chrome's
+ *  "Either the '<all_urls>' or 'activeTab' permission is required." mid-turn — `activeTab` covers
+ *  only the tab that was active when the toolbar icon was clicked, and dies on the next
+ *  navigation. Asking once, up front, is the difference between a working vision loop and one
+ *  that silently degrades as soon as the user browses.
+ *
+ *  Fire-and-forget, and never awaited. A denial must not block Start — DOM reads and edits need no
+ *  page access, so the session opens either way and the readiness panel's "Page access" row keeps
+ *  offering the grant. Awaiting it would also hang Start outright wherever the prompt never
+ *  resolves (a headless harness leaves `permissions.request` pending forever — see the note in
+ *  test/e2e/settings.spec.ts), which is exactly the kind of dependency Start should not have. */
 export async function startSession(): Promise<void> {
   setError(null);
+  // First statement, and unawaited: `chrome.permissions.request` only prompts inside the gesture's
+  // own call stack, so anything awaited before it kills the prompt (see requestPageAccess).
+  void requestPageAccess().catch(() => {});
   try {
     await request({ type: 'session-start' }, OkResult);
   } catch (e) {

@@ -28,7 +28,13 @@ import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
-import { createProvider, listModels, validateProvider } from '@/agent/provider';
+import {
+  createProvider,
+  keyMissing,
+  listModels,
+  MISSING_KEY_ERROR,
+  validateProvider,
+} from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { generateReport as authorReport, type GenerateReport } from '@/agent/report';
 import { SessionStore } from '@/agent/session';
@@ -97,11 +103,13 @@ import type {
   SessionStateResult,
   SwToPanel,
 } from '@/shared/messages';
+// Value import (a Zod schema, parsed at runtime) — the block below is `import type`.
 import {
   CaptureRequest,
   ContentToSw,
   DesignReadResult,
   IdentityResult,
+  OverlayAck,
   PageMetricsResult,
   PanelToSw,
   ToolResult,
@@ -166,6 +174,59 @@ const emulation = new EmulationRegistry();
 
 export default defineBackground(() => {
   initSentry();
+
+  // Repair the tabs an install/update just orphaned. Content scripts are injected at
+  // `document_idle`, so every tab that was ALREADY OPEN when the extension is installed, updated,
+  // or reloaded from chrome://extensions keeps running without one — and stays that way until the
+  // user happens to reload it. Every DOM tool then fails with Chrome's
+  // "Could not establish connection. Receiving end does not exist.", which reads as a broken
+  // extension rather than "reload the page". Re-injecting closes that window without asking the
+  // user to do anything.
+  //
+  // Driven off the manifest's own `content_scripts` rather than hardcoded paths, so adding or
+  // renaming an entrypoint (or its `world`) can't silently desync this from what actually ships.
+  chrome.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason !== 'install' && reason !== 'update') return;
+    void reinjectAllTabs();
+  });
+
+  // …and again at every worker boot. `onInstalled` does NOT fire when an UNPACKED extension is
+  // reloaded from chrome://extensions — which is exactly what a developer does after every build.
+  // The old content script stays in every open tab with its `chrome.*` bridge invalidated: a
+  // corpse that still holds capture-phase listeners, so the page looks alive and nothing works.
+  // The worker always restarts on reload, so booting is the one reliable signal. Re-injection is
+  // idempotent — content.ts's newest instance tears down the previous one (see its TAKEOVER note).
+  void reinjectAllTabs();
+
+  /** Re-run every declared content script in every already-open http(s) tab. Best-effort per tab
+   *  AND per script: a tab we have no host access to, a chrome:// page, the Web Store, a
+   *  discarded tab — all throw, and none of them should stop the rest. Re-injection is safe to
+   *  repeat: a frame that already has the script simply gets a second evaluation of a module that
+   *  guards its own listeners. */
+  async function reinjectAllTabs(): Promise<void> {
+    if (typeof chrome.scripting === 'undefined') return; // Firefox / older Chrome
+    const scripts = chrome.runtime.getManifest().content_scripts ?? [];
+    if (scripts.length === 0) return;
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }).catch(() => []);
+    await Promise.all(
+      tabs.flatMap((tab) =>
+        tab.id === undefined
+          ? []
+          : scripts.map((script) =>
+              chrome.scripting
+                .executeScript({
+                  target: { tabId: tab.id as number, allFrames: script.all_frames ?? false },
+                  files: script.js ?? [],
+                  // `world` is load-bearing — the page-facts bridge MUST land in MAIN, not the
+                  // isolated world — but chrome-types' ManifestV3 content_scripts entry predates
+                  // the field, so it is read structurally rather than off the declared type.
+                  world: (script as { world?: string }).world === 'MAIN' ? 'MAIN' : 'ISOLATED',
+                })
+                .catch(() => {}),
+            ),
+      ),
+    );
+  }
 
   // Clicking the toolbar action opens (and toggles closed) the side panel — the panel's primary
   // entry point. `openPanelOnActionClick` is a persisted setting, but re-asserting it on every SW
@@ -456,7 +517,24 @@ export default defineBackground(() => {
       }
       return parsed.data.frameId === undefined ? { ...parsed.data, frameId } : parsed.data;
     } catch (err) {
-      return { type: 'tool-result', ok: false, error: String(err) };
+      // "Could not establish connection. Receiving end does not exist." means there is no content
+      // script in that tab — which is almost never a page problem: content scripts are injected at
+      // document_idle, so every tab already open when the extension is installed, updated or
+      // reloaded keeps running WITHOUT one until it reloads. `reinjectAllTabs()` repairs that on
+      // install/update, but a tab opened before this build (or one loaded while the worker was
+      // starting) can still land here, and Chrome's wording gives the model nothing to act on.
+      const message = String(err);
+      if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
+        return {
+          type: 'tool-result',
+          ok: false,
+          error:
+            'No Designer content script in this tab — it was open before the extension was ' +
+            'installed or updated. Reload the page (F5) and retry; every DOM tool needs it. ' +
+            'Nothing on the page has been changed.',
+        };
+      }
+      return { type: 'tool-result', ok: false, error: message };
     }
   }
 
@@ -553,6 +631,9 @@ export default defineBackground(() => {
     }
     const cfg = await getProviderConfig();
     if (!cfg) return { ok: false, error: 'Add a model provider in Settings first.' };
+    // The brief is model-authored, so a keyless hosted provider fails this route too — name it
+    // (same guard as a design turn) instead of surfacing a raw 401 from `authorReport`.
+    if (keyMissing(cfg)) return { ok: false, error: MISSING_KEY_ERROR };
 
     // Reuse (or ensure) this tab's design session so the changeset carries the SAME sessionId a
     // turn's `appendTurn` keyed history under — minting a fresh random id here would target a
@@ -689,6 +770,14 @@ export default defineBackground(() => {
           postToPanel({ type: 'error', message: 'Add a model provider in Settings to start.' });
           return { ok: true };
         }
+        // Fail here, named, rather than let the SDK issue a keyless request and surface the
+        // provider's own wording ("Missing Authentication header") several frames deep in the
+        // stream. Readiness blocks Start on the same condition; this covers a key cleared after
+        // Start, and a session restored into a worker whose stored key has since gone.
+        if (keyMissing(cfg)) {
+          postToPanel({ type: 'error', message: MISSING_KEY_ERROR });
+          return { ok: true };
+        }
         const tabId = tab.id;
         // Closure-stable alias (TS drops a captured property's narrowing inside the chained
         // rehydration closure below — same reason `tabId` is aliased).
@@ -716,7 +805,7 @@ export default defineBackground(() => {
         // still-attached element(s) on `selector`/`selectors`, and the grounded text — not the raw
         // text — goes into the thread, so a turn resumed after an SW eviction still knows what
         // "this" referred to. History keeps the user's own words (`msg.text`, below).
-        const groundedText = groundUserText(msg.text, msg.selector, msg.selectors);
+        const groundedText = groundUserText(msg.text, msg.selector, msg.selectors, msg.xpath);
         const session = await sessions.appendMessages(tabId, {
           role: 'user',
           content: groundedText,
@@ -751,7 +840,8 @@ export default defineBackground(() => {
             selector: update.selector,
             kind: update.kind,
           };
-          void chrome.tabs.sendMessage(tabId, cmd).catch(() => {});
+          // Top frame only — same reason as `set-overlay-enabled` below.
+          void chrome.tabs.sendMessage(tabId, cmd, { frameId: 0 }).catch(() => {});
         }
         const emitTurn = (update: SwToPanel): void => {
           postToPanel(update);
@@ -1398,11 +1488,23 @@ export default defineBackground(() => {
         overlayEnabled = msg.enabled;
         await writeOverlayEnabled(msg.enabled);
         const tab = await resolveTargetTab();
+        // Report whether the push landed instead of swallowing the failure: no content script in
+        // the active tab (a tab open since before the extension was installed/reloaded, or a
+        // chrome:// page) means nothing on that page will react until it reloads — and silently
+        // showing "On" over a page with no overlay is the single most common way this feature
+        // looks broken. The panel turns this into a "reload the page" hint.
+        let reachedPage = false;
         if (tab?.id !== undefined) {
           const cmd: OverlayCmd = { type: 'overlay-toggle', enabled: overlayEnabled };
-          await chrome.tabs.sendMessage(tab.id, cmd).catch(() => {});
+          // frameId 0: the overlay is top-frame only (content.ts gates it on `isTopFrame`), so
+          // addressing every frame would wake N listeners for one card and leave the ack racing
+          // between frames that don't own it.
+          reachedPage = await chrome.tabs
+            .sendMessage(tab.id, cmd, { frameId: 0 })
+            .then((reply) => OverlayAck.safeParse(reply).success)
+            .catch(() => false);
         }
-        return { ok: true, enabled: overlayEnabled };
+        return { ok: true, enabled: overlayEnabled, reachedPage };
       }
       case 'get-overlay-enabled':
         return { ok: true, enabled: overlayEnabled };
@@ -1735,12 +1837,32 @@ export default defineBackground(() => {
 // read — never a content dispatch — so guarding inside a lock holder can't self-deadlock.
 const probeTab: CaptureTargetProbe = (tabId) => chrome.tabs.get(tabId);
 
+// Grab the visible tab as PNG, re-wording the one failure the user can actually act on. Chrome
+// answers a capture without page access with "Either the '<all_urls>' or 'activeTab' permission is
+// required." — accurate, and useless to someone who has never heard of either. The readiness
+// panel's "Page access" row is where this is fixed, so the error says so.
+async function grabVisibleTab(windowId?: number): Promise<string> {
+  try {
+    return await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, {
+      format: 'png',
+    });
+  } catch (err) {
+    const message = String(err);
+    if (/permission is required|activeTab|all_urls/i.test(message)) {
+      throw new Error(
+        'Cannot screenshot this page: the extension has no page access. Open the status ' +
+          'dropdown in the panel header and Grant it on the "Page access" row, then retry. ' +
+          'DOM reads and edits still work meanwhile — prefer `describe` / `getStyles`.',
+      );
+    }
+    throw err;
+  }
+}
+
 // Capture the visible tab as PNG, then crop to the requested (page-CSS-px) rect. `windowId` comes
 // from the requesting content script's tab; falls back to the current window.
 async function captureVisibleTab(req: CaptureRequest, windowId?: number): Promise<string> {
-  const full = await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, {
-    format: 'png',
-  });
+  const full = await grabVisibleTab(windowId);
   return cropDataUrl(full, req.rect, req.devicePixelRatio);
 }
 
@@ -1920,11 +2042,7 @@ async function captureFullPage(
       if (signal?.aborted) throw new Error('aborted');
       await sendScrollTo(tabId, band.scrollY);
       await browseDelay(SCROLL_SETTLE_MS, signal);
-      frames.push(
-        await chrome.tabs.captureVisibleTab(windowId ?? chrome.windows.WINDOW_ID_CURRENT, {
-          format: 'png',
-        }),
-      );
+      frames.push(await grabVisibleTab(windowId));
     }
   } finally {
     // Best-effort restore — never let a failed grab strand the user scrolled to the page bottom.

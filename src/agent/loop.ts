@@ -172,6 +172,17 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
       onStepFinish: (step) => budget.record(step.usage),
     });
 
+    // We consume `result.stream`, never the result promises (`steps`, `finishReason`, …). When a
+    // turn dies before ANY output — a 401 on the very first model call — the SDK settles those
+    // promises with `AI_NoOutputGeneratedError`; with nothing awaiting them that surfaced as a
+    // second, unactionable "Uncaught (in promise)" in the worker console on top of the real error.
+    // Park a no-op handler on each: the outcome the caller gets is unchanged.
+    // `PromiseLike`, not `Promise` — `Promise.resolve` adopts each one so there's a `.catch` to
+    // attach (and the adopting promise itself is handled).
+    void Promise.resolve(result.steps).catch(() => {});
+    void Promise.resolve(result.finishReason).catch(() => {});
+    void Promise.resolve(result.totalUsage).catch(() => {});
+
     for await (const part of result.stream) {
       switch (part.type) {
         case 'text-delta':
@@ -475,8 +486,30 @@ export function toolOutcome(output: unknown): { ok: boolean; error?: string } {
   return { ok: false, ...(typeof error === 'string' ? { error: boundedError(error) } : {}) };
 }
 
-function errorText(err: unknown): string {
+/**
+ * Panel-facing text for a stream/turn error. An auth rejection is re-worded: providers phrase it
+ * from their own side ("Missing Authentication header", "No auth credentials found", "Incorrect
+ * API key provided"), which reads as an extension bug rather than "your key isn't set". Everything
+ * else passes through — the provider's own message is usually the most useful thing available.
+ * Exported for unit coverage.
+ */
+export function errorText(err: unknown): string {
+  if (isAuthError(err)) {
+    return `${AUTH_ERROR_HINT} (provider said: ${err.message})`;
+  }
   if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
   return 'The agent hit an unexpected error.';
+}
+
+const AUTH_ERROR_HINT =
+  'Your provider rejected the request as unauthenticated — check the API key in Settings.';
+
+/** A 401/403 from the model call. Read structurally (`statusCode`) rather than via
+ *  `APICallError.isInstance`, so a provider that surfaces the same thing through a plain Error
+ *  subclass is still recognized. */
+function isAuthError(err: unknown): err is Error {
+  if (!(err instanceof Error)) return false;
+  const status = (err as { statusCode?: unknown }).statusCode;
+  return status === 401 || status === 403;
 }

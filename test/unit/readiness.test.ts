@@ -57,7 +57,9 @@ describe('computeReadiness', () => {
     expect(state).toEqual({
       provider: 'missing',
       model: 'missing',
+      apiKey: 'missing',
       hostPermission: 'needed',
+      pageAccess: 'needed',
       mcp: { connected: 0, total: 0 },
       ready: false,
     });
@@ -77,10 +79,9 @@ describe('computeReadiness', () => {
     expect(state.ready).toBe(false);
   });
 
-  it('is ready with a keyless-but-configured provider (local llama.cpp): provider ok, ready true', async () => {
-    // A keyless local openai-compatible endpoint is a SUPPORTED setup — provider readiness keys off
-    // a valid stored config (baseURL + model), NOT the presence of an apiKey. Requiring a key here
-    // would permanently block Start for llama.cpp & friends.
+  it('is ready with a keyless-but-configured LOCAL provider (llama.cpp): apiKey not-required', async () => {
+    // A keyless local openai-compatible endpoint is a SUPPORTED setup — the apiKey row reads
+    // `not-required` rather than `missing`, so it never blocks Start for llama.cpp & friends.
     installChromeFakes({ grantedOrigins: ['http://localhost/*'] });
     await saveProviderConfig({
       baseURL: 'http://localhost:8080/v1',
@@ -90,7 +91,49 @@ describe('computeReadiness', () => {
     const state = await computeReadiness(mcpSource([]));
     expect(state.provider).toBe('ok');
     expect(state.model).toBe('ok');
+    expect(state.apiKey).toBe('not-required');
     expect(state.ready).toBe(true);
+  });
+
+  it('blocks Start on a keyless HOSTED provider — the setup that used to 401 mid-turn', async () => {
+    // The regression this row exists for: baseURL + model saved, no key. Every check was green,
+    // Start was enabled, and the first model call came back "Missing Authentication header".
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    await saveProviderConfig({
+      baseURL: 'https://openrouter.ai/api/v1',
+      model: 'minimax/hailuo-3',
+      // no apiKey
+    });
+    const state = await computeReadiness(mcpSource([]));
+    expect(state.provider).toBe('ok');
+    expect(state.model).toBe('ok');
+    expect(state.apiKey).toBe('missing');
+    expect(state.ready).toBe(false);
+  });
+
+  it('reports page access separately from the provider host grant, and never gates `ready`', async () => {
+    // `<all_urls>` is what `chrome.tabs.captureVisibleTab` needs (screenshot / responsiveCapture /
+    // inspectVisually). Without it the agent can still read and edit the DOM, so it must not block
+    // Start — but it has to be VISIBLE, or vision silently fails mid-turn with Chrome's own
+    // "Either the '<all_urls>' or 'activeTab' permission is required."
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    await saveProviderConfig({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-v1-secret',
+      model: 'anthropic/claude-3.5-sonnet',
+    });
+    const without = await computeReadiness(mcpSource([]));
+    expect(without.pageAccess).toBe('needed');
+    expect(without.hostPermission).toBe('granted'); // the PROVIDER origin — a different grant
+    expect(without.ready).toBe(true);
+
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*', '<all_urls>'] });
+    await saveProviderConfig({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-v1-secret',
+      model: 'anthropic/claude-3.5-sonnet',
+    });
+    expect((await computeReadiness(mcpSource([]))).pageAccess).toBe('granted');
   });
 
   it('is ready once provider (key+baseURL) and model are both configured', async () => {

@@ -9,6 +9,24 @@ import { type BrowserContext, test as base, chromium, type Page } from '@playwri
 // (ESM repo — `__dirname` is undefined here.) Requires `bun run build` first.
 const pathToExtension = path.resolve(process.cwd(), 'build/chrome-mv3');
 
+/**
+ * Stub the endpoint `validateProvider` actually probes for an AUTH verdict. `/models` is not it on
+ * OpenRouter — that catalogue is public, so probing it there returns 200 for a config with no key
+ * and Settings reported "saved and reachable" for a provider that then 401'd on its first model
+ * call. `src/agent/provider.ts` probes `/key` for openrouter.ai hosts; every spec that configures
+ * an OpenRouter provider has to stub it alongside `/models` or Save now (correctly) reports the
+ * endpoint unreachable.
+ */
+export async function stubAuthProbe(context: BrowserContext, baseURL: string): Promise<void> {
+  await context.route(`${baseURL.replace(/\/+$/, '')}/key`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { label: 'e2e', usage: 0 } }),
+    }),
+  );
+}
+
 export const test = base.extend<{
   context: BrowserContext;
   extensionId: string;

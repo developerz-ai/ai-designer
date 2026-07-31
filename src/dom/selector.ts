@@ -155,6 +155,9 @@ export function pickUnique(el: Element, doc: ParentNode): StableSelector {
  * the resolver a downstream consumer uses to turn any `shadow` selector back into a live element.
  */
 export function resolveShadowSelector(root: ParentNode, value: string): Element | null {
+  // XPath values arrive here too (the overlay highlight and the widget driver both replay stored
+  // selectors through this function), and they are not host-paths — resolve them directly.
+  if (isXPath(value)) return resolveXPath(root, value);
   const segments = value.split(SHADOW_COMBINATOR);
   let scope: ParentNode | null = root;
   let found: Element | null = null;
@@ -319,6 +322,56 @@ function cssPath(el: ElementLike, scope?: ParentNode, anchor = true): string {
     isTarget = false;
   }
   return segments.join(' > ');
+}
+
+/**
+ * Absolute XPath for `el` — `/html/body/div[2]/button[1]`. Unique by construction: every step is a
+ * tag plus its 1-based index among same-tag siblings, so replaying it can only reach one node.
+ *
+ * Deliberately NOT one of {@link resolveSelector}'s candidates, and never {@link pickUnique}'s
+ * answer: every value those emit must be a legal `querySelector` argument (asserted in
+ * test/unit/selector.test.ts) because consumers pass them straight to the DOM, and an XPath is not
+ * one. It travels as its own field on `element-picked` instead — an exact, positional handle for
+ * naming what the user pointed at, alongside the CSS selector everything else uses. Tools accept
+ * it as a target because {@link isXPath} routes it in `queryAll`.
+ *
+ * Pure and element-like: reads only `tagName`/`parentElement`, never queries a document.
+ */
+export function xpathFor(el: ElementLike): string {
+  const steps: string[] = [];
+  let cur: ElementLike | null | undefined = el;
+  while (cur) {
+    const tag = cur.tagName.toLowerCase();
+    const parent: ElementLike | null | undefined = cur.parentElement;
+    // No parent element = the document element; it needs no index (there is exactly one).
+    steps.unshift(parent ? `${tag}[${nthOfType(cur)}]` : tag);
+    cur = parent;
+  }
+  return `/${steps.join('/')}`;
+}
+
+/** Whether a selector VALUE is an XPath rather than CSS. A CSS selector can never begin with `/`,
+ *  so the leading slash is an unambiguous discriminator — no extra field on the wire, and any
+ *  stored selector stays a single string. */
+export function isXPath(value: string): boolean {
+  return value.startsWith('/');
+}
+
+/** Resolve an XPath against `root`'s document, or `null`. Wrapped because `document.evaluate` is
+ *  absent in some hosts (and throws outright on a malformed expression), and a selector that can't
+ *  resolve must degrade to "no match" exactly like a CSS miss. */
+export function resolveXPath(root: ParentNode, value: string): Element | null {
+  const doc = (root as Document).evaluate
+    ? (root as Document)
+    : ((root as Element).ownerDocument ?? null);
+  if (!doc?.evaluate) return null;
+  try {
+    const result = doc.evaluate(value, doc, null, 9 /* FIRST_ORDERED_NODE_TYPE */, null);
+    const node = result.singleNodeValue;
+    return node && node.nodeType === 1 ? (node as Element) : null;
+  } catch {
+    return null;
+  }
 }
 
 // Whether `el`'s id can anchor a css-path within `scope`: it must select `el` and nothing else.

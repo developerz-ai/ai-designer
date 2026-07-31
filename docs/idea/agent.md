@@ -5,13 +5,28 @@ The design agent. A [Vercel AI SDK](https://github.com/vercel/ai) `ToolLoopAgent
 ## Provider — BYOK, any endpoint
 
 - `createProvider(cfg)` builds an AI SDK model from `ProviderConfig = { baseURL, apiKey?, model, label? }` via `createOpenAICompatible` (`src/agent/provider.ts`) — OpenRouter's `https://openrouter.ai/api/v1` is one preset among many; self-hosted/local/other-vendor `/v1` endpoints work the same way.
-- `listModels()` fetches `{baseURL}/models` for the in-panel model picker; `validateProvider()` pings the same endpoint to confirm the key/URL before unlocking Start (see [readiness](#readiness--start), `src/agent/readiness.ts`).
+- `listModels()` fetches `{baseURL}/models` to fill the in-panel model combobox (searchable; a model id the endpoint never lists can be typed or pasted). `validateProvider()` confirms the key/URL before unlocking Start — against an endpoint that actually **requires auth**, not `/models`: OpenRouter serves its catalogue publicly, so probing it there returned 200 for a config with no key at all. OpenRouter is probed at `/key`; a hosted endpoint with no key is refused outright without a request. Loopback / `.local` endpoints (llama.cpp, Ollama) stay keyless by design. See [readiness](#readiness--start), `src/agent/provider.ts`.
 - Key custody: non-secret fields (`baseURL`, `model`, `label`) live plaintext in `chrome.storage.local`; `apiKey` is AES-GCM-encrypted by `src/agent/key-store.ts` under a non-extractable WebCrypto key, stored as `provider:default:key`. Never touches the content script.
 - A legacy OpenRouter-only install migrates automatically on first SW start (`src/agent/config-store.ts`).
 
 ## Readiness / Start
 
-The header shows a status pill ("Setup needed" → "Ready" → "Running…") that expands into a checklist: **Provider**, **Model**, **Host permission**, **MCP backend** (informational, not blocking) — each row deep-links to Settings or the MCP tab to fix it. `computeReadiness()` (`src/agent/readiness.ts`) is `ready = provider ok && model ok`; **MCP is optional** — copy/debug flows work with zero connected servers, falling back to a downloadable report (see [handoff.md](handoff.md)). Start/Stop is a separate toggle, disabled until `ready`.
+The header shows a status pill ("Setup needed" → "Ready" → "Running…") that expands into a checklist. `computeReadiness()` (`src/agent/readiness.ts`) is `ready = provider ok && model ok && apiKey !== missing`.
+
+| Row | Gates Start | Fix |
+|-----|-------------|-----|
+| **Provider** | yes | deep-link → Settings |
+| **Model** | yes | deep-link → Settings |
+| **API key** | yes, unless the endpoint is loopback/`.local` (`not-required`) | deep-link → Settings |
+| **Host permission** (provider origin) | no | deep-link → Settings |
+| **Page access** (`<all_urls>`) | no | **Grant**, in place |
+| **MCP backend** | no | deep-link → MCP |
+
+**API key** is its own row because the two failures differ: a keyless *local* endpoint is a supported setup, while a keyless *hosted* one could only ever 401 — that combination used to pass every check and then die on the first model call with the provider's own `Missing Authentication header`.
+
+**Page access** gates the vision tools only (`screenshot` / `responsiveCapture` / `inspectVisually` all go through `chrome.tabs.captureVisibleTab`, which needs `<all_urls>` or a live `activeTab` grant — and `activeTab` dies on the next navigation). Its Grant button calls `chrome.permissions.request` from the panel, inside the click: the prompt only appears in the gesture's own call stack, so it cannot be an RPC to the service worker, and the permission stays `optional_host_permissions` (declaring `<all_urls>` statically puts Chrome into withheld-host-permissions mode and breaks the provider save).
+
+**MCP is optional** — copy/debug flows work with zero connected servers, falling back to a downloadable report (see [handoff.md](handoff.md)). Start/Stop is a separate toggle, disabled until `ready`; the pre-Start chat surface offers the same action inline, and Settings offers it right after a validated save.
 
 ## Loop — autonomous, multi-step
 

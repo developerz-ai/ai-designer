@@ -21,6 +21,14 @@ export default defineContentScript({
   allFrames: true,
   matchAboutBlank: true,
   main() {
+    // Re-entry guard — same reason as content.ts's: `reinjectAllTabs()` re-runs every declared
+    // content script in already-open tabs on install/update, and a second `serveBridge` in one
+    // frame would answer each bridge request twice. This flag is on the PAGE's own `window` (MAIN
+    // world), so it is deliberately generic-looking and carries no data.
+    const guard = window as typeof window & { __dzDesignerBridgeLoaded?: true };
+    if (guard.__dzDesignerBridgeLoaded) return;
+    guard.__dzDesignerBridgeLoaded = true;
+
     serveBridge({
       'page-facts': () => detectFacts(window, document),
       'chart-data': () => ({ charts: extractCharts(window, document) }),

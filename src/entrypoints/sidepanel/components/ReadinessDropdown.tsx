@@ -7,6 +7,7 @@ import {
   setOverlayEnabled,
 } from '../stores/overlay';
 import {
+  grantPageAccess,
   initReadinessStore,
   error as readinessError,
   loading as readinessLoading,
@@ -50,7 +51,12 @@ interface CheckRow {
   label: string;
   ok: boolean;
   detail?: string;
-  tab: DeepLinkTab;
+  /** Deep-link destination for the row's fix. Omitted when `grant` handles it in place. */
+  tab?: DeepLinkTab;
+  /** Fixed HERE rather than by navigating: `chrome.permissions.request` only prompts inside the
+   *  live user gesture that triggered it, so the page-access row's button must call it directly
+   *  (see stores/readiness.ts `grantPageAccess`). */
+  grant?: boolean;
 }
 
 // Header status pill ("Leo"), the header's readiness dropdown. Collapsed reads
@@ -76,10 +82,11 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
     return ready() ? i18n.t('readiness.label.ready') : i18n.t('readiness.label.setupNeeded');
   });
 
-  const pillIcon = createMemo<IconName>(() => {
-    if (running()) return 'spinner';
-    return ready() ? 'check' : 'warning';
-  });
+  // A live session is a STATE, not a wait: the pill spun a wheel for the entire time the session
+  // was open (it flips to `running` on Start and stays there between turns), which reads as
+  // "busy, hold on" when nothing is pending. Green check, same as Ready — the button next to it
+  // already says Stop, which is what tells you the session is open.
+  const pillIcon = createMemo<IconName>(() => (ready() || running() ? 'check' : 'warning'));
 
   const checks = createMemo<CheckRow[]>(() => {
     const s = state();
@@ -97,11 +104,31 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
         ok: s.model === 'ok',
         tab: 'settings',
       },
+      // A keyless LOCAL endpoint is a supported setup, so the row reports `not-required` as
+      // satisfied rather than pretending a key is there (src/agent/readiness.ts).
+      {
+        key: 'apiKey',
+        label: i18n.t('readiness.check.apiKey'),
+        ok: s.apiKey !== 'missing',
+        detail:
+          s.apiKey === 'not-required' ? i18n.t('readiness.check.apiKeyNotRequired') : undefined,
+        tab: 'settings',
+      },
       {
         key: 'hostPermission',
         label: i18n.t('readiness.check.hostPermission'),
         ok: s.hostPermission === 'granted',
         tab: 'settings',
+      },
+      // Advisory: DOM reads/edits work without it, but every capture does not — so the row exists
+      // and offers a one-click grant instead of letting `screenshot` fail mid-turn with Chrome's
+      // own "Either the '<all_urls>' or 'activeTab' permission is required."
+      {
+        key: 'pageAccess',
+        label: i18n.t('readiness.check.pageAccess'),
+        ok: s.pageAccess === 'granted',
+        detail: s.pageAccess === 'granted' ? undefined : i18n.t('readiness.check.pageAccessDetail'),
+        grant: true,
       },
       {
         key: 'mcp',
@@ -131,11 +158,11 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
       <button
         type="button"
         class="dz-readiness__pill"
-        classList={{ 'is-ready': ready() && !running(), 'is-running': running() }}
+        classList={{ 'is-ready': ready() || running() }}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open()}
       >
-        <Icon name={pillIcon()} size="sm" spin={running()} />
+        <Icon name={pillIcon()} size="sm" />
         <span>{label()}</span>
         <Icon name="chevronDown" size="sm" class="dz-readiness__chevron" />
       </button>
@@ -155,18 +182,41 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
             {(check) => (
               <div class="dz-readiness__row">
                 <Icon name={check.ok ? 'check' : 'warning'} size="sm" />
-                <span class="dz-readiness__rowlabel">{check.label}</span>
-                <Show when={check.detail}>
-                  <small class="dz-readiness__rowdetail">{check.detail}</small>
-                </Show>
+                {/* Label and detail STACK. Side by side they competed for the same row at the
+                    360px panel width, and the detail won on intrinsic width — "Page access"
+                    rendered as "P..", "MCP backend" as "MCP bac...". The label is the part that
+                    identifies the row; it must never be the thing that truncates. */}
+                <span class="dz-readiness__rowtext">
+                  <span class="dz-readiness__rowlabel">{check.label}</span>
+                  <Show when={check.detail}>
+                    <small class="dz-readiness__rowdetail">{check.detail}</small>
+                  </Show>
+                </span>
                 <Show when={!check.ok}>
-                  <button
-                    type="button"
-                    class="dz-readiness__link"
-                    onClick={() => navigate(check.tab)}
+                  <Show
+                    when={check.grant}
+                    fallback={
+                      <button
+                        type="button"
+                        class="dz-readiness__link"
+                        onClick={() => check.tab && navigate(check.tab)}
+                      >
+                        {i18n.t('readiness.fix')} <Icon name="externalLink" size="sm" />
+                      </button>
+                    }
                   >
-                    {i18n.t('readiness.fix')} <Icon name="externalLink" size="sm" />
-                  </button>
+                    {/* No `void` + no navigate: the permission prompt must be raised inside THIS
+                        click's call stack, so the handler stays a direct call. */}
+                    <button
+                      type="button"
+                      class="dz-readiness__link"
+                      onClick={() => {
+                        void grantPageAccess();
+                      }}
+                    >
+                      {i18n.t('readiness.grant')}
+                    </button>
+                  </Show>
                 </Show>
               </div>
             )}

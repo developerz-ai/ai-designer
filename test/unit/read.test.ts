@@ -456,3 +456,73 @@ describe('pageMetrics', () => {
     expect(m.devicePixelRatio).toBeGreaterThan(0);
   });
 });
+
+describe('query is bounded (the token bomb)', () => {
+  // Measured on a real page: `query('a')` on a link-dense front page returned 38,905 characters in
+  // ONE tool result — roughly 10k tokens — because each match is a full css-path
+  // (`#hnmain > tbody:nth-of-type(1) > tr:nth-of-type(1) > …`). Worse, the whole transcript is
+  // resent on every later step, so a single broad query is paid for again and again.
+  function links(n: number): Document {
+    const doc = document.implementation.createHTMLDocument('links');
+    const table = doc.createElement('table');
+    doc.body.appendChild(table);
+    for (let i = 0; i < n; i += 1) {
+      const a = doc.createElement('a');
+      a.setAttribute('href', `/x/${i}`);
+      a.textContent = `link ${i}`;
+      table.appendChild(a);
+    }
+    return doc;
+  }
+
+  it('caps the returned matches and reports the real total', () => {
+    const result = query(links(200), 'a');
+    expect(result.matches.length).toBeLessThanOrEqual(25);
+    expect(result.total).toBe(200);
+  });
+
+  it('explains the page in words, with both remedies', () => {
+    const result = query(links(200), 'a');
+    expect(result.note).toContain('1-25 of 200');
+    // Paging on, or narrowing — a capped result that offers neither leaves the agent guessing.
+    expect(result.note).toContain('offset=25');
+    expect(result.note).toMatch(/narrow the selector/i);
+    expect(result.note).toMatch(/do not describe matches you have not received/i);
+  });
+
+  it('pages through the tail with offset, without ever growing the result', () => {
+    const doc = links(60);
+    const first = query(doc, 'a');
+    const second = query(doc, 'a', { offset: 25 });
+    const last = query(doc, 'a', { offset: 50 });
+
+    expect(first.matches).toHaveLength(25);
+    expect(second.matches).toHaveLength(25);
+    expect(last.matches).toHaveLength(10);
+    expect(second.note).toContain('26-50 of 60');
+    // The final page says it is final rather than dangling an offset that returns nothing.
+    expect(last.note).toContain('end of list');
+    expect(last.note).not.toContain('offset=');
+  });
+
+  it('honours a smaller limit for a cheap peek, and never exceeds the cap', () => {
+    const doc = links(60);
+    expect(query(doc, 'a', { limit: 3 }).matches).toHaveLength(3);
+    expect(query(doc, 'a', { limit: 999 }).matches).toHaveLength(25);
+  });
+
+  it('stays silent — no note, no total — when nothing was withheld', () => {
+    const result = query(links(3), 'a');
+    expect(result.matches).toHaveLength(3);
+    expect(result.total).toBeUndefined();
+    expect(result.note).toBeUndefined();
+  });
+
+  it('keeps one broad query well under the size that caused the blow-up', () => {
+    // 200, not 500: `pickUnique` verifies each candidate with a real querySelectorAll, so the
+    // fixture itself is the slow part under jsdom. The cap is what this asserts, and the cap does
+    // not care how many matched.
+    const bytes = JSON.stringify(query(links(200), 'a')).length;
+    expect(bytes).toBeLessThan(12_000); // was ~39,000 uncapped on a real page
+  });
+});

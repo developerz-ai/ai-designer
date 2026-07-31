@@ -6,7 +6,7 @@ Where work lands — **optional**. The MCP management UI lets the user connect d
 
 | Backend | URL | Use |
 |---------|-----|-----|
-| [tesote ai-dev](https://ai-dev.miamibeachstart.com/mcp) | `…/mcp` | Primary. Creates coding tasks → PRs. `task`, `kb`, `pr` tools. |
+| [developerz.ai](https://developerz.ai/mcp) | `…/mcp` | Primary. Creates coding tasks → PRs. `task`, `kb`, `pr` tools. |
 | developerz.ai | (per install) | Maintainer agent; handoff as an issue/PR task. |
 | [GitHub MCP](https://github.com/github/github-mcp-server) | `https://api.githubcopilot.com/mcp` | Direct repo/PR ops when no orchestrator is used. |
 | Custom | any HTTP-streamable MCP | User-added server URL. |

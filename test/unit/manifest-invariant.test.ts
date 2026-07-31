@@ -48,6 +48,7 @@ describe('manifest least-privilege invariants', () => {
       'activeTab',
       'debugger',
       'identity',
+      'scripting',
       'sidePanel',
       'storage',
       'tabs',
@@ -56,8 +57,21 @@ describe('manifest least-privilege invariants', () => {
     expect([...(manifest.permissions ?? [])].sort()).toStrictEqual([...expected].sort());
   });
 
-  it('does not request scripting (removed as unused)', () => {
-    expect(manifest.permissions).not.toContain('scripting');
+  it('requests scripting ONLY to re-inject the manifest’s own content scripts', () => {
+    // Re-added deliberately after being dropped as unused. A tab that was already open when the
+    // extension is installed/updated/reloaded has no content script until it reloads, so every
+    // DOM tool fails with "Receiving end does not exist"; background.ts's `reinjectAllTabs`
+    // repairs that on `onInstalled`. The guard is that it stays limited to that: injecting
+    // FILES the manifest already declares, never a string of code (no remote code — CLAUDE.md).
+    expect(manifest.permissions).toContain('scripting');
+    const background = readFileSync(
+      resolve(__dirname, '../../src/entrypoints/background.ts'),
+      'utf8',
+    );
+    expect(background).toContain('reinjectAllTabs');
+    // `func:`/`args:` would mean injecting code we composed at runtime rather than shipped files.
+    const injectCall = background.slice(background.indexOf('chrome.scripting'));
+    expect(injectCall.slice(0, 600)).not.toMatch(/\bfunc\s*:/);
   });
 
   it('keeps activeTab as the static host-access grant', () => {

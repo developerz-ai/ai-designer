@@ -1,5 +1,5 @@
 import { getStyles } from '@/dom/read';
-import { pickUnique, resolveSelector } from '@/dom/selector';
+import { pickUnique, resolveSelector, xpathFor } from '@/dom/selector';
 import type { ContentToSw, Rect, StableSelector } from '@/shared/messages';
 
 // Cursor-style element picker overlay — the content script's user-driven "point at the thing"
@@ -19,8 +19,57 @@ export interface Picker {
   /** Deactivate + clear the overlay. Idempotent. Emits `picker-state`. */
   stop(): void;
   isActive(): boolean;
+  /**
+   * Arm modifier-click quick-pick: {@link QUICK_PICK_MODIFIER}+click pins the clicked element as
+   * chat context WITHOUT arming the full picker first, so "make THIS bigger" needs no mode switch
+   * — you point at the thing while you are already looking at it. Emits the same `element-picked`
+   * the armed picker does, so the panel's context chip needs no special case. Idempotent.
+   */
+  enableQuickPick(): void;
+  /** Disarm modifier-click quick-pick. Idempotent. */
+  disableQuickPick(): void;
   /** Tear the shadow host out of the DOM (stops first). */
   destroy(): void;
+}
+
+/**
+ * The quick-pick chord: **Alt anywhere, or Ctrl outside a link**.
+ *
+ * Alt is the universal one — unbound in the browser, rare in page handlers, safe on every element
+ * on every platform. Ctrl is accepted too because it is the chord people reach for (Cursor's
+ * visual editor uses it), but it cannot be taken unconditionally: Ctrl+click is "open in a new
+ * tab" on every link on the web, and on macOS it is a right-click synonym. So Ctrl picks
+ * everything EXCEPT a link — where the browser's meaning wins and Alt is still available — and
+ * never on macOS, where the whole chord belongs to the context menu.
+ *
+ * Both modifiers HIGHLIGHT while held; only the click is gated, since highlighting takes nothing
+ * away from anyone.
+ */
+export function isQuickPickChord(
+  e: { altKey: boolean; ctrlKey: boolean },
+  target?: Element | null,
+) {
+  if (e.altKey) return true;
+  if (!e.ctrlKey || isApplePlatform()) return false;
+  // A link (or anything inside one) keeps Ctrl+click = open in a new tab.
+  return !target?.closest?.('a[href]');
+}
+
+/** Whether Ctrl+click means "right-click" here (macOS and iPadOS). Read from the UA rather than
+ *  the deprecated `navigator.platform` where available, and defaulted to `false` so a headless or
+ *  exotic host keeps the more useful behaviour. */
+function isApplePlatform(): boolean {
+  const nav = globalThis.navigator as
+    | (Navigator & { userAgentData?: { platform?: string } })
+    | undefined;
+  const platform = nav?.userAgentData?.platform ?? nav?.platform ?? '';
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+/** Whether a modifier that ARMS the hover highlight is currently down. Highlighting is free —
+ *  it intercepts nothing — so both chords qualify regardless of platform or target. */
+export function isQuickPickHoverChord(e: { altKey: boolean; ctrlKey: boolean }): boolean {
+  return e.altKey || e.ctrlKey;
 }
 
 /** Stable id + attribute on the shadow host — the recorder ignores `data-dz-designer` nodes. */
@@ -33,6 +82,8 @@ const HOST_STYLE =
   'all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;';
 const ACCENT = '#6366f1'; // indigo — hover outline
 const SELECTED_COLOR = '#10b981'; // emerald — committed multi-selection
+// Slightly longer than the 620ms fade so the box is removed after it has finished animating.
+const FLASH_MS = 700;
 const FRAGILE_COLOR = '#f59e0b'; // amber — fragile-selector badge
 
 const CSS = `
@@ -46,6 +97,28 @@ const CSS = `
   will-change: transform, width, height;
 }
 .dz-box { border-color: ${SELECTED_COLOR}; background: ${SELECTED_COLOR}1f; }
+/* Quick-pick confirmation: the committed-selection box, faded out. Without it an Alt+click gave
+   no on-page feedback at all — the only sign it registered was a chip in a panel the user was
+   not looking at. Animation-only, pointer-events: none, removed on finish. */
+.dz-flash {
+  position: fixed; top: 0; left: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid ${SELECTED_COLOR};
+  background: ${SELECTED_COLOR}2e;
+  border-radius: 2px;
+  animation: dz-flash 620ms ease-out forwards;
+}
+@keyframes dz-flash {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Still confirm, just without the fade — hold it briefly, then remove (the JS timer owns
+     teardown either way). */
+  .dz-flash { animation: none; opacity: 1; }
+}
 .dz-pill {
   position: fixed; top: 0; left: 0;
   pointer-events: none;
@@ -90,6 +163,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
   const win = doc.defaultView;
   let ui: Ui | null = null;
   let active = false;
+  let quickPick = false;
   let hovered: Element | null = null;
   const selected = new Set<Element>();
 
@@ -203,6 +277,74 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     if (ui) ui.selectedLayer.textContent = '';
   }
 
+  /** Briefly outline `target` to confirm a quick pick landed. Mounts the shadow host if needed —
+   *  the armed picker is not running, so nothing else has — and tears the box out again on a
+   *  timer, so the page is left exactly as it was found. */
+  function flash(target: Element): void {
+    const layer = ensureUi().selectedLayer;
+    const box = mkEl('div', 'dz-flash');
+    place(box, rectOf(target));
+    layer.appendChild(box);
+    win?.setTimeout(() => box.remove(), FLASH_MS);
+  }
+
+  // --- quick-pick hover: highlight what a modifier-click WOULD take ---------
+  // Holding the modifier turns the page into a target picker for as long as it is down: the
+  // element under the pointer gets the same outline + selector pill the armed picker draws. This
+  // is the half that makes quick-pick usable — without it you click blind and only find out what
+  // you hit afterwards, which is exactly what "how does the agent know what I mean?" is asking.
+
+  let hoverArmed = false;
+  // Last known pointer position, tracked passively while quick-pick is enabled. Needed because
+  // `mouseover` only fires when the pointer MOVES: hold the modifier without moving the mouse and
+  // there is no event to hang the first outline on, so the feature looked dead until you jiggled
+  // the mouse. Two numbers on a passive listener, and they let `armHover` resolve what is already
+  // under the cursor.
+  let pointerX = 0;
+  let pointerY = 0;
+
+  const onPointerTrack = (e: MouseEvent): void => {
+    pointerX = e.clientX;
+    pointerY = e.clientY;
+  };
+
+  function armHover(): void {
+    if (hoverArmed || active) return;
+    hoverArmed = true;
+    ensureUi();
+    doc.addEventListener('mouseover', onOver, true);
+    doc.addEventListener('scroll', onReflow, true);
+    win?.addEventListener('resize', onReflow);
+    // Outline whatever is under the cursor RIGHT NOW, without waiting for the next move.
+    const under = (doc as Document).elementFromPoint?.(pointerX, pointerY) ?? null;
+    if (under && !isOwn(under)) {
+      hovered = under;
+      renderHover(under);
+    }
+  }
+
+  function disarmHover(): void {
+    if (!hoverArmed) return;
+    hoverArmed = false;
+    doc.removeEventListener('mouseover', onOver, true);
+    doc.removeEventListener('scroll', onReflow, true);
+    win?.removeEventListener('resize', onReflow);
+    hovered = null;
+    hideHover();
+  }
+
+  const onModifierDown = (e: KeyboardEvent): void => {
+    if (isQuickPickHoverChord(e)) armHover();
+  };
+
+  const onModifierUp = (e: KeyboardEvent): void => {
+    if (!isQuickPickHoverChord(e)) disarmHover();
+  };
+
+  // Alt+Tab / clicking away leaves the keyup unheard, which would strand the outline on the page
+  // with no way to clear it. Any focus loss disarms.
+  const onWindowBlur = (): void => disarmHover();
+
   function pickSingle(target: Element): void {
     const hadMulti = selected.size > 0;
     clearSelected();
@@ -210,6 +352,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     emit({
       type: 'element-picked',
       candidates: selectorsFor(target),
+      xpath: xpathFor(target),
       rect: rectOf(target),
       styles: getStyles(target).styles,
     });
@@ -338,11 +481,74 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     emit({ type: 'picker-state', active: false });
   }
 
+  // --- modifier-click quick pick ------------------------------------------
+  // Always listening once enabled (the armed picker is not involved), so the cost when the
+  // modifier is not held is one capture-phase comparison per click.
+
+  const onQuickPick = (e: MouseEvent): void => {
+    // The armed picker owns every click while it is up — let its handler run instead of both.
+    if (active || e.button !== 0) return;
+    const t = targetOf(e);
+    if (!t || isOwn(t) || !isQuickPickChord(e, t)) return;
+    // Same read-only contract as the armed picker: the pick gesture must not reach the page.
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    pickSingle(t);
+    disarmHover();
+    flash(t);
+  };
+
+  // A modifier-click still starts a native drag on an HTML5 drag-and-drop board, and `mousedown`
+  // routes navigation on some apps — neither is a recorder event, so nothing could undo it.
+  // Swallow the rest of the gesture too, but ONLY when the modifier is held (unmodified clicks
+  // must pass through untouched — this listener is live on every page).
+  const onQuickPickSwallow = (e: MouseEvent): void => {
+    if (active || e.button !== 0) return;
+    const t = targetOf(e);
+    if (!t || isOwn(t) || !isQuickPickChord(e, t)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+
+  const QUICK_SWALLOWED = ['pointerdown', 'pointerup', 'mousedown', 'mouseup'] as const;
+
+  function enableQuickPick(): void {
+    if (quickPick) return;
+    quickPick = true;
+    doc.addEventListener('click', onQuickPick, true);
+    for (const type of QUICK_SWALLOWED) {
+      doc.addEventListener(type, onQuickPickSwallow as EventListener, true);
+    }
+    doc.addEventListener('keydown', onModifierDown, true);
+    doc.addEventListener('keyup', onModifierUp, true);
+    doc.addEventListener('pointermove', onPointerTrack as EventListener, {
+      capture: true,
+      passive: true,
+    });
+    win?.addEventListener('blur', onWindowBlur);
+  }
+
+  function disableQuickPick(): void {
+    if (!quickPick) return;
+    quickPick = false;
+    doc.removeEventListener('click', onQuickPick, true);
+    for (const type of QUICK_SWALLOWED) {
+      doc.removeEventListener(type, onQuickPickSwallow as EventListener, true);
+    }
+    doc.removeEventListener('keydown', onModifierDown, true);
+    doc.removeEventListener('keyup', onModifierUp, true);
+    doc.removeEventListener('pointermove', onPointerTrack as EventListener, true);
+    win?.removeEventListener('blur', onWindowBlur);
+    disarmHover();
+  }
+
   function destroy(): void {
     stop();
+    disableQuickPick();
     ui?.host.remove();
     ui = null;
   }
 
-  return { start, stop, isActive: () => active, destroy };
+  return { start, stop, isActive: () => active, enableQuickPick, disableQuickPick, destroy };
 }

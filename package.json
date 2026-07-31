@@ -41,6 +41,7 @@
     "test:changed": "vitest related --run $(git diff --name-only $(git merge-base HEAD origin/main) -- 'src/**/*.ts' 'src/**/*.tsx' | tr '\\n' ' ')",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "debug:live": "bun scripts/debug-live.ts",
     "verify": "bash scripts/verify.sh",
     "check": "bash scripts/verify.sh --check",
     "gate": "bash scripts/verify.sh --gate",

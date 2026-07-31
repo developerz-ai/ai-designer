@@ -18,6 +18,40 @@
 
 export type HostAccess = { ok: boolean; reason?: HostAccessReason; error?: string };
 
+/** The manifest's one `optional_host_permissions` entry — broad PAGE access, distinct from the
+ *  provider-origin grant above. `chrome.tabs.captureVisibleTab` (the whole vision loop:
+ *  `screenshot`, `responsiveCapture`, `inspectVisually`) needs either this or a live `activeTab`
+ *  grant, and `activeTab` only survives until the tab navigates — so without this the agent's
+ *  screenshots start failing the moment the user browses anywhere. */
+export const ALL_URLS = '<all_urls>';
+
+/** Whether broad page access is currently granted. Safe in the SW and in extension pages. */
+export function hasPageAccess(): Promise<boolean> {
+  return chrome.permissions.contains({ origins: [ALL_URLS] });
+}
+
+/**
+ * Request broad page access. MUST be reached synchronously inside a real user gesture — see the
+ * note above; from the service worker it throws rather than prompting.
+ *
+ * `chrome.permissions.request` is called FIRST, with no `contains()` check in front of it: an
+ * `await` before it ends the gesture's call stack and Chrome then refuses to prompt. Already
+ * holding the permission is not a problem — `request` resolves true immediately and shows no
+ * prompt — so the check would only have bought a redundant round trip at the cost of the prompt
+ * working at all.
+ *
+ * Callers: the readiness dropdown's Grant button, and Start (`stores/session.ts`), which asks once
+ * at the top of a session rather than letting the first `screenshot` of the first turn fail.
+ */
+export async function requestPageAccess(): Promise<HostAccess> {
+  try {
+    const granted = await chrome.permissions.request({ origins: [ALL_URLS] });
+    return granted ? { ok: true } : { ok: false, reason: 'denied', error: 'Page access denied.' };
+  } catch (err) {
+    return { ok: false, error: `Could not request page access: ${String(err)}` };
+  }
+}
+
 /** Why an `ensureHostAccess` failure can be classified. `'denied'` = the user dismissed the
  *  host-permission prompt; the other failure branches (invalid URL, a thrown `request`) stay
  *  unclassified and carry a detailed `error` instead, so a caller can render a localized

@@ -4,7 +4,7 @@ Chrome extension. **Talk to an agent, redesign the live page in real time, then 
 
 Pitch: **Design in the page. Ship the real code.**
 
-You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([tesote ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai) that makes the real code change and opens a PR.
+You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR.
 
 Two surfaces, one extension: a **chat** (design conversation) and **MCP management** (where the work actually lands).
 

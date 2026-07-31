@@ -65,8 +65,7 @@ export default defineConfig({
       default_title: '__MSG_actionTitle__',
     },
     // Least-privilege permissions — each retained entry gates a concrete, in-use
-    // `chrome.*` surface. `scripting` was removed (zero `chrome.scripting.*` refs
-    // in src/; content script is auto-injected via the manifest, not programmatic).
+    // `chrome.*` surface.
     //   sidePanel      — chrome.sidePanel.*: the durable side-panel UI surface.
     //   storage        — chrome.storage.{session,local}: agent/mcp/changeset
     //                    stores persist SW state across ephemeral restarts.
@@ -80,6 +79,15 @@ export default defineConfig({
     //                    so the agent can target a specific iframe. SW-only.
     //   debugger       — chrome.debugger.* (attach/sendCommand/detach): CDP
     //                    Emulation.setDeviceMetricsOverride for true device emulation. SW-only.
+    //   scripting      — chrome.scripting.executeScript: re-inject the declared content
+    //                    scripts into tabs that were ALREADY OPEN when the extension was
+    //                    installed/updated/reloaded. Without it those tabs carry no content
+    //                    script until the user happens to reload them, and every DOM tool
+    //                    fails with "Receiving end does not exist" — which reads as a broken
+    //                    extension. See background.ts `reinjectAllTabs`. SW-only; it injects
+    //                    only what the manifest already declares, never remote code.
+    // NOTE: keep this list comment-free — test/unit/manifest-invariant.test.ts parses the
+    // array as text, and an inline comment lands in the parsed permission set.
     permissions: [
       'sidePanel',
       'storage',
@@ -88,11 +96,24 @@ export default defineConfig({
       'identity',
       'webNavigation',
       'debugger',
+      'scripting',
     ],
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
     host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],
-    // Least privilege: the user grants broad page access only when they want it.
+    //
+    // `<all_urls>` stays OPTIONAL, not static, and that is load-bearing. Listing it under
+    // `host_permissions` puts the extension into Chrome's "broad host access" class, where Chrome
+    // WITHHOLDS host permissions by default — `chrome.permissions.contains` then reads false even
+    // for the statically-declared `https://openrouter.ai/*`, so saving a provider starts prompting
+    // for a grant it already had (verified against a loaded build: every settings E2E hangs on a
+    // never-settling `permissions.request`).
+    //
+    // It still has to be GRANTABLE in one click, because `chrome.tabs.captureVisibleTab` — the
+    // whole vision loop (`screenshot`, `responsiveCapture`, `inspectVisually`) — needs either it or
+    // a live `activeTab` grant, and `activeTab` is revoked the moment the tab navigates. That is
+    // what the readiness panel's "Page access" row is: it reports the real state and its Grant
+    // button raises the prompt from inside the click (src/entrypoints/sidepanel/stores/readiness.ts).
     optional_host_permissions: ['<all_urls>'],
     icons: {
       '16': '/icon/icon-16.png',

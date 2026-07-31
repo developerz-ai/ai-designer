@@ -3,9 +3,9 @@ import { i18n } from '#i18n';
 import { ChangesetPreview } from './components/ChangesetPreview';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
-import { Icon } from './components/Icon';
 import { McpPanel } from './components/McpPanel';
 import { Onboarding } from './components/Onboarding';
+import { PreStart } from './components/PreStart';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -62,14 +62,7 @@ export function App() {
           <Match when={tab() === 'chat'}>
             <Show
               when={sessionStarted()}
-              fallback={
-                <div class="dz-app__empty">
-                  <Icon name="agent" size="lg" class="dz-icon--fixed dz-app__empty-icon" />
-                  {/* The copy is one text node in one element on purpose:
-                      test/e2e/readiness.spec.ts matches it verbatim with getByText. */}
-                  <p class="dz-app__empty-text">{i18n.t('app.chat.empty')}</p>
-                </div>
-              }
+              fallback={<PreStart onOpenSettings={() => setTab('settings')} />}
             >
               <ChatPanel />
             </Show>
@@ -84,7 +77,7 @@ export function App() {
             <HistoryPanel />
           </Match>
           <Match when={tab() === 'settings'}>
-            <SettingsPanel />
+            <SettingsPanel onStart={() => setTab('chat')} />
           </Match>
         </Switch>
       </main>

@@ -6,7 +6,7 @@
 
 > **Design in the live page. Ship the real code.**
 
-Chrome extension. Open any page — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, click **Ship** and the agent hands the change off over **MCP** to a dev-agent backend ([Tesote ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai) that makes the real code change and opens a PR.
+Chrome extension. Open any page — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, click **Ship** and the agent hands the change off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR.
 
 Not a page builder. Not a Figma clone. It edits **your codebase**, and the only durable output is a reviewable PR.
 

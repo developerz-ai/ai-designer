@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type ElementLike,
+  isXPath,
   pickUnique,
   resolveSelector,
   resolveShadowSelector,
+  resolveXPath,
   SHADOW_COMBINATOR,
+  xpathFor,
 } from '@/dom/selector';
 
 function el(over: Partial<ElementLike> & { attrs?: Record<string, string> }): ElementLike {
@@ -395,5 +398,57 @@ describe('shadow-aware selectors', () => {
     expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}button`)).toBe(null);
     expect(resolveShadowSelector(document, `#nope${SHADOW_COMBINATOR}button`)).toBe(null);
     expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}`)).toBe(null);
+  });
+});
+
+describe('xpath strategy', () => {
+  // Added because `pickUnique`'s last-resort used to be a BARE TAG (`div`) — and `queryOne` takes
+  // hits[0], so a fallback like that silently pointed the next mutation at the first div on the
+  // page. An XPath is unique by construction, so the worst case now still names the right element.
+  it('builds an absolute, index-qualified path to the document element', () => {
+    document.body.innerHTML = '<section><p>one</p><p id="target">two</p></section>';
+    const el = document.getElementById('target');
+    if (!el) throw new Error('fixture missing');
+    expect(xpathFor(el)).toBe('/html/body[1]/section[1]/p[2]');
+  });
+
+  it('indexes only among SAME-TAG siblings, like nth-of-type', () => {
+    document.body.innerHTML = '<div><span>a</span><b>b</b><span id="s2">c</span></div>';
+    const el = document.getElementById('s2');
+    if (!el) throw new Error('fixture missing');
+    // Second <span>, not the third child.
+    expect(xpathFor(el)).toBe('/html/body[1]/div[1]/span[2]');
+  });
+
+  it('round-trips: every path it builds resolves back to exactly that element', () => {
+    document.body.innerHTML =
+      '<main><ul><li>a</li><li><a href="#">link</a></li></ul><ul><li>b</li></ul></main>';
+    for (const el of Array.from(document.querySelectorAll('*'))) {
+      expect(resolveXPath(document, xpathFor(el))).toBe(el);
+    }
+  });
+
+  it('isXPath discriminates on the leading slash a CSS selector can never have', () => {
+    expect(isXPath('/html/body[1]/div[1]')).toBe(true);
+    expect(isXPath('#cta')).toBe(false);
+    expect(isXPath('div > span')).toBe(false);
+    expect(isXPath('.a >>> .b')).toBe(false);
+  });
+
+  it('resolveXPath returns null for a miss or a malformed expression rather than throwing', () => {
+    document.body.innerHTML = '<div></div>';
+    expect(resolveXPath(document, '/html/body[1]/section[9]')).toBeNull();
+    expect(resolveXPath(document, '/html/body[1]/div[')).toBeNull();
+  });
+
+  it('is NOT a selector candidate — those must all stay querySelector-valid', () => {
+    // The constraint that makes this a separate field rather than a seventh candidate: consumers
+    // pass candidate values straight to `querySelector`, and an XPath throws there. It reaches the
+    // agent on `element-picked.xpath` instead.
+    document.body.innerHTML = '<button id="cta" data-testid="buy">Buy</button>';
+    const el = document.getElementById('cta');
+    if (!el) throw new Error('fixture missing');
+    expect(resolveSelector(el).map((c) => c.strategy)).not.toContain('xpath');
+    expect(pickUnique(el, document).strategy).not.toBe('xpath');
   });
 });

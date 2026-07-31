@@ -20,14 +20,14 @@ Four tabs (`Tab = 'chat' | 'mcp' | 'history' | 'settings'`) — there is no stan
 
 ## Readiness header
 
-Always visible above the tabs: a status pill (Setup needed → Ready → Running…) that expands into a checklist (Provider, Model, Host permission, MCP backend — each with a "Fix →" link) plus a Start/Stop toggle and the on-page-overlay switch. See [agent.md](agent.md#readiness--start).
+Always visible above the tabs: a status pill (Setup needed → Ready → Running…) that expands into a checklist (Provider, Model, API key, Host permission, Page access, MCP backend — a "Fix →" deep-link each, except Page access, which grants in place) plus a Start/Stop toggle and the on-page-overlay switch. The pill is green with no spinner while a session is open: an open session is a state, not a wait — the Stop button next to it is what says the session is live. See [agent.md](agent.md#readiness--start).
 
 ## Overlay
 
 Two related, visually consistent surfaces, both drawn in a shadow-DOM host so page CSS can't leak either direction:
 
 - **Element picker** — hover outline + floating pill (tag · dims · resolved selector · fragility badge). Click to focus; shift-click for multi-select.
-- **Agent-decision overlay** (opt-in, off by default) — while a turn runs, mirrors each tool-call step live on the page: a compact card with the current step, a short scrolling log, and a highlight box on the element being acted on. `pointer-events: none` — never blocks the page. Reuses the picker's highlight so the on-page chrome reads as one Cursor-style system.
+- **Agent-decision overlay** (opt-in, off by default) — while a turn runs, mirrors each tool-call step live on the page: a compact card with the current step, a short scrolling log, and a highlight box on the element being acted on. `pointer-events: none` — never blocks the page. Reuses the picker's highlight so the on-page chrome reads as one Cursor-style system. Top frame only, addressed at `frameId: 0`, and **ACKed**: the content script is manifest-injected at `document_idle`, so a tab open since before the extension was installed or last reloaded has none — the toggle push is then unanswered and the panel says "reload the page" instead of showing a confident On over a page that will never paint it.
 
 ## Component map (SRP, selected)
 

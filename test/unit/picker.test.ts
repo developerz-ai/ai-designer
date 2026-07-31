@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPicker, PICKER_HOST_ID, type Picker } from '@/dom/picker';
+import {
+  createPicker,
+  isQuickPickChord,
+  isQuickPickHoverChord,
+  PICKER_HOST_ID,
+  type Picker,
+} from '@/dom/picker';
 import type { ContentToSw } from '@/shared/messages';
 
 // Picker unit tests (jsdom). The picker is pure DOM + an injected `emit`, so we drive it with
@@ -334,5 +340,261 @@ describe('shadow DOM targets', () => {
     expect(picked?.type === 'element-picked' && picked.candidates[0]?.value).toBe(
       '#host >>> [data-testid="buy"]',
     );
+  });
+});
+
+describe('quick pick (Alt+click, no mode to enter)', () => {
+  // The point of the feature: answer "what are you referring to?" without a mode switch. You are
+  // already looking at the element, so you point at it — and the panel grounds the next
+  // instruction in its stable selector instead of the model guessing from prose.
+  it('Alt+click pins the clicked element and emits the SAME element-picked as the armed picker', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+
+    const event = click(byId('cta'), { altKey: true });
+
+    const picked = byType(msgs, 'element-picked');
+    expect(picked).toHaveLength(1);
+    expect(picked[0]?.type === 'element-picked' && picked[0].candidates[0]?.value).toBe('#cta');
+    // Read-only contract: the gesture must never reach the page (no nav, no page handler).
+    expect(event.defaultPrevented).toBe(true);
+    // And it does NOT arm the full picker — no hover tracking, no picker-state. (The shadow host
+    // IS mounted: the confirmation flash lives in it.)
+    expect(picker.isActive()).toBe(false);
+    expect(byType(msgs, 'picker-state')).toHaveLength(0);
+  });
+
+  it('leaves an UNMODIFIED click completely alone — it is live on every page', () => {
+    document.body.innerHTML = '<a id="link" href="#x">Go</a>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+
+    const event = click(byId('link'));
+
+    expect(byType(msgs, 'element-picked')).toHaveLength(0);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('swallows the modifier gesture’s mousedown too — a drag board must not receive it', () => {
+    document.body.innerHTML = '<div id="card" draggable="true">Card</div>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+
+    const down = new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      altKey: true,
+    });
+    byId('card').dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+
+    // …but an unmodified mousedown still passes through.
+    const plain = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    byId('card').dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+  });
+
+  it('defers to the ARMED picker: while it is up, its own handler owns the click', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+    picker.start();
+
+    click(byId('cta'), { altKey: true });
+
+    // Exactly one pick, not two — the quick-pick handler stands down while `active`.
+    expect(byType(msgs, 'element-picked')).toHaveLength(1);
+  });
+
+  it('disableQuickPick and destroy both release the listeners', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+    picker.disableQuickPick();
+
+    const event = click(byId('cta'), { altKey: true });
+    expect(byType(msgs, 'element-picked')).toHaveLength(0);
+    expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe('quick pick hover (see the target before you take it)', () => {
+  const keydown = (opts: KeyboardEventInit): void => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...opts }));
+  };
+  const keyup = (opts: KeyboardEventInit): void => {
+    document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, ...opts }));
+  };
+
+  it('holding the modifier mounts the overlay and outlines the element under the pointer', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+
+    expect(document.getElementById(PICKER_HOST_ID)).toBeNull(); // nothing until it is held
+    keydown({ key: 'Alt', altKey: true });
+    over(byId('cta'));
+
+    const hover = shadow().querySelector('.dz-hover');
+    expect(hover).not.toBeNull();
+    expect(hover?.classList.contains('dz-hidden')).toBe(false);
+    // The pill names the resolved selector, so you can see WHAT you are about to pin.
+    expect(shadow().querySelector('.dz-pill')?.classList.contains('dz-hidden')).toBe(false);
+  });
+
+  it('releasing the modifier clears the outline', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+    keydown({ key: 'Alt', altKey: true });
+    over(byId('cta'));
+    keyup({ key: 'Alt', altKey: false });
+
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
+  });
+
+  it('losing window focus disarms — an Alt+Tab must not strand the outline on the page', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+    keydown({ key: 'Alt', altKey: true });
+    over(byId('cta'));
+
+    window.dispatchEvent(new Event('blur'));
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
+  });
+
+  it('does not track hover without the modifier held', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+    over(byId('cta'));
+    expect(document.getElementById(PICKER_HOST_ID)).toBeNull();
+  });
+
+  it('the pick flashes a confirmation box and drops the hover outline', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+    keydown({ key: 'Alt', altKey: true });
+    over(byId('cta'));
+    click(byId('cta'), { altKey: true });
+
+    expect(shadow().querySelectorAll('.dz-flash')).toHaveLength(1);
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
+  });
+});
+
+describe('quick pick chord (Alt anywhere, Ctrl outside a link)', () => {
+  it('Ctrl+click picks an ordinary element', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+
+    const event = click(byId('cta'), { ctrlKey: true });
+
+    expect(byType(msgs, 'element-picked')).toHaveLength(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('Ctrl+click on a LINK is left to the browser — that chord is open-in-a-new-tab', () => {
+    document.body.innerHTML = '<a id="link" href="/x"><span id="inner">Go</span></a>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+
+    const onLink = click(byId('link'), { ctrlKey: true });
+    // …including a click on something nested INSIDE the link.
+    const onInner = click(byId('inner'), { ctrlKey: true });
+
+    expect(byType(msgs, 'element-picked')).toHaveLength(0);
+    expect(onLink.defaultPrevented).toBe(false);
+    expect(onInner.defaultPrevented).toBe(false);
+  });
+
+  it('Alt+click still works on a link, where Ctrl deliberately does not', () => {
+    document.body.innerHTML = '<a id="link" href="/x">Go</a>';
+    const { picker, msgs } = spawn();
+    picker.enableQuickPick();
+
+    const event = click(byId('link'), { altKey: true });
+
+    expect(byType(msgs, 'element-picked')).toHaveLength(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('isQuickPickChord: the pure rule, independent of the DOM', () => {
+    const link = document.createElement('a');
+    link.setAttribute('href', '/x');
+    expect(isQuickPickChord({ altKey: true, ctrlKey: false })).toBe(true);
+    expect(isQuickPickChord({ altKey: true, ctrlKey: false }, link)).toBe(true);
+    expect(isQuickPickChord({ altKey: false, ctrlKey: true })).toBe(true);
+    expect(isQuickPickChord({ altKey: false, ctrlKey: true }, link)).toBe(false);
+    expect(isQuickPickChord({ altKey: false, ctrlKey: false })).toBe(false);
+  });
+
+  it('either modifier arms the hover highlight — highlighting takes nothing away', () => {
+    expect(isQuickPickHoverChord({ altKey: true, ctrlKey: false })).toBe(true);
+    expect(isQuickPickHoverChord({ altKey: false, ctrlKey: true })).toBe(true);
+    expect(isQuickPickHoverChord({ altKey: false, ctrlKey: false })).toBe(false);
+  });
+
+  it('holding Ctrl highlights, exactly like Alt', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ctrlKey: true }));
+    over(byId('cta'));
+
+    expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(false);
+  });
+});
+
+describe('content-script takeover (why the chord looked dead after an update)', () => {
+  // Reloading an unpacked extension leaves the OLD content script in every open tab with its
+  // `chrome.*` bridge invalidated — a corpse that still holds capture-phase listeners and still
+  // calls preventDefault(). The repair (`reinjectAllTabs`) only works if the new instance can
+  // evict the old one; a boolean "already loaded" guard let the corpse win and the tab was left
+  // with no working tools and a chord that did nothing.
+  //
+  // `createPicker` is the piece that owns those listeners, so this asserts the eviction contract
+  // the content entrypoint relies on: destroying an instance must fully release the document.
+  it('a destroyed picker stops intercepting — the replacement gets the clicks', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const first = spawn();
+    first.picker.enableQuickPick();
+    // It is live: the chord is swallowed and pinned.
+    expect(click(byId('cta'), { altKey: true }).defaultPrevented).toBe(true);
+    expect(byType(first.msgs, 'element-picked')).toHaveLength(1);
+
+    // Evict it, the way a re-injection does.
+    first.picker.destroy();
+    expect(click(byId('cta'), { altKey: true }).defaultPrevented).toBe(false);
+    expect(byType(first.msgs, 'element-picked')).toHaveLength(1); // no new pick from the corpse
+
+    // The replacement now owns the chord, and only it emits.
+    const second = spawn();
+    second.picker.enableQuickPick();
+    expect(click(byId('cta'), { altKey: true }).defaultPrevented).toBe(true);
+    expect(byType(second.msgs, 'element-picked')).toHaveLength(1);
+    expect(byType(first.msgs, 'element-picked')).toHaveLength(1);
+  });
+
+  it('a destroyed picker also releases the hover chord and unmounts its overlay', () => {
+    document.body.innerHTML = '<button id="cta">Buy</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, altKey: true }));
+    over(byId('cta'));
+    expect(document.getElementById(PICKER_HOST_ID)).not.toBeNull();
+
+    picker.destroy();
+    expect(document.getElementById(PICKER_HOST_ID)).toBeNull();
+    // And holding the chord again does not resurrect it.
+    document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, altKey: true }));
+    over(byId('cta'));
+    expect(document.getElementById(PICKER_HOST_ID)).toBeNull();
   });
 });

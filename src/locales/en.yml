@@ -36,8 +36,22 @@ app:
       ariaLabel: Diff
     history:
       ariaLabel: History
-  chat:
-    empty: Configure a provider above, then hit Start to begin chatting.
+
+# ─── Pre-Start chat surface (PreStart.tsx) ────────────────────────────────────────
+prestart:
+  setup:
+    title: Set up your provider
+    body: Configure a provider above, then hit Start to begin chatting.
+    # Deliberately NOT "Settings" / "Open settings": both already name other controls (the tab
+    # bar, the onboarding guide's provider step), and an ambiguous accessible name makes every
+    # role-based selector in the suite resolve to two elements.
+    cta: Set up provider
+  ready:
+    title: Ready to design
+    body: Start a session and tell the agent what to change on this page.
+    # Distinct from the header toggle's bare "Start" — two buttons with the same accessible name
+    # on one screen is ambiguous for AT and for role-based selectors alike.
+    cta: Start designing
 
 # ─── About (AboutSection.tsx) ─────────────────────────────────────────────────────
 about:
@@ -199,14 +213,20 @@ readiness:
   check:
     provider: Provider
     model: Model
+    apiKey: API key
+    apiKeyNotRequired: not needed (local)
     hostPermission: Host permission
+    pageAccess: Page access
+    pageAccessDetail: needed for screenshots
     mcp: MCP backend
     mcpDetail: '{connected}/{total} connected'
   fix: Fix
+  grant: Grant
   overlay:
     label: On-page overlay
     on: 'On'
     off: 'Off'
+    reloadNeeded: Saved — reload the page to show the overlay on it.
 
 # ─── Settings (SettingsPanel.tsx + stores/settings.ts) ────────────────────────────
 settings:
@@ -227,8 +247,13 @@ settings:
   model:
     label: Model
     refresh: Refresh
-    hint: Pick a vision-capable model; cost varies per model.
+    placeholder: Search or paste a model id
+    useCustom: 'Use “{id}”'
+    toggleList: Show model list
+    hint: Search the list, or paste any model id your provider accepts. Prefer a vision-capable
+      model; cost varies per model.
   save: Save
+  startDesigning: Start designing
   setupGuide:
     button: Show setup guide
   preset:
@@ -321,6 +346,7 @@ contextChip:
     text: text
     cssPath: css path
     shadow: shadow
+    xpath: XPath
   picking: Picking element…
   remove:
     ariaLabel: Remove context

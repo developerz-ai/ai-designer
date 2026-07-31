@@ -73,3 +73,43 @@ describe('groundUserText', () => {
     expect(grounded.split('\n').at(-1)).toBe('align these');
   });
 });
+
+describe('grounding on the exact node (xpath)', () => {
+  // The leading candidate is the most STABLE selector, which for an unremarkable element is a bare
+  // tag — `h1` matches every heading on the page. The XPath names the one the user pointed at, so
+  // the model has a way to be certain rather than picking hits[0] and hoping.
+  const fragileTag: StableSelector = { value: 'h1', strategy: 'text', fragile: true };
+
+  it('names the exact node alongside the CSS selector when one is pinned', () => {
+    const line = focusContextLine(fragileTag, undefined, '/html/body[1]/section[2]/h1[1]');
+    expect(line).toContain('`h1` (text, fragile)');
+    expect(line).toContain('/html/body[1]/section[2]/h1[1]');
+    // Phrased so the model knows it may USE it, not just that it exists.
+    expect(line).toContain('pass that as the selector');
+  });
+
+  it('omits the clause entirely when no xpath came through', () => {
+    const line = focusContextLine(fragileTag);
+    expect(line).toContain('`h1` (text, fragile)');
+    expect(line).not.toContain('exact node');
+  });
+
+  it('is ignored for a multi-selection — several referents have no single exact node', () => {
+    const a: StableSelector = { value: '#a', strategy: 'id', fragile: false };
+    const b: StableSelector = { value: '#b', strategy: 'id', fragile: false };
+    const line = focusContextLine(undefined, [a, b], '/html/body[1]/div[1]');
+    expect(line).not.toContain('exact node');
+    expect(line).toContain('2 elements');
+  });
+
+  it('groundUserText prepends the line and leaves the user’s own words untouched', () => {
+    const grounded = groundUserText(
+      'make this bigger',
+      fragileTag,
+      undefined,
+      '/html/body[1]/h1[1]',
+    );
+    expect(grounded.endsWith('\nmake this bigger')).toBe(true);
+    expect(grounded).toContain('/html/body[1]/h1[1]');
+  });
+});

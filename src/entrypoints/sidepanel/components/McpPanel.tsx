@@ -31,12 +31,6 @@ interface BackendPreset {
 // duplicated (mcp-add always mints a fresh id, so re-clicking a preset after removal
 // is fine; re-clicking while already connected just no-ops via the `alreadyAdded` guard).
 const DEFAULT_BACKENDS: BackendPreset[] = [
-  {
-    id: 'ai-dev',
-    label: 'Tesote AI Dev',
-    url: 'https://ai-dev.miamibeachstart.com/mcp',
-    authKind: 'apikey',
-  },
   { id: 'developerz', label: 'developerz.ai', url: 'https://developerz.ai/mcp', authKind: 'oauth' },
 ];
 

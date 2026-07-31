@@ -4,12 +4,19 @@ import { type FocusState, reduceFocus } from '@/entrypoints/sidepanel/stores/foc
 const selector = { value: '[data-testid="cta"]', strategy: 'data-attr' as const, fragile: false };
 const other = { value: '#hero', strategy: 'id' as const, fragile: false };
 const rect = { x: 10, y: 20, width: 100, height: 50 };
-const initial: FocusState = { selector: null, rect: null, pickerActive: false, selectors: [] };
+const initial: FocusState = {
+  selector: null,
+  xpath: null,
+  rect: null,
+  pickerActive: false,
+  selectors: [],
+};
 
 describe('reduceFocus', () => {
   it('focus sets selector and rect', () => {
     expect(reduceFocus(initial, { type: 'focus', selector, rect })).toEqual({
       selector,
+      xpath: null,
       rect,
       pickerActive: false,
       selectors: [],
@@ -19,6 +26,7 @@ describe('reduceFocus', () => {
   it('picker-state active sets pickerActive true', () => {
     expect(reduceFocus(initial, { type: 'picker-state', active: true })).toEqual({
       selector: null,
+      xpath: null,
       rect: null,
       pickerActive: true,
       selectors: [],
@@ -28,9 +36,10 @@ describe('reduceFocus', () => {
   it('picker-state inactive ends the picker but KEEPS the pick', () => {
     // src/dom/picker.ts doesn't stop after a pick, so Escape ("I'm done picking") is what emits
     // this — and it used to throw away the element the user had just pinned.
-    const focused: FocusState = { selector, rect, pickerActive: true, selectors: [] };
+    const focused: FocusState = { selector, xpath: null, rect, pickerActive: true, selectors: [] };
     expect(reduceFocus(focused, { type: 'picker-state', active: false })).toEqual({
       selector,
+      xpath: null,
       rect,
       pickerActive: false,
       selectors: [],
@@ -40,6 +49,7 @@ describe('reduceFocus', () => {
   it('focus-multi adopts the shift-multi-select set', () => {
     expect(reduceFocus(initial, { type: 'focus-multi', selectors: [selector, other] })).toEqual({
       selector: null,
+      xpath: null,
       rect: null,
       pickerActive: false,
       selectors: [selector, other],

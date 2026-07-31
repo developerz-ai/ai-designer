@@ -102,8 +102,15 @@ export function describePage(
   mode: DescribeMode,
   opts: DescribeOptions = {},
 ): DescribeResult {
-  const text = mode === 'layout' ? layoutText(root) : contentText(root);
-  return { mode, text: clip(text, opts.maxChars ?? MAX_CHARS) };
+  const full = mode === 'layout' ? layoutText(root) : contentText(root);
+  const budget = opts.maxChars ?? MAX_CHARS;
+  // A silent mid-sentence cut reads as a complete answer that simply ended. Declare it, for the
+  // same reason the per-list markers do.
+  const text =
+    full.length > budget
+      ? `${clip(full, budget)}\n[TRUNCATED at ${budget} characters${TRUNCATION_HINT}]`
+      : full;
+  return { mode, text };
 }
 
 // --- layout ---------------------------------------------------------------
@@ -127,7 +134,15 @@ function layoutText(root: ParentNode): string {
     lines.push(...outline);
   }
 
-  return lines.length > 0 ? lines.join('\n') : 'No landmarks or headings found.';
+  if (lines.length > 0) return lines.join('\n');
+  // A page with no landmarks and no headings is not a page with no structure — table-layout sites
+  // (Hacker News, older forums, a lot of internal tooling) have plenty, just none of it semantic.
+  // Returning a bare "nothing found" left the model with no facts at all, which is precisely when
+  // it starts inventing them. Fall back to what IS countable.
+  const counts = componentCounts(root);
+  return counts
+    ? `No landmarks or headings (this page uses no semantic sectioning). Page contains: ${counts}. Use describe(content) for text, or query/a11ySnapshot on a region.`
+    : 'No landmarks, headings, or countable components found — the page may still be loading.';
 }
 
 function collectLandmarks(root: ParentNode): { el: Element; role: string }[] {
@@ -151,7 +166,7 @@ function landmarkRole(el: Element): string | null {
   return implicit;
 }
 
-function componentCounts(el: Element): string {
+function componentCounts(el: ParentNode): string {
   const parts: string[] = [];
   for (const [kind, selector] of COUNTED) {
     const n = queryAll(el, selector).length;
@@ -184,12 +199,22 @@ function contentText(root: ParentNode): string {
     if (desc) lines.push(`Description: ${clip(desc, MAX_COPY)}`);
   }
 
-  const headings = dedupe(
+  // Headings dropped their tail with NO marker at all — worse than the counted overflow above,
+  // because the read looked complete.
+  const allHeadings = dedupe(
     queryAll(root, HEADING_SELECTOR)
       .map((h) => clip(textOf(h), MAX_HEADING))
       .filter((t) => t !== ''),
-  ).slice(0, MAX_LIST);
-  if (headings.length > 0) lines.push(`Headings: ${headings.join('; ')}`);
+  );
+  if (allHeadings.length > 0) {
+    const shown = allHeadings.slice(0, MAX_LIST).join('; ');
+    const more = allHeadings.length - MAX_LIST;
+    lines.push(
+      more > 0
+        ? `Headings: ${shown} — TRUNCATED: ${more} more not shown${TRUNCATION_HINT}`
+        : `Headings: ${shown}`,
+    );
+  }
 
   const buttons = labels(root, BUTTON_SELECTOR);
   if (buttons) lines.push(`Buttons: ${buttons}`);
@@ -203,7 +228,15 @@ function contentText(root: ParentNode): string {
   return lines.length > 0 ? lines.join('\n') : 'No salient text content found.';
 }
 
-// Deduped, bounded control labels with an overflow marker (`Sign up; Log in; …(+3)`).
+/**
+ * Deduped, bounded control labels with a SELF-DECLARING overflow marker.
+ *
+ * The marker used to be a bare `…(+127)`, and that number was the entire signal that 127 items had
+ * been withheld. On a link-dense page (a news front page, a docs index) the model received one or
+ * two real titles followed by `…(+127)` and answered "what's on this page?" by inventing the rest —
+ * plausible, specific, and false. A count is not a warning; this says what happened, in words, so
+ * a truncated read cannot be mistaken for a complete one.
+ */
 function labels(root: ParentNode, selector: string): string {
   const all = dedupe(
     queryAll(root, selector)
@@ -213,8 +246,15 @@ function labels(root: ParentNode, selector: string): string {
   if (all.length === 0) return '';
   const shown = all.slice(0, MAX_LIST).join('; ');
   const more = all.length - MAX_LIST;
-  return more > 0 ? `${shown}; …(+${more})` : shown;
+  return more > 0 ? `${shown} — TRUNCATED: ${more} more not shown${TRUNCATION_HINT}` : shown;
 }
+
+/** Appended to every truncated list. Names the remedy, because "there is more" without "here is
+ *  how to get it" just leaves the model guessing — which is the failure mode this exists for. */
+const TRUNCATION_HINT =
+  '. This is a partial sample, NOT the full list — do not describe or summarize the items you ' +
+  'cannot see. To read more, call describe again with a larger `maxChars`, or scope it to a ' +
+  '`selector` for the region you care about.';
 
 function controlLabel(el: Element): string {
   const aria = accessibleName(el);

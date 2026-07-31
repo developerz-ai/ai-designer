@@ -5,7 +5,9 @@ import type { ReadinessState } from '@/shared/messages';
 const ready: ReadinessState = {
   provider: 'ok',
   model: 'ok',
+  apiKey: 'ok',
   hostPermission: 'granted',
+  pageAccess: 'granted',
   mcp: { connected: 1, total: 1 },
   ready: true,
 };
@@ -13,7 +15,9 @@ const ready: ReadinessState = {
 const notReady: ReadinessState = {
   provider: 'missing',
   model: 'missing',
+  apiKey: 'missing',
   hostPermission: 'needed',
+  pageAccess: 'needed',
   mcp: { connected: 0, total: 0 },
   ready: false,
 };

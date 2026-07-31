@@ -5,9 +5,10 @@
 // key-store's WebCrypto decrypt; never import this from content.ts.
 
 import type { McpHealth } from '@/mcp/manager';
-import { originPattern } from '@/shared/host-permissions';
+import { hasPageAccess, originPattern } from '@/shared/host-permissions';
 import type { ReadinessState } from '@/shared/messages';
 import { getProviderConfig } from './config-store';
+import { isLocalEndpoint, keyMissing } from './provider';
 
 // Structural subset of `McpManager` this module needs — keeps `computeReadiness` testable
 // against a plain health-list stub instead of a real (connection-owning) McpManager.
@@ -29,13 +30,27 @@ async function hostPermissionCheck(
 
 /** Compute the current `ReadinessState`. Never throws: a missing/corrupt config reads as
  *  `provider: 'missing'`, an unreachable host as `hostPermission: 'needed'`. Provider readiness
- *  keys off a valid stored config (baseURL), NOT the key: a keyless local openai-compatible
- *  endpoint (llama.cpp) is a supported setup — requiring a key would permanently block Start for it. */
+ *  keys off a valid stored config (baseURL); the KEY is its own row, because the two fail
+ *  differently: a keyless local openai-compatible endpoint (llama.cpp) is a supported setup, so
+ *  its row reads `not-required` and never blocks Start, while a hosted endpoint with no stored
+ *  key can only ever 401 — it blocks Start here instead of dying mid-turn with a provider-worded
+ *  "Missing Authentication header". */
 export async function computeReadiness(mcpManager: McpHealthSource): Promise<ReadinessState> {
   const cfg = await getProviderConfig();
   const provider: ReadinessState['provider'] = cfg?.baseURL ? 'ok' : 'missing';
   const model: ReadinessState['model'] = cfg?.model ? 'ok' : 'missing';
+  const apiKey: ReadinessState['apiKey'] = !cfg?.baseURL
+    ? 'missing' // no endpoint yet: the provider row owns that failure, this one just isn't satisfied
+    : isLocalEndpoint(cfg.baseURL)
+      ? 'not-required'
+      : keyMissing(cfg)
+        ? 'missing'
+        : 'ok';
   const hostPermission = await hostPermissionCheck(cfg?.baseURL);
+  // Advisory, like the MCP row — it gates the vision tools, not the ability to design.
+  const pageAccess: ReadinessState['pageAccess'] = (await hasPageAccess().catch(() => false))
+    ? 'granted'
+    : 'needed';
 
   // The mcp row counts ENABLED servers only (#17): a disabled backend is neither reachable
   // (its tools never merge) nor expected capacity, so it must not inflate `total` either.
@@ -45,5 +60,13 @@ export async function computeReadiness(mcpManager: McpHealthSource): Promise<Rea
     total: enabled.length,
   };
 
-  return { provider, model, hostPermission, mcp, ready: provider === 'ok' && model === 'ok' };
+  return {
+    provider,
+    model,
+    apiKey,
+    hostPermission,
+    pageAccess,
+    mcp,
+    ready: provider === 'ok' && model === 'ok' && apiKey !== 'missing',
+  };
 }

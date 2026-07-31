@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, stubAuthProbe, test } from './fixtures';
 
 // E2E: #120 per-tool opt-in for backend write-shaped tools, driven against a loaded, real
 // Chromium. The stubbed MCP backend's catalog mixes a write-shaped tool (`deploy`) with a read
@@ -30,6 +30,7 @@ async function stubModels(context: BrowserContext): Promise<void> {
       body: JSON.stringify({ data: [{ id: 'test/vision', name: 'Test Vision' }] }),
     }),
   );
+  await stubAuthProbe(context, BASE_URL);
 }
 
 const OWN_PAGE =
@@ -163,8 +164,7 @@ async function configureProvider(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.locator('#dz-key').fill('sk-or-test-120');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('#dz-model option')).toHaveText(['Test Vision']);
-  await page.locator('#dz-model').selectOption('test/vision');
+  await expect(page.locator('#dz-model')).toHaveValue('test/vision');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 }
