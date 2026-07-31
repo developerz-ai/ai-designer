@@ -7,7 +7,7 @@ import { type BrowserContext, test as base, chromium, type Page } from '@playwri
 // runs extensions in the new headless mode — so this works in CI with no xvfb.
 // `playwright test` runs from the repo root, so process.cwd() is the repo root.
 // (ESM repo — `__dirname` is undefined here.) Requires `bun run build` first.
-const pathToExtension = path.resolve(process.cwd(), '.output/chrome-mv3');
+const pathToExtension = path.resolve(process.cwd(), 'build/chrome-mv3');
 
 export const test = base.extend<{
   context: BrowserContext;

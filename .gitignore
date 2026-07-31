@@ -1,9 +1,16 @@
 node_modules
-.output
 .wxt
 stats.html
 coverage
 *.tsbuildinfo
+
+# extension build output (wxt.config.ts `outDir`) — keep the dir, drop the artifacts
+build/*
+!build/.keep
+
+# CRX signing keys — the private key IS the extension ID. Never commit one.
+keys/*
+!keys/.keep
 
 # landing site (site/) build output
 site/dist

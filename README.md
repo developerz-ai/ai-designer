@@ -54,12 +54,16 @@ Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
 
 | `bun run local` | |
 |--|--|
-| *(no flags)* | chrome, plain build → `.output/chrome-mv3` |
-| `--firefox` | firefox MV2 → `.output/firefox-mv2` |
+| *(no flags)* | chrome, plain build → `build/chrome-mv3` |
+| `--firefox` | firefox MV2 → `build/firefox-mv2` |
 | `--check` | run the gate (lint + typecheck + unit + integration) first |
 | `--zip` | also produce the distributable `.zip` |
 
-1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `.output/chrome-mv3`.
+Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` — generated on the first build and gitignored. Back it up: that key is the extension ID.
+
+Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` (generated on first build, gitignored — back it up, it defines the extension ID).
+
+1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `build/chrome-mv3`.
 2. **Add your OpenRouter key** — side panel → settings (BYOK, stored encrypted, used only in the service worker).
 3. **Connect a backend** — MCP tab → add `https://ai-dev.miamibeachstart.com/mcp` (or developerz.ai). OAuth on first use.
 4. **Open any page**, open the side panel, start designing.
@@ -67,7 +71,7 @@ Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
 Release build (tree-shaken, minified, optimized CSS/JS):
 
 ```bash
-bun run release            # wxt build && wxt zip → .output/*.zip
+bun run release            # build + sign .crx + zip → build/*.zip, build/*.crx
 ```
 
 ## Stack

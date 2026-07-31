@@ -2,7 +2,7 @@ import { availableParallelism } from 'node:os';
 import { defineConfig } from '@playwright/test';
 
 // E2E loads the built extension unpacked via a persistent context (see test/e2e/fixtures.ts).
-// Run `bun run build` first so `.output/chrome-mv3` exists. Runs headless via
+// Run `bun run build` first so `build/chrome-mv3` exists. Runs headless via
 // channel:'chromium' (the full Chrome-for-Testing build) — no xvfb needed.
 export default defineConfig({
   testDir: './test/e2e',

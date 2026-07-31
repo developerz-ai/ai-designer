@@ -1,6 +1,6 @@
 import { expect, test } from './fixtures';
 
-// E2E smoke — loads the built extension (.output/chrome-mv3) and asserts the side
+// E2E smoke — loads the built extension (build/chrome-mv3) and asserts the side
 // panel mounts. MV3 side panels can't be opened via a Playwright toolbar gesture,
 // so navigate a tab directly to the panel's extension-origin page and assert the
 // Chat surface renders. WXT flattens the entrypoint to `sidepanel.html` at the

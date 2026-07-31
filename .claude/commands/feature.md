@@ -23,7 +23,7 @@ $ARGUMENTS
 
 **Whether to hive is a judgement call, not a ritual.** Two things justify it: **searching** (a sweep across all three worlds where you want conclusions, not file dumps) and **scale** (independent, path-separable work that would take hours serially). Nothing else. A single-file fix or one obvious bug: do it yourself — briefing, collision management and report-reading cost more than the change, and you pay it out of the one context that must survive to the merge.
 
-A big task is not one agent doing more; it is a **team sharing one working tree**, with you as coordinator. **Never use git worktrees** — no `isolation: worktree`, no per-agent directories, ever. They hide half-finished work from the gate, and each agent would need its own `bun install`, its own `wxt prepare` (generated `.wxt/` types) and its own `.output/` build. One checkout, many hands; the file set is the only lock.
+A big task is not one agent doing more; it is a **team sharing one working tree**, with you as coordinator. **Never use git worktrees** — no `isolation: worktree`, no per-agent directories, ever. They hide half-finished work from the gate, and each agent would need its own `bun install`, its own `wxt prepare` (generated `.wxt/` types) and its own `build/` output. One checkout, many hands; the file set is the only lock.
 
 - **You coordinate; you do not code.** You own git, the ledger and the merge, and you alone must survive to the end — spend that context on routing, not on reading files an agent will report back. Editing extension code means you took a slice from someone who had room for it.
 - **The file set is the lock.** Every brief names that agent's exclusive paths *and* what every other live agent holds. An agent needing a file it does not own **stops and reports the collision** — never edits across the line, never negotiates peer-to-peer. You mediate: hand the change to the owner, or re-cut the boundary. The world/module map in CLAUDE.md is the natural cut: `src/agent/` (SW loop), `src/dom/` (content), `src/mcp/`, `src/changeset/`, `src/entrypoints/sidepanel/`, `src/shared/`.
@@ -39,11 +39,11 @@ A big task is not one agent doing more; it is a **team sharing one working tree*
 | lint | `bunx biome check <the files it edited>` | `bun run lint` |
 | tests | `bunx vitest run <its own test files>`, named explicitly | `bun run test:unit` + `bun run test:integration` (or `just verify`) |
 | typecheck | `bun run typecheck` **once, when otherwise done** — `tsc --noEmit` is project-wide by nature, so this is the floor | covered by the gate |
-| build / e2e | never | `bun run build`, load `.output/chrome-mv3`, `bun run test:e2e` |
+| build / e2e | never | `bun run build`, load `build/chrome-mv3`, `bun run test:e2e` |
 
 An agent owns *its own files and its own tests*; whole-repo green is the coordinator's job and nobody else's. Never let an agent run `bun run test`, `just verify`, or the e2e suite, and keep every agent at concurrency 1 (no `--threads`/`--parallel` bumps) — saturating the box is the coordinator's job, once, at the end.
 
-**`.output/` and `.wxt/` are shared, single-slot artifacts.** `bun run build` and `bun run test:e2e` write and load the *same* `.output/chrome-mv3` directory, so two agents building or driving a loaded extension concurrently overwrite each other's bundle and produce failures that belong to somebody else's code. **Builds and e2e are the coordinator's, run once.** An agent that thinks it needs a loaded-extension check reports that instead of running one.
+**`build/` and `.wxt/` are shared, single-slot artifacts.** `bun run build` and `bun run test:e2e` write and load the *same* `build/chrome-mv3` directory, so two agents building or driving a loaded extension concurrently overwrite each other's bundle and produce failures that belong to somebody else's code. **Builds and e2e are the coordinator's, run once.** An agent that thinks it needs a loaded-extension check reports that instead of running one.
 
 ### Two things only the coordinator can do
 
@@ -57,7 +57,7 @@ An agent owns *its own files and its own tests*; whole-repo green is the coordin
 
 2. **Distrust the paperwork.** `docs/idea/` and `docs/architecture/` describe the *intended* design; slices 01–16 have shipped and moved on. Check any plan doc against the code and `git log` for the area before planning work off it — merged PR titles are the cheapest ground truth. State plainly which claims you falsified, so nobody re-implements shipped work or "fixes" working code.
 
-3. **Reproduce before you theorise.** There is **no error-tracking backend wired to this repo** — don't invent one, and don't cite a dashboard that doesn't exist. The closest thing to production evidence is the real artifact: `bun run build`, load `.output/chrome-mv3` unpacked, and drive it (`mcp__playwright`, or the `ui-debugger` MCP for a page-side view) until the symptom reproduces, capturing the service-worker console and the content-script console separately — the world a message dies in is usually the whole diagnosis. A finding with a reproduction outranks one derived from reading alone.
+3. **Reproduce before you theorise.** There is **no error-tracking backend wired to this repo** — don't invent one, and don't cite a dashboard that doesn't exist. The closest thing to production evidence is the real artifact: `bun run build`, load `build/chrome-mv3` unpacked, and drive it (`mcp__playwright`, or the `ui-debugger` MCP for a page-side view) until the symptom reproduces, capturing the service-worker console and the content-script console separately — the world a message dies in is usually the whole diagnosis. A finding with a reproduction outranks one derived from reading alone.
 
 4. **Explore (parallel).** Fan out `Agent` Explore agents (very thorough; `codegraph_explore` for structure — this repo has a `.codegraph/` index) over the affected worlds and modules, plus the matching skill for the surface (`live-edit`, `mv3`, `ship`, `solid-srp`, `test-extension`, `scaffold-tool`). Give each a **disjoint** area, and require of every finding severity, `file:line`, a one-sentence defect statement and a **concrete failure scenario** (inputs → wrong outcome). Demand two more things: the doc claims they **falsified**, and the brief premises that turned out **true**. Produce a ranked worklist; log what the survey could not cover. **Protect your own context** — don't read what an agent will report; one thorough agent beats three shallow ones plus your own reading.
 
@@ -87,11 +87,11 @@ An agent owns *its own files and its own tests*; whole-repo green is the coordin
 
    Small feature → one agent, skip the fan-out.
 
-8. **Verify.** Once, at the end, as coordinator: `bun run lint`, `bun run typecheck`, `bun run test:unit`, `bun run test:integration` (`just verify` runs the four) — stop at the first failure and fix the root cause; never silence a check or weaken a type. Then the part a type-check can never prove: `bun run build`, load `.output/chrome-mv3` as an unpacked extension and drive the real thing (`bun run test:e2e` / `mcp__playwright`). A green `tsc` is not a working side panel, and it is certainly not a DOM tool that mutates the page.
+8. **Verify.** Once, at the end, as coordinator: `bun run lint`, `bun run typecheck`, `bun run test:unit`, `bun run test:integration` (`just verify` runs the four) — stop at the first failure and fix the root cause; never silence a check or weaken a type. Then the part a type-check can never prove: `bun run build`, load `build/chrome-mv3` as an unpacked extension and drive the real thing (`bun run test:e2e` / `mcp__playwright`). A green `tsc` is not a working side panel, and it is certainly not a DOM tool that mutates the page.
 
 9. **PR + merge.** `claudetm` operates on the **current directory**, so at most one PR is in flight at a time — parallel *building* is fine, parallel *merging* is not.
 
-   **Before committing, sweep the agents' leftovers**: scratch test files, debug `console.log`, stray probes at the repo root, `test-results/` and `.output/` noise. Agents create them and rarely clean up.
+   **Before committing, sweep the agents' leftovers**: scratch test files, debug `console.log`, stray probes at the repo root, `test-results/` and `build/` noise. Agents create them and rarely clean up.
 
    **Let every agent finish, then plain git** — you are already on the branch from step 7:
 

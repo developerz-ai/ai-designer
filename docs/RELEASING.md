@@ -19,9 +19,9 @@ git push origin v1.4.0
 The `Release` workflow (`.github/workflows/release.yml`) then:
 
 1. Installs deps (`bun install --frozen-lockfile`).
-2. Builds the production Chrome zip (`bun run release` = `wxt build && wxt zip`).
+2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
-4. Creates a GitHub Release with auto-generated notes and both `.zip`s attached from `.output/`.
+4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
 
 `workflow_dispatch` is also enabled for manual runs.
 
@@ -33,7 +33,7 @@ Production builds go through WXT → Vite → Rollup:
 - **JS minify** — esbuild minifier, `target: esnext`.
 - **CSS minify** — SCSS compiled and minified (`cssMinify`), per-entrypoint.
 - **No sourcemaps** in release (smaller zip; flip on for debugging).
-- Output: one zip per browser target under `.output/`.
+- Output: one zip per browser target under `build/`, plus a signed `.crx` for Chrome.
 
 Dev builds (`bun run dev`) skip minification for fast HMR.
 

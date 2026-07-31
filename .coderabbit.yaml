@@ -23,7 +23,6 @@ reviews:
 
   path_filters:
     - "!**/node_modules/**"
-    - "!**/.output/**"
     - "!**/.wxt/**"
     - "!**/dist/**"
     - "!**/build/**"

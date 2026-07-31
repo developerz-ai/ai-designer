@@ -49,10 +49,10 @@ fi
 step "building ($BROWSER)"
 if [ "$BROWSER" = firefox ]; then
   bun run build:firefox
-  OUT=.output/firefox-mv2
+  OUT=build/firefox-mv2
 else
   bun run build
-  OUT=.output/chrome-mv3
+  OUT=build/chrome-mv3
 fi
 
 if [ "$ZIP" = 1 ]; then
@@ -81,5 +81,10 @@ EOF
 fi
 
 if [ "$ZIP" = 1 ]; then
-  printf '\nZips: %s\n' "$(cd .output && ls -1 ./*.zip 2>/dev/null | tr '\n' ' ')"
+  printf '\nZips: %s\n' "$(cd build && ls -1 ./*.zip 2>/dev/null | tr '\n' ' ')"
+fi
+
+# Chrome builds also sign a .crx (scripts/pack-crx.sh, run by `bun run build`).
+if [ "$BROWSER" = chrome ]; then
+  printf 'CRX:  %s\n' "$(cd build && ls -1 ./*.crx 2>/dev/null | tr '\n' ' ')"
 fi

@@ -20,4 +20,4 @@ If anything fails:
 
 If `src/entrypoints/sidepanel/**` changed, also `bun run build` and confirm the side panel bundle is produced. Type-check passing ≠ the UI working.
 
-Report: each step's result and the final `.output/chrome-mv3` build size if you built.
+Report: each step's result and the final `build/chrome-mv3` build size if you built.

@@ -29,15 +29,22 @@ jobs:
         run: bun install --frozen-lockfile
 
       # Production build: tree-shaken + minified JS, minified CSS (WXT/Vite).
-      - name: Build Chrome zip
+      # Also signs build/*.crx. CRX_PRIVATE_KEY (repo secret, PEM contents) keeps the
+      # extension ID stable across releases; without it every release signs with a
+      # throwaway key and self-hosted installs read as a different extension.
+      - name: Build Chrome zip + crx
         run: bun run release
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
       - name: Build Firefox zip
         run: bun run build:firefox && bun run zip -- -b firefox
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: .output/*.zip
+          files: |
+            build/*.zip
+            build/*.crx
           generate_release_notes: true
           fail_on_unmatched_files: true
 
@@ -46,7 +53,7 @@ jobs:
       #   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
       # - name: Publish to Chrome Web Store
       #   run: bunx chrome-webstore-upload-cli@3 upload --auto-publish \
-      #     --source .output/*-chrome.zip \
+      #     --source build/*-chrome.zip \
       #     --extension-id "${{ secrets.CWS_EXTENSION_ID }}" \
       #     --client-id "${{ secrets.CWS_CLIENT_ID }}" \
       #     --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \

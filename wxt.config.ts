@@ -4,6 +4,10 @@ import { defineConfig } from 'wxt';
 // Release builds are tree-shaken + minified + css-optimized via the vite block below.
 export default defineConfig({
   srcDir: 'src',
+  // Not WXT's default `.output` — a dotdir is hidden by editors (VSCode `files.exclude`),
+  // by `ls`, and by actions/upload-artifact. Build output you have to load unpacked
+  // should be visible. Targets land in build/<browser>-mv<n>; zips + .crx at build/.
+  outDir: 'build',
   // Assets live in src/public; WXT's publicDir defaults to <root>/public, so without
   // this the icons (manifest `icons`) and /logo.png are missing from the build and
   // Chrome refuses to load the unpacked extension ("Could not load icon").

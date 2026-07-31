@@ -12,7 +12,7 @@ bun run dev        # WXT dev build + HMR
 Load the extension:
 
 1. `chrome://extensions` → enable **Developer mode**.
-2. **Load unpacked** → select `.output/chrome-mv3`.
+2. **Load unpacked** → select `build/chrome-mv3`.
 3. Open the side panel, add your **OpenRouter** key (BYOK, stored locally), connect an MCP backend (ai-dev).
 
 `just` users: `just dev`, `just verify`, `just build` (see `justfile`).
@@ -23,7 +23,7 @@ Load the extension:
 |------|---------|
 | Dev (HMR) | `bun run dev` |
 | Verify (gate) | `bun run lint && bun run typecheck && bun run test:unit && bun run test:integration` (or `just verify`) |
-| Build | `bun run build` → `.output/chrome-mv3` |
+| Build | `bun run build` → `build/chrome-mv3` + signed `build/*.crx` |
 | Release zip | `bun run release` |
 
 ## Architecture rules (load-bearing)

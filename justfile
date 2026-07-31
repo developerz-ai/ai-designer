@@ -16,7 +16,7 @@ dev:
 dev-firefox:
     bun run dev:firefox
 
-# Production build (tree-shaken, minified) → .output/chrome-mv3
+# Production build (tree-shaken, minified) → build/chrome-mv3
 build:
     bun run build
 
@@ -62,4 +62,4 @@ e2e:
 
 # Remove build output + caches
 clean:
-    rm -rf .output .wxt coverage
+    rm -rf build/chrome-mv3 build/firefox-mv2 build/*.zip build/*.crx .wxt coverage

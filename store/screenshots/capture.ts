@@ -1,5 +1,5 @@
 // Web Store listing screenshots (#26) — standalone capture script, NOT a Playwright test.
-// Runs the REAL built extension (`.output/chrome-mv3`) in a real Chromium persistent context
+// Runs the REAL built extension (`build/chrome-mv3`) in a real Chromium persistent context
 // against the local demo page, with only the model's HTTP canned (the same vocabulary as
 // test/e2e/chat-streaming.spec.ts + overlay.spec.ts + diff-review.spec.ts). No model key needed.
 //
@@ -31,7 +31,7 @@ import path from 'node:path';
 import { type BrowserContext, chromium, type Locator, type Page } from 'playwright';
 
 const ROOT = process.cwd();
-const EXT_PATH = path.resolve(ROOT, '.output/chrome-mv3');
+const EXT_PATH = path.resolve(ROOT, 'build/chrome-mv3');
 const OUT_DIR = path.resolve(ROOT, 'store/screenshots');
 const DEMO_URL = 'https://demo.local/';
 const OR_API = 'https://openrouter.ai/api/v1';

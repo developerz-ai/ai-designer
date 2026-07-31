@@ -93,10 +93,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: extension-zip
-          path: .output/*.zip
+          path: build/*.zip
           if-no-files-found: error
-          # .output is a dotfile dir; upload-artifact skips hidden paths by default.
-          include-hidden-files: true
 
   test-e2e:
     name: Test (e2e)
@@ -114,7 +112,7 @@ jobs:
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Build extension (unpacked .output/chrome-mv3)
+      - name: Build extension (unpacked build/chrome-mv3)
         run: bun run build
       # Cache the Playwright browser binaries (the big download) keyed on the
       # resolved Playwright version, so warm runs restore them instead of
@@ -141,7 +139,6 @@ jobs:
           name: playwright-report
           path: playwright-report/
           if-no-files-found: ignore
-          include-hidden-files: true
 
   actionlint:
     name: actionlint

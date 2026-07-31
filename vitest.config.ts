@@ -41,7 +41,7 @@ export default defineConfig({
     // Plain-logic specs stay `.ts` and never touch the JSX transform.
     include: ['test/**/*.{test,spec}.{ts,tsx}'],
     setupFiles: ['./test/setup-dom.ts'],
-    exclude: ['test/e2e/**', 'node_modules', '.output', '.wxt'],
+    exclude: ['test/e2e/**', 'node_modules', 'build', '.wxt'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

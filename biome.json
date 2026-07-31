@@ -10,7 +10,7 @@
     "includes": [
       "**",
       "!**/node_modules",
-      "!**/.output",
+      "!**/build",
       "!**/.wxt",
       "!**/coverage",
       "!**/dist",
