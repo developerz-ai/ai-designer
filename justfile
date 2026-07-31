@@ -24,12 +24,21 @@ build:
 release:
     bun run release
 
-# Full local gate: lint + typecheck + unit + integration
+# Full local gate: lint + typecheck (concurrent) → unit + integration in one pool
 verify:
-    bun run lint
-    bun run typecheck
-    bun run test:unit
-    bun run test:integration
+    bash scripts/verify.sh
+
+# Fast inner-loop check: lint + typecheck only, concurrently. No tests.
+check:
+    bash scripts/verify.sh --check
+
+# Everything CI runs, including a real build + E2E on the loaded extension
+gate:
+    bash scripts/verify.sh --gate
+
+# One-shot local build → unpacked extension + load instructions
+local *ARGS:
+    bun run local {{ARGS}}
 
 # Lint (Biome)
 lint:

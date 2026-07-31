@@ -16,6 +16,14 @@ import { createMutator } from '@/dom/mutate';
 import { createRecorder } from '@/dom/recorder';
 import type { IdentityResult, SwToPanel, ToolResult } from '@/shared/messages';
 
+// The overrides sheet is built through CSSOM (mutate.ts `renderSheet`) so a model-supplied
+// value can never escape its rule, which means the <style> element's textContent is empty
+// by design — read the live rules instead.
+function overridesCss(): string {
+  const el = document.getElementById('dz-designer-overrides') as HTMLStyleElement | null;
+  return Array.from(el?.sheet?.cssRules ?? [], (r) => r.cssText).join('\n');
+}
+
 // Integration: the slice-14 copy spine end to end — `extractIdentity` reads a *reference*
 // document's real design identity (src/dom/identity.ts, no fakes), the loop hands that identity to
 // the model as its tool result, and the model's follow-up `setStyle` call lands on the *user's own*
@@ -165,7 +173,9 @@ describe('integration: copy mode reads a reference identity and applies it to th
 
     // The CTA on the user's OWN page actually took the reference's accent color.
     expect(document.getElementById('cta')?.getAttribute('style')).toBeNull(); // via overrides, never inline
-    expect(document.getElementById('dz-designer-overrides')?.textContent).toContain('#ff3366');
+    // CSSOM normalizes the authored hex to its rgb() form — assert what actually
+    // gets applied, not the spelling the model happened to use.
+    expect(overridesCss()).toContain('rgb(255, 51, 102)');
 
     const afterSetStyle = toolResultShownToModel(model, 2);
     expect(afterSetStyle?.type).toBe('json');

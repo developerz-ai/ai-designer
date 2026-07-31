@@ -42,7 +42,7 @@ function factory(byUrl: Record<string, ToolSet>) {
 describe('McpManager enabled flag (#17)', () => {
   it('registers enabled by default, stamped onto health', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
 
     expect(mgr.isEnabled('ai-dev')).toBe(true);
@@ -55,7 +55,7 @@ describe('McpManager enabled flag (#17)', () => {
 
   it('register(spec, {enabled:false}) keeps the server registered but never opens it', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV, { enabled: false });
 
     expect(mgr.isEnabled('ai-dev')).toBe(false);
@@ -66,7 +66,7 @@ describe('McpManager enabled flag (#17)', () => {
 
   it('setEnabled(false) closes the live connection and drops health to disconnected', async () => {
     const { connect, closes } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     await mgr.connect('ai-dev');
     expect(mgr.health('ai-dev')).toMatchObject({ status: 'connected' });
@@ -79,7 +79,7 @@ describe('McpManager enabled flag (#17)', () => {
 
   it('connect() refuses a disabled server — null, no open attempted', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     await mgr.connect('ai-dev');
     await mgr.setEnabled('ai-dev', false);
@@ -94,7 +94,7 @@ describe('McpManager enabled flag (#17)', () => {
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: toolSet('search'),
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV, { enabled: false });
     mgr.register(GITHUB);
 
@@ -105,7 +105,7 @@ describe('McpManager enabled flag (#17)', () => {
 
   it('re-enabling is lazy: the next connect() opens the server again', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV, { enabled: false });
 
     expect(await mgr.setEnabled('ai-dev', true)).toBe(true);
@@ -118,7 +118,7 @@ describe('McpManager enabled flag (#17)', () => {
 
   it('setEnabled on an unknown id returns false; isEnabled reads unknown as false', async () => {
     const { connect } = factory({});
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
 
     expect(await mgr.setEnabled('missing', false)).toBe(false);
     expect(await mgr.setEnabled('missing', true)).toBe(false);
@@ -131,7 +131,7 @@ describe('McpManager enabled flag (#17)', () => {
     const connect = vi.fn<McpClientFactory>(async () => {
       throw new Error('down');
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
 
     const health = await mgr.connect('ai-dev');
@@ -198,7 +198,6 @@ describe('McpManager per-tool grants (#120)', () => {
     const { connect } = twoServerGrants();
     const mgr = new McpManager({
       connect,
-      idleMs: 0,
       grantsFor: async (id) => (id === SRV_A.id ? ['deploy'] : []),
     });
     mgr.register(SRV_A);
@@ -213,7 +212,7 @@ describe('McpManager per-tool grants (#120)', () => {
 
   it('with no grantsFor option, every write-shaped tool is gated but reads still merge', async () => {
     const { connect } = twoServerGrants();
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(SRV_A);
     mgr.register(SRV_B);
 
@@ -224,7 +223,6 @@ describe('McpManager per-tool grants (#120)', () => {
     const { connect } = twoServerGrants();
     const mgr = new McpManager({
       connect,
-      idleMs: 0,
       grantsFor: async () => ['task', 'deploy', 'publish'],
     });
     mgr.register(SRV_A);
@@ -245,7 +243,7 @@ describe('McpManager per-tool grants (#120)', () => {
 
   it('an ungranted write tool never reaches the merge, so its execute cannot fire', async () => {
     const { connect, aDeploy, bPublish } = twoServerGrants();
-    const mgr = new McpManager({ connect, idleMs: 0 }); // no grantsFor
+    const mgr = new McpManager({ connect }); // no grantsFor
     mgr.register(SRV_A);
     mgr.register(SRV_B);
 
@@ -261,7 +259,6 @@ describe('McpManager per-tool grants (#120)', () => {
     const { connect, aDeploy } = twoServerGrants();
     const mgr = new McpManager({
       connect,
-      idleMs: 0,
       grantsFor: async (id) => (id === SRV_A.id ? ['deploy'] : []),
     });
     mgr.register(SRV_A);
@@ -283,7 +280,6 @@ describe('McpManager per-tool grants (#120)', () => {
     let granted: Record<string, string[]> = { [SRV_A.id]: ['deploy'] };
     const mgr = new McpManager({
       connect,
-      idleMs: 0,
       grantsFor: async (id) => granted[id] ?? [],
     });
     mgr.register(SRV_A);
@@ -299,7 +295,6 @@ describe('McpManager per-tool grants (#120)', () => {
     const { connect } = twoServerGrants();
     const mgr = new McpManager({
       connect,
-      idleMs: 0,
       grantsFor: async () => ['deploy', 'publish'],
     });
     mgr.register(SRV_A);
@@ -310,7 +305,7 @@ describe('McpManager per-tool grants (#120)', () => {
 
   it("toolsForShip merges every server's tools regardless of grants (Ship semantics unchanged)", async () => {
     const { connect } = twoServerGrants();
-    const mgr = new McpManager({ connect, idleMs: 0 }); // no grantsFor at all
+    const mgr = new McpManager({ connect }); // no grantsFor at all
     mgr.register(SRV_A);
     mgr.register(SRV_B);
 

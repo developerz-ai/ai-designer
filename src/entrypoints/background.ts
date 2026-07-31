@@ -4,6 +4,7 @@ import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
 import { withCaptureLock } from '@/agent/capture-lock';
 import { shouldRideCaptureLock } from '@/agent/capture-policy';
+import { type CaptureTargetProbe, captureBlockedReason } from '@/agent/capture-target';
 import {
   clearProviderConfig,
   getProviderConfig,
@@ -12,16 +13,17 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import {
-  type DeviceEmulationDriver,
-  restoreDevice,
-  runResponsiveCapture,
-  runSetDevice,
-} from '@/agent/device-emulation';
+  createDeviceDriver,
+  DEBUGGER_PROTOCOL_VERSION,
+  type DeviceChrome,
+} from '@/agent/device-driver';
+import { restoreDevice, runResponsiveCapture, runSetDevice } from '@/agent/device-emulation';
 import {
   EmulationRegistry,
   type EmulationTeardown,
   type SavedWindow,
 } from '@/agent/emulation-registry';
+import { groundUserText } from '@/agent/focus-context';
 import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
@@ -30,6 +32,11 @@ import { createProvider, listModels, validateProvider } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { generateReport as authorReport, type GenerateReport } from '@/agent/report';
 import { SessionStore } from '@/agent/session';
+import {
+  readSessionLifecycle,
+  reconcileTurnStatus,
+  writeSessionLifecycle,
+} from '@/agent/session-lifecycle';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
@@ -86,6 +93,8 @@ import type {
   PageMetricsRequest,
   PickerCmd,
   Rect,
+  SessionLifecycle,
+  SessionStateResult,
   SwToPanel,
 } from '@/shared/messages';
 import {
@@ -144,11 +153,12 @@ async function readCommittedUrl(tabId: number): Promise<string | undefined> {
 }
 
 // Device-emulation teardown state, persisted to chrome.storage.session so an SW eviction
-// mid-emulation can be reconciled on wake (slice 16 / SW-resilience). `chromeDeviceDriver` records
-// attach/resize here; `activeEmulationOwner` is the id of the turn currently applying emulation, so
-// a superseded turn's teardown can be scoped to its own emulation (see the user-message `.finally`).
+// mid-emulation can be reconciled on wake (slice 16 / SW-resilience). Each TURN builds its own
+// driver (`deviceDriverFor(owner)`), which stamps that turn's id on every attach/resize it records,
+// so a superseded turn's teardown is scoped to its own emulation (see the user-message `.finally`).
+// The owner used to be a module-level `let` read after an await inside the driver — see
+// `src/agent/device-driver.ts` for the mis-stamping that caused (#165 S3).
 const emulation = new EmulationRegistry();
-let activeEmulationOwner = '';
 
 // Service worker — the brain. Holds keys, runs the agent loop, owns MCP clients
 // and the changeset store. NEVER expose the OpenRouter key to the content script
@@ -251,7 +261,15 @@ export default defineBackground(() => {
   }
 
   function pushMcpStatus(stored: StoredServer): void {
-    void toBusServer(stored).then((server) => postToPanel({ type: 'mcp-status', server }));
+    // `toBusServer` awaits chrome.storage.local (the #120 grant map), which can reject; `mcp-status`
+    // fans this out over EVERY configured server, so an uncaught rejection here is N unhandled
+    // rejections Sentry reports as crashes for a storage hiccup that costs only a stale status row
+    // (#165 S9). Every other `void`-ed promise in this file is caught; so is this one now.
+    void toBusServer(stored)
+      .then((server) => postToPanel({ type: 'mcp-status', server }))
+      .catch((err) =>
+        console.warn(`[mcp-status] failed to publish health for server ${stored.id}:`, err),
+      );
   }
 
   // Readiness (slice 03): pushed unsolicited whenever provider/model/host-permission/MCP
@@ -262,7 +280,9 @@ export default defineBackground(() => {
 
   // Start/Stop session lifecycle (04 wires the real agent-turn AbortController into
   // `turnAbort`; this slice only tracks/pushes the tri-state and aborts if one is set).
-  let sessionState: 'idle' | 'running' | 'stopped' = 'idle';
+  // Mirrored to chrome.storage.session (#165 S5) so it survives an SW eviction — a woken worker
+  // that reported `idle` here was the reason a panel could never learn a session was still open.
+  let sessionState: SessionLifecycle = 'idle';
   let turnAbort: AbortController | null = null;
   // The in-flight turn's changeset store + persist hook, registered at turn start and cleared in
   // the turn's `.finally` (and on session start/stop) — the mid-turn half of the recorder-revert
@@ -303,9 +323,12 @@ export default defineBackground(() => {
     return result;
   }
 
-  function setSessionState(next: typeof sessionState): void {
+  function setSessionState(next: SessionLifecycle): void {
     sessionState = next;
-    postToPanel({ type: 'session-state', state: sessionState });
+    // Persist before pushing so an eviction right after the push still wakes into the right state
+    // (#165 S5). Fire-and-forget + self-catching: a failed write only degrades a later wake.
+    void writeSessionLifecycle(next);
+    postToPanel({ type: 'session-state', state: sessionState, turnRunning: turnAbort !== null });
   }
 
   // Rehydrate the registry from the persisted server list before any RPC is served — after
@@ -345,12 +368,35 @@ export default defineBackground(() => {
     })
     .catch(() => {});
 
+  // The persisted session lifecycle, rehydrated before the first `session-state` push so a panel
+  // connecting to a woken worker isn't told `idle` for a session that is still open (#165 S5).
+  const lifecycleReady = readSessionLifecycle()
+    .then((state) => {
+      sessionState = state;
+    })
+    .catch(() => {});
+
   const panelPorts = new Set<chrome.runtime.Port>();
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== PORT_NAME) return;
     panelPorts.add(port);
     port.onDisconnect.addListener(() => {
       panelPorts.delete(port);
+    });
+    // Push the current state to the newly-connected panel (#165 S5). Without this a panel that
+    // reconnected to a worker woken mid-turn waits forever: `turn-done`/`error`/`session-state`
+    // all belong to a worker that no longer exists, so the in-flight assistant bubble never closes.
+    // `turnRunning: false` on a woken worker is the signal that closes it.
+    void lifecycleReady.then(() => {
+      try {
+        port.postMessage({
+          type: 'session-state',
+          state: sessionState,
+          turnRunning: turnAbort !== null,
+        } satisfies SwToPanel);
+      } catch {
+        // Disconnected between connect and this push — `postToPanel` prunes it on the next fan-out.
+      }
     });
   });
 
@@ -443,6 +489,16 @@ export default defineBackground(() => {
     const content = contentDispatchFor(defaultTabId);
     return async (input, signal) => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+      const tabId = input.tabId ?? defaultTabId;
+      // #165 S1 — BOTH branches, before either. `captureVisibleTab` takes no tabId: it grabs
+      // whatever is active in the window, so a capture aimed at a background tab (copy mode's
+      // reference tab) silently returned the USER's page — element crops with the reference's
+      // geometry applied to the wrong image, full-page stitches scrolling one tab while grabbing
+      // another. Refuse instead, naming `tabs({action:'activate'})` (see capture-target.ts for
+      // why refusing beats auto-activating). Raw `chrome.tabs.get` — no lock re-entry, so the
+      // capture-policy deadlock invariant holds.
+      const blocked = await captureBlockedReason(probeTab, tabId);
+      if (blocked) return { type: 'tool-result', ok: false, error: blocked };
       if (!input.fullPage || input.selector) {
         return content(
           {
@@ -454,7 +510,6 @@ export default defineBackground(() => {
           signal,
         );
       }
-      const tabId = input.tabId ?? defaultTabId;
       try {
         const tab = await chrome.tabs.get(tabId);
         return {
@@ -501,9 +556,11 @@ export default defineBackground(() => {
 
     // Reuse (or ensure) this tab's design session so the changeset carries the SAME sessionId a
     // turn's `appendTurn` keyed history under — minting a fresh random id here would target a
-    // history entry that never existed (`setReport` throws, swallowed → the brief goes unrecorded)
-    // and break handoff idempotency. A session-less tab (report before any turn) still gets a
-    // stable id via `ensure`.
+    // history entry that never existed (`setReport` throws, swallowed → the brief goes unrecorded).
+    // A session-less tab (report before any turn) still gets a stable id via `ensure`.
+    // NOT an idempotency key, despite what this comment used to claim (#165 S10): `sessionId`
+    // appears nowhere under `src/mcp/`, and the dispatched task spec carries no idempotency key at
+    // all — a double Ship opens two tasks. Adding one needs the ai-dev side too; deferred in #165.
     const session = await sessions.ensure(tab.id, tab.url, crypto.randomUUID());
     const changeset = session.changeset;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
@@ -617,6 +674,7 @@ export default defineBackground(() => {
     await historyReady; // history-* RPCs and turn-done append need the persisted ring buffer
     await overlayReady; // user-message/get-overlay-enabled need the hydrated in-memory flag
     await emulationReady; // any orphaned emulation is reconciled before a new turn emulates again
+    await lifecycleReady; // session-get / session-state must read the persisted tri-state, not 'idle'
     switch (msg.type) {
       case 'user-message': {
         // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
@@ -642,18 +700,30 @@ export default defineBackground(() => {
         const controller = new AbortController();
         turnAbort = controller;
 
-        // This turn's device-emulation owner: the driver stamps it on any attach/resize so a
-        // superseded turn's teardown (below) only clears the emulation IT applied, never one a
-        // newer concurrent same-tab turn has since taken over.
+        // This turn's device-emulation owner + the driver BOUND to it: the driver stamps the owner
+        // on any attach/resize, so a superseded turn's teardown (below) only clears the emulation
+        // IT applied, never one a newer concurrent same-tab turn has since taken over. The owner is
+        // a constructor argument, not a module-level global read after an await (#165 S3).
         const emulationOwner = crypto.randomUUID();
-        activeEmulationOwner = emulationOwner;
+        const deviceDriver = deviceDriverFor(emulationOwner);
         // Every tab this turn emulated (the model can target other tabs, e.g. copy mode's
         // reference tab, and can emulate several in one turn) — the teardown below restores each
         // of them, not just the turn's default tab. A `reset` removes the tab from the set.
         const emulatedTabs = new Set<number>();
 
         await sessions.ensure(tabId, tab.url, crypto.randomUUID());
-        const session = await sessions.appendMessages(tabId, { role: 'user', content: msg.text });
+        // Ground the instruction in the picker's selection (#165 S6): the panel echoes the
+        // still-attached element(s) on `selector`/`selectors`, and the grounded text — not the raw
+        // text — goes into the thread, so a turn resumed after an SW eviction still knows what
+        // "this" referred to. History keeps the user's own words (`msg.text`, below).
+        const groundedText = groundUserText(msg.text, msg.selector, msg.selectors);
+        const session = await sessions.appendMessages(tabId, {
+          role: 'user',
+          content: groundedText,
+        });
+        // The turn is live: persist it per-tab so a panel reconnecting to a WOKEN worker can tell
+        // an orphaned turn from a live one (#165 S5, `session-get`).
+        await sessions.patch(tabId, { status: 'running' }).catch(() => {});
 
         // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction —
         // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
@@ -844,8 +914,8 @@ export default defineBackground(() => {
           // interact.control — same `content` transport, no extra SW-side logic needed.
           complexSite: content,
           // Device emulation + responsive capture (slice 16): `setDevice`/`responsiveCapture` are
-          // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against `chromeDeviceDriver`;
-          // `checkResponsive` is content-routed (the scanner runs in the page's world). Both
+          // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against this turn's OWN
+          // `deviceDriver`; `checkResponsive` is content-routed (scanner runs in the page). Both
           // emulation entry points ride the per-tab capture lock (#136): a same-step setDevice or
           // responsive sweep resizing the viewport mid-stitch invalidates every band's planned
           // geometry. The lock keys on the RESOLVED tab (the model can pass `tabId` — a copy-mode
@@ -865,17 +935,21 @@ export default defineBackground(() => {
               // clobber the record of a tab still emulated from earlier in the turn).
               if (message.reset) emulatedTabs.delete(target);
               else emulatedTabs.add(target);
-              return withCaptureLock(target, () =>
-                runSetDevice(chromeDeviceDriver, message, tabId),
-              );
+              return withCaptureLock(target, () => runSetDevice(deviceDriver, message, tabId));
             },
             capture: (message, signal) => {
               const target = message.tabId ?? tabId;
               emulatedTabs.add(target);
               return withCaptureLock(target, () =>
                 runResponsiveCapture(
-                  chromeDeviceDriver,
+                  deviceDriver,
                   async (t, opts, sig) => {
+                    // #165 S1 again, per breakpoint: the sweep applies emulation to `t` and then
+                    // captures — against the ACTIVE tab if `t` isn't it, so every shot in the set
+                    // would be the wrong page rendered at the wrong size. A per-shot error keeps
+                    // the sweep's "never an aborted sweep" contract.
+                    const inactive = await captureBlockedReason(probeTab, t);
+                    if (inactive) return { type: 'tool-result', ok: false, error: inactive };
                     if (opts.fullPage) {
                       try {
                         const tab = await chrome.tabs.get(t);
@@ -1016,9 +1090,11 @@ export default defineBackground(() => {
               // must never receive another strip (see retractRevertedEdit).
               turnChangeset = null;
             }
-            // Tear down device emulation ONLY if this turn still owns it (detach the debugger /
-            // restore the window) so the user's page + the "being debugged" banner don't outlast the
-            // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
+            // The turn is over: clear the persisted per-tab turn status so a later `session-get`
+            // doesn't read a stale `'running'` and report an orphan (#165 S5). A superseded turn
+            // does NOT write here — the turn that replaced it already stamped `'running'`, and
+            // overwriting would make the live turn look finished.
+            if (wasCurrent) void sessions.patch(tabId, { status: 'idle' }).catch(() => {});
             // Tear down device emulation ONLY for tabs this turn still owns (detach the debugger /
             // restore the window) so the user's page + the "being debugged" banner don't outlast the
             // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
@@ -1031,7 +1107,7 @@ export default defineBackground(() => {
               // would kill that newer turn's fresh emulation mid-turn.
               void withCaptureLock(emuTab, () => {
                 if (!emulation.owns(emuTab, emulationOwner)) return Promise.resolve();
-                return restoreDevice(chromeDeviceDriver, emuTab);
+                return restoreDevice(deviceDriver, emuTab);
               }).catch(() => {});
             }
             if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });
@@ -1278,6 +1354,26 @@ export default defineBackground(() => {
         turnChangeset = null;
         setSessionState('stopped');
         return { ok: true };
+      // The panel ASKS for the current state (#165 S5) — the recovery path for a panel that
+      // reconnected to a worker woken after a mid-turn eviction, where no transition will ever be
+      // pushed because the transition already happened in a worker that is gone. Two facts, and
+      // the per-tab turn status is HEALED on the way out: a persisted `'running'` with no live
+      // `turnAbort` can only be an orphan, so it becomes `'stopped'` here and stays that way.
+      case 'session-get': {
+        const tab = await resolveTargetTab();
+        const tabId = tab?.id ?? null;
+        const turnRunning = turnAbort !== null;
+        const current = tabId === null ? undefined : sessions.get(tabId);
+        if (tabId !== null && current) {
+          const healed = reconcileTurnStatus(current.status, turnRunning);
+          // Best-effort: the answer above is already correct, and a failed write only means the
+          // next ask re-derives the same thing.
+          if (healed !== current.status) {
+            await sessions.patch(tabId, { status: healed }).catch(() => {});
+          }
+        }
+        return { ok: true, state: sessionState, turnRunning, tabId } satisfies SessionStateResult;
+      }
 
       // --- history: last-10 conversations + reports (slice 08) ------------
       // Lightweight summaries for the History SPA list — never the full thread/report payload.
@@ -1529,7 +1625,8 @@ export default defineBackground(() => {
   // for a page that no longer exists. Wipe the recorder buffer + BOTH changeset mirrors: the
   // undo/redo persister (`changeset:<tabId>`) AND the SessionStore resume snapshot (turn start
   // falls back to it when no persister record exists). The mirror is re-seeded EMPTY for the new
-  // URL with a fresh sessionId (the handoff idempotency key must not carry over); the session's
+  // URL with a fresh sessionId (the history key must not carry over — see #165 S10: it is not an
+  // idempotency key and never was); the session's
   // message thread + usage survive — only edits are wiped. `webNavigation` is already a manifest
   // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
   // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
@@ -1575,6 +1672,26 @@ export default defineBackground(() => {
       );
   });
 
+  // Chrome detached the debugger without us asking (#165 S4): the user clicked Cancel on the
+  // "started debugging this browser" infobar, DevTools opened on the tab, or the target crashed.
+  // `applyCdp` is idempotent against the REGISTRY, so a stale `attached` record makes it skip the
+  // re-attach; `sendCommand` then rejects "Debugger is not attached", `applyDevice` swallows that
+  // and silently drops to the window-resize fallback — every later breakpoint measured with the
+  // desktop UA, DPR 1 and no touch, while the model reports "responsive looks fine" from a desktop
+  // rendering it believes is a Pixel 7. Clearing the record here lets the next `applyCdp` re-attach.
+  // Guarded on API presence, like the `chrome.sidePanel` block above: `chrome.debugger` is absent
+  // without the permission (and on Firefox), where the property access would throw synchronously.
+  if (typeof chrome.debugger !== 'undefined') {
+    chrome.debugger.onDetach.addListener(({ tabId }) => {
+      if (tabId === undefined) return;
+      void emulation
+        .clearAttach(tabId)
+        .catch((err) =>
+          console.warn(`[emulation] failed to clear the detach record for tab ${tabId}:`, err),
+        );
+    });
+  }
+
   // Tab-close cleanup: a closed tab's buffered recorder events can never fold (no turn will
   // drain them again) — drop the buffer so a recycled tab id never inherits stale mutations.
   // Same for the document-identity stamp (both copies): a recycled id must not compare against
@@ -1592,12 +1709,31 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     const parsed = CaptureRequest.safeParse(raw);
     if (!parsed.success) return; // not a capture request
-    captureVisibleTab(parsed.data, sender.tab?.windowId)
-      .then((dataUrl) => sendResponse({ ok: true, dataUrl } satisfies CaptureResult))
+    const senderTabId = sender.tab?.id;
+    // #165 S1, the content-initiated leg: the requesting frame computed its crop rect against ITS
+    // page, but `captureVisibleTab` would return the window's ACTIVE tab. Refuse rather than crop
+    // one page's geometry out of another's pixels. Re-probed (not read off `sender.tab.active`,
+    // a snapshot from send time) so a tab switch during the round-trip is caught.
+    (senderTabId === undefined
+      ? Promise.resolve<string | null>(null)
+      : captureBlockedReason(probeTab, senderTabId)
+    )
+      .then(async (blocked) => {
+        if (blocked) return { ok: false, error: blocked } satisfies CaptureResult;
+        return {
+          ok: true,
+          dataUrl: await captureVisibleTab(parsed.data, sender.tab?.windowId),
+        } satisfies CaptureResult;
+      })
+      .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: String(err) } satisfies CaptureResult));
     return true; // async response
   });
 });
+
+// `chrome.tabs.get` as the capture guard's tab probe (`src/agent/capture-target.ts`). A raw tabs
+// read — never a content dispatch — so guarding inside a lock holder can't self-deadlock.
+const probeTab: CaptureTargetProbe = (tabId) => chrome.tabs.get(tabId);
 
 // Capture the visible tab as PNG, then crop to the requested (page-CSS-px) rect. `windowId` comes
 // from the requesting content script's tab; falls back to the current window.
@@ -1663,69 +1799,39 @@ const chromeBrowserDriver: BrowserControlDriver = {
 // permission is unavailable/denied. The tested decision logic (preset resolution, CDP-vs-fallback,
 // sweep, restore) lives in `src/agent/device-emulation.ts`; this is only the chrome glue
 // (coverage-excluded, like the browse/browser drivers). Emulation is torn down on turn end.
-const CDP_VERSION = '1.3';
 // Which tabs have the debugger attached + which windows we've resized is tracked in the persisted
 // `emulation` registry (survives SW eviction) rather than a bare in-memory Set/Map, and keyed by the
 // owning turn so attach stays idempotent, restore returns each window to its pre-emulation bounds,
 // and a woken SW can reconcile emulation orphaned by an eviction (see `emulationReady`).
-
-const chromeDeviceDriver: DeviceEmulationDriver = {
+//
+// Only the raw chrome calls live here; the bookkeeping (owner stamping, idempotent attach, saved
+// bounds) is `src/agent/device-driver.ts`, which is unit-tested.
+const deviceChrome: DeviceChrome = {
   // `chrome.debugger` exists only when the `debugger` permission is declared + granted; otherwise the
-  // runner takes the viewport fallback. (Permission is added in the following slice-16 task.)
+  // runner takes the viewport fallback.
   cdpAvailable: () => typeof chrome.debugger !== 'undefined',
-  applyCdp: async (tabId, device) => {
-    if (!emulation.isAttached(tabId)) {
-      await chrome.debugger.attach({ tabId }, CDP_VERSION);
-      await emulation.recordAttach(tabId, activeEmulationOwner);
-    }
-    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
-      width: device.width,
-      height: device.height,
-      deviceScaleFactor: device.dpr,
-      mobile: device.mobile,
-    });
-    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setTouchEmulationEnabled', {
-      enabled: device.touch,
-      maxTouchPoints: device.touch ? 5 : 0,
-    });
-    // A resolved desktop device carries no UA — override with the browser's own so switching
-    // mobile→desktop mid-sweep clears the prior mobile UA (an empty string wouldn't reset it).
-    await chrome.debugger.sendCommand({ tabId }, 'Network.setUserAgentOverride', {
-      userAgent: device.userAgent ?? navigator.userAgent,
-    });
+  attach: (tabId) => chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION),
+  detach: (tabId) => chrome.debugger.detach({ tabId }),
+  sendCommand: async (tabId, method, params) => {
+    await chrome.debugger.sendCommand({ tabId }, method, params);
   },
-  clearCdp: async (tabId) => {
-    if (!emulation.isAttached(tabId)) return;
-    await emulation.clearAttach(tabId);
-    // Detaching drops every override in one call; best-effort (the tab may already be gone).
-    await chrome.debugger.detach({ tabId }).catch(() => {});
+  windowIdOf: async (tabId) => (await chrome.tabs.get(tabId)).windowId,
+  windowBounds: async (windowId) => {
+    const win = await chrome.windows.get(windowId);
+    return { width: win.width, height: win.height };
   },
-  applyViewport: async (tabId, device) => {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.windowId === undefined) throw new Error('The tab has no window to resize.');
-    if (!emulation.savedWindow(tabId)) {
-      const win = await chrome.windows.get(tab.windowId);
-      await emulation.recordWindow(tabId, activeEmulationOwner, {
-        windowId: tab.windowId,
-        width: win.width,
-        height: win.height,
-      });
-    }
-    await chrome.windows.update(tab.windowId, {
-      state: 'normal',
-      width: device.width,
-      height: device.height,
-    });
+  resizeWindow: async (windowId, size) => {
+    await chrome.windows.update(windowId, { state: 'normal', ...size });
   },
-  clearViewport: async (tabId) => {
-    const saved = emulation.savedWindow(tabId);
-    if (!saved) return;
-    await emulation.clearWindow(tabId);
-    await chrome.windows
-      .update(saved.windowId, { width: saved.width, height: saved.height })
-      .catch(() => {});
+  restoreWindow: async (saved) => {
+    await chrome.windows.update(saved.windowId, { width: saved.width, height: saved.height });
   },
+  defaultUserAgent: () => navigator.userAgent,
 };
+
+/** This turn's emulation driver. `owner` is captured in the closure, so no await inside the driver
+ *  can observe a newer turn's id — the #165 S3 fix. */
+const deviceDriverFor = (owner: string) => createDeviceDriver(deviceChrome, emulation, owner);
 
 // The raw debugger/window teardown the wake reconcile drives to undo emulation orphaned by an SW
 // eviction — kept separate from the driver above (which also mutates the registry) so `reconcile`

@@ -45,7 +45,9 @@ jobs:
 
   test-unit:
     name: Test (unit)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # vitest leaves maxWorkers unset on CI (vitest.config.ts), so it fans out over
+    # every core — more vCPU converts straight into a shorter job.
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
@@ -57,7 +59,7 @@ jobs:
 
   test-integration:
     name: Test (integration)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
@@ -71,7 +73,11 @@ jobs:
     name: Build extension
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
-    needs: [lint, typecheck, test-unit, test-integration]
+    # No `needs:`. Gating the build behind lint+typecheck+tests added their full
+    # duration to the critical path before this job's own setup even began, and a
+    # build failure is independent of a lint failure — we want both reported in one
+    # run, not one after the other. Costs some runner minutes on a red PR; buys back
+    # several minutes of wall clock on every green one.
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: ./.github/actions/bun-setup
@@ -90,9 +96,13 @@ jobs:
 
   test-e2e:
     name: Test (e2e)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # E2E is the long pole: a build, a Chromium download, then N persistent-context
+    # browser launches. On 2 vCPU the Playwright worker count (see playwright.config.ts)
+    # floors at 1, so the suite ran fully serial. More cores buy real parallelism here.
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
-    needs: [lint, typecheck, test-unit, test-integration]
+    # No `needs:` — see the build job. This was the single biggest chunk of CI wall
+    # clock: the slowest job waited on all four fast ones before starting.
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: ./.github/actions/bun-setup

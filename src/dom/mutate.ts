@@ -257,6 +257,17 @@ export function attrDenyReason(name: string, value: string): string | null {
   return null;
 }
 
+/** A tree that can host an overrides sheet: the page document, or a shadow root (whose elements
+ *  document CSS never reaches — see `rootOf`). */
+type SheetRoot = Document | ShadowRoot;
+
+/** One element's live overrides + the root whose sheet carries them. */
+interface OverrideEntry {
+  root: SheetRoot;
+  /** kebab prop -> value; the source of truth the sheet is rebuilt from. */
+  props: Map<string, string>;
+}
+
 /**
  * A page-bound reversible mutator. Holds the injected overrides stylesheet + per-element override
  * maps so repeated `setStyle`s on one element merge into a single rule and unwind precisely. One
@@ -264,26 +275,56 @@ export function attrDenyReason(name: string, value: string): string | null {
  */
 export function createMutator(doc: Document = document): Mutator {
   let markerSeq = 0;
-  // marker id -> its current kebab prop overrides; the source of truth serialized into the sheet.
-  const overrides = new Map<string, Map<string, string>>();
+  // marker id -> its current overrides + host root; the source of truth the sheet is built from.
+  const overrides = new Map<string, OverrideEntry>();
+  // Every root we have ever rendered into, so a render can CLEAR a sheet whose last override was
+  // just undone (a root with no entries left never comes up in the overrides walk).
+  const sheets = new Map<SheetRoot, HTMLStyleElement>();
 
-  function ensureSheet(): HTMLStyleElement {
-    const existing = doc.getElementById(SHEET_ID);
-    if (existing instanceof HTMLStyleElement) return existing;
+  // Document rules do not cross a shadow boundary, so a shadow-nested target needs its rule in
+  // THAT root's own sheet (#165 F4 — the picker resolves shadow-nested elements now, so setStyle
+  // has to be able to reach them). A detached element falls back to the page document.
+  function rootOf(el: Element): SheetRoot {
+    const root = el.getRootNode();
+    return typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot ? root : doc;
+  }
+
+  function ensureSheet(root: SheetRoot): HTMLStyleElement {
+    const existing = root.getElementById(SHEET_ID);
+    if (existing instanceof HTMLStyleElement) {
+      sheets.set(root, existing);
+      return existing;
+    }
     const style = doc.createElement('style');
     style.id = SHEET_ID;
-    (doc.head ?? doc.documentElement).appendChild(style);
+    const host = root instanceof Document ? (root.head ?? root.documentElement) : root;
+    host.appendChild(style);
+    sheets.set(root, style);
     return style;
   }
 
+  // Rebuild every overrides sheet from `overrides` THROUGH CSSOM — never by string-concatenating a
+  // rule body (#165 F1). `insertRule` fixes the rule's boundaries and `setProperty` writes one
+  // declaration inside it, so a value carrying `}` (or any other CSS syntax) cannot close our rule
+  // and append page-wide CSS — the parser simply drops a declaration it can't parse. This is the
+  // same threat the sanitizer's DROPPED_TAGS entry for <style> names: a page-WIDE stylesheet is a
+  // repaint-anything + selector/url() exfil channel, beyond setStyle's per-element grant.
   function renderSheet(): void {
-    const blocks: string[] = [];
-    for (const [id, props] of overrides) {
-      if (props.size === 0) continue;
-      const body = Array.from(props, ([prop, value]) => `${prop}: ${value} !important;`).join(' ');
-      blocks.push(`[${MARKER_ATTR}="${id}"] { ${body} }`);
+    for (const entry of overrides.values()) if (entry.props.size > 0) ensureSheet(entry.root);
+    for (const style of sheets.values()) {
+      const sheet = style.sheet;
+      if (!sheet) continue;
+      while (sheet.cssRules.length > 0) sheet.deleteRule(0);
     }
-    ensureSheet().textContent = blocks.join('\n');
+    for (const [id, entry] of overrides) {
+      if (entry.props.size === 0) continue;
+      const sheet = sheets.get(entry.root)?.sheet;
+      if (!sheet) continue; // an unattached sheet has no CSSOM; nothing to render into
+      const index = sheet.insertRule(`[${MARKER_ATTR}="${id}"] {}`, sheet.cssRules.length);
+      const rule = sheet.cssRules[index];
+      if (!(rule instanceof CSSStyleRule)) continue;
+      for (const [prop, value] of entry.props) rule.style.setProperty(prop, value, 'important');
+    }
   }
 
   function markerOf(el: Element): string {
@@ -300,8 +341,9 @@ export function createMutator(doc: Document = document): Mutator {
     props: Record<string, string>,
   ): ElementMutation<Record<string, string>> {
     const id = markerOf(el);
-    const map = overrides.get(id) ?? new Map<string, string>();
-    overrides.set(id, map);
+    const entry = overrides.get(id) ?? { root: rootOf(el), props: new Map<string, string>() };
+    const map = entry.props;
+    overrides.set(id, entry);
 
     const entries = Object.entries(props).map(([prop, value]) => [toKebab(prop), value] as const);
     const touchedProps = entries.map(([prop]) => prop);
@@ -345,7 +387,7 @@ export function createMutator(doc: Document = document): Mutator {
       computed,
       styleChanges,
       undo() {
-        const map = overrides.get(id);
+        const map = overrides.get(id)?.props;
         if (!map) return;
         for (const [prop, value] of prior) {
           if (value === undefined) map.delete(prop);

@@ -129,6 +129,13 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     model,
     instructions,
     tools,
+    // Transient-failure retry is the SDK's, PER MODEL CALL — deliberately not a wrapper around the
+    // whole turn. `APICallError.isRetryable` already covers 408/409/429/5xx plus network `fetch
+    // failed`, with exponential backoff that honours `Retry-After`, so one 429 on a BYOK key no
+    // longer ends the turn. Re-running a whole turn instead would re-execute every completed step's
+    // tool calls — duplicated page mutations, duplicated backend writes. 3 keeps the worst-case
+    // backoff (~2s + 4s + 8s) inside what an MV3 worker survives.
+    maxRetries: 3,
     // Two ceilings: native step cap + a token cap computed from each step's usage. Either stops
     // the loop after the current step; `ceilingHit` records that it was a ceiling (not a natural
     // finish) that ended the loop, and `budget` (fed by `onStepFinish`) reports which fired.
@@ -177,9 +184,36 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           // `selector`/`kind` (slice 09): feeds the future panel tool chip and, when the on-page
           // overlay is opted in, background.ts's `forwardOverlayStep` mirror to content.
           const { selector, kind } = classifyTool(part.toolName, part.input);
-          emit({ type: 'tool-call', tool: part.toolName, selector, kind });
+          emit({ type: 'tool-call', tool: part.toolName, selector, kind, id: part.toolCallId });
           break;
         }
+        // The OUTCOME half of the chip (#165 S8). `tool-call` above fires when the model REQUESTS
+        // a call — before it runs — so on its own it makes the panel render a green ✓ for a tool
+        // that failed. Both SDK settle parts are forwarded, correlated by `toolCallId`:
+        //   • `tool-result` — the tool returned. NOT necessarily success: every content-routed
+        //     tool reports failure as a normal return with an `ok: false` payload, so the flag is
+        //     read off the output (`toolOutcomeOk`) rather than assumed from the part type.
+        //   • `tool-error` — the tool threw.
+        // A `preliminary` result is a mid-execution partial, not a settle — skipped.
+        case 'tool-result': {
+          if (part.preliminary) break;
+          emit({
+            type: 'tool-result',
+            tool: part.toolName,
+            id: part.toolCallId,
+            ...toolOutcome(part.output),
+          });
+          break;
+        }
+        case 'tool-error':
+          emit({
+            type: 'tool-result',
+            tool: part.toolName,
+            id: part.toolCallId,
+            ok: false,
+            error: boundedError(errorText(part.error)),
+          });
+          break;
         case 'abort':
           stop = 'aborted';
           break;
@@ -419,6 +453,26 @@ function shotsOf(output: ToolResult): ResponsiveShot[] {
 function stripDataUrl(data: string): string {
   const comma = data.startsWith('data:') ? data.indexOf(',') : -1;
   return comma >= 0 ? data.slice(comma + 1) : data;
+}
+
+// The panel-facing `tool-result` chip is a tooltip, not a log sink — bound what crosses the bus
+// (mirrors the schema's `error` cap in `src/shared/messages.ts`).
+const MAX_TOOL_ERROR_CHARS = 500;
+const boundedError = (message: string): string => message.slice(0, MAX_TOOL_ERROR_CHARS);
+
+/**
+ * Read a settled tool's own success flag off its output. Every content-routed tool returns a
+ * `ToolResult` — `{ ok: false, error }` on failure — as a NORMAL return, so a tool-result stream
+ * part says nothing about whether the work landed; only its payload does. Anything without a
+ * boolean `ok` (an MCP backend's free-form JSON, a plain string) is taken at face value: it
+ * returned, so it succeeded. Exported for unit coverage.
+ */
+export function toolOutcome(output: unknown): { ok: boolean; error?: string } {
+  if (typeof output !== 'object' || output === null) return { ok: true };
+  const { ok, error } = output as { ok?: unknown; error?: unknown };
+  if (typeof ok !== 'boolean') return { ok: true };
+  if (ok) return { ok: true };
+  return { ok: false, ...(typeof error === 'string' ? { error: boundedError(error) } : {}) };
 }
 
 function errorText(err: unknown): string {

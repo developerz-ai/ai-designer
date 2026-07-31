@@ -23,9 +23,32 @@ describe('relayToPanel', () => {
     });
   });
 
-  it('does not relay multi-select-changed to the panel (no panel consumer — SW/overlay only)', () => {
-    expect(relayToPanel({ type: 'multi-select-changed', selectors: [selector] })).toBeNull();
-    expect(relayToPanel({ type: 'multi-select-changed', selectors: [] })).toBeNull();
+  // #165 S7: this used to return null under a comment claiming an on-page overlay consumed the
+  // event SW-side. No such path existed — shift-multi-select painted green boxes and did nothing.
+  it('relays multi-select-changed as focus-multi so the composer can chip the selection', () => {
+    const second = { value: '#hero', strategy: 'id' as const, fragile: false };
+    expect(relayToPanel({ type: 'multi-select-changed', selectors: [selector, second] })).toEqual({
+      type: 'focus-multi',
+      selectors: [selector, second],
+    });
+  });
+
+  it('relays an EMPTY multi-select as focus-multi — a cleared selection the panel must reflect', () => {
+    expect(relayToPanel({ type: 'multi-select-changed', selectors: [] })).toEqual({
+      type: 'focus-multi',
+      selectors: [],
+    });
+  });
+
+  it('does not relay recorder-revert / diagnostics-signal (SW-side engine inputs)', () => {
+    const event = { kind: 'setStyle' as const, selector, before: '', after: 'x', ts: 0 };
+    expect(relayToPanel({ type: 'recorder-revert', event })).toBeNull();
+    expect(
+      relayToPanel({
+        type: 'diagnostics-signal',
+        signal: { kind: 'exception', message: 'boom', ts: 0 },
+      }),
+    ).toBeNull();
   });
 
   it('does not relay recorder-event to the panel (SW folds it into the Changeset)', () => {

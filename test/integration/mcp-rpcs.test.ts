@@ -87,7 +87,7 @@ function fakeMcpFactory(tools: Record<string, unknown> = { task: {} }): McpClien
 // Rebuilds the piece of SW-lifetime state background.ts closes over for the mcp-* cases,
 // so each test gets a fresh manager/oauth cache like a fresh service worker would.
 function makeHandlers(connect: McpClientFactory) {
-  const mcpManager = new McpManager({ connect, idleMs: 0 });
+  const mcpManager = new McpManager({ connect });
   const oauthConfigs = new Map<string, McpOAuthConfig>();
   // #120 grant map — mirrors background.ts's tool-grants store reads; the grant-set harness
   // case writes it (the real store is exercised in the store unit suite).

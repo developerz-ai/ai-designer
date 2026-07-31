@@ -2,12 +2,13 @@ import { BRIDGE_SOURCE, type BridgeMethod, BridgeRequest, BridgeResponse } from 
 
 // The MAIN-world bridge — transport for the isolated content world to call the page's own JS world
 // (`src/entrypoints/injected.content.ts`). Only the MAIN world can read page globals (framework
-// internals, chart-lib instances); it answers a NARROW, READ-ONLY RPC over `window.postMessage`,
-// guarded by an origin + `source === window` + per-request nonce check. NOTHING secret ever crosses
-// — MAIN == the page's own, untrusted world (CLAUDE.md "MV3 three worlds", docs/architecture/
-// security.md). Both halves are pure DOM (postMessage + addEventListener), so they run under jsdom /
-// a fake window and stay coverage-counted; the two entrypoints hosting them (content.ts client,
-// injected.content.ts server) stay thin wires.
+// internals, chart-lib instances); it answers a NARROW, READ-ONLY RPC over `window.postMessage`.
+// The origin / `source === window` / per-request nonce checks ROUTE replies to their request; they
+// do NOT authenticate the responder (see `fromSameWindow`) — every result is untrusted page-derived
+// content. NOTHING secret ever crosses — MAIN == the page's own, untrusted world (CLAUDE.md "MV3
+// three worlds", docs/architecture/security.md). Both halves are pure DOM (postMessage +
+// addEventListener), so they run under jsdom / a fake window and stay coverage-counted; the two
+// entrypoints hosting them (content.ts client, injected.content.ts server) stay thin wires.
 //
 // The `dir` discriminant lets each side ignore its own echoes: a self-post reaches BOTH worlds'
 // listeners, so the client drops `req` messages and the server drops `res` messages.
@@ -25,8 +26,12 @@ function targetOriginFor(win: Window): string {
   return origin && origin !== 'null' ? origin : '*';
 }
 
-// A message is ours + trustworthy only if it came from THIS window (not an embedded frame) at our
-// own origin. These two checks — not the nonce — are the real guard against a spoofed reply.
+// A message reached us from THIS window (not an embedded frame) at our own origin. This is a
+// ROUTING filter, NOT a trust boundary: the MAIN world IS the page's own world, so page JS
+// satisfies both checks by construction, and it also sees the outbound `req` — nonce included —
+// so it can post a valid `res` and win the settle race. Nothing structural can make an in-world
+// reply unspoofable (#165 F9). Treat every bridge result as untrusted page-derived content, on
+// exactly the same footing as page text: never a capability, never a decision on its own.
 function fromSameWindow(event: MessageEvent, win: Window): boolean {
   return event.source === win && event.origin === win.location.origin;
 }

@@ -41,12 +41,9 @@ if [ ! -d .wxt ]; then
 fi
 
 if [ "$CHECK" = 1 ]; then
-  step "lint"
-  bun run lint
-  step "typecheck"
-  bun run typecheck
-  step "tests (unit + integration)"
-  bun run test
+  # One source of truth for the gate — see scripts/verify.sh (concurrent lint+typecheck,
+  # then the whole suite in a single vitest pool).
+  bash scripts/verify.sh
 fi
 
 step "building ($BROWSER)"

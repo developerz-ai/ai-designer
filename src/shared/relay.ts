@@ -12,9 +12,17 @@ export function relayToPanel(msg: ContentToSw): SwToPanel | null {
     }
     case 'picker-state':
       return { type: 'picker-state', active: msg.active };
-    // `multi-select-changed` + `recorder-event` are consumed SW-side only (the on-page overlay
-    // highlight and the session Changeset fold, respectively) — no panel store reflects them, so
-    // there is nothing to relay to the panel here.
+    // Shift-multi-select (#165 S7): relayed as `focus-multi`, the multi-element sibling of
+    // `focus`, so the composer can chip the selection and echo it back on the next
+    // `UserMessage.selectors` — the grounding half of "make THESE bigger". An EMPTY array is
+    // relayed too: it means the user cleared the selection, which the panel must reflect.
+    // (Before #165 this returned null under a comment claiming an on-page overlay consumed it
+    // SW-side; no such path existed — the event was emitted and read by nothing.)
+    case 'multi-select-changed':
+      return { type: 'focus-multi', selectors: msg.selectors };
+    // `recorder-event` / `recorder-revert` / `diagnostics-signal` are consumed SW-side only (the
+    // Changeset fold, the revert retraction, the diagnostics buffer) — no panel store reflects
+    // them, so there is nothing to relay here.
     default:
       return null;
   }

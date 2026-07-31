@@ -230,23 +230,55 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     emitMultiSelect();
   }
 
+  // The event's TRUE origin, piercing shadow boundaries. A composed event that crossed a shadow
+  // root is retargeted to the outermost host by the time it reaches this `document` listener, so
+  // `e.target` names the custom element and never the inner node the user is pointing at (#165
+  // F4) — `composedPath()[0]` is the node actually under the cursor. Falls back to `target` for a
+  // synthetic event with no composed path.
+  function targetOf(e: Event): Element | null {
+    const first = e.composedPath?.()[0] ?? e.target;
+    return first instanceof Element ? first : null;
+  }
+
   const onOver = (e: MouseEvent): void => {
-    const t = e.target;
-    if (!(t instanceof Element) || isOwn(t)) return;
+    const t = targetOf(e);
+    if (!t || isOwn(t)) return;
     hovered = t;
     renderHover(t);
   };
 
   const onClick = (e: MouseEvent): void => {
     if (e.button !== 0) return;
-    const t = e.target;
-    if (!(t instanceof Element) || isOwn(t)) return;
+    const t = targetOf(e);
+    if (!t || isOwn(t)) return;
     // The pick click must never reach the page (no navigation, no page handlers).
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
     if (e.shiftKey) toggleMulti(t);
     else pickSingle(t);
+  };
+
+  // Cancelling `click` alone is not enough to keep the picker read-only (#165 F3): a
+  // mousedown/mouseup pair IS a drag on an HTML5 drag-and-drop board (Trello/Jira-style), so a
+  // shift-click multi-selection would drop a card into another column, and a mousedown-routed nav
+  // would navigate. None of that is a recorder event, so nothing could undo it. Swallow the whole
+  // gesture in the capture phase. Cancelling `pointerdown` also suppresses the compatibility mouse
+  // events per Pointer Events — `click` still fires, which is what `onClick` picks on.
+  const SWALLOWED = [
+    'pointerdown',
+    'pointerup',
+    'mousedown',
+    'mouseup',
+    'dblclick',
+    'contextmenu',
+  ] as const;
+
+  const onSwallow = (e: Event): void => {
+    const t = targetOf(e);
+    if (!t || isOwn(t)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
   };
 
   const onKeydown = (e: KeyboardEvent): void => {
@@ -284,6 +316,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     ensureUi();
     doc.addEventListener('mouseover', onOver, true);
     doc.addEventListener('click', onClick, true);
+    for (const type of SWALLOWED) doc.addEventListener(type, onSwallow, true);
     doc.addEventListener('keydown', onKeydown, true);
     doc.addEventListener('scroll', onReflow, true);
     win?.addEventListener('resize', onReflow);
@@ -295,6 +328,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     active = false;
     doc.removeEventListener('mouseover', onOver, true);
     doc.removeEventListener('click', onClick, true);
+    for (const type of SWALLOWED) doc.removeEventListener(type, onSwallow, true);
     doc.removeEventListener('keydown', onKeydown, true);
     doc.removeEventListener('scroll', onReflow, true);
     win?.removeEventListener('resize', onReflow);

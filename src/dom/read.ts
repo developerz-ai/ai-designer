@@ -1,4 +1,4 @@
-import { pickUnique } from '@/dom/selector';
+import { pickUnique, resolveShadowSelector } from '@/dom/selector';
 import type {
   A11yNode,
   A11yResult,
@@ -16,8 +16,18 @@ import type {
 // --- query ----------------------------------------------------------------
 
 /** Every element matching `selector` under `root`. An invalid selector yields `[]` rather than
- *  throwing — a bad selector from the model must not crash the content-script bus. */
+ *  throwing — a bad selector from the model must not crash the content-script bus.
+ *
+ *  A ` >>> ` host-path (the `shadow` strategy the selector engine emits) is NOT a CSS selector —
+ *  `querySelectorAll` throws SyntaxError on it — so it is replayed through
+ *  {@link resolveShadowSelector} instead, exactly as `src/dom/widgets.ts` already does. Without
+ *  this every shadow-nested target silently resolved to nothing (#165 F4). The replay yields at
+ *  most one element, so the result is `[el]` or `[]`. */
 export function queryAll(root: ParentNode, selector: string): Element[] {
+  if (selector.includes('>>>')) {
+    const el = resolveShadowSelector(root, selector);
+    return el ? [el] : [];
+  }
   try {
     return Array.from(root.querySelectorAll(selector));
   } catch {
