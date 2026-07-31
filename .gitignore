@@ -28,3 +28,9 @@ goal.txt
 
 # CodeGraph index — local per-machine SQLite graph, never commit
 .codegraph/
+
+# ui-debugger-mcp workspace (sessions, chrome profile, logs)
+tmp/
+
+# editor settings — per-machine (extensions.json stays shared)
+.vscode/settings.json
