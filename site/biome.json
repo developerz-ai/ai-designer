@@ -7,7 +7,13 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/node_modules", "!**/dist", "!**/*.tsbuildinfo"]
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/*.tsbuildinfo",
+      "!**/public/world-assets"
+    ]
   },
   "formatter": {
     "enabled": true,

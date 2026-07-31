@@ -54,10 +54,12 @@ export default defineConfig({
     target: 'esnext',
     sourcemap: false,
     rollupOptions: {
-      // Multi-page: the landing page plus a standalone privacy notice.
+      // Multi-page: the landing page, a standalone privacy notice, and the
+      // (dark, unlinked) /world scroll-world page (#160).
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         privacy: fileURLToPath(new URL('./privacy.html', import.meta.url)),
+        world: fileURLToPath(new URL('./world.html', import.meta.url)),
       },
     },
   },

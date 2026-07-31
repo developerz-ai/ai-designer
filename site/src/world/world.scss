@@ -1,0 +1,172 @@
+// /world page shell (#160). Reuses the shared shell (tokens, fonts, base reset +
+// type primitives, effects) like privacy.scss, then themes the vendored scroll-world
+// engine and reserves the pre-JS track height. No raw color/dimension literals that
+// are tokens — the scene accents below are pinned by the issue, not tokenized.
+@use '../styles/tokens' as *;
+@use '../styles/fonts';
+@use '../styles/base';
+@use '../styles/effects';
+
+// ─── Engine theme ─────────────────────────────────────────────────────────────
+// Unlayered on purpose: the engine wraps its own CSS in `@layer sw` exactly so an
+// unlayered declaration wins regardless of injection order (scrub-engine.js
+// injectCSS). Values pinned by #160; Manrope is already served from /fonts.
+:root {
+  --sw-bg: #{$bg};
+  --sw-ink: #{$paper};
+  --sw-ink-soft: #{$slate-400};
+  --sw-accent: #6366f1; // indigo default — each scene overrides via its own accent
+  --sw-font-display: #{$font-sans};
+  --sw-font-body: #{$font-sans};
+}
+
+// ─── P6: pre-JS track reservation (CLS) ───────────────────────────────────────
+// 5 dives x diveScroll 1.3 + 4 connectors x connScroll 0.9 + 1 trailing = 11.1 screens.
+// Keep in sync with world.ts's sections/connectors and diveScroll/connScroll.
+// Sits on #world, the static mount container — never on .sw-track, which the engine
+// only creates at runtime, so a rule targeting it would reserve nothing pre-JS.
+:root {
+  --world-track-vh: 1110;
+}
+#world {
+  min-height: calc(var(--world-track-vh) * 1vh);
+}
+
+// ─── Static fallback (no-JS / crawlers) ───────────────────────────────────────
+// world.ts hides this block before the engine mounts.
+.world-static {
+  .container--narrow {
+    padding-block: clamp(2.5rem, 6vw, 5rem);
+  }
+}
+
+.world-static__top {
+  border-bottom: 1px solid var(--dz-border);
+}
+
+.world-static__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-4;
+  min-height: $nav-h;
+  padding-block: $space-3;
+}
+
+.world-static__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  font-weight: 600;
+}
+
+.world-static__logo {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.world-static__sub {
+  color: var(--dz-muted);
+}
+
+.world-static__nav {
+  display: flex;
+  gap: $space-4;
+  font-size: 0.9rem;
+  color: var(--dz-muted);
+
+  a {
+    transition: color $dur-2 $ease-out;
+
+    &:hover {
+      color: var(--dz-ink);
+    }
+  }
+
+  @media (max-width: $bp-md) {
+    display: none;
+  }
+}
+
+.world-static__cta {
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: color $dur-2 $ease-out;
+
+  &:hover {
+    color: $brand-300;
+  }
+}
+
+.world-static__title {
+  margin-top: $space-3;
+  font-size: fluid(2rem, 2.75rem);
+}
+
+.world-static__intro {
+  margin-top: $space-4;
+  color: var(--dz-muted);
+  font-size: fluid(1.05rem, 1.2rem);
+  max-width: 46ch;
+}
+
+.world-static__scene {
+  margin-top: $space-8;
+
+  h2 {
+    margin-top: $space-2;
+    font-size: fluid(1.5rem, 2rem);
+  }
+
+  p {
+    margin-top: $space-3;
+    color: var(--dz-muted);
+    max-width: 60ch;
+  }
+}
+
+.world-static__scene-eyebrow {
+  font-size: fluid(0.72rem, 0.78rem);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--scene-accent, var(--dz-muted));
+}
+
+.world-static__scene-cta {
+  color: $brand-300;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    color: $brand-400;
+  }
+}
+
+.world-static__poster {
+  margin-top: $space-10;
+  width: 100%;
+  border: 1px solid var(--dz-border);
+  border-radius: $radius-lg;
+  background: var(--dz-surface);
+}
+
+// ─── Footer ───────────────────────────────────────────────────────────────────
+// Sits after #world: post-JS it lands right below the engine's 1110vh track, at
+// the end of the last scene.
+.world-foot {
+  padding-block: $space-6;
+  border-top: 1px solid var(--dz-border);
+  color: var(--dz-muted);
+  font-size: 0.9rem;
+
+  a {
+    color: $brand-300;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+
+    &:hover {
+      color: $brand-400;
+    }
+  }
+}
