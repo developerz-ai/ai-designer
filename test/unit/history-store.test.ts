@@ -177,6 +177,26 @@ describe('HistoryStore.hydrate', () => {
     await store.hydrate();
     expect(store.size).toBe(0);
   });
+
+  it('salvages good conversations alongside a corrupt one instead of total amnesia (#168)', async () => {
+    const seeded = new HistoryStore({ now: at(5) });
+    await seeded.appendTurn({ id: 'good-1', title: 'one', url: URL, messages: [msg('user', 'a')] });
+    await seeded.appendTurn({ id: 'good-2', title: 'two', url: URL, messages: [msg('user', 'b')] });
+
+    // Corrupt ONE entry in place (a stale-schema record after an update).
+    const raw = backing.get('history:conversations') as unknown[];
+    backing.set('history:conversations', [...raw, { id: 'bad', url: 42 }]);
+
+    const revived = new HistoryStore();
+    await revived.hydrate();
+
+    expect(revived.size).toBe(2);
+    expect(revived.get('good-1')?.messages).toEqual([{ role: 'user', content: 'a' }]);
+    expect(revived.get('good-2')?.messages).toEqual([{ role: 'user', content: 'b' }]);
+    // The cleaned list is persisted back so the corruption never re-surfaces.
+    const persisted = backing.get('history:conversations') as unknown[];
+    expect(persisted).toHaveLength(2);
+  });
 });
 
 describe('boundMessages: size-bounding', () => {
@@ -203,6 +223,47 @@ describe('boundMessages: size-bounding', () => {
     const [bounded] = boundMessages([long]);
     expect(typeof bounded?.content).toBe('string');
     expect((bounded?.content as string).length).toBeLessThan(10_000);
+  });
+
+  it('replaces BARE-base64 image payloads (what the loop’s toModelOutput produces) with the placeholder, not a 4k truncation (#168)', () => {
+    // `loop.ts` strips the `data:` prefix before handing a screenshot to the model, so the
+    // persisted tool-result file part holds plain base64 — the data-URL check never fires.
+    const bareBase64 = 'iVBORw0KGgoAAAANSUhEUg'.repeat(500); // ~11k chars, base64 charset only
+    const toolMessage: ChatMessage = {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 't1',
+          toolName: 'screenshot',
+          output: {
+            type: 'content',
+            value: [
+              { type: 'text', text: 'Screenshot of the current result.' },
+              { type: 'file', data: { type: 'data', data: bareBase64 }, mediaType: 'image/png' },
+            ],
+          },
+        },
+      ],
+    };
+    const call: ChatMessage = {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'screenshot', input: {} }],
+    };
+
+    const bounded = boundMessages([call, toolMessage]);
+    const flat = JSON.stringify(bounded);
+    expect(bounded).toHaveLength(2);
+    expect(flat).toContain('[image omitted from history]');
+    expect(flat).not.toContain(bareBase64.slice(0, 100)); // no half-truncated binary junk
+  });
+
+  it('still truncates (not placeholders) ordinary long prose — the base64 heuristic never fires on real text', () => {
+    const prose = `${'A meaningful sentence with spaces. '.repeat(300)}`;
+    const [bounded] = boundMessages([{ role: 'assistant', content: prose }]);
+    expect(typeof bounded?.content).toBe('string');
+    expect(bounded?.content as string).toContain('A meaningful sentence');
+    expect(bounded?.content as string).not.toContain('[image omitted from history]');
   });
 
   it('keeps only the most recent messages when a thread exceeds the per-conversation cap', () => {

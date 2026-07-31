@@ -9,6 +9,12 @@
 // SW-ONLY by usage (the agent loop runs in the service worker), but this module is a pure
 // string builder: no chrome.*, no I/O, no `any`. That keeps it unit-testable and lets modes
 // compose it deterministically. Base doctrine mirrors `docs/idea/agent.md:21-35`.
+//
+// PROMPT-CACHE INVARIANT (#168): the assembled prompt must be BYTE-STABLE across turns —
+// OpenAI-compatible prompt caching is prefix-based, so anything per-turn injected here (a mode
+// addendum, a timestamp, the page URL) re-bills the entire system block + thread every turn.
+// Per-turn guidance rides the message tail instead (`modes.ts` `ModeGuidance.turnAddendum`);
+// `addenda` remains for genuinely static composition (and tests).
 
 /** The base sections, in the order they appear in the assembled prompt. Exported so callers
  *  (and tests) can target a section by name and assert coverage/ordering. */
@@ -63,6 +69,18 @@ taste, make the call, and say what you decided and why.`;
 
 const DOCTRINE = `You are **agentic**: one user instruction kicks off a full multi-step run, not a single
 edit. Drive it to a finished, verified result — do not ping-pong one change per message.
+
+**This is a persistent multi-turn conversation.** Earlier turns' messages — including your own tool
+calls and their results — remain in the thread. Build on them: don't re-run a read whose answer you
+already have unless the page may have changed since. Older screenshots are replaced with short
+placeholder notes to save space — re-capture when you need current pixels; persisted *text* results
+stay trustworthy. When a turn was cut short by its budget, the next "continue" resumes from that
+recorded state, not from scratch.
+
+**Batch independent calls in one step.** You may issue several tool calls in a single step when none
+depends on another's result — read \`query\` + \`getStyles\` + \`a11ySnapshot\` on different targets
+together rather than one per step. The working loop below is a rhythm, not a one-tool-per-step rule;
+serialize only when a call's input needs another call's output.
 
 Your working loop, repeated until the goal is met:
 1. **Understand** the target — read it with \`query\` / \`a11ySnapshot\` / \`getStyles\` before you touch it.

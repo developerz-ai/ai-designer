@@ -13,6 +13,17 @@
 // (src/dom/charts.ts:350-358) — hover-by-another-name, and page/chart handlers can react with
 // layout-shifting side effects mid-stitch. Only widgets.ts's widgetAct and interact.ts's drivers
 // scroll — all locked.
+// Widened 2026-07-31 (#168): query / getStyles / a11ySnapshot were missing, so the very reads
+// the system prompt tells the model to batch ("several small reads cost far less") serialized
+// behind the per-tab capture mutex — contradicting the "reads stay outside for throughput"
+// intent above. Audit per tool (src/dom/read.ts): `query` resolves selectors + derives stable
+// selectors via pickUnique — no rects, no scrolling, no synthetic events; `getStyles` projects
+// getComputedStyle values — scroll-independent; `a11ySnapshot` walks roles/names off
+// attributes/text — scroll-independent. None dispatches events or mutates. NOT widened:
+// `screenshot` (the capture itself), every mutation (`setStyle`/`setText`/structural), every
+// driver (`click`/`type`/`scrollTo`/…), `diagnostics` (its `scan` reads layout geometry that a
+// mid-sweep emulation resize would skew), and `chartTooltip` (synthetic hover — see above).
+// A `readText` message type does not exist on the bus (checked `src/shared/messages.ts`).
 export const UNLOCKED_READS: ReadonlySet<string> = new Set([
   'describe',
   'extractIdentity',
@@ -21,10 +32,14 @@ export const UNLOCKED_READS: ReadonlySet<string> = new Set([
   'readChart',
   'pageFacts',
   'checkResponsive',
+  'query',
+  'getStyles',
+  'a11ySnapshot',
 ]);
 
 /** Whether one content-routed message type rides the per-tab capture lock (#136). Everything not
- *  a named pure read locks: all DomTool mutations/reads and every page-driving ControlTool. */
+ *  a named pure read locks: all DomTool mutations, `screenshot`, `diagnostics`, and every
+ *  page-driving ControlTool. */
 export function shouldRideCaptureLock(type: string): boolean {
   return !UNLOCKED_READS.has(type);
 }

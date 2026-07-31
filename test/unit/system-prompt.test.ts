@@ -63,6 +63,21 @@ describe('buildSystemPrompt: load-bearing content', () => {
     expect(prompt).toMatch(/ask only when genuinely ambiguous/i);
   });
 
+  it('tells the model it is in a persistent multi-turn conversation with tool results in the thread (#168)', () => {
+    expect(prompt).toMatch(/persistent multi-turn conversation/i);
+    expect(prompt).toMatch(/tool\s+calls and their results — remain in the thread/i);
+    expect(prompt).toMatch(/don't re-run a read whose answer you\s+already have/i);
+    // Old screenshots become placeholders — the model must know to re-capture, not guess.
+    expect(prompt).toMatch(/older screenshots are replaced/i);
+    expect(prompt).toMatch(/re-capture when you need current pixels/i);
+  });
+
+  it('invites batching independent tool calls in one step — the numbered loop is a rhythm, not one-tool-per-step (#168)', () => {
+    expect(prompt).toMatch(/batch independent calls in one step/i);
+    expect(prompt).toMatch(/not a one-tool-per-step rule/i);
+    expect(prompt).toMatch(/serialize only when a call's input needs another call's output/i);
+  });
+
   it('encodes the guardrails: never auto-ship, budget, fragile selectors, ephemeral', () => {
     expect(prompt).toMatch(/never ship on your own/i);
     expect(prompt).toMatch(/handoff` is user-triggered and approval-gated/i);

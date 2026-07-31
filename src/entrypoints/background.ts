@@ -28,6 +28,7 @@ import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
+import { cachedSystemPrompt, withCacheBreakpoint } from '@/agent/prompt-cache';
 import {
   createProvider,
   keyMissing,
@@ -37,13 +38,14 @@ import {
 } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
 import { generateReport as authorReport, type GenerateReport } from '@/agent/report';
-import { SessionStore } from '@/agent/session';
+import { type ChatMessage, SessionStore } from '@/agent/session';
 import {
   readSessionLifecycle,
   reconcileTurnStatus,
   writeSessionLifecycle,
 } from '@/agent/session-lifecycle';
 import { buildSystemPrompt } from '@/agent/system-prompt';
+import { compactForThread } from '@/agent/thread-compact';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
@@ -102,12 +104,16 @@ import type {
   SessionLifecycle,
   SessionStateResult,
   SwToPanel,
+  ThreadGetResult,
+  ThreadViewMessage,
+  UserMessageResult,
 } from '@/shared/messages';
 // Value import (a Zod schema, parsed at runtime) — the block below is `import type`.
 import {
   CaptureRequest,
   ContentToSw,
   DesignReadResult,
+  HISTORY_MAX_MESSAGES,
   IdentityResult,
   OverlayAck,
   PageMetricsResult,
@@ -140,6 +146,12 @@ type ContentDispatch = (
 // A device-emulation change re-evaluates media queries + reflows the whole layout — give it a beat
 // longer than a scroll before capturing a responsive breakpoint.
 const EMULATION_SETTLE_MS = 300;
+
+// Ceiling on how long a superseding user-message waits for the aborted turn's finalization
+// (thread + history persistence) before giving up and forfeiting it (#168). An aborted SDK
+// stream settles in milliseconds; the bound only matters when a provider hangs on abort — the
+// new turn must not be hostage to it.
+const SUPERSEDE_SETTLE_MS = 3_000;
 
 // The chrome.storage.session key mirroring a tab's last committed main-frame URL (stamped by the
 // webNavigation.onCommitted listener on every main-frame commit) so the turn-start URL guard
@@ -345,6 +357,21 @@ export default defineBackground(() => {
   // that reported `idle` here was the reason a panel could never learn a session was still open.
   let sessionState: SessionLifecycle = 'idle';
   let turnAbort: AbortController | null = null;
+  // #168 turn attribution: the id of the turn `turnAbort` belongs to (stamped on every stream
+  // event that turn emits), plus the ids of user-messages ACCEPTED but not yet launched — the
+  // setup window (config reads, supersede settlement, changeset rehydration) used to report
+  // `turnRunning: false` to a reconnecting panel for a turn that was about to start (#168 H4).
+  let runningTurnId: string | null = null;
+  const startingTurns = new Set<string>();
+  const isTurnRunning = (): boolean => turnAbort !== null || startingTurns.size > 0;
+  const liveTurnId = (): string | undefined => runningTurnId ?? [...startingTurns].at(-1);
+  // The in-flight turn's finalization (thread/history persistence): a superseding user-message
+  // AWAITS this (bounded) before appending its own user message, so the session thread stays
+  // [user1, assistant1(partial), user2] — one source of truth for ordering. A turn that missed
+  // the bound is FORFEITED: its late finalization must no longer append (it would land after
+  // the newer user message and corrupt the resume thread).
+  let settlingTurn: { id: string; done: Promise<void> } | null = null;
+  const forfeitedTurns = new Set<string>();
   // The in-flight turn's changeset store + persist hook, registered at turn start and cleared in
   // the turn's `.finally` (and on session start/stop) — the mid-turn half of the recorder-revert
   // retraction (`retractRevertedEdit` below) strips the reverted event from THIS store too, so
@@ -389,7 +416,7 @@ export default defineBackground(() => {
     // Persist before pushing so an eviction right after the push still wakes into the right state
     // (#165 S5). Fire-and-forget + self-catching: a failed write only degrades a later wake.
     void writeSessionLifecycle(next);
-    postToPanel({ type: 'session-state', state: sessionState, turnRunning: turnAbort !== null });
+    postToPanel({ type: 'session-state', state: sessionState, turnRunning: isTurnRunning() });
   }
 
   // Rehydrate the registry from the persisted server list before any RPC is served — after
@@ -453,7 +480,7 @@ export default defineBackground(() => {
         port.postMessage({
           type: 'session-state',
           state: sessionState,
-          turnRunning: turnAbort !== null,
+          turnRunning: isTurnRunning(),
         } satisfies SwToPanel);
       } catch {
         // Disconnected between connect and this push — `postToPanel` prunes it on the next fan-out.
@@ -802,450 +829,556 @@ export default defineBackground(() => {
       case 'user-message': {
         // Autonomous multi-step turn in the SW: stream tokens + tool-call chips to the panel,
         // route DOM tools to the content script, persist the thread/changeset for resume (04).
-        const tab = await resolveTargetTab();
-        if (tab?.id === undefined || !tab.url) {
-          postToPanel({ type: 'error', message: 'Open a web page to start designing.' });
-          return { ok: true };
-        }
-        const cfg = await getProviderConfig();
-        if (!cfg) {
-          postToPanel({ type: 'error', message: 'Add a model provider in Settings to start.' });
-          return { ok: true };
-        }
-        // Fail here, named, rather than let the SDK issue a keyless request and surface the
-        // provider's own wording ("Missing Authentication header") several frames deep in the
-        // stream. Readiness blocks Start on the same condition; this covers a key cleared after
-        // Start, and a session restored into a worker whose stored key has since gone.
-        if (keyMissing(cfg)) {
-          postToPanel({ type: 'error', message: MISSING_KEY_ERROR });
-          return { ok: true };
-        }
-        const tabId = tab.id;
-        // Closure-stable alias (TS drops a captured property's narrowing inside the chained
-        // rehydration closure below — same reason `tabId` is aliased).
-        const tabUrl = tab.url;
+        // #168: the turn's id is minted before ANY await and registered as "starting", so a port
+        // reconnect during the setup window already reports `turnRunning: true` for this turn.
+        // The try/finally guarantees a guard return or a setup throw always unregisters it.
+        const turnId = crypto.randomUUID();
+        startingTurns.add(turnId);
+        try {
+          const tab = await resolveTargetTab();
+          if (tab?.id === undefined || !tab.url) {
+            postToPanel({ type: 'error', message: 'Open a web page to start designing.' });
+            return { ok: true } satisfies UserMessageResult;
+          }
+          const cfg = await getProviderConfig();
+          if (!cfg) {
+            postToPanel({ type: 'error', message: 'Add a model provider in Settings to start.' });
+            return { ok: true } satisfies UserMessageResult;
+          }
+          // Fail here, named, rather than let the SDK issue a keyless request and surface the
+          // provider's own wording ("Missing Authentication header") several frames deep in the
+          // stream. Readiness blocks Start on the same condition; this covers a key cleared after
+          // Start, and a session restored into a worker whose stored key has since gone.
+          if (keyMissing(cfg)) {
+            postToPanel({ type: 'error', message: MISSING_KEY_ERROR });
+            return { ok: true } satisfies UserMessageResult;
+          }
+          const tabId = tab.id;
+          // Closure-stable alias (TS drops a captured property's narrowing inside the chained
+          // rehydration closure below — same reason `tabId` is aliased).
+          const tabUrl = tab.url;
 
-        // Supersede any in-flight turn, then run this one under a fresh abort controller (Stop /
-        // a newer instruction aborts it). Session-start/-stop share `turnAbort` (slice 03).
-        turnAbort?.abort();
-        const controller = new AbortController();
-        turnAbort = controller;
+          // Supersede any in-flight turn, then run this one under a fresh abort controller (Stop /
+          // a newer instruction aborts it). Session-start/-stop share `turnAbort` (slice 03).
+          // The new controller is installed BEFORE the settlement wait below so the supersede
+          // window never reports `turnRunning: false`, and so the aborted turn's `.finally` sees
+          // itself non-current (it must not emit `turn-done` or null a controller it no longer owns).
+          const priorTurn = settlingTurn;
+          turnAbort?.abort();
+          const controller = new AbortController();
+          turnAbort = controller;
+          runningTurnId = turnId;
 
-        // This turn's device-emulation owner + the driver BOUND to it: the driver stamps the owner
-        // on any attach/resize, so a superseded turn's teardown (below) only clears the emulation
-        // IT applied, never one a newer concurrent same-tab turn has since taken over. The owner is
-        // a constructor argument, not a module-level global read after an await (#165 S3).
-        const emulationOwner = crypto.randomUUID();
-        const deviceDriver = deviceDriverFor(emulationOwner);
-        // Every tab this turn emulated (the model can target other tabs, e.g. copy mode's
-        // reference tab, and can emulate several in one turn) — the teardown below restores each
-        // of them, not just the turn's default tab. A `reset` removes the tab from the set.
-        const emulatedTabs = new Set<number>();
-
-        await sessions.ensure(tabId, tab.url, crypto.randomUUID());
-        // Ground the instruction in the picker's selection (#165 S6): the panel echoes the
-        // still-attached element(s) on `selector`/`selectors`, and the grounded text — not the raw
-        // text — goes into the thread, so a turn resumed after an SW eviction still knows what
-        // "this" referred to. History keeps the user's own words (`msg.text`, below).
-        const groundedText = groundUserText(msg.text, msg.selector, msg.selectors, msg.xpath);
-        const session = await sessions.appendMessages(tabId, {
-          role: 'user',
-          content: groundedText,
-        });
-        // The turn is live: persist it per-tab so a panel reconnecting to a WOKEN worker can tell
-        // an orphaned turn from a live one (#165 S5, `session-get`).
-        await sessions.patch(tabId, { status: 'running' }).catch(() => {});
-
-        // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction —
-        // sharpens the base system prompt's `modes` section into a concrete directive for this turn.
-        const mode = resolveMode(msg.mode, msg.text);
-
-        // Browser-control + vision dispatches (slice 13) — the loop builds the tools from these
-        // (`interact`/`tabsFrames`/`vision`) and wraps `waitFor`/`navigate*`/`inspectVisually`
-        // with its budget guards, so construction lives in one place (`loop.ts` `buildTools`)
-        // and stays consistent with the DOM/browse tools instead of being assembled ad hoc here.
-        // `content` drives the page (DOM + interaction) in the target frame; nav/tabs/frames run
-        // SW-side against `chromeBrowserDriver`; vision captures + inspects.
-        const model = createProvider(cfg);
-        const content = contentDispatchFor(tabId);
-        const screenshot = screenshotDispatchFor(tabId);
-
-        // On-page agent-decision overlay (slice 09): mirror every `tool-call` this turn streams to
-        // the panel onto the target tab's overlay, when the user opted in. A send failure (the tab
-        // navigated away / has no injected content script) is swallowed — the overlay is cosmetic,
-        // never allowed to affect the turn.
-        function forwardOverlayStep(update: SwToPanel): void {
-          if (!overlayEnabled || update.type !== 'tool-call') return;
-          const cmd: OverlayCmd = {
-            type: 'overlay-step',
-            label: overlayLabel(update.tool, update.selector),
-            selector: update.selector,
-            kind: update.kind,
-          };
-          // Top frame only — same reason as `set-overlay-enabled` below.
-          void chrome.tabs.sendMessage(tabId, cmd, { frameId: 0 }).catch(() => {});
-        }
-        const emitTurn = (update: SwToPanel): void => {
-          postToPanel(update);
-          forwardOverlayStep(update);
-        };
-
-        // The session/recorder tools (slice 07): `recordEdit`/`undo`/`redo` mutate this tab's
-        // changeset, `handoff` only proposes (gated below — never auto-ships). Rehydrate the
-        // undo/redo-capable store from its own `chrome.storage.session` record (falling back to
-        // the resume-context changeset `sessions.ensure` above just loaded/created), and mirror
-        // every mutation to BOTH: the redo-capable record (`changesetPersister`, this store's own
-        // durability) and `SessionStore` (`sessions.setChangeset`, so `runHandoffRoute`'s Ship/
-        // report reads see the edit immediately, without waiting for the turn to finish). The
-        // whole rehydration rides the per-tab mutation chain (#142 item 1): a curation op whose
-        // save→mirror tail is still in flight settles first, so this load seeds from the
-        // POST-curation record instead of persisting the pre-op state over it.
-        const { changesetStore, persistChangeset } = await enqueueChangesetMutation(
-          tabId,
-          async () => {
-            const changesetPersister = createSessionChangesetPersister(tabId);
-            const priorChangesetState = await changesetPersister.load();
-            // Turn-start URL guard (#9 review): the persister record (and the session mirror it
-            // falls back to) can hold a changeset for a URL the tab has since left — the nav-clear
-            // wipe is async and a between-turns navigation can race it. Edits recorded against
-            // another page must never fold into this turn's record, so on mismatch BOTH mirrors
-            // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
-            // references the old record's edits). The comparison runs against the last
-            // CROSS-DOCUMENT committed URL, not the live `tab.url`: a same-document navigation
-            // (hash change, history.pushState) fires no commit, leaves DOM + live edits intact, and
-            // must not wipe the record (#9 review round 2). The committed URL is read from
-            // chrome.storage.session FIRST (#9 review round 4): it survives the SW eviction the
-            // in-memory `lastCommittedUrl` map doesn't, so a woken SW no longer falls straight
-            // through to `tab.url` and false-wipes on a hash change; the map then the live
-            // `tab.url` remain the fallbacks for a tab no commit was ever seen for. This closes
-            // the BETWEEN-turns race only; a mid-turn in-flight rebase is tracked in issue #148.
-            const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
-            const staleRecord =
-              priorChangeset.url !==
-              ((await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl);
-            const store = new ChangesetStore(
-              staleRecord
-                ? emptyChangeset(tabUrl, new Date().toISOString(), crypto.randomUUID())
-                : priorChangeset,
-              { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
-            );
-            // Named (not inline) so the turn-done auto-finalize below records + persists + streams
-            // leftover recorder groups through the exact same path as a model-called `recordEdit`.
-            const persist = async (): Promise<void> => {
-              await changesetPersister.save(store.snapshot());
-              await sessions.setChangeset(tabId, store.current);
-            };
-            // A stale (cross-URL) record was re-seeded above: write the empty changeset to BOTH
-            // mirrors now, so neither the persister nor the session mirror can resurrect the old
-            // page's edits on a later load.
-            if (staleRecord) await persist();
-            // Register the turn's store for the mid-turn half of the recorder-revert retraction
-            // (retractRevertedEdit strips the reverted event's contribution here too, so this
-            // store's next persist can't resurrect the phantom over the op's retraction).
-            turnChangeset = { tabId, store, persist };
-            return { changesetStore: store, persistChangeset: persist };
-          },
-        );
-        // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
-        // them instead of folding phantom rows (the turn keeps running when the user switches
-        // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
-        const emitRecord = (update: SwToPanel): void => {
-          postToPanel(
-            update.type === 'edit-recorded' || update.type === 'changeset'
-              ? { ...update, tabId }
-              : update,
-          );
-        };
-        const sessionTools = createSessionTools({
-          store: changesetStore,
-          persist: persistChangeset,
-          emit: emitRecord,
-          // #9: `recordEdit` drains this tab's buffered recorder events for its selector and
-          // folds their real mechanical deltas into the Edit (ground truth wins per family).
-          drainRecorderEvents: (selectorValue) => pendingMutations.drain(tabId, selectorValue),
-        });
-
-        // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
-        // (unblocking the panel). Completion persists spend + threads the assistant reply.
-        // Running cumulative session spend: seeded from the session's prior total, advanced in
-        // `.then()`, and surfaced to the panel's usage meter on `turn-done` (#25).
-        let sessionUsage = session.usage;
-        void runTurn({
-          tabId,
-          messages: session.messages,
-          signal: controller.signal,
-          model,
-          instructions: buildSystemPrompt({ addenda: modeGuidance(mode).addenda }),
-          dispatch: content,
-          browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
-          interact: {
-            control: content,
-            // Same-tab nav drivers ride the per-tab capture lock (#146): a navigate/back/
-            // reload issued while a full-page stitch is in flight would unload the content
-            // script mid-stitch — and captureVisibleTab inside the navigation window can grab
-            // a stale/transition frame into a band SILENTLY. The lock keys on the RESOLVED
-            // tab (the model can pass `tabId` — a copy-mode reference tab), exactly like the
-            // emulation wrappers below. Deadlock-invariant-safe: runNav's internals are raw
-            // chrome.tabs calls that never re-enter the locking dispatch.
-            nav: (msg, signal) =>
-              withCaptureLock(msg.tabId ?? tabId, () =>
-                runNav(chromeBrowserDriver, msg, tabId, signal),
+          // #168 ordering: ONE source of truth for the thread order. The aborted turn's (or a
+          // stopped turn's still-running) finalization appends its REAL messages (partial included)
+          // to the session thread; this message must land AFTER them, so await that finalization —
+          // bounded, so a provider that hangs on abort can't hold the new turn hostage. Missing the
+          // bound FORFEITS the old turn: its late finalization skips the append instead of writing
+          // behind this user message (the residual race — forfeit flagged between its check and its
+          // append — is a single microtask and loses only that partial, never the order).
+          if (priorTurn) {
+            const settledInTime = await Promise.race([
+              priorTurn.done.then(() => true),
+              browseDelay(SUPERSEDE_SETTLE_MS).then(
+                () => false,
+                () => false,
               ),
-          },
-          tabsFrames: {
-            // tabs.close rides the target tab's lock too (#146) — closing a stitching tab
-            // mid-band is the same corruption class; the close queues behind the stitch
-            // instead. open/activate/list mutate no captured tab (activate targets the
-            // WINDOW, which a per-tab lock can't express — documented residual, pre-#146).
-            tabs: (msg) =>
-              msg.action === 'close' && msg.tabId !== undefined
-                ? withCaptureLock(msg.tabId, () => runTabs(chromeBrowserDriver, msg))
-                : runTabs(chromeBrowserDriver, msg),
-            frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
-          },
-          vision: {
-            screenshot,
-            readImages: content,
-            inspect: (msg, signal) =>
-              runInspect(
-                {
-                  model,
-                  generate: visionGenerate,
-                  capture: (i, sig) =>
-                    screenshot(
-                      {
-                        type: 'screenshot',
-                        selector: i.selector,
-                        fullPage: i.fullPage,
-                        tabId: i.tabId,
-                        frameId: i.frameId,
-                      },
-                      sig,
-                    ),
-                },
-                msg,
-                signal,
-              ),
-          },
-          // `extractIdentity` + `describe`'s text modes/`readImageContent` are cheap content
-          // round-trips (the same `content` transport as the DOM tools); `describe`'s `scene` mode
-          // is the one that costs a vision call, so it's the SW-orchestrated capture+generate path
-          // (mirrors `vision.inspect` above, reusing `runDescribeScene`).
-          identity: content,
-          describe: {
-            describe: content,
-            scene: (msg, signal) =>
-              runDescribeScene(
-                { model, generate: visionGenerate, capture: screenshot },
-                msg,
-                signal,
-              ),
-            readImageContent: content,
-          },
-          // pageFacts/readChart/chartTooltip/widgetAct (slice 15) are content-routed exactly like
-          // interact.control — same `content` transport, no extra SW-side logic needed.
-          complexSite: content,
-          // Device emulation + responsive capture (slice 16): `setDevice`/`responsiveCapture` are
-          // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against this turn's OWN
-          // `deviceDriver`; `checkResponsive` is content-routed (scanner runs in the page). Both
-          // emulation entry points ride the per-tab capture lock (#136): a same-step setDevice or
-          // responsive sweep resizing the viewport mid-stitch invalidates every band's planned
-          // geometry. The lock keys on the RESOLVED tab (the model can pass `tabId` — a copy-mode
-          // reference tab), and the turn records which tab it emulated so its teardown (the
-          // `finally` below) restores the right one. The sweep holds the lock for its WHOLE
-          // duration — so its internal captures must use RAW paths (never the locking dispatches,
-          // which would queue it behind itself): fullPage calls captureFullPage directly (its
-          // internals are lock-free by the deadlock invariant), element/viewport shots ride
-          // `sendContentRaw`. The fullPage branch try/catches into a per-shot error ToolResult —
-          // one failed breakpoint must not reject the whole sweep (device-emulation.ts's
-          // "never an aborted sweep" contract).
-          responsive: {
-            setDevice: (message) => {
-              const target = message.tabId ?? tabId;
-              // Track the emulation for the turn's teardown: a real apply adds the tab; a `reset`
-              // restores it immediately (runSetDevice) so it leaves the set (a bare reset must not
-              // clobber the record of a tab still emulated from earlier in the turn).
-              if (message.reset) emulatedTabs.delete(target);
-              else emulatedTabs.add(target);
-              return withCaptureLock(target, () => runSetDevice(deviceDriver, message, tabId));
-            },
-            capture: (message, signal) => {
-              const target = message.tabId ?? tabId;
-              emulatedTabs.add(target);
-              return withCaptureLock(target, () =>
-                runResponsiveCapture(
-                  deviceDriver,
-                  async (t, opts, sig) => {
-                    // #165 S1 again, per breakpoint: the sweep applies emulation to `t` and then
-                    // captures — against the ACTIVE tab if `t` isn't it, so every shot in the set
-                    // would be the wrong page rendered at the wrong size. A per-shot error keeps
-                    // the sweep's "never an aborted sweep" contract.
-                    const inactive = await captureBlockedReason(probeTab, t);
-                    if (inactive) return { type: 'tool-result', ok: false, error: inactive };
-                    if (opts.fullPage) {
-                      try {
-                        const tab = await chrome.tabs.get(t);
-                        const result: ToolResult = {
-                          type: 'tool-result',
-                          ok: true,
-                          data: await captureFullPage(t, tab.windowId, sig),
-                        };
-                        return result;
-                      } catch (err) {
-                        // The pre-lock path normalized these (closed tab, capture quota, abort) —
-                        // keep the per-shot-error contract (normalize 'Error: aborted' to
-                        // 'aborted', mirroring screenshotDispatchFor).
-                        return {
-                          type: 'tool-result',
-                          ok: false,
-                          error:
-                            err instanceof Error && err.message === 'aborted'
-                              ? 'aborted'
-                              : String(err),
-                        };
-                      }
-                    }
-                    return sendContentRaw(
-                      t,
-                      0,
-                      { type: 'screenshot', selector: opts.selector, tabId: t },
-                      sig,
-                    );
-                  },
-                  (sig) => browseDelay(EMULATION_SETTLE_MS, sig),
-                  message,
-                  tabId,
-                  signal,
-                ),
-              );
-            },
-            check: content,
-          },
-          emit: emitTurn,
-          // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
-          // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
-          // The design turn only ever sees write-gated backend tools (#117): `toolsFor()` is
-          // design-safe at the source (manager applies design-gate.ts), so the model cannot
-          // dispatch `<id>__task` outside the user-clicked Ship RPC — which resolves its task
-          // backends from the explicit `toolsForShip()` merge instead.
-          tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
-          // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
-          // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
-          approveHandoff: () => false,
-        })
-          .then(async (outcome) => {
-            // Only the still-current turn threads its result. A turn that was superseded (a
-            // newer user-message) or Stopped already had `turnAbort` reassigned/cleared; its
-            // partial reply streamed to the panel (the scrollback source of truth), but
-            // appending it here would land *after* the newer user message and corrupt the
-            // resume thread — so a non-current turn persists nothing.
-            if (turnAbort !== controller) return;
-            if (outcome.text) {
-              await sessions.appendMessages(tabId, { role: 'assistant', content: outcome.text });
-            }
-            // Accumulate spend across the session's turns (nothing else reads `session.usage`, so
-            // summing is safe) so the panel shows a running session total, not just the last turn.
-            // Only the current turn reaches here — a superseded/Stopped turn returns above, so its
-            // partial spend isn't counted; the meter is current-lineage and approximate (hence "~").
-            sessionUsage = {
-              steps: sessionUsage.steps + outcome.usage.steps,
-              tokens: sessionUsage.tokens + outcome.usage.tokens,
-            };
-            await sessions.patch(tabId, { usage: sessionUsage });
-            // Persist this turn to history (slice 08): the conversation is keyed by the
-            // changeset's sessionId (minted once per tab session), so every turn in the same
-            // design session appends to one entry rather than forking a new ring-buffer slot.
-            // Only this turn's new messages are appended — the full resume thread already lives
-            // in `sessions`; history keeps its own size-bounded copy (see `history-store.ts`).
-            const newMessages = outcome.text
-              ? [
-                  { role: 'user' as const, content: msg.text },
-                  { role: 'assistant' as const, content: outcome.text },
-                ]
-              : [{ role: 'user' as const, content: msg.text }];
-            await historyStore
-              .appendTurn({
-                id: changesetStore.current.sessionId,
-                title: msg.text,
-                url: changesetStore.current.url,
-                mode,
-                messages: newMessages,
-              })
-              .catch((err) => postToPanel({ type: 'error', message: String(err) }));
-            // #9 auto-finalize: mutation groups the model never recorded (no `recordEdit` call
-            // drained them) still land in the durable changeset — one "Auto-recorded" Edit per
-            // remaining selector group, folded from the real events, recorded + persisted +
-            // streamed exactly like a model-recorded edit. A group holding several structural
-            // ops splits: the first stays in the folded edit, each additional op becomes its own
-            // auto-recorded spillover Edit. Events dropped at the buffer cap are surfaced as an
-            // intent suffix on the FIRST finalized edit only — the loss is tab-level, so one
-            // note covers it (and `recordEdit`'s drain already claimed + reset the counter for
-            // anything it folded). Then the tab's buffer is wiped. Runs only on the
-            // still-current turn (the guard above): a superseded turn's leftovers stay buffered
-            // for the turn that replaced it (or the nav-clear below wipes them).
-            const droppedAtCap = pendingMutations.droppedCount(tabId);
-            let capNote =
-              droppedAtCap > 0 ? ` (+${droppedAtCap} earlier events dropped at buffer cap)` : '';
-            for (const group of pendingMutations.peekGroups(tabId)) {
-              const { folded, spillover } = foldMutationEvents(
-                {
-                  intent: 'Auto-recorded agent edit (no recordEdit call)',
-                  selector: group.selector,
-                  changes: [],
-                  attrs: [],
-                  classes: [],
-                  frameworkHints: [],
-                },
-                group.events,
-              );
-              for (const edit of [folded, ...spillover]) {
-                const tagged = capNote ? { ...edit, intent: `${edit.intent}${capNote}` } : edit;
-                capNote = ''; // tab-level loss: noted once, on the first finalized edit
-                changesetStore.record(tagged);
-                await persistChangeset();
-                emitRecord({ type: 'edit-recorded', edit: tagged });
-              }
-            }
-            pendingMutations.clear(tabId);
-          })
-          .catch((err) => postToPanel({ type: 'error', message: String(err) }))
-          .finally(() => {
-            // Same "still current" guard as the `.then()` above: a superseded turn (newer
-            // user-message) or one Stop already cleared `turnAbort` and pushed `session-state:
-            // 'stopped'` itself (case 'session-stop') — that already tells the chat store (11) the
-            // turn is done, so this natural-completion signal only fires for the turn that's still
-            // the one in flight.
-            const wasCurrent = turnAbort === controller;
-            if (wasCurrent) {
-              turnAbort = null;
-              // Unregister the mid-turn retraction target with the turn — a dead turn's store
-              // must never receive another strip (see retractRevertedEdit).
-              turnChangeset = null;
-            }
-            // The turn is over: clear the persisted per-tab turn status so a later `session-get`
-            // doesn't read a stale `'running'` and report an orphan (#165 S5). A superseded turn
-            // does NOT write here — the turn that replaced it already stamped `'running'`, and
-            // overwriting would make the live turn look finished.
-            if (wasCurrent) void sessions.patch(tabId, { status: 'idle' }).catch(() => {});
-            // Tear down device emulation ONLY for tabs this turn still owns (detach the debugger /
-            // restore the window) so the user's page + the "being debugged" banner don't outlast the
-            // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
-            for (const emuTab of emulatedTabs) {
-              if (!emulation.owns(emuTab, emulationOwner)) continue;
-              // Ride the capture lock too (#136): a concurrent same-tab stitch (a newer turn's)
-              // must not see its viewport resized mid-capture by this turn's teardown. Ownership
-              // is RE-CHECKED inside the lock callback: the queue wait is a TOCTOU window in which
-              // a superseding turn's setDevice may have stamped its own owner — restoring now
-              // would kill that newer turn's fresh emulation mid-turn.
-              void withCaptureLock(emuTab, () => {
-                if (!emulation.owns(emuTab, emulationOwner)) return Promise.resolve();
-                return restoreDevice(deviceDriver, emuTab);
-              }).catch(() => {});
-            }
-            if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage });
+            ]);
+            if (!settledInTime) forfeitedTurns.add(priorTurn.id);
+          }
+
+          // This turn's device-emulation owner + the driver BOUND to it: the driver stamps the owner
+          // on any attach/resize, so a superseded turn's teardown (below) only clears the emulation
+          // IT applied, never one a newer concurrent same-tab turn has since taken over. The owner is
+          // a constructor argument, not a module-level global read after an await (#165 S3).
+          const emulationOwner = crypto.randomUUID();
+          const deviceDriver = deviceDriverFor(emulationOwner);
+          // Every tab this turn emulated (the model can target other tabs, e.g. copy mode's
+          // reference tab, and can emulate several in one turn) — the teardown below restores each
+          // of them, not just the turn's default tab. A `reset` removes the tab from the set.
+          const emulatedTabs = new Set<number>();
+
+          const ensured = await sessions.ensure(tabId, tab.url, crypto.randomUUID());
+
+          // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction
+          // WITH the session's last resolved mode as the sticky fallback (#168 E) — "now fix the
+          // padding too" three messages into a debug session stays a debug turn. Resolved BEFORE
+          // the user append because the mode's guidance now rides the user message (below). The
+          // resolution is persisted back so the next turn's inference starts from it.
+          const mode = resolveMode(msg.mode, msg.text, ensured.lastMode);
+          const guidance = modeGuidance(mode);
+
+          // Ground the instruction in the picker's selection (#165 S6): the panel echoes the
+          // still-attached element(s) on `selector`/`selectors`, and the grounded text — not the raw
+          // text — goes into the thread, so a turn resumed after an SW eviction still knows what
+          // "this" referred to. History keeps the user's own words (`msg.text`, below).
+          // The mode's per-turn guidance (`turnAddendum`) is appended to the SAME message — never
+          // to the system prompt, which must stay byte-stable across turns for prefix caching
+          // (#168; `ModeGuidance.addenda` is always empty now, see modes.ts). It rides the
+          // PERSISTED thread too, deliberately: the next turn rebuilds the model input from the
+          // thread, and a persisted message differing from what the model actually saw would
+          // break the cached prefix.
+          const groundedText = groundUserText(msg.text, msg.selector, msg.selectors, msg.xpath);
+          const turnText = guidance.turnAddendum
+            ? `${groundedText}\n\n${guidance.turnAddendum}`
+            : groundedText;
+          const session = await sessions.appendMessages(tabId, {
+            role: 'user',
+            content: turnText,
           });
 
-        return { ok: true };
+          // The turn is live: persist it per-tab so a panel reconnecting to a WOKEN worker can tell
+          // an orphaned turn from a live one (#165 S5, `session-get`), along with the resolved mode.
+          await sessions.patch(tabId, { status: 'running', lastMode: mode }).catch(() => {});
+
+          // Browser-control + vision dispatches (slice 13) — the loop builds the tools from these
+          // (`interact`/`tabsFrames`/`vision`) and wraps `waitFor`/`navigate*`/`inspectVisually`
+          // with its budget guards, so construction lives in one place (`loop.ts` `buildTools`)
+          // and stays consistent with the DOM/browse tools instead of being assembled ad hoc here.
+          // `content` drives the page (DOM + interaction) in the target frame; nav/tabs/frames run
+          // SW-side against `chromeBrowserDriver`; vision captures + inspects.
+          const model = createProvider(cfg);
+          // #168 prompt-cache opt-in: Anthropic-via-OpenRouter honours explicit `cache_control`
+          // breakpoints forwarded from the request JSON, but a strict OpenAI-compatible endpoint
+          // may reject the unknown field — so BOTH annotations are gated on the configured
+          // baseURL being OpenRouter (prompt-cache.ts's opt-in doctrine). Placement: one
+          // breakpoint after the byte-stable system prompt, one on the last message of the PRIOR
+          // thread (the new user message + this turn's steps grow past it without invalidating
+          // it). Annotations are per-request only — the persisted thread stays clean.
+          const cacheable = isOpenRouterBase(cfg.baseURL);
+          const systemPrompt = buildSystemPrompt();
+          const content = contentDispatchFor(tabId);
+          const screenshot = screenshotDispatchFor(tabId);
+
+          // On-page agent-decision overlay (slice 09): mirror every `tool-call` this turn streams to
+          // the panel onto the target tab's overlay, when the user opted in. A send failure (the tab
+          // navigated away / has no injected content script) is swallowed — the overlay is cosmetic,
+          // never allowed to affect the turn.
+          function forwardOverlayStep(update: SwToPanel): void {
+            if (!overlayEnabled || update.type !== 'tool-call') return;
+            const cmd: OverlayCmd = {
+              type: 'overlay-step',
+              label: overlayLabel(update.tool, update.selector),
+              selector: update.selector,
+              kind: update.kind,
+            };
+            // Top frame only — same reason as `set-overlay-enabled` below.
+            void chrome.tabs.sendMessage(tabId, cmd, { frameId: 0 }).catch(() => {});
+          }
+          const emitTurn = (update: SwToPanel): void => {
+            // #168 A: every per-turn stream event carries this turn's id, so the panel folds ONLY
+            // same-turn events into its in-flight bubble (a second window's turn can't bleed in).
+            postToPanel(stampTurnId(update, turnId));
+            forwardOverlayStep(update);
+          };
+
+          // The session/recorder tools (slice 07): `recordEdit`/`undo`/`redo` mutate this tab's
+          // changeset, `handoff` only proposes (gated below — never auto-ships). Rehydrate the
+          // undo/redo-capable store from its own `chrome.storage.session` record (falling back to
+          // the resume-context changeset `sessions.ensure` above just loaded/created), and mirror
+          // every mutation to BOTH: the redo-capable record (`changesetPersister`, this store's own
+          // durability) and `SessionStore` (`sessions.setChangeset`, so `runHandoffRoute`'s Ship/
+          // report reads see the edit immediately, without waiting for the turn to finish). The
+          // whole rehydration rides the per-tab mutation chain (#142 item 1): a curation op whose
+          // save→mirror tail is still in flight settles first, so this load seeds from the
+          // POST-curation record instead of persisting the pre-op state over it.
+          const { changesetStore, persistChangeset } = await enqueueChangesetMutation(
+            tabId,
+            async () => {
+              const changesetPersister = createSessionChangesetPersister(tabId);
+              const priorChangesetState = await changesetPersister.load();
+              // Turn-start URL guard (#9 review): the persister record (and the session mirror it
+              // falls back to) can hold a changeset for a URL the tab has since left — the nav-clear
+              // wipe is async and a between-turns navigation can race it. Edits recorded against
+              // another page must never fold into this turn's record, so on mismatch BOTH mirrors
+              // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
+              // references the old record's edits). The comparison runs against the last
+              // CROSS-DOCUMENT committed URL, not the live `tab.url`: a same-document navigation
+              // (hash change, history.pushState) fires no commit, leaves DOM + live edits intact, and
+              // must not wipe the record (#9 review round 2). The committed URL is read from
+              // chrome.storage.session FIRST (#9 review round 4): it survives the SW eviction the
+              // in-memory `lastCommittedUrl` map doesn't, so a woken SW no longer falls straight
+              // through to `tab.url` and false-wipes on a hash change; the map then the live
+              // `tab.url` remain the fallbacks for a tab no commit was ever seen for. This closes
+              // the BETWEEN-turns race only; a mid-turn in-flight rebase is tracked in issue #148.
+              const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
+              const staleRecord =
+                priorChangeset.url !==
+                ((await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl);
+              const store = new ChangesetStore(
+                staleRecord
+                  ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
+                    // L6): history is keyed by it, so minting a fresh id here forked the history
+                    // conversation on every cross-document nav (and could evict an older one).
+                    // Safe to carry over — it is NOT an idempotency key (#165 S10). Edits are
+                    // still wiped; only the history/thread identity survives the nav.
+                    emptyChangeset(tabUrl, new Date().toISOString(), session.changeset.sessionId)
+                  : priorChangeset,
+                { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
+              );
+              // Named (not inline) so the turn-done auto-finalize below records + persists + streams
+              // leftover recorder groups through the exact same path as a model-called `recordEdit`.
+              const persist = async (): Promise<void> => {
+                await changesetPersister.save(store.snapshot());
+                await sessions.setChangeset(tabId, store.current);
+              };
+              // A stale (cross-URL) record was re-seeded above: write the empty changeset to BOTH
+              // mirrors now, so neither the persister nor the session mirror can resurrect the old
+              // page's edits on a later load.
+              if (staleRecord) await persist();
+              // Register the turn's store for the mid-turn half of the recorder-revert retraction
+              // (retractRevertedEdit strips the reverted event's contribution here too, so this
+              // store's next persist can't resurrect the phantom over the op's retraction).
+              turnChangeset = { tabId, store, persist };
+              return { changesetStore: store, persistChangeset: persist };
+            },
+          );
+          // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
+          // them instead of folding phantom rows (the turn keeps running when the user switches
+          // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
+          const emitRecord = (update: SwToPanel): void => {
+            postToPanel(
+              update.type === 'edit-recorded' || update.type === 'changeset'
+                ? { ...update, tabId }
+                : update,
+            );
+          };
+          const sessionTools = createSessionTools({
+            store: changesetStore,
+            persist: persistChangeset,
+            emit: emitRecord,
+            // #9: `recordEdit` drains this tab's buffered recorder events for its selector and
+            // folds their real mechanical deltas into the Edit (ground truth wins per family).
+            drainRecorderEvents: (selectorValue) => pendingMutations.drain(tabId, selectorValue),
+          });
+
+          // Fire-and-forget: the turn streams over the port for its lifetime, so the RPC acks now
+          // (unblocking the panel). Completion persists the REAL turn messages + spend. The whole
+          // chain (it never rejects — `.catch` below) is registered as `settlingTurn` so the NEXT
+          // user-message can await this turn's persistence before appending its own (#168 B).
+          // Running cumulative session spend: seeded from the session's prior total, advanced in
+          // `.then()`, and surfaced to the panel's usage meter on `turn-done` (#25).
+          let sessionUsage = session.usage;
+          const turnDone = runTurn({
+            tabId,
+            messages: cacheable ? annotatePriorThreadTail(session.messages) : session.messages,
+            signal: controller.signal,
+            model,
+            instructions: cacheable ? cachedSystemPrompt(systemPrompt) : systemPrompt,
+            dispatch: content,
+            browse: (input, signal) => runBrowse(chromeBrowseDriver, input, signal),
+            interact: {
+              control: content,
+              // Same-tab nav drivers ride the per-tab capture lock (#146): a navigate/back/
+              // reload issued while a full-page stitch is in flight would unload the content
+              // script mid-stitch — and captureVisibleTab inside the navigation window can grab
+              // a stale/transition frame into a band SILENTLY. The lock keys on the RESOLVED
+              // tab (the model can pass `tabId` — a copy-mode reference tab), exactly like the
+              // emulation wrappers below. Deadlock-invariant-safe: runNav's internals are raw
+              // chrome.tabs calls that never re-enter the locking dispatch.
+              nav: (msg, signal) =>
+                withCaptureLock(msg.tabId ?? tabId, () =>
+                  runNav(chromeBrowserDriver, msg, tabId, signal),
+                ),
+            },
+            tabsFrames: {
+              // tabs.close rides the target tab's lock too (#146) — closing a stitching tab
+              // mid-band is the same corruption class; the close queues behind the stitch
+              // instead. open/activate/list mutate no captured tab (activate targets the
+              // WINDOW, which a per-tab lock can't express — documented residual, pre-#146).
+              tabs: (msg) =>
+                msg.action === 'close' && msg.tabId !== undefined
+                  ? withCaptureLock(msg.tabId, () => runTabs(chromeBrowserDriver, msg))
+                  : runTabs(chromeBrowserDriver, msg),
+              frames: (msg) => runFrames(chromeBrowserDriver, msg, tabId),
+            },
+            vision: {
+              screenshot,
+              readImages: content,
+              inspect: (msg, signal) =>
+                runInspect(
+                  {
+                    model,
+                    generate: visionGenerate,
+                    capture: (i, sig) =>
+                      screenshot(
+                        {
+                          type: 'screenshot',
+                          selector: i.selector,
+                          fullPage: i.fullPage,
+                          tabId: i.tabId,
+                          frameId: i.frameId,
+                        },
+                        sig,
+                      ),
+                  },
+                  msg,
+                  signal,
+                ),
+            },
+            // `extractIdentity` + `describe`'s text modes/`readImageContent` are cheap content
+            // round-trips (the same `content` transport as the DOM tools); `describe`'s `scene` mode
+            // is the one that costs a vision call, so it's the SW-orchestrated capture+generate path
+            // (mirrors `vision.inspect` above, reusing `runDescribeScene`).
+            identity: content,
+            describe: {
+              describe: content,
+              scene: (msg, signal) =>
+                runDescribeScene(
+                  { model, generate: visionGenerate, capture: screenshot },
+                  msg,
+                  signal,
+                ),
+              readImageContent: content,
+            },
+            // pageFacts/readChart/chartTooltip/widgetAct (slice 15) are content-routed exactly like
+            // interact.control — same `content` transport, no extra SW-side logic needed.
+            complexSite: content,
+            // Device emulation + responsive capture (slice 16): `setDevice`/`responsiveCapture` are
+            // SW-owned (chrome.debugger CDP + chrome.tabs capture) and run against this turn's OWN
+            // `deviceDriver`; `checkResponsive` is content-routed (scanner runs in the page). Both
+            // emulation entry points ride the per-tab capture lock (#136): a same-step setDevice or
+            // responsive sweep resizing the viewport mid-stitch invalidates every band's planned
+            // geometry. The lock keys on the RESOLVED tab (the model can pass `tabId` — a copy-mode
+            // reference tab), and the turn records which tab it emulated so its teardown (the
+            // `finally` below) restores the right one. The sweep holds the lock for its WHOLE
+            // duration — so its internal captures must use RAW paths (never the locking dispatches,
+            // which would queue it behind itself): fullPage calls captureFullPage directly (its
+            // internals are lock-free by the deadlock invariant), element/viewport shots ride
+            // `sendContentRaw`. The fullPage branch try/catches into a per-shot error ToolResult —
+            // one failed breakpoint must not reject the whole sweep (device-emulation.ts's
+            // "never an aborted sweep" contract).
+            responsive: {
+              setDevice: (message) => {
+                const target = message.tabId ?? tabId;
+                // Track the emulation for the turn's teardown: a real apply adds the tab; a `reset`
+                // restores it immediately (runSetDevice) so it leaves the set (a bare reset must not
+                // clobber the record of a tab still emulated from earlier in the turn).
+                if (message.reset) emulatedTabs.delete(target);
+                else emulatedTabs.add(target);
+                return withCaptureLock(target, () => runSetDevice(deviceDriver, message, tabId));
+              },
+              capture: (message, signal) => {
+                const target = message.tabId ?? tabId;
+                emulatedTabs.add(target);
+                return withCaptureLock(target, () =>
+                  runResponsiveCapture(
+                    deviceDriver,
+                    async (t, opts, sig) => {
+                      // #165 S1 again, per breakpoint: the sweep applies emulation to `t` and then
+                      // captures — against the ACTIVE tab if `t` isn't it, so every shot in the set
+                      // would be the wrong page rendered at the wrong size. A per-shot error keeps
+                      // the sweep's "never an aborted sweep" contract.
+                      const inactive = await captureBlockedReason(probeTab, t);
+                      if (inactive) return { type: 'tool-result', ok: false, error: inactive };
+                      if (opts.fullPage) {
+                        try {
+                          const tab = await chrome.tabs.get(t);
+                          const result: ToolResult = {
+                            type: 'tool-result',
+                            ok: true,
+                            data: await captureFullPage(t, tab.windowId, sig),
+                          };
+                          return result;
+                        } catch (err) {
+                          // The pre-lock path normalized these (closed tab, capture quota, abort) —
+                          // keep the per-shot-error contract (normalize 'Error: aborted' to
+                          // 'aborted', mirroring screenshotDispatchFor).
+                          return {
+                            type: 'tool-result',
+                            ok: false,
+                            error:
+                              err instanceof Error && err.message === 'aborted'
+                                ? 'aborted'
+                                : String(err),
+                          };
+                        }
+                      }
+                      return sendContentRaw(
+                        t,
+                        0,
+                        { type: 'screenshot', selector: opts.selector, tabId: t },
+                        sig,
+                      );
+                    },
+                    (sig) => browseDelay(EMULATION_SETTLE_MS, sig),
+                    message,
+                    tabId,
+                    signal,
+                  ),
+                );
+              },
+              check: content,
+            },
+            emit: emitTurn,
+            // Backend (MCP) + session/recorder tools win a name clash over the built-ins, per the
+            // loop's merge order (a namespaced MCP tool can never collide with `recordEdit`/etc.).
+            // The design turn only ever sees write-gated backend tools (#117): `toolsFor()` is
+            // design-safe at the source (manager applies design-gate.ts), so the model cannot
+            // dispatch `<id>__task` outside the user-clicked Ship RPC — which resolves its task
+            // backends from the explicit `toolsForShip()` merge instead.
+            tools: { ...(await mcpManager.toolsFor()), ...sessionTools },
+            // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
+            // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
+            approveHandoff: () => false,
+          })
+            .then(async (outcome) => {
+              // #168 B: persist the REAL turn — `compactForThread` over the SDK's response
+              // messages (tool calls + results included), not a flat prose message — on EVERY
+              // completion path: done, budget, error, user Stop, supersede. The one exception is a
+              // FORFEITED turn (its superseder stopped waiting): its user message is already, or
+              // is about to be, appended, so a late append here would land behind it and corrupt
+              // the resume order — that partial is dropped, order wins.
+              const forfeited = forfeitedTurns.has(turnId);
+              let compacted: ChatMessage[] = [];
+              if (!forfeited) {
+                try {
+                  compacted = compactForThread(outcome.responseMessages);
+                  if (compacted.length > 0) await sessions.appendMessages(tabId, ...compacted);
+                } catch (err) {
+                  // #168 F: a persistence failure is NOT a turn failure. Log + surface it
+                  // UNATTRIBUTED (no turnId) — the panel doesn't fold turnless errors into turn
+                  // state — so the streamed reply stands while the user still learns the resume
+                  // thread may be short.
+                  console.warn(`[turn] failed to persist the thread for tab ${tabId}:`, err);
+                  postToPanel({
+                    type: 'error',
+                    message: `Could not save this turn to the conversation thread: ${String(err)}`,
+                  });
+                }
+                // #168 D: history gets the SAME compacted tool-bearing messages, so a replay shows
+                // the tool activity (history-store's tool-unit pairing finally has real input).
+                // The user's own words lead the turn (`msg.text`, not the grounded text). History
+                // is keyed by the changeset's sessionId (stable across turns AND, since #168 L6,
+                // across cross-document navs) so the whole design session stays ONE conversation.
+                // Quiet failure: history is a convenience copy — console.warn only, never an
+                // error push the panel could misread as the turn failing (#168 M5).
+                try {
+                  await historyStore.appendTurn({
+                    id: changesetStore.current.sessionId,
+                    title: msg.text,
+                    url: changesetStore.current.url,
+                    mode,
+                    messages: [{ role: 'user' as const, content: msg.text }, ...compacted],
+                  });
+                } catch (err) {
+                  console.warn(`[turn] failed to append history for tab ${tabId}:`, err);
+                }
+              }
+              // Everything below is current-lineage only: a superseded/Stopped turn's spend stays
+              // uncounted (the meter is approximate, hence "~") and its recorder leftovers stay
+              // buffered for the turn that replaced it (or the nav-clear below wipes them).
+              if (turnAbort !== controller) return;
+              sessionUsage = {
+                steps: sessionUsage.steps + outcome.usage.steps,
+                tokens: sessionUsage.tokens + outcome.usage.tokens,
+              };
+              await sessions.patch(tabId, { usage: sessionUsage }).catch((err) => {
+                console.warn(`[turn] failed to persist usage for tab ${tabId}:`, err);
+              });
+              // #9 auto-finalize: mutation groups the model never recorded (no `recordEdit` call
+              // drained them) still land in the durable changeset — one "Auto-recorded" Edit per
+              // remaining selector group, folded from the real events, recorded + persisted +
+              // streamed exactly like a model-recorded edit. A group holding several structural
+              // ops splits: the first stays in the folded edit, each additional op becomes its own
+              // auto-recorded spillover Edit. Events dropped at the buffer cap are surfaced as an
+              // intent suffix on the FIRST finalized edit only — the loss is tab-level, so one
+              // note covers it (and `recordEdit`'s drain already claimed + reset the counter for
+              // anything it folded). Then the tab's buffer is wiped. Runs only on the
+              // still-current turn (the guard above): a superseded turn's leftovers stay buffered
+              // for the turn that replaced it (or the nav-clear below wipes them).
+              try {
+                const droppedAtCap = pendingMutations.droppedCount(tabId);
+                let capNote =
+                  droppedAtCap > 0
+                    ? ` (+${droppedAtCap} earlier events dropped at buffer cap)`
+                    : '';
+                for (const group of pendingMutations.peekGroups(tabId)) {
+                  const { folded, spillover } = foldMutationEvents(
+                    {
+                      intent: 'Auto-recorded agent edit (no recordEdit call)',
+                      selector: group.selector,
+                      changes: [],
+                      attrs: [],
+                      classes: [],
+                      frameworkHints: [],
+                    },
+                    group.events,
+                  );
+                  for (const edit of [folded, ...spillover]) {
+                    const tagged = capNote ? { ...edit, intent: `${edit.intent}${capNote}` } : edit;
+                    capNote = ''; // tab-level loss: noted once, on the first finalized edit
+                    changesetStore.record(tagged);
+                    await persistChangeset();
+                    emitRecord({ type: 'edit-recorded', edit: tagged });
+                  }
+                }
+                pendingMutations.clear(tabId);
+              } catch (err) {
+                // #168 F: changeset persistence trouble is surfaced unattributed too — the turn
+                // itself finished; conflating the two made the panel misread "turn failed".
+                console.warn(`[turn] auto-finalize failed for tab ${tabId}:`, err);
+                postToPanel({
+                  type: 'error',
+                  message: `Could not record the turn's remaining edits: ${String(err)}`,
+                });
+              }
+            })
+            .catch((err) => {
+              // #168 F: narrowed — every persistence step above handles its own failure, so only
+              // an unexpected `runTurn` throw (or a programming error in the finalization scaffold)
+              // lands here, and that one IS this turn's failure: turn-scoped, turnId stamped.
+              postToPanel({ type: 'error', message: String(err), turnId });
+            })
+            .finally(() => {
+              // Same "still current" guard as the `.then()` above: a superseded turn (newer
+              // user-message) or one Stop already cleared `turnAbort` and pushed `session-state:
+              // 'stopped'` itself (case 'session-stop') — that already tells the chat store (11) the
+              // turn is done, so this natural-completion signal only fires for the turn that's still
+              // the one in flight.
+              const wasCurrent = turnAbort === controller;
+              if (wasCurrent) {
+                turnAbort = null;
+                runningTurnId = null;
+                // Unregister the mid-turn retraction target with the turn — a dead turn's store
+                // must never receive another strip (see retractRevertedEdit).
+                turnChangeset = null;
+              }
+              // This turn's supersede bookkeeping dies with it: a settled turn no longer needs to
+              // be awaited, and its forfeit mark (checked in the `.then` above) must not leak.
+              if (settlingTurn?.id === turnId) settlingTurn = null;
+              forfeitedTurns.delete(turnId);
+              // The turn is over: clear the persisted per-tab turn status so a later `session-get`
+              // doesn't read a stale `'running'` and report an orphan (#165 S5). A superseded turn
+              // does NOT write here — the turn that replaced it already stamped `'running'`, and
+              // overwriting would make the live turn look finished.
+              if (wasCurrent) void sessions.patch(tabId, { status: 'idle' }).catch(() => {});
+              // Tear down device emulation ONLY for tabs this turn still owns (detach the debugger /
+              // restore the window) so the user's page + the "being debugged" banner don't outlast the
+              // turn — but never clear emulation a newer concurrent same-tab turn has taken over.
+              for (const emuTab of emulatedTabs) {
+                if (!emulation.owns(emuTab, emulationOwner)) continue;
+                // Ride the capture lock too (#136): a concurrent same-tab stitch (a newer turn's)
+                // must not see its viewport resized mid-capture by this turn's teardown. Ownership
+                // is RE-CHECKED inside the lock callback: the queue wait is a TOCTOU window in which
+                // a superseding turn's setDevice may have stamped its own owner — restoring now
+                // would kill that newer turn's fresh emulation mid-turn.
+                void withCaptureLock(emuTab, () => {
+                  if (!emulation.owns(emuTab, emulationOwner)) return Promise.resolve();
+                  return restoreDevice(deviceDriver, emuTab);
+                }).catch(() => {});
+              }
+              if (wasCurrent) postToPanel({ type: 'turn-done', usage: sessionUsage, turnId });
+            });
+          // Register the chain for the NEXT user-message's ordered supersede (see the wait above).
+          settlingTurn = { id: turnId, done: turnDone };
+
+          // #168 A: ack with the turn's id so the panel keys its in-flight bubble to this turn's
+          // stream events (which all carry the same id via `emitTurn`).
+          return { ok: true, turnId } satisfies UserMessageResult;
+        } finally {
+          startingTurns.delete(turnId);
+        }
       }
       // Ship (user-triggered) — dispatch to a connected coding backend, else return an MD brief to
       // download. Never auto-ships; `runHandoffRoute` streams per-task status over the port.
@@ -1372,14 +1505,13 @@ export default defineBackground(() => {
       }
       // Tear down the connection and purge the persisted record + both credential slots
       // (mcp/store.ts removeServer already clears the key-store side).
-      case 'mcp-remove': {
+      case 'mcp-remove':
         await mcpManager.unregister(msg.id);
         oauthConfigs.delete(msg.id);
         await removeServer(msg.id);
         await clearToolGrants(msg.id); // #120: no orphaned grant survives a removal
         void pushReadiness().catch(() => {});
         return { ok: true };
-      }
       case 'mcp-list': {
         const servers = await Promise.all((await listServers()).map((s) => toBusServer(s)));
         return { ok: true, servers };
@@ -1422,17 +1554,14 @@ export default defineBackground(() => {
       // Origin→repo map (#20): the one-click-Ship mapping the panel curates. The SW validates
       // nothing beyond the bus schema — the map is user-curated by construction, and a bogus
       // slug only ever fails the user's own backend task create.
-      case 'mcp-origin-repo-get': {
+      case 'mcp-origin-repo-get':
         return { ok: true, map: await getOriginRepoMap() };
-      }
-      case 'mcp-origin-repo-set': {
+      case 'mcp-origin-repo-set':
         await setOriginRepo(msg.origin, msg.entry);
         return { ok: true };
-      }
-      case 'mcp-origin-repo-clear': {
+      case 'mcp-origin-repo-clear':
         await clearOriginRepo(msg.origin);
         return { ok: true };
-      }
       // Submit the chosen auth kind's credential, then reconnect so the new header takes
       // effect immediately. `authKind` on the record is updated to match what was just
       // authorized (an add can predate its auth step with authKind left at the default).
@@ -1461,10 +1590,9 @@ export default defineBackground(() => {
       }
       // Manual refresh: republish every registered server's current health on the
       // mcp-status stream (e.g. a panel that just (re)connected with no cached state).
-      case 'mcp-status': {
+      case 'mcp-status':
         for (const stored of await listServers()) pushMcpStatus(stored);
         return { ok: true };
-      }
 
       // --- readiness + session (slice 03) ---------------------------------
       case 'readiness':
@@ -1475,14 +1603,20 @@ export default defineBackground(() => {
       case 'session-start':
         turnAbort?.abort();
         turnAbort = null;
+        runningTurnId = null;
         turnChangeset = null;
         setSessionState('running');
         return { ok: true };
       // Aborts the in-flight agent turn (04 sets `turnAbort` at turn-start) without
       // ending the session — the panel stays on chat, ready for the next message.
       case 'session-stop':
+        // Aborting still lets the turn's finalization persist its REAL partial messages to the
+        // session thread (#168 B): the `.then` persistence path is unconditional (not gated on
+        // "still current"), so a Stop-then-send never produces a [user, user] adjacency — the
+        // next user-message additionally awaits `settlingTurn` before appending.
         turnAbort?.abort();
         turnAbort = null;
+        runningTurnId = null;
         turnChangeset = null;
         setSessionState('stopped');
         return { ok: true };
@@ -1494,7 +1628,7 @@ export default defineBackground(() => {
       case 'session-get': {
         const tab = await resolveTargetTab();
         const tabId = tab?.id ?? null;
-        const turnRunning = turnAbort !== null;
+        const turnRunning = isTurnRunning();
         const current = tabId === null ? undefined : sessions.get(tabId);
         if (tabId !== null && current) {
           const healed = reconcileTurnStatus(current.status, turnRunning);
@@ -1504,7 +1638,45 @@ export default defineBackground(() => {
             await sessions.patch(tabId, { status: healed }).catch(() => {});
           }
         }
-        return { ok: true, state: sessionState, turnRunning, tabId } satisfies SessionStateResult;
+        // #168 A: name the in-flight turn so a reconnecting panel can match its orphaned bubble
+        // against the stream's turnId-stamped events. Only while one is actually running/starting.
+        const currentTurnId = turnRunning ? liveTurnId() : undefined;
+        return {
+          ok: true,
+          state: sessionState,
+          turnRunning,
+          tabId,
+          ...(currentTurnId !== undefined ? { currentTurnId } : {}),
+        } satisfies SessionStateResult;
+      }
+      // The SW-side conversation thread for the active tab, rendered down to a view the panel can
+      // replace its lossy replica with (#168 C). Same tab resolution as `session-get`; the reply
+      // is tab-stamped so the panel can't fold one tab's thread into another's transcript. The
+      // heavy provider parts (tool payloads, images) NEVER cross the bus — `toThreadView` distills
+      // them to text + per-tool outcomes.
+      case 'thread-get': {
+        const tab = await resolveTargetTab();
+        const tabId = tab?.id ?? null;
+        if (tabId === null) {
+          return {
+            ok: false,
+            tabId,
+            error: 'Open a web page first.',
+          } satisfies ThreadGetResult;
+        }
+        const session = sessions.get(tabId);
+        if (!session) {
+          return {
+            ok: false,
+            tabId,
+            error: 'No design session for this tab yet.',
+          } satisfies ThreadGetResult;
+        }
+        return {
+          ok: true,
+          tabId,
+          thread: toThreadView(session.messages),
+        } satisfies ThreadGetResult;
       }
 
       // --- history: last-10 conversations + reports (slice 08) ------------
@@ -1769,9 +1941,10 @@ export default defineBackground(() => {
   // for a page that no longer exists. Wipe the recorder buffer + BOTH changeset mirrors: the
   // undo/redo persister (`changeset:<tabId>`) AND the SessionStore resume snapshot (turn start
   // falls back to it when no persister record exists). The mirror is re-seeded EMPTY for the new
-  // URL with a fresh sessionId (the history key must not carry over — see #165 S10: it is not an
-  // idempotency key and never was); the session's
-  // message thread + usage survive — only edits are wiped. `webNavigation` is already a manifest
+  // URL, KEEPING the session's conversation id (#168 L6): the session — thread, usage — survives
+  // the nav, and history is keyed by that id, so minting a fresh one forked the history
+  // conversation per nav (and could evict an older one). Safe to keep — it is NOT an idempotency
+  // key (#165 S10). Only edits are wiped. `webNavigation` is already a manifest
   // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
   // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
   // is the same URL, so per docs/architecture/changeset.md the live edits die but the recorded
@@ -1804,8 +1977,10 @@ export default defineBackground(() => {
         const current = await persister.load();
         if (current?.changeset.url === url) return;
         await persister.clear();
-        if (!sessions.get(tabId)) return;
-        const reseeded = emptyChangeset(url, new Date().toISOString(), crypto.randomUUID());
+        const live = sessions.get(tabId);
+        if (!live) return;
+        // Keep the conversation id across the reseed (#168 L6, see the listener comment above).
+        const reseeded = emptyChangeset(url, new Date().toISOString(), live.changeset.sessionId);
         await sessions.setChangeset(tabId, reseeded);
         // Tell an open Diff tab the record was wiped — otherwise it shows the dead page's
         // edits until its next refresh.
@@ -1874,6 +2049,171 @@ export default defineBackground(() => {
     return true; // async response
   });
 });
+
+// --- #168 turn attribution + thread view (pure; mirrored 1:1 by
+// test/integration/thread-memory.test.ts — background.ts itself can't be imported under Vitest,
+// see history-flow.test.ts's header note) --------------------------------------------------------
+
+/** Is the configured provider endpoint OpenRouter? Gates the `cache_control` annotations
+ *  (prompt-cache.ts): OpenRouter forwards them to Anthropic models; a strict OpenAI-compatible
+ *  endpoint may reject the unknown field. Hostname match, not string equality, so a baseURL
+ *  saved with/without a trailing slash (or an alternate path) still opts in. */
+function isOpenRouterBase(baseURL: string): boolean {
+  try {
+    return new URL(baseURL).hostname === 'openrouter.ai';
+  } catch {
+    return false;
+  }
+}
+
+/** Annotate the last message of the PRIOR thread (everything before the just-appended user
+ *  message) with a cache breakpoint — the placement prompt-cache.ts's doctrine prescribes: the
+ *  breakpoint caches the whole prior conversation, and the new user message plus this turn's
+ *  streamed steps grow past it without invalidating it. Pure copy; with no prior thread (first
+ *  turn: `[user]`) there is nothing worth a breakpoint and the messages pass through untouched. */
+function annotatePriorThreadTail(messages: readonly ChatMessage[]): ChatMessage[] {
+  if (messages.length < 2) return [...messages];
+  const tail = messages.length - 2;
+  return messages.map((m, i) => (i === tail ? withCacheBreakpoint(m) : m));
+}
+
+/** Stamp `turnId` onto the five per-turn stream events (`token`/`tool-call`/`tool-result`/
+ *  `error`/`turn-done`); every other push passes through untouched. */
+function stampTurnId(update: SwToPanel, turnId: string): SwToPanel {
+  switch (update.type) {
+    case 'token':
+    case 'tool-call':
+    case 'tool-result':
+    case 'error':
+    case 'turn-done':
+      return { ...update, turnId };
+    default:
+      return update;
+  }
+}
+
+/** Per-turn tool chip being assembled by {@link toThreadView}: the `toolCallId` correlates a
+ *  later tool-result to its call, exactly like the stream's `tool-call`/`tool-result` pairing. */
+interface ThreadViewTool {
+  name: string;
+  ok: boolean;
+  id?: string;
+}
+
+/** The visible text of a message's content: the string itself, or its `text` parts joined —
+ *  never images/tool payloads. Structural narrowing (the content unions differ per role). */
+function contentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const texts: string[] = [];
+  for (const part of content) {
+    if (
+      part !== null &&
+      typeof part === 'object' &&
+      'type' in part &&
+      part.type === 'text' &&
+      'text' in part &&
+      typeof part.text === 'string' &&
+      part.text.length > 0
+    ) {
+      texts.push(part.text);
+    }
+  }
+  return texts.join('\n\n');
+}
+
+/** Did this tool-result output report success? `error-text`/`error-json`/`execution-denied`
+ *  outputs are failures; a JSON output carrying the content-bus `ToolResult` shape answers with
+ *  its own `ok`; anything else (plain text, unrecognized) counts as success — same optimism as
+ *  the panel folding a result chip without an `error`. */
+function toolOutputOk(output: unknown): boolean {
+  if (output === null || typeof output !== 'object') return true;
+  const type = 'type' in output ? output.type : undefined;
+  if (type === 'error-text' || type === 'error-json' || type === 'execution-denied') return false;
+  const value = 'value' in output ? output.value : output;
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    'ok' in value &&
+    typeof value.ok === 'boolean'
+  ) {
+    return value.ok;
+  }
+  return true;
+}
+
+/** Fold one tool-result part onto the pending chip it answers (by `toolCallId`, else the newest
+ *  same-named chip), or append a chip of its own when the call fell outside the thread. */
+function settleThreadTool(
+  tools: ThreadViewTool[],
+  part: { toolCallId?: string; toolName: string; output?: unknown },
+): void {
+  const ok = toolOutputOk(part.output);
+  const byId = part.toolCallId ? tools.find((t) => t.id === part.toolCallId) : undefined;
+  const target = byId ?? [...tools].reverse().find((t) => t.name === part.toolName);
+  if (target) target.ok = ok;
+  else tools.push({ name: part.toolName, ok });
+}
+
+/**
+ * Render the SW's persisted session thread down to the panel-facing view (#168 C): one entry per
+ * user message, and ONE assistant entry per turn — consecutive assistant/tool messages between
+ * user messages fold together (their prose joined, their tool calls settled in order by the
+ * matching tool-results). Raw provider parts (tool payloads, images) never cross the bus. A
+ * tool-call with no persisted result keeps `ok: true` — the absence of a recorded failure, same
+ * as a text-only output. System messages are the SW's own scaffolding and are dropped. Bounded to
+ * the same caps the schema enforces (`HISTORY_MAX_MESSAGES` messages, 100 tools per entry).
+ */
+function toThreadView(messages: readonly ChatMessage[]): ThreadViewMessage[] {
+  const view: ThreadViewMessage[] = [];
+  let turn: { texts: string[]; tools: ThreadViewTool[] } | null = null;
+
+  const flushTurn = (): void => {
+    if (!turn) return;
+    const tools = turn.tools.slice(0, 100).map(({ name, ok }) => ({ name, ok }));
+    view.push({
+      role: 'assistant',
+      text: turn.texts.filter((t) => t.length > 0).join('\n\n'),
+      ...(tools.length > 0 ? { tools } : {}),
+    });
+    turn = null;
+  };
+
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    if (message.role === 'user') {
+      flushTurn();
+      view.push({ role: 'user', text: contentText(message.content) });
+      continue;
+    }
+    if (message.role === 'assistant') {
+      turn ??= { texts: [], tools: [] };
+      if (typeof message.content === 'string') {
+        if (message.content.length > 0) turn.texts.push(message.content);
+        continue;
+      }
+      for (const part of message.content) {
+        if (part.type === 'text') {
+          if (part.text.length > 0) turn.texts.push(part.text);
+        } else if (part.type === 'tool-call') {
+          turn.tools.push({ name: part.toolName, ok: true, id: part.toolCallId });
+        } else if (part.type === 'tool-result') {
+          // Provider-executed tools settle inline in the assistant message.
+          settleThreadTool(turn.tools, part);
+        }
+      }
+      continue;
+    }
+    // role === 'tool': results answering the current turn's calls. An orphaned tool message
+    // (no assistant before it — a truncated thread) still surfaces as chips on a text-less turn.
+    turn ??= { texts: [], tools: [] };
+    for (const part of message.content) {
+      if (part.type === 'tool-result') settleThreadTool(turn.tools, part);
+    }
+  }
+  flushTurn();
+  return view.slice(-HISTORY_MAX_MESSAGES);
+}
 
 // `chrome.tabs.get` as the capture guard's tab probe (`src/agent/capture-target.ts`). A raw tabs
 // read — never a content dispatch — so guarding inside a lock holder can't self-deadlock.

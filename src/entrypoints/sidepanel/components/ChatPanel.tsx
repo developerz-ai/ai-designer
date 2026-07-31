@@ -1,5 +1,12 @@
 import { createMemo, onMount, Show } from 'solid-js';
-import { error, initChatStore, messages, send as sendMessage, usage } from '../stores/chat';
+import {
+  error,
+  initChatStore,
+  messages,
+  send as sendMessage,
+  streaming,
+  usage,
+} from '../stores/chat';
 import { initFocusStore } from '../stores/focus';
 import { initReadinessStore } from '../stores/readiness';
 import './ChatPanel.scss';
@@ -33,6 +40,10 @@ export function ChatPanel() {
   const hasThread = createMemo(() => messages().length > 0);
 
   function selectSuggestion(suggestion: Suggestion): void {
+    // Same dispatch gate as Composer's `submit`: a double-clicked chip (or one clicked while a
+    // turn streams) must not fire a second send — the SW would supersede the live turn. The store
+    // guards too; gating here keeps even the RPC from firing.
+    if (streaming()) return;
     void sendMessage(suggestion.prompt, suggestion.mode);
   }
 

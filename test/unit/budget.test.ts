@@ -99,6 +99,17 @@ describe('budgetNotice', () => {
     expect(notice.toLowerCase()).toContain('continue');
   });
 
+  it('is honest about both halves (#168): the token figure is BILLED spend, and the pick-up promise is backed by the persisted thread', () => {
+    const notice = budgetNotice('steps', usage(24, 180_000));
+    // Summed input+output across steps is what the provider bills — say so, so the number
+    // matches the user's invoice rather than looking inflated.
+    expect(notice).toContain('tokens billed');
+    // "Pick up where I left off" is only true because tool activity persists in the session
+    // thread (TurnOutcome.responseMessages → compactForThread) — the notice leans on that.
+    expect(notice).toMatch(/stays in our conversation/i);
+    expect(notice).toMatch(/pick up where I left off/i);
+  });
+
   it('says "step budget" for a step stop', () => {
     expect(budgetNotice('steps', usage(3, 0))).toContain('step budget');
   });

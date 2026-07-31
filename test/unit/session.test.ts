@@ -153,4 +153,92 @@ describe('SessionStore.hydrate', () => {
     expect(store.size).toBe(0);
     expect(backing.has('some-other-key')).toBe(true); // untouched
   });
+
+  it('salvages good sessions alongside a corrupt one — never total amnesia (#168 audit)', async () => {
+    const seeded = new SessionStore({ now: at(5) });
+    await seeded.ensure(1, URL, SESSION_ID);
+    await seeded.ensure(2, URL, SESSION_ID);
+    backing.set('session:3', { tabId: 3, url: 42 /* corrupt */ });
+
+    const revived = new SessionStore();
+    await revived.hydrate();
+
+    expect(revived.get(1)).toBeDefined();
+    expect(revived.get(2)).toBeDefined();
+    expect(revived.get(3)).toBeUndefined();
+    expect(backing.has('session:1')).toBe(true);
+    expect(backing.has('session:2')).toBe(true);
+    expect(backing.has('session:3')).toBe(false); // only the corrupt record is purged
+  });
+
+  it('parses a pre-#168 record without lastMode (additive schema change)', async () => {
+    const seeded = new SessionStore({ now: at(5) });
+    await seeded.ensure(6, URL, SESSION_ID);
+    const raw = backing.get('session:6') as Record<string, unknown>;
+    delete raw.lastMode; // simulate a record written before the field existed
+
+    const revived = new SessionStore();
+    await revived.hydrate();
+    expect(revived.get(6)).toBeDefined();
+    expect(revived.get(6)?.lastMode).toBeUndefined();
+  });
+});
+
+describe('SessionStore.lastMode (#168 mode stickiness)', () => {
+  it('persists the session’s last resolved mode and round-trips it through hydrate', async () => {
+    const store = new SessionStore({ now: at(1) });
+    await store.ensure(7, URL, SESSION_ID);
+    await store.patch(7, { lastMode: 'debug' });
+
+    const revived = new SessionStore();
+    await revived.hydrate();
+    expect(revived.get(7)?.lastMode).toBe('debug');
+  });
+});
+
+describe('SessionStore.appendMessages: high-water thread compaction (#168)', () => {
+  it('stays append-only below the high-water mark', async () => {
+    const store = new SessionStore({ now: at(1) });
+    await store.ensure(9, URL, SESSION_ID);
+    const updated = await store.appendMessages(
+      9,
+      { role: 'user', content: 'one' },
+      { role: 'assistant', content: 'two' },
+    );
+    expect(updated.messages).toEqual([
+      { role: 'user', content: 'one' },
+      { role: 'assistant', content: 'two' },
+    ]);
+  });
+
+  it('digests the oldest turns once the thread crosses the high-water mark, keeping the newest verbatim', async () => {
+    const store = new SessionStore({ now: at(1) });
+    await store.ensure(10, URL, SESSION_ID);
+
+    // ~40 turns of ~3.2k chars each ≈ 128k chars > the ~96k-char high-water mark.
+    const payload = 'y'.repeat(3_000);
+    for (let i = 0; i < 40; i++) {
+      await store.appendMessages(
+        10,
+        { role: 'user', content: `ask ${i}` },
+        { role: 'assistant', content: `${payload} (turn ${i})` },
+      );
+    }
+
+    const session = store.get(10);
+    if (!session) throw new Error('no session');
+    expect(session.messages.length).toBeLessThan(80);
+    const [first] = session.messages;
+    if (first?.role !== 'user' || typeof first.content !== 'string') throw new Error('shape');
+    expect(first.content).toContain('[Session memory]');
+    // The newest turn always survives verbatim.
+    expect(session.messages.at(-1)).toEqual({
+      role: 'assistant',
+      content: `${payload} (turn 39)`,
+    });
+    // And the persisted mirror matches the cache.
+    expect(backing.get('session:10')).toMatchObject({
+      messages: session.messages,
+    });
+  });
 });

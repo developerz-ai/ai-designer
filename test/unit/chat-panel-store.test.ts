@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type ChatMessage,
+  classifyEvent,
+  type EventContext,
   nextUsage,
   reduceChat,
+  threadToMessages,
   ZERO_USAGE,
 } from '@/entrypoints/sidepanel/stores/chat';
 import type { Edit } from '@/shared/changeset';
@@ -20,10 +23,12 @@ const edit: Edit = {
   frameworkHints: [],
 };
 
-/** `turn-done` fixture — carries the session's cumulative spend (`usage`), required since #25. */
-const turnDone = (steps = 0, tokens = 0): SwToPanel => ({
+/** `turn-done` fixture — carries the session's cumulative spend (`usage`), required since #25.
+ *  `turnId` stamps it for attribution (#168); omitted = a pre-#168 emitter. */
+const turnDone = (steps = 0, tokens = 0, turnId?: string): SwToPanel => ({
   type: 'turn-done',
   usage: { steps, tokens },
+  turnId,
 });
 
 describe('reduceChat: streaming assembly', () => {
@@ -77,6 +82,8 @@ describe('reduceChat: streaming assembly', () => {
   });
 
   it('error attaches to the in-flight bubble and closes it out even mid-stream', () => {
+    // classifyEvent has already vetted the error as belonging to this view by the time it reaches
+    // the fold — so the fold's job stays: attach + terminate.
     let messages = reduceChat([], { type: 'token', text: 'partial' });
     messages = reduceChat(messages, { type: 'error', message: 'boom' });
     expect(messages).toHaveLength(1);
@@ -109,14 +116,17 @@ describe('reduceChat: streaming assembly', () => {
     expect(messages[0]?.streaming).toBe(false);
   });
 
-  it('a woken worker reporting turnRunning:false closes the orphaned bubble', () => {
+  it('a running push with turnRunning:false leaves the bubble alone (deferred verification)', () => {
+    // #168 finding 2: a reconnect can reach a fresh worker BEFORE it re-registers the in-flight
+    // turn — its first `turnRunning: false` must not kill the live bubble. The STORE verifies via
+    // a delayed session-get (see the liveness tests below); the fold itself stays hands-off.
     let messages = reduceChat([], { type: 'token', text: 'working' });
     messages = reduceChat(messages, {
       type: 'session-state',
       state: 'running',
       turnRunning: false,
     });
-    expect(messages[0]?.streaming).toBe(false);
+    expect(messages[0]?.streaming).toBe(true);
   });
 
   it('a plain running transition leaves a live turn alone', () => {
@@ -156,52 +166,108 @@ describe('reduceChat: streaming assembly', () => {
   });
 });
 
-describe('reduceChat: tool-result settles the chip that requested it', () => {
-  const call = (tool: string, id?: string): SwToPanel => ({ type: 'tool-call', tool, id });
-
-  it('matches by tool-call id when the SW carried one', () => {
-    let messages = reduceChat([], call('setStyle', 'c1'));
-    messages = reduceChat(messages, call('query', 'c2'));
-    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: true, id: 'c1' });
-    expect(messages[0]?.toolCalls.map((c) => [c.tool, c.ok])).toEqual([
-      ['setStyle', true],
-      ['query', undefined],
-    ]);
+describe('classifyEvent: turn/tab attribution gate (#168)', () => {
+  const ctx = (over: Partial<EventContext> = {}): EventContext => ({
+    activeTurnId: 't1',
+    streaming: true,
+    viewTabId: 1,
+    ...over,
   });
 
-  it('carries the failure reason onto the failed call', () => {
-    let messages = reduceChat([], call('setStyle', 'c1'));
-    messages = reduceChat(messages, {
-      type: 'tool-result',
-      tool: 'setStyle',
-      ok: false,
-      id: 'c1',
-      error: 'no element matches #gone',
-    });
-    expect(messages[0]?.toolCalls[0]).toMatchObject({
-      ok: false,
-      error: 'no element matches #gone',
-    });
+  it('folds a stream event stamped with the active turn', () => {
+    expect(classifyEvent({ type: 'token', text: 'x', turnId: 't1' }, ctx())).toBe('fold');
+    expect(classifyEvent(turnDone(1, 10, 't1'), ctx())).toBe('fold');
   });
 
-  it('with no id, settles the NEWEST unsettled call of that name', () => {
-    let messages = reduceChat([], call('setStyle'));
-    messages = reduceChat(messages, call('setStyle'));
-    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: false });
-    expect(messages[0]?.toolCalls.map((c) => c.ok)).toEqual([undefined, false]);
-
-    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: true });
-    expect(messages[0]?.toolCalls.map((c) => c.ok)).toEqual([true, false]);
-  });
-
-  it('never opens a bubble for a result with no call to attach to', () => {
-    expect(reduceChat([], { type: 'tool-result', tool: 'setStyle', ok: true })).toEqual([]);
-    const withUser: ChatMessage[] = [
-      { id: 'u1', role: 'user', text: 'hi', toolCalls: [], edits: [], streaming: false },
-    ];
-    expect(reduceChat(withUser, { type: 'tool-result', tool: 'setStyle', ok: true })).toBe(
-      withUser,
+  it("drops a foreign turn's token/tool events instead of mutating this transcript", () => {
+    // Finding 4: two windows share the SW's broadcast — the second panel grew orphan bubbles.
+    expect(classifyEvent({ type: 'token', text: 'x', turnId: 't2' }, ctx())).toBe('drop');
+    expect(classifyEvent({ type: 'tool-call', tool: 'setStyle', turnId: 't2' }, ctx())).toBe(
+      'drop',
     );
+    expect(
+      classifyEvent({ type: 'tool-result', tool: 'setStyle', ok: true, turnId: 't2' }, ctx()),
+    ).toBe('drop');
+  });
+
+  it('drops a foreign turn-done — its usage must not be adopted', () => {
+    expect(classifyEvent(turnDone(9, 9999, 't2'), ctx())).toBe('drop');
+  });
+
+  it('drops a stamped event when this panel has no keyed turn at all', () => {
+    expect(
+      classifyEvent({ type: 'token', text: 'x', turnId: 't2' }, ctx({ activeTurnId: null })),
+    ).toBe('drop');
+  });
+
+  it('folds unstamped events regardless of the active turn (pre-#168 SW keeps working)', () => {
+    expect(classifyEvent({ type: 'token', text: 'x' }, ctx())).toBe('fold');
+    expect(classifyEvent({ type: 'token', text: 'x' }, ctx({ activeTurnId: null }))).toBe('fold');
+    expect(classifyEvent(turnDone(), ctx({ activeTurnId: null, streaming: false }))).toBe('fold');
+  });
+
+  it('an unattributed error during a live turn is a notice, never a stream-terminator', () => {
+    // Finding 1: ship-route/history-append failures pushed `error` mid-turn and closed the live
+    // bubble. Pre-fix this classified as 'fold' (terminal) — this test fails against that.
+    expect(classifyEvent({ type: 'error', message: 'ship failed' }, ctx())).toBe('notice');
+  });
+
+  it('an unattributed error while idle still folds (global failures deserve a bubble)', () => {
+    expect(
+      classifyEvent(
+        { type: 'error', message: 'Add a provider first.' },
+        ctx({ streaming: false, activeTurnId: null }),
+      ),
+    ).toBe('fold');
+  });
+
+  it('an attributed error folds for the matching turn and drops for a foreign one', () => {
+    expect(classifyEvent({ type: 'error', message: 'boom', turnId: 't1' }, ctx())).toBe('fold');
+    expect(classifyEvent({ type: 'error', message: 'boom', turnId: 't2' }, ctx())).toBe('drop');
+  });
+
+  it('drops an edit-recorded stamped for another tab; folds same-tab and unstamped ones', () => {
+    expect(classifyEvent({ type: 'edit-recorded', edit, tabId: 2 }, ctx())).toBe('drop');
+    expect(classifyEvent({ type: 'edit-recorded', edit, tabId: 1 }, ctx())).toBe('fold');
+    expect(classifyEvent({ type: 'edit-recorded', edit }, ctx())).toBe('fold');
+    // An unkeyed view (no thread-get applied yet) folds rather than going dark.
+    expect(classifyEvent({ type: 'edit-recorded', edit, tabId: 2 }, ctx({ viewTabId: null }))).toBe(
+      'fold',
+    );
+  });
+
+  it('non-turn stream messages always fold', () => {
+    expect(classifyEvent({ type: 'picker-state', active: true }, ctx())).toBe('fold');
+    expect(classifyEvent({ type: 'session-state', state: 'running' }, ctx())).toBe('fold');
+  });
+});
+
+describe('threadToMessages: thread-get rebuild mapping (#168)', () => {
+  it('maps roles, text, and settled tool chips; everything arrives closed', () => {
+    const rebuilt = threadToMessages([
+      { role: 'user', text: 'make it pop' },
+      {
+        role: 'assistant',
+        text: 'done',
+        tools: [
+          { name: 'query', ok: true },
+          { name: 'setStyle', ok: false },
+        ],
+      },
+    ]);
+    expect(rebuilt).toHaveLength(2);
+    expect(rebuilt[0]).toMatchObject({ role: 'user', text: 'make it pop', streaming: false });
+    expect(rebuilt[1]).toMatchObject({ role: 'assistant', text: 'done', streaming: false });
+    expect(rebuilt[1]?.toolCalls).toEqual([
+      { tool: 'query', ok: true },
+      { tool: 'setStyle', ok: false },
+    ]);
+    // Distinct ids so keyed rendering never collides.
+    expect(rebuilt[0]?.id).not.toBe(rebuilt[1]?.id);
+  });
+
+  it('an empty thread maps to an empty chat', () => {
+    expect(threadToMessages([])).toEqual([]);
   });
 });
 
@@ -232,6 +298,20 @@ function installChromeFake(handle: SendMessage): { sendMessage: ReturnType<typeo
   return { sendMessage };
 }
 
+/** Default RPC handler: user-message acks ok with a turnId; session/thread hydration RPCs reply a
+ *  malformed shape on purpose so `hydrateThread` no-ops (its failure path leaves the stream-built
+ *  view untouched) and the stream tests stay deterministic. Override per test. */
+function ackHandler(
+  over: Partial<Record<PanelToSw['type'], (msg: PanelToSw) => unknown>> = {},
+): SendMessage {
+  return (msg) => {
+    const handler = over[msg.type];
+    if (handler) return handler(msg);
+    if (msg.type === 'user-message') return { ok: true, turnId: 't1' };
+    return { ok: true };
+  };
+}
+
 // What the picker resolves and the composer's context chip displays — the referent of "this".
 const pickedSelector: StableSelector = {
   value: '[data-testid="cta"]',
@@ -242,31 +322,58 @@ const otherSelector: StableSelector = { value: '#hero', strategy: 'id', fragile:
 
 afterEach(() => {
   (globalThis as { chrome?: unknown }).chrome = undefined;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-describe('chat store actions', () => {
-  it('send() appends the user message immediately and dispatches user-message', async () => {
+describe('chat store actions: ack-gated send (#168 D)', () => {
+  it('does NOT append the user message until the SW ack says ok', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const { sendMessage } = installChromeFake(ackHandler());
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     const pending = store.send('make the hero pink');
-    expect(store.messages()).toHaveLength(1);
-    expect(store.messages()[0]).toMatchObject({ role: 'user', text: 'make the hero pink' });
+    // Optimistic composer lock, honest transcript: streaming flips immediately, the bubble waits
+    // for the ack.
+    expect(store.messages()).toHaveLength(0);
     expect(store.streaming()).toBe(true);
 
     await pending;
+    expect(store.messages()).toHaveLength(1);
+    expect(store.messages()[0]).toMatchObject({ role: 'user', text: 'make the hero pink' });
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'user-message', text: 'make the hero pink' }),
     );
   });
 
-  it('send() carries the picked element so "this" has a referent', async () => {
-    // The signature bug: the picker resolved a target, the context chip showed it, and the turn
-    // reached the SW as text alone — on a page with four CTAs the agent restyled a guess.
+  it('a rejected send surfaces a composer-level notice, never a phantom bubble', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    installChromeFake(ackHandler({ 'user-message': () => ({ ok: false, error: 'busy' }) }));
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    await store.send('hi');
+
+    expect(store.messages()).toEqual([]);
+    expect(store.error()).toBe('busy');
+    expect(store.streaming()).toBe(false);
+  });
+
+  it('drops a send fired while a turn already streams (chip double-fire guard, #168 finding 5)', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(ackHandler());
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    const first = store.send('copy the hero'); // streaming flips true synchronously…
+    await store.send('copy the hero'); // …so the double-fired chip send is dropped outright
+    await first;
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(store.messages()).toHaveLength(1);
+  });
+
+  it('send() carries the picked element so "this" has a referent', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(ackHandler());
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     await store.send('make this 20% bigger', undefined, pickedSelector);
@@ -278,7 +385,7 @@ describe('chat store actions', () => {
 
   it('send() carries the shift-multi-select set from the focus store', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const { sendMessage } = installChromeFake(ackHandler());
     const port = installPortFake();
     const focus = await import('@/entrypoints/sidepanel/stores/focus');
     const store = await import('@/entrypoints/sidepanel/stores/chat');
@@ -294,7 +401,7 @@ describe('chat store actions', () => {
 
   it('send() omits `selectors` entirely when nothing is multi-selected', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const { sendMessage } = installChromeFake(ackHandler());
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     await store.send('make the hero pink');
@@ -305,32 +412,13 @@ describe('chat store actions', () => {
 
   it('send() ignores a blank/whitespace-only draft', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const { sendMessage } = installChromeFake(ackHandler());
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     await store.send('   ');
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.messages()).toEqual([]);
-  });
-
-  it('send() supersedes a prior in-flight assistant bubble (closes it, not drop it)', async () => {
-    vi.resetModules();
-    installChromeFake(() => ({ ok: true }));
-    const port = installPortFake();
-    const store = await import('@/entrypoints/sidepanel/stores/chat');
-
-    store.initChatStore();
-    await store.send('first');
-    port.emit({ type: 'token', text: 'working…' }); // turn still in flight when the user follows up
-
-    await store.send('second');
-    const shape = store.messages().map((m) => [m.role, m.text, m.streaming]);
-    expect(shape).toEqual([
-      ['user', 'first', false],
-      ['assistant', 'working…', false], // closed out, not dropped, by the newer send()
-      ['user', 'second', false],
-    ]);
   });
 
   it('a rejected dispatch surfaces its message and clears streaming', async () => {
@@ -348,44 +436,304 @@ describe('chat store actions', () => {
 
   it('stopTurn() dispatches session-stop', async () => {
     vi.resetModules();
-    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const { sendMessage } = installChromeFake(ackHandler());
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     await store.stopTurn();
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'session-stop' }));
   });
+});
 
-  it('clearChat() resets the thread, streaming, and error', async () => {
+describe('chat store stream: turn attribution (#168 A/E)', () => {
+  it('an unattributed error mid-turn does NOT end streaming or close the bubble', async () => {
+    // Finding 1, failure case first: pre-fix, ANY error push flipped streaming false and closed
+    // the live bubble — a ship failure killed a running turn's UI.
     vi.resetModules();
-    installChromeFake(() => ({ ok: true }));
+    installChromeFake(ackHandler());
+    const port = installPortFake();
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
-    await store.send('hi');
-    store.clearChat();
+    store.initChatStore();
+    await store.send('go');
+    port.emit({ type: 'token', text: 'partial', turnId: 't1' });
 
-    expect(store.messages()).toEqual([]);
-    expect(store.streaming()).toBe(false);
-    expect(store.error()).toBeNull();
+    port.emit({ type: 'error', message: 'history append failed' });
+
+    expect(store.streaming()).toBe(true);
+    expect(store.messages().at(-1)).toMatchObject({ text: 'partial', streaming: true });
+    expect(store.messages().at(-1)?.error).toBeUndefined();
+    expect(store.error()).toBe('history append failed'); // surfaced as the composer-level notice
   });
 
-  it('initChatStore() folds a live turn-done push into streaming=false', async () => {
+  it('an error attributed to the active turn ends it; the trailing turn-done still folds usage', async () => {
     vi.resetModules();
-    installChromeFake(() => ({ ok: true }));
+    installChromeFake(ackHandler());
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.send('go');
+    port.emit({ type: 'token', text: 'partial', turnId: 't1' });
+    port.emit({ type: 'error', message: 'boom', turnId: 't1' });
+
+    expect(store.streaming()).toBe(false);
+    expect(store.messages().at(-1)).toMatchObject({ error: 'boom', streaming: false });
+
+    port.emit({ type: 'turn-done', usage: { steps: 2, tokens: 900 }, turnId: 't1' });
+    expect(store.usage()).toEqual({ steps: 2, tokens: 900 });
+  });
+
+  it("a foreign turn's token/turn-done never mutate this panel's transcript or usage", async () => {
+    vi.resetModules();
+    installChromeFake(ackHandler());
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.send('go');
+    port.emit({ type: 'token', text: 'mine', turnId: 't1' });
+
+    port.emit({ type: 'token', text: ' THEIRS', turnId: 't2' });
+    port.emit({ type: 'turn-done', usage: { steps: 9, tokens: 9999 }, turnId: 't2' });
+
+    expect(store.messages().at(-1)).toMatchObject({ text: 'mine', streaming: true });
+    expect(store.streaming()).toBe(true);
+    expect(store.usage()).toEqual(store.ZERO_USAGE);
+
+    port.emit({ type: 'turn-done', usage: { steps: 2, tokens: 900 }, turnId: 't1' });
+    expect(store.streaming()).toBe(false);
+    expect(store.usage()).toEqual({ steps: 2, tokens: 900 });
+  });
+
+  it('unstamped events keep folding for a pre-#168 SW (ack without turnId)', async () => {
+    vi.resetModules();
+    installChromeFake(ackHandler({ 'user-message': () => ({ ok: true }) }));
     const port = installPortFake();
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     store.initChatStore();
     await store.send('hi');
-    expect(store.streaming()).toBe(true);
-
     port.emit({ type: 'token', text: 'working on it' });
     expect(store.messages().at(-1)?.text).toBe('working on it');
 
     port.emit(turnDone(2, 900));
     expect(store.streaming()).toBe(false);
-    expect(store.messages().at(-1)?.streaming).toBe(false);
     expect(store.usage()).toEqual({ steps: 2, tokens: 900 });
+  });
+
+  it("holds a turn's stamped events that beat the ack and replays them once keyed", async () => {
+    vi.resetModules();
+    let resolveAck: (() => void) | undefined;
+    installChromeFake(
+      ackHandler({
+        'user-message': () =>
+          new Promise((resolve) => {
+            resolveAck = () => resolve({ ok: true, turnId: 't1' });
+          }),
+      }),
+    );
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    const pending = store.send('go');
+    await Promise.resolve(); // let the request reach the fake so the ack is pending
+    port.emit({ type: 'token', text: 'early', turnId: 't1' }); // beats the ack
+
+    resolveAck?.();
+    await pending;
+
+    expect(store.messages().map((m) => [m.role, m.text])).toEqual([
+      ['user', 'go'],
+      ['assistant', 'early'],
+    ]);
+  });
+});
+
+describe('chat store: reconnect-race liveness check (#168 B)', () => {
+  const sessionAlive = {
+    ok: true,
+    state: 'running',
+    turnRunning: true,
+    tabId: 1,
+    currentTurnId: 't1',
+  };
+  const sessionDead = { ok: true, state: 'running', turnRunning: false, tabId: 1 };
+
+  async function bootMidTurn(sessionReply: () => unknown) {
+    vi.resetModules();
+    vi.useFakeTimers();
+    installChromeFake(ackHandler({ 'session-get': sessionReply }));
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+    store.initChatStore();
+    await store.send('go');
+    port.emit({ type: 'token', text: 'working', turnId: 't1' });
+    return { store, port };
+  }
+
+  it('a turnRunning:false push does not kill the live stream immediately', async () => {
+    const { store, port } = await bootMidTurn(() => sessionDead);
+
+    port.emit({ type: 'session-state', state: 'running', turnRunning: false });
+
+    expect(store.streaming()).toBe(true); // pre-fix this was already false
+    expect(store.messages().at(-1)?.streaming).toBe(true);
+  });
+
+  it('closes the turn only after the delayed session-get confirms it dead', async () => {
+    const { store, port } = await bootMidTurn(() => sessionDead);
+
+    port.emit({ type: 'session-state', state: 'running', turnRunning: false });
+    await vi.advanceTimersByTimeAsync(store.TURN_LIVENESS_DELAY_MS + 1);
+
+    expect(store.streaming()).toBe(false);
+    expect(store.messages().at(-1)?.streaming).toBe(false);
+  });
+
+  it('keeps streaming when the confirmation says the turn is alive after all', async () => {
+    const { store, port } = await bootMidTurn(() => sessionAlive);
+
+    port.emit({ type: 'session-state', state: 'running', turnRunning: false });
+    await vi.advanceTimersByTimeAsync(store.TURN_LIVENESS_DELAY_MS + 1);
+
+    expect(store.streaming()).toBe(true);
+    expect(store.messages().at(-1)?.streaming).toBe(true);
+  });
+
+  it('a non-running session-state still ends the turn immediately (Stop path)', async () => {
+    const { store, port } = await bootMidTurn(() => sessionAlive);
+
+    port.emit({ type: 'session-state', state: 'stopped' });
+
+    expect(store.streaming()).toBe(false);
+    expect(store.messages().at(-1)?.streaming).toBe(false);
+  });
+});
+
+describe('chat store: thread-get rebuild + adoption (#168 C/E)', () => {
+  const thread = [
+    { role: 'user', text: 'make it pop' },
+    { role: 'assistant', text: 'done', tools: [{ name: 'setStyle', ok: true }] },
+  ];
+
+  it('rebuilds the transcript from the SW thread and keys the view to its tab', async () => {
+    vi.resetModules();
+    installChromeFake(
+      ackHandler({
+        'session-get': () => ({ ok: true, state: 'running', turnRunning: false, tabId: 2 }),
+        'thread-get': () => ({ ok: true, tabId: 2, thread }),
+      }),
+    );
+    installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.hydrateThread();
+
+    expect(store.messages().map((m) => [m.role, m.text, m.streaming])).toEqual([
+      ['user', 'make it pop', false],
+      ['assistant', 'done', false],
+    ]);
+    expect(store.messages()[1]?.toolCalls).toEqual([{ tool: 'setStyle', ok: true }]);
+    expect(store.viewTabId()).toBe(2);
+    expect(store.streaming()).toBe(false);
+  });
+
+  it('adopts the in-flight turn on rebuild so a reopened panel re-attaches to it', async () => {
+    vi.resetModules();
+    installChromeFake(
+      ackHandler({
+        'session-get': () => ({
+          ok: true,
+          state: 'running',
+          turnRunning: true,
+          tabId: 2,
+          currentTurnId: 't9',
+        }),
+        'thread-get': () => ({ ok: true, tabId: 2, thread }),
+      }),
+    );
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.hydrateThread();
+
+    expect(store.streaming()).toBe(true);
+    expect(store.activeTurnId()).toBe('t9');
+
+    port.emit({ type: 'token', text: 'still going', turnId: 't9' }); // re-attached
+    expect(store.messages().at(-1)).toMatchObject({ text: 'still going', streaming: true });
+
+    port.emit({ type: 'token', text: 'NOPE', turnId: 'tz' }); // a foreign turn stays foreign
+    expect(store.messages().at(-1)?.text).toBe('still going');
+  });
+
+  it("an empty/errored thread for the tab shows an empty chat, not another tab's transcript", async () => {
+    vi.resetModules();
+    installChromeFake(
+      ackHandler({
+        'session-get': () => ({ ok: true, state: 'idle', turnRunning: false, tabId: 3 }),
+        'thread-get': () => ({ ok: false, tabId: 3, error: 'no session' }),
+      }),
+    );
+    installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    // Seed a fake prior view, as if the panel had been showing another tab.
+    await store.send('old tab message');
+    expect(store.messages()).toHaveLength(1);
+
+    await store.hydrateThread();
+
+    expect(store.messages()).toEqual([]);
+    expect(store.viewTabId()).toBe(3);
+    expect(store.streaming()).toBe(false);
+  });
+
+  it('a failed hydrate leaves the stream-built view untouched', async () => {
+    vi.resetModules();
+    installChromeFake(
+      ackHandler({
+        'thread-get': () => {
+          throw new Error('no handler');
+        },
+      }),
+    );
+    installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.send('hi');
+
+    await store.hydrateThread();
+
+    expect(store.messages()).toHaveLength(1);
+    expect(store.messages()[0]).toMatchObject({ role: 'user', text: 'hi' });
+  });
+
+  it('re-keying to a different tab resets the usage meter (per-tab spend)', async () => {
+    vi.resetModules();
+    installChromeFake(
+      ackHandler({
+        'session-get': () => ({ ok: true, state: 'running', turnRunning: false, tabId: 5 }),
+        'thread-get': () => ({ ok: true, tabId: 5, thread: [] }),
+      }),
+    );
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    await store.send('hi');
+    port.emit({ type: 'turn-done', usage: { steps: 3, tokens: 1200 }, turnId: 't1' });
+    expect(store.usage()).toEqual({ steps: 3, tokens: 1200 });
+
+    await store.hydrateThread(); // view was unkeyed (null) -> tab 5 counts as a re-key
+
+    expect(store.usage()).toEqual(store.ZERO_USAGE);
   });
 });
 

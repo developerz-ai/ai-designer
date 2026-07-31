@@ -15,7 +15,6 @@
 // hub, since `history-list`/`history-get`/`history-delete` need them on the bus), not here.
 
 import { modelMessageSchema } from 'ai';
-import { z } from 'zod';
 import {
   Conversation,
   type ConversationSummary,
@@ -55,7 +54,11 @@ export class HistoryStore {
   }
 
   /** Load the persisted ring buffer into the cache. Idempotent — safe to call on each SW wake
-   *  before the first message is served. A corrupt/legacy record is dropped rather than trusted. */
+   *  before the first message is served. Salvage is PER-CONVERSATION (#168): parsing the whole
+   *  array with one schema meant a single corrupt/stale-schema entry wiped ALL ten
+   *  conversations and deleted the key — total amnesia on any schema change. Now each entry
+   *  parses independently; the bad ones drop, the good ones survive, and the cleaned list is
+   *  persisted back so the corruption doesn't re-surface on the next wake. */
   async hydrate(): Promise<void> {
     const got = await chrome.storage.local.get(STORAGE_KEY);
     const raw = got[STORAGE_KEY];
@@ -63,13 +66,22 @@ export class HistoryStore {
       this.cache = [];
       return;
     }
-    const parsed = z.array(Conversation).safeParse(raw);
-    if (parsed.success) {
-      this.cache = parsed.data.slice(0, CAP);
-    } else {
+    if (!Array.isArray(raw)) {
       this.cache = [];
       await chrome.storage.local.remove(STORAGE_KEY);
+      return;
     }
+    const salvaged: Conversation[] = [];
+    for (const entry of raw as unknown[]) {
+      const parsed = Conversation.safeParse(entry);
+      if (parsed.success) salvaged.push(parsed.data);
+    }
+    this.cache = salvaged.slice(0, CAP);
+    if (salvaged.length === raw.length) return;
+    // Some entries dropped: write the cleaned list back (or clear the key when nothing
+    // survived) so the corruption doesn't re-surface on the next wake.
+    if (this.cache.length > 0) await this.persist();
+    else await chrome.storage.local.remove(STORAGE_KEY);
   }
 
   /** The 10 (or fewer) conversations, newest first, as list-view summaries. */
@@ -178,13 +190,27 @@ function isDataUrl(value: string): boolean {
   return value.startsWith('data:');
 }
 
-/** Deep-walk a JSON-serializable value, replacing data-URL payloads (the size hog — a single
- *  captured screenshot easily runs hundreds of KB) with a short placeholder, and truncating any
- *  other over-long string. Structure — keys, array shape, discriminant fields like `role`/`type` —
- *  is preserved; only oversized leaf strings shrink, so the result still fits `modelMessageSchema`. */
+// Bare-base64 image payloads (#168): `loop.ts`'s `toModelOutput` hooks strip the `data:` prefix
+// before handing a screenshot to the model, so the string that lands in a persisted tool-result
+// file part is PLAIN base64 — which the data-URL check above never catches. Truncating one to
+// 4k chars produced a corrupt half-image instead of the placeholder. Heuristic: at this length,
+// a base64-charset-only run (no whitespace, no punctuation outside the alphabet) is an embedded
+// binary payload, not prose — real text always breaks the charset within far fewer characters.
+const BARE_BASE64_MIN_CHARS = 1_000;
+const BARE_BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function isBareBase64Payload(value: string): boolean {
+  return value.length >= BARE_BASE64_MIN_CHARS && BARE_BASE64_RE.test(value);
+}
+
+/** Deep-walk a JSON-serializable value, replacing image payloads — data-URLs AND the bare-base64
+ *  strings the loop's `toModelOutput` hooks produce (the size hog — a single captured screenshot
+ *  easily runs hundreds of KB) — with a short placeholder, and truncating any other over-long
+ *  string. Structure — keys, array shape, discriminant fields like `role`/`type` — is preserved;
+ *  only oversized leaf strings shrink, so the result still fits `modelMessageSchema`. */
 export function boundValue(value: unknown): unknown {
   if (typeof value === 'string') {
-    if (isDataUrl(value)) return IMAGE_PLACEHOLDER;
+    if (isDataUrl(value) || isBareBase64Payload(value)) return IMAGE_PLACEHOLDER;
     return value.length > MAX_STRING_CHARS ? `${value.slice(0, MAX_STRING_CHARS)}…` : value;
   }
   if (Array.isArray(value)) return value.map(boundValue);
