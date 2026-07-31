@@ -1,5 +1,8 @@
-# Custom self-hosted runner labels (Blacksmith) so actionlint doesn't flag them.
+# actionlint ships a hard-coded list of known runner labels and does not know Blacksmith's
+# larger tiers — it accepts 2vcpu/4vcpu but rejects 8vcpu, even though the runner exists and
+# schedules fine (the unit/integration/e2e jobs run on it). Declaring it here is what
+# actionlint's own error message asks for, and keeps the check honest for real typos.
 self-hosted-runner:
   labels:
-    - blacksmith-2vcpu-ubuntu-2404
-    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-8vcpu-ubuntu-2404
+    - blacksmith-16vcpu-ubuntu-2404
