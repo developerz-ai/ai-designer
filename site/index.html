@@ -212,6 +212,35 @@
         </div>
       </section>
 
+      <!-- ─────────────────────── world tour teaser ─────────────────────── -->
+      <!-- Static poster band into /world (#161): zero JS, and the #notify form
+           contract below stays byte-identical. Ghost button on purpose — the
+           orange primary belongs to the waitlist CTA directly below. -->
+      <section class="section teaser" id="world-tour">
+        <div class="container teaser__inner">
+          <p class="eyebrow">The tour</p>
+          <h2 class="section__title">Watch Designer fly.</h2>
+          <p class="lead">
+            A slow glide through the loop: your page, one click, one plain-English ask,
+            the live edit, one real PR.
+          </p>
+          <a class="teaser__poster-link" href="/world" aria-label="Watch the Designer tour — a scroll-through flight">
+            <img
+              class="teaser__poster"
+              src="/world-assets/v1/img/teaser-poster.webp"
+              alt="Miniature clay world of the Designer loop: a browser-window city, a giant cursor, a chat kiosk, a page being rebuilt, and a rocket ready to ship."
+              width="1672"
+              height="941"
+              loading="lazy"
+            />
+          </a>
+          <a class="dz-btn dz-btn--ghost" href="/world">
+            See it fly
+            <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </a>
+        </div>
+      </section>
+
       <!-- ─────────────────────── notify / waitlist ─────────────────────── -->
       <!-- The form contract (IDs + structure) is lifted verbatim from the working
            landing so main.ts's captcha/count/subscribe handlers bind unchanged;
@@ -282,6 +311,7 @@
           <h4 class="footer__heading">Product</h4>
           <a href="#how">How it works</a>
           <a href="#notify">Notify me</a>
+          <a href="/world">See it fly</a>
           <a href="https://developerz.ai" rel="noopener">developerz.ai</a>
         </nav>
 
