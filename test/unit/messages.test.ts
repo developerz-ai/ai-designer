@@ -57,8 +57,11 @@ import {
   TabsCmd,
   TabsResult,
   Target,
+  ThreadGetResult,
+  ThreadViewMessage,
   ToolResult,
   UndoInput,
+  UserMessageResult,
   WaitCondition,
   WaitForInput,
 } from '@/shared/messages';
@@ -608,6 +611,97 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
   });
 });
 
+// #168 — cross-turn amnesia: turn attribution on the stream + the thread reconciliation RPC.
+describe('turn attribution on the SwToPanel stream (#168)', () => {
+  it('rejects a malformed turnId (non-string) on a stream event', () => {
+    expect(SwToPanel.safeParse({ type: 'token', text: 'hi', turnId: 42 }).success).toBe(false);
+    expect(
+      SwToPanel.safeParse({ type: 'error', message: 'boom', turnId: { id: 't1' } }).success,
+    ).toBe(false);
+  });
+
+  it('carries an optional turnId on all five per-turn stream events', () => {
+    expect(SwToPanel.safeParse({ type: 'token', text: 'hi', turnId: 't1' }).success).toBe(true);
+    expect(
+      SwToPanel.safeParse({ type: 'tool-call', tool: 'setStyle', id: 'call_1', turnId: 't1' })
+        .success,
+    ).toBe(true);
+    expect(
+      SwToPanel.safeParse({ type: 'tool-result', tool: 'setStyle', ok: false, turnId: 't1' })
+        .success,
+    ).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'error', message: 'boom', turnId: 't1' }).success).toBe(
+      true,
+    );
+    expect(
+      SwToPanel.safeParse({ type: 'turn-done', usage: { steps: 3, tokens: 900 }, turnId: 't1' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('stays back-compatible: every event still parses with no turnId (pre-#168 emitter)', () => {
+    expect(SwToPanel.safeParse({ type: 'token', text: 'hi' }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'tool-call', tool: 'undo' }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'tool-result', tool: 'undo', ok: true }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'error', message: 'boom' }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'turn-done', usage: { steps: 0, tokens: 0 } }).success).toBe(
+      true,
+    );
+  });
+
+  it('parses the user-message ack with and without the turnId it now names', () => {
+    expect(UserMessageResult.safeParse({ ok: true, turnId: 42 }).success).toBe(false);
+    expect(UserMessageResult.safeParse({ ok: true }).success).toBe(true); // pre-#168 SW reply
+    const parsed = UserMessageResult.safeParse({ ok: true, turnId: 't1' });
+    expect(parsed.success && parsed.data).toEqual({ ok: true, turnId: 't1' });
+    expect(UserMessageResult.safeParse({ ok: false, error: 'no tab' }).success).toBe(true);
+  });
+});
+
+describe('thread-get (#168: the panel reconciles its transcript from the SW thread)', () => {
+  it('is a PanelToSw variant taking no arguments', () => {
+    expect(PanelToSw.safeParse({ type: 'thread-get' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'thread-gett' }).success).toBe(false);
+  });
+
+  it('rejects a ThreadViewMessage with an unknown role or a malformed tool outcome', () => {
+    expect(ThreadViewMessage.safeParse({ role: 'system', text: 'x' }).success).toBe(false);
+    expect(
+      ThreadViewMessage.safeParse({
+        role: 'assistant',
+        text: 'done',
+        tools: [{ name: 'setStyle' }], // missing ok — the outcome is the point
+      }).success,
+    ).toBe(false);
+  });
+
+  it('round-trips a thread of user/assistant messages with tool outcomes', () => {
+    const thread = [
+      { role: 'user' as const, text: 'make the CTA orange' },
+      { role: 'assistant' as const, text: 'Done.', tools: [{ name: 'setStyle', ok: true }] },
+    ];
+    const parsed = ThreadGetResult.safeParse({ ok: true, tabId: 7, thread });
+    expect(parsed.success && parsed.data).toEqual({ ok: true, tabId: 7, thread });
+  });
+
+  it('accepts the failure shape, a null tabId, and an empty (fresh-session) thread', () => {
+    expect(ThreadGetResult.safeParse({ ok: false, tabId: null, error: 'no session' }).success).toBe(
+      true,
+    );
+    expect(ThreadGetResult.safeParse({ ok: true, tabId: 7, thread: [] }).success).toBe(true);
+  });
+
+  it('bounds the thread and the per-message tool list (defense-in-depth)', () => {
+    const msg = { role: 'user' as const, text: 'x' };
+    const tooLong = Array.from({ length: HISTORY_MAX_MESSAGES + 1 }, () => msg);
+    expect(ThreadGetResult.safeParse({ ok: true, tabId: 1, thread: tooLong }).success).toBe(false);
+    const tooManyTools = Array.from({ length: 101 }, () => ({ name: 'query', ok: true }));
+    expect(
+      ThreadViewMessage.safeParse({ role: 'assistant', text: '', tools: tooManyTools }).success,
+    ).toBe(false);
+  });
+});
+
 describe('session-get (#165 S5: the panel can ask a woken worker)', () => {
   it('is a PanelToSw variant taking no arguments', () => {
     expect(PanelToSw.safeParse({ type: 'session-get' }).success).toBe(true);
@@ -626,6 +720,31 @@ describe('session-get (#165 S5: the panel can ask a woken worker)', () => {
       turnRunning: false,
       tabId: 7,
     });
+  });
+
+  it('carries the current turn id when a turn is in flight, and stays optional (#168)', () => {
+    expect(
+      SessionStateResult.safeParse({
+        ok: true,
+        state: 'running',
+        turnRunning: true,
+        tabId: 7,
+        currentTurnId: 42, // malformed: not a string
+      }).success,
+    ).toBe(false);
+    const parsed = SessionStateResult.safeParse({
+      ok: true,
+      state: 'running',
+      turnRunning: true,
+      tabId: 7,
+      currentTurnId: 't1',
+    });
+    expect(parsed.success && parsed.data.currentTurnId).toBe('t1');
+    // Pre-#168 SW reply (no currentTurnId) still parses.
+    expect(
+      SessionStateResult.safeParse({ ok: true, state: 'running', turnRunning: true, tabId: 7 })
+        .success,
+    ).toBe(true);
   });
 
   it('allows a null tabId (no page tab resolved) but requires both facts', () => {

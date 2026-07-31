@@ -19,6 +19,8 @@ export type { Mode };
 // keywords are checked first: a "copy the bug report" style sentence is far rarer than a debug
 // instruction that happens to also mention a reference/design word, and getting debug mode is the
 // more consequential miss (a debug turn run as a design turn skips the diagnostics collector).
+// Matching is WORD-BOUNDED (#168): plain `includes` fired 'fix' inside "prefix" and 'like'
+// inside "unlike", flipping unrelated turns into debug/copy mode.
 const DEBUG_KEYWORDS = [
   'debug',
   'broken',
@@ -48,20 +50,34 @@ const COPY_KEYWORDS = [
   'competitor',
 ];
 
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const asMatchers = (keywords: readonly string[]): RegExp[] =>
+  keywords.map((kw) => new RegExp(`\\b${escapeRegExp(kw)}\\b`, 'i'));
+
+const DEBUG_MATCHERS = asMatchers(DEBUG_KEYWORDS);
+const COPY_MATCHERS = asMatchers(COPY_KEYWORDS);
+
 /** Best-effort mode from free text — the same heuristic a human skimming the instruction would
- *  use. Returns `undefined` when neither vocabulary shows up (a generic edit); the base prompt
- *  already covers that case, so no addendum is the correct answer, not a failure. */
-export function inferMode(text: string): Mode | undefined {
-  const lower = text.toLowerCase();
-  if (DEBUG_KEYWORDS.some((kw) => lower.includes(kw))) return 'debug';
-  if (COPY_KEYWORDS.some((kw) => lower.includes(kw))) return 'copy';
-  return undefined;
+ *  use, word-bounded so 'fix' never fires inside "prefix". When neither vocabulary shows up,
+ *  falls back to `previous` — the mode the SESSION last ran under (`TurnSession.lastMode`) —
+ *  because a follow-up like "now the header too" continues the same activity; mode was
+ *  previously re-inferred from each message alone, so every follow-up silently dropped the
+ *  debug/copy addendum. Returns `undefined` only when there's no signal at all (a generic
+ *  edit): the base prompt covers that, so no addendum is the correct answer, not a failure. */
+export function inferMode(text: string, previous?: Mode): Mode | undefined {
+  if (DEBUG_MATCHERS.some((m) => m.test(text))) return 'debug';
+  if (COPY_MATCHERS.some((m) => m.test(text))) return 'copy';
+  return previous;
 }
 
-/** An explicit `mode` always wins; only fall back to inference when the caller (or the composer)
- *  didn't set one. */
-export function resolveMode(explicit: Mode | undefined, text: string): Mode | undefined {
-  return explicit ?? inferMode(text);
+/** An explicit `mode` always wins; only fall back to inference (then to the session's previous
+ *  mode) when the caller (or the composer) didn't set one. */
+export function resolveMode(
+  explicit: Mode | undefined,
+  text: string,
+  previous?: Mode,
+): Mode | undefined {
+  return explicit ?? inferMode(text, previous);
 }
 
 // --- prompt addenda + tool emphasis ----------------------------------------
@@ -112,23 +128,33 @@ const DEBUG_TOOL_EMPHASIS = [
 ];
 
 export interface ModeGuidance {
-  /** Feeds `buildSystemPrompt({ addenda })` — appended to the `modes` section. */
+  /** Feeds `buildSystemPrompt({ addenda })`. ALWAYS EMPTY since #168 — injecting the mode
+   *  addendum into the SYSTEM prompt made every mode flip rewrite the prompt-cache prefix
+   *  (OpenAI-compatible caching is prefix-based), invalidating the cached system block +
+   *  thread on the very turns that switch activity. Kept in the shape so callers composing
+   *  `buildSystemPrompt({ addenda: modeGuidance(mode).addenda })` keep compiling and now get
+   *  a byte-stable system prompt for free. */
   readonly addenda: SystemPromptOptions['addenda'];
   /** The tools this mode leans on first, in the order the agent should reach for them. */
   readonly toolEmphasis: readonly string[];
+  /** The per-turn mode directive, for the MESSAGE TAIL: append it to the outgoing user
+   *  message (a trailing paragraph after the user's text). Rides the conversation — which
+   *  changes every turn anyway — so a mode flip costs nothing cache-wise. `undefined` for no
+   *  mode: the base `MODES` section already covers both activities generically. */
+  readonly turnAddendum?: string;
 }
 
 const NONE_GUIDANCE: ModeGuidance = { addenda: {}, toolEmphasis: [] };
 
-/** The prompt addendum + tool emphasis for one turn's resolved mode. `undefined` (no mode
+/** The per-turn directive + tool emphasis for one turn's resolved mode. `undefined` (no mode
  *  inferred/chosen — a generic edit) returns no addendum: the base `MODES` section already
  *  covers both activities, so there's nothing to sharpen. */
 export function modeGuidance(mode: Mode | undefined): ModeGuidance {
   switch (mode) {
     case 'copy':
-      return { addenda: { modes: [COPY_ADDENDUM] }, toolEmphasis: COPY_TOOL_EMPHASIS };
+      return { addenda: {}, toolEmphasis: COPY_TOOL_EMPHASIS, turnAddendum: COPY_ADDENDUM };
     case 'debug':
-      return { addenda: { modes: [DEBUG_ADDENDUM] }, toolEmphasis: DEBUG_TOOL_EMPHASIS };
+      return { addenda: {}, toolEmphasis: DEBUG_TOOL_EMPHASIS, turnAddendum: DEBUG_ADDENDUM };
     default:
       return NONE_GUIDANCE;
   }

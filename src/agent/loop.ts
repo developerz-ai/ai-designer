@@ -9,7 +9,13 @@
 // panel sink (`emit` → port), and any extra tools (MCP, slice 02; session/recorder, slice 07).
 // That keeps the loop unit/integration-testable against a mock model with no `chrome.*`.
 
-import { isStepCount, type LanguageModel, ToolLoopAgent, type ToolSet } from 'ai';
+import {
+  type Instructions,
+  isStepCount,
+  type LanguageModel,
+  ToolLoopAgent,
+  type ToolSet,
+} from 'ai';
 import type {
   ControlTool,
   NavIntent,
@@ -26,6 +32,8 @@ import {
   usageOf,
 } from './budget';
 import type { ChatMessage } from './session';
+import { pruneInFlightImages } from './thread-compact';
+import { createInvalidToolFallback, createRepairToolCall } from './tool-repair';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
 import { type ComplexSiteDispatch, createComplexSiteTools } from './tools/complex-site';
 import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
@@ -46,8 +54,20 @@ const SCREENSHOT_HINT =
 export type TurnStop = 'done' | 'budget' | 'aborted' | 'error';
 
 export interface TurnOutcome {
-  /** The assistant's final prose, for appending to the session thread. */
+  /** The assistant's final prose — what the panel shows as the turn's reply. */
   readonly text: string;
+  /**
+   * EVERYTHING the model produced this turn, step by step, in SDK `ModelMessage` shape:
+   * assistant messages (prose + tool-call parts) and tool messages (tool results, screenshots
+   * included). THIS — not `text` — is what belongs in the session thread: threading only the
+   * flat prose made turn 2 re-run every tool and triple its token spend (#168, measured
+   * 31.8k → 97.1k). Accumulated per completed step, so a partial set survives abort / error /
+   * budget-stop. Persist it via `compactForThread` (`src/agent/thread-compact.ts`), which
+   * strips image payloads and truncates oversized outputs while keeping the structure. When a
+   * caller appends `responseMessages` to the thread it must NOT also append `text` — the final
+   * step's assistant message already contains it.
+   */
+  readonly responseMessages: ChatMessage[];
   readonly usage: BudgetUsage;
   readonly stop: TurnStop;
   readonly budgetReason: BudgetReason | null;
@@ -62,8 +82,10 @@ export interface RunTurnArgs {
   readonly signal?: AbortSignal;
   /** The provider model to drive (built from the BYOK config in the SW, slice 01). */
   readonly model: LanguageModel;
-  /** The design-agent system prompt (`buildSystemPrompt`). Passed as `instructions` (v7). */
-  readonly instructions: string;
+  /** The design-agent system prompt (`buildSystemPrompt`). Passed as `instructions` (v7).
+   *  Accepts a `SystemModelMessage` too, so a caller can attach a prompt-cache breakpoint
+   *  (`prompt-cache.ts` `cachedSystemPrompt`) without the loop knowing about providers. */
+  readonly instructions: Instructions;
   /** Bus round-trip that runs a DOM tool in the tab's content script (slice 05). */
   readonly dispatch: DomDispatch;
   /** Opens a reference site in a background tab and returns its compact design read (slice 06).
@@ -129,6 +151,18 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     model,
     instructions,
     tools,
+    // Within-turn image pruning (#168): before each model call, keep only the newest 1–2
+    // screenshot sets in the transcript and replace older ones with placeholder text. A 4-PNG
+    // `responsiveCapture` at step 5 of 20 was otherwise re-uploaded on every one of the 15
+    // remaining steps. The returned `messages` override carries forward (SDK semantics), and
+    // `pruneInFlightImages` rewrites each aged-out image exactly ONCE and is otherwise
+    // identity-stable — so the prompt prefix (what OpenAI-compatible caching keys on) changes
+    // only at a real aging event, not on every step.
+    prepareStep: ({ messages }) => ({ messages: pruneInFlightImages(messages) }),
+    // Broken tool calls (empty/unknown name, schema-invalid input) are rewritten to the
+    // `invalidTool` fallback instead of failing the step — the model reads the error result and
+    // retries (see `tool-repair.ts`; live failure: `AI_NoSuchToolError` on an empty name).
+    experimental_repairToolCall: createRepairToolCall(),
     // Transient-failure retry is the SDK's, PER MODEL CALL — deliberately not a wrapper around the
     // whole turn. `APICallError.isRetryable` already covers 408/409/429/5xx plus network `fetch
     // failed`, with exponential backoff that honours `Retry-After`, so one 429 on a BYOK key no
@@ -164,12 +198,20 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
 
   let text = '';
   let stop: TurnStop = 'done';
+  // Accumulated per COMPLETED step (the SDK builds `step.response.messages` at each
+  // finish-step), so every exit path below — throw, abort, budget stop, natural finish —
+  // returns whatever tool activity actually happened. Never read from the result's settled
+  // promises: those reject wholesale on an early death, losing the completed steps.
+  const responseMessages: ChatMessage[] = [];
 
   try {
     const result = await agent.stream({
       messages,
       abortSignal: signal,
-      onStepFinish: (step) => budget.record(step.usage),
+      onStepFinish: (step) => {
+        budget.record(step.usage);
+        responseMessages.push(...step.response.messages);
+      },
     });
 
     // We consume `result.stream`, never the result promises (`steps`, `finishReason`, …). When a
@@ -239,9 +281,17 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
   } catch (err) {
     // A fired signal surfaces as a throw on some providers — treat it as the user abort it is,
     // not an error the panel should show.
-    if (signal?.aborted) return { text, usage: budget.usage, stop: 'aborted', budgetReason: null };
+    if (signal?.aborted) {
+      return { text, responseMessages, usage: budget.usage, stop: 'aborted', budgetReason: null };
+    }
     emit({ type: 'error', message: errorText(err) });
-    return { text, usage: budget.usage, stop: 'error', budgetReason: budget.reason };
+    return {
+      text,
+      responseMessages,
+      usage: budget.usage,
+      stop: 'error',
+      budgetReason: budget.reason,
+    };
   }
 
   // Force-stopped on a budget ceiling: stream the stop-and-summarize notice so the user sees why
@@ -260,6 +310,10 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
 
   return {
     text,
+    // Deliberately WITHOUT the budget notice appended to `text` above: the notice is panel
+    // UX, not model output — persisting it would make the model read its own stop notice as
+    // something it said.
+    responseMessages,
     usage: budget.usage,
     stop,
     budgetReason: stop === 'budget' ? budget.reason : null,
@@ -327,6 +381,10 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     ...describeTools,
     ...complexSite,
     ...responsive,
+    // The repair channel for broken tool calls (`tool-repair.ts`): must be in the ToolSet so a
+    // repaired call parses+executes. Before `deps.tools` so no extra can be shadowed by it —
+    // an extra literally named `invalidTool` would (deliberately) take over the channel.
+    ...createInvalidToolFallback(),
   };
   // Whichever `screenshot` survived the merge (vision's `fullPage`-capable one if present, else the
   // DOM one) and `responsiveCapture` get an image→model hook so their PNGs are fed back as vision

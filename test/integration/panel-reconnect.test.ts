@@ -109,7 +109,11 @@ describe('panel reopened while a turn is running', () => {
 
     session.initSessionStore();
 
-    // `turnRunning: false` on a woken worker: nothing will ever finish that turn.
+    // #168: `turnRunning: false` no longer closes the bubble on FIRST sight — a reconnect can
+    // beat the woken worker's turn re-registration, and killing the stream on that race
+    // re-enabled send mid-turn. The store re-asks (`session-get`) after the liveness delay and
+    // only the CONFIRMED not-running answer closes it.
+    await vi.advanceTimersByTimeAsync(chat.TURN_LIVENESS_DELAY_MS);
     await vi.waitFor(() => expect(chat.messages().at(-1)?.streaming).toBe(false));
     expect(chat.streaming()).toBe(false);
     // The text streamed before the worker died is kept — the bubble is closed, not dropped.
@@ -126,6 +130,70 @@ describe('panel reopened while a turn is running', () => {
 
     expect(chat.messages()).toHaveLength(1);
     expect(chat.messages()[0]?.text).toBe('hi');
+  });
+});
+
+describe('transcript rebuild via thread-get (#168)', () => {
+  const threadReply = {
+    ok: true,
+    tabId: 7,
+    thread: [
+      { role: 'user', text: 'make the hero bigger' },
+      { role: 'assistant', text: 'Enlarged it.', tools: [{ name: 'setStyle', ok: true }] },
+    ],
+  };
+
+  it('rebuilds the transcript from the SW thread on mount, everything closed', async () => {
+    installChromeFake((msg) => {
+      switch (msg.type) {
+        case 'session-get':
+          return { ok: true, state: 'running', turnRunning: false, tabId: 7 };
+        case 'thread-get':
+          return threadReply;
+        default:
+          return { ok: true };
+      }
+    });
+    const chat = await import('@/entrypoints/sidepanel/stores/chat');
+
+    chat.initChatStore();
+    await vi.waitFor(() => expect(chat.messages()).toHaveLength(2));
+
+    // The SW thread replaced the (empty) local replica wholesale: closed bubbles, settled chips.
+    expect(chat.messages()[0]).toMatchObject({ role: 'user', text: 'make the hero bigger' });
+    expect(chat.messages()[1]).toMatchObject({
+      role: 'assistant',
+      text: 'Enlarged it.',
+      streaming: false,
+      toolCalls: [{ tool: 'setStyle', ok: true }],
+    });
+    expect(chat.viewTabId()).toBe(7);
+  });
+
+  it('re-pulls the thread after a dropped Port — the transcript survives an SW eviction', async () => {
+    installChromeFake((msg) => {
+      switch (msg.type) {
+        case 'session-get':
+          return { ok: true, state: 'running', turnRunning: false, tabId: 7 };
+        case 'thread-get':
+          return threadReply;
+        default:
+          return { ok: true };
+      }
+    });
+    const chat = await import('@/entrypoints/sidepanel/stores/chat');
+
+    chat.initChatStore();
+    await vi.waitFor(() => expect(sentTypes()).toContain('thread-get'));
+    sent = [];
+
+    latest().disconnect(); // Chrome force-disconnects the Port after ~5 minutes
+    vi.advanceTimersByTime(500); // the sw-stream reconnect backoff
+
+    // The chat store's onReconnect hydration re-reads the SW's per-tab thread, exactly like
+    // readiness/MCP re-read their snapshots below.
+    await vi.waitFor(() => expect(sentTypes()).toContain('thread-get'));
+    expect(chat.messages()).toHaveLength(2);
   });
 });
 

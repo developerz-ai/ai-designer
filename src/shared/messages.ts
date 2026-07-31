@@ -378,6 +378,13 @@ export const SessionStop = z.object({ type: z.literal('session-stop') });
 // forever. The SW also posts the same state unsolicited on `chrome.runtime.onConnect`, so a
 // (re)connecting panel usually needs no explicit call; the RPC covers a later re-check.
 export const SessionGet = z.object({ type: z.literal('session-get') });
+// Pull the SW's own conversation thread for the active tab (#168 cross-turn amnesia). The panel
+// transcript is a lossy replica built from the stream; after an SW eviction, a second-window
+// takeover, or a missed `turn-done` it can drift from the thread the agent actually resumes. This
+// RPC is the reconciliation source of truth: the SW renders its persisted per-tab session thread
+// down to `ThreadViewMessage`s (text + tool outcomes — never raw provider parts) and the panel
+// replaces its replica wholesale. Reply: `ThreadGetResult`.
+export const ThreadGet = z.object({ type: z.literal('thread-get') });
 
 // --- on-page agent-decision overlay, opt-in (slice 09) --------------------
 // Cursor-style "watch the agent work" surface (`src/dom/overlay.ts`). Opt-in + persisted to
@@ -453,6 +460,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   SessionStart,
   SessionStop,
   SessionGet,
+  ThreadGet,
   HistoryList,
   HistoryGet,
   HistoryDelete,
@@ -472,6 +480,18 @@ export type PanelToSw = z.infer<typeof PanelToSw>;
 // SwToPanel stream). None of these ever carries the key value.
 export const OkResult = z.object({ ok: z.boolean(), error: z.string().optional() });
 export type OkResult = z.infer<typeof OkResult>;
+
+// RPC response for `user-message` (#168). `turnId` names the turn this send started, so the panel
+// can key its in-flight assistant bubble to it and fold ONLY same-turn stream events in (the
+// stream events below carry the matching `turnId`). Optional both ways: the pre-#168 SW replies a
+// plain `{ ok }` (this schema still parses it), and a panel that parses the ack as `OkResult`
+// simply strips the field — strictly additive.
+export const UserMessageResult = z.object({
+  ok: z.boolean(),
+  turnId: z.string().optional(),
+  error: z.string().optional(),
+});
+export type UserMessageResult = z.infer<typeof UserMessageResult>;
 
 export const SaveKeyResult = z.object({
   ok: z.boolean(),
@@ -556,8 +576,44 @@ export const SessionStateResult = z.object({
   state: SessionLifecycle,
   turnRunning: z.boolean(),
   tabId: z.number().int().nullable(),
+  // The id of the turn currently in flight (#168) — set only when `turnRunning` is true and the
+  // live worker knows which turn it is running. Lets a reconnecting panel match its orphaned
+  // in-flight bubble against the stream's `turnId`-stamped events instead of guessing "any error
+  // = my turn over". Optional: a pre-#168 SW (or an idle session) omits it.
+  currentTurnId: z.string().optional(),
 });
 export type SessionStateResult = z.infer<typeof SessionStateResult>;
+
+// One rendered message of the SW-side conversation thread, as `thread-get`'s reply carries it
+// (#168). Deliberately a VIEW shape, not `modelMessageSchema`: the SW's persisted thread holds raw
+// provider parts (tool-call payloads, base64 images) that must never cross to the panel wholesale
+// — the SW renders each turn down to its visible text plus per-tool outcomes (name + ok, exactly
+// what the panel's chips show). Bounds are defense-in-depth against an oversized persisted thread,
+// mirroring the history caps above.
+export const ThreadViewMessage = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  // The tool calls this assistant turn made, in order, each settled to its outcome — same
+  // vocabulary as the `tool-call`/`tool-result` stream chips. Absent on user messages and on
+  // assistant turns that called no tools.
+  tools: z
+    .array(z.object({ name: z.string(), ok: z.boolean() }))
+    .max(100)
+    .optional(),
+});
+export type ThreadViewMessage = z.infer<typeof ThreadViewMessage>;
+
+// RPC response for `thread-get` (#168). `tabId` is the tab the thread belongs to, following
+// `SessionStateResult`/`ChangesetResult`'s tab-keying rule (null when no page tab resolved) so a
+// reply can't be folded into a view of another tab. `thread` is present on success (empty array =
+// a session with no messages yet); `error` explains a failure (no session, no tab).
+export const ThreadGetResult = z.object({
+  ok: z.boolean(),
+  tabId: z.number().int().nullable(),
+  thread: z.array(ThreadViewMessage).max(HISTORY_MAX_MESSAGES).optional(),
+  error: z.string().optional(),
+});
+export type ThreadGetResult = z.infer<typeof ThreadGetResult>;
 
 // RPC response for `ship` / `send-report` / `download-report` (slice 07). `routed` says what
 // happened: 'tasks' = dispatched to a connected backend (per-task progress then streams as
@@ -1820,8 +1876,14 @@ export const TurnUsage = z.object({
 export type TurnUsage = z.infer<typeof TurnUsage>;
 
 // --- service worker -> panel (stream) ------------------------------------
+// Turn attribution (#168): the five per-turn stream events — `token` / `tool-call` /
+// `tool-result` / `error` / `turn-done` — each carry an optional `turnId`, the id the
+// `user-message` ack returned (`UserMessageResult.turnId`). Without it the panel must treat ANY
+// error as "current turn over" and a second window's panel folds another turn's stream into its
+// own transcript. Optional everywhere: a pre-#168 emitter (or a turnless error, e.g. "open a web
+// page") still validates, and the panel falls back to today's behavior when it's absent.
 export const SwToPanel = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('token'), text: z.string() }),
+  z.object({ type: z.literal('token'), text: z.string(), turnId: z.string().optional() }),
   // `selector`/`kind` (slice 09): the tool-call's target element + cosmetic accent, derived
   // pure-side by `src/shared/overlay-step.ts` `classifyTool` — optional so an unrecognized/
   // selector-less tool (e.g. `undo`) still streams a plain chip. Feeds both the panel's future
@@ -1834,6 +1896,7 @@ export const SwToPanel = z.discriminatedUnion('type', [
     // The SDK's tool-call id — correlates this chip with the `tool-result` that settles it
     // (#165 S8). Optional so an emitter without one (a synthetic/test event) still validates.
     id: z.string().optional(),
+    turnId: z.string().optional(),
   }),
   // How the tool call named by `id` (else by `tool`, newest-unsettled-first) actually ENDED
   // (#165 S8). `tool-call` above fires when the model REQUESTS a call — before execution — so a
@@ -1851,6 +1914,7 @@ export const SwToPanel = z.discriminatedUnion('type', [
     id: z.string().optional(),
     // The failure reason, bounded — a chip tooltip, never a place to dump a provider payload.
     error: z.string().max(500).optional(),
+    turnId: z.string().optional(),
   }),
   // Record pushes are tab-stamped at the SW emit sites (turn path + curation): the panel folds
   // them only into a Diff view keyed to the same tab, so a turn on tab A can never bleed phantom
@@ -1881,7 +1945,9 @@ export const SwToPanel = z.discriminatedUnion('type', [
     prUrl: z.string().optional(),
     error: z.string().optional(),
   }),
-  z.object({ type: z.literal('error'), message: z.string() }),
+  // `turnId` absent = a turnless/global error (no tab, missing key) — the panel may still treat
+  // it as fatal to whatever is in flight; present = scoped to that one turn (#168).
+  z.object({ type: z.literal('error'), message: z.string(), turnId: z.string().optional() }),
   // SW relays of ContentToSw picker events.
   z.object({
     type: z.literal('focus'),
@@ -1919,6 +1985,6 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // panel's chat store (11) uses this to close out the in-flight assistant bubble and flip its
   // `streaming` flag; token/tool-call/edit-recorded/error carry the content. `usage` is the
   // session's cumulative spend after this turn, so the panel's usage meter updates on each turn.
-  z.object({ type: z.literal('turn-done'), usage: TurnUsage }),
+  z.object({ type: z.literal('turn-done'), usage: TurnUsage, turnId: z.string().optional() }),
 ]);
 export type SwToPanel = z.infer<typeof SwToPanel>;

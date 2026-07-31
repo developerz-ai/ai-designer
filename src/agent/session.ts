@@ -11,6 +11,8 @@
 import { modelMessageSchema } from 'ai';
 import { z } from 'zod';
 import { Changeset, emptyChangeset } from '@/shared/changeset';
+import { Mode } from '@/shared/messages';
+import { compactSessionThread } from './thread-compact';
 
 // A single conversation message in AI SDK shape. `ModelMessage` isn't exported from `ai`, so
 // derive it from the exported schema — the same schema we validate persisted threads against.
@@ -22,9 +24,13 @@ export const TurnStatus = z.enum(['idle', 'running', 'stopped']);
 export type TurnStatus = z.infer<typeof TurnStatus>;
 
 // One tab's session as persisted to `chrome.storage.session`. Validated on rehydrate so a
-// corrupt or stale-schema record is dropped rather than trusted. `messages` holds only the
-// JSON-serializable text thread the SW threads back into the next turn — screenshots fed to
-// the model as image parts live inside the SDK's step loop and are never persisted here.
+// corrupt or stale-schema record is dropped rather than trusted. `messages` is the full model
+// thread the SW threads back into the next turn — since #168 that INCLUDES tool activity
+// (assistant tool-call parts + tool-result messages from `TurnOutcome.responseMessages`), run
+// through `compactForThread` by the caller first so image payloads are placeholders and long
+// outputs are truncated. `appendMessages` applies the high-water compaction
+// (`compactSessionThread`) so a long session digests its oldest turns instead of growing
+// forever.
 export const TurnSession = z.object({
   tabId: z.number().int(),
   url: z.string(),
@@ -37,6 +43,10 @@ export const TurnSession = z.object({
     })
     .default({ steps: 0, tokens: 0 }),
   status: TurnStatus.default('idle'),
+  // The mode the session's LAST turn resolved to (#168) — `resolveMode`'s fallback, so a
+  // follow-up message with no mode keyword keeps the running activity instead of silently
+  // dropping the copy/debug addendum. Additive + optional: pre-#168 stored sessions parse fine.
+  lastMode: Mode.optional(),
   updatedAt: z.number(),
 });
 export type TurnSession = z.infer<typeof TurnSession>;
@@ -63,8 +73,10 @@ export class SessionStore {
     this.now = options.now ?? (() => Date.now());
   }
 
-  /** Load every persisted session into the cache; drop any that fail validation. Idempotent —
-   *  safe to call on each SW wake before the first message is served. */
+  /** Load every persisted session into the cache. Salvage is PER-SESSION (audited for #168):
+   *  each `session:<tabId>` key parses independently, so one corrupt/stale-schema record drops
+   *  (and removes) only itself — every other tab's session survives a schema change intact.
+   *  Idempotent — safe to call on each SW wake before the first message is served. */
   async hydrate(): Promise<void> {
     const all = await chrome.storage.session.get(null);
     for (const [key, value] of Object.entries(all)) {
@@ -119,10 +131,15 @@ export class SessionStore {
     return next;
   }
 
-  /** Append messages to a tab's turn thread. Convenience over `patch` for the common case. */
+  /** Append messages to a tab's turn thread. Convenience over `patch` for the common case.
+   *  Applies the high-water compaction (`compactSessionThread`): append-only in the common
+   *  case (prefix-cache friendly); past ~24k approx tokens the oldest turns fold into one
+   *  digest message while recent turns stay verbatim — a 60-turn session stops re-sending
+   *  (and re-billing) its entire history and can't grow into the storage quota. */
   async appendMessages(tabId: number, ...messages: ChatMessage[]): Promise<TurnSession> {
     const current = this.require(tabId);
-    return this.patch(tabId, { messages: [...current.messages, ...messages] });
+    const { messages: compacted } = compactSessionThread([...current.messages, ...messages]);
+    return this.patch(tabId, { messages: compacted });
   }
 
   /** Replace a tab's changeset (recorder output — slice 07). */

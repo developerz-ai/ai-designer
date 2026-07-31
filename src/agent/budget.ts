@@ -18,7 +18,11 @@
 export interface BudgetLimits {
   /** Max reasoning/tool steps before the turn is force-stopped. */
   readonly maxSteps: number;
-  /** Max tokens (input + output, summed across every step) before the turn is force-stopped. */
+  /** Max tokens (input + output, summed across every step) before the turn is force-stopped.
+   *  Summed input+output IS the billed spend, kept deliberately: every step re-sends the whole
+   *  transcript as input, and the provider charges for each of those sends — so a cap on
+   *  "distinct" tokens would under-count exactly the runaway (a long transcript re-uploaded
+   *  every step) this ceiling exists to stop. */
   readonly maxTokens: number;
   /** Max `inspectVisually` calls — each is an extra vision-model round-trip invisible to the step/
    *  token ceilings above (it doesn't go through `onStepFinish`), so it needs its own cap. */
@@ -85,13 +89,19 @@ export function budgetReason(usage: BudgetUsage, limits: BudgetLimits): BudgetRe
 }
 
 /** The concise notice streamed to the panel when a turn is force-stopped on budget — the
- *  "stop and summarize" half of the guardrail. Speaks to the user, names what was spent. */
+ *  "stop and summarize" half of the guardrail. Speaks to the user, names what was spent (the
+ *  token figure is billed spend: input + output summed across every step — see
+ *  {@link BudgetLimits.maxTokens}). The "pick up where I left off" promise is real: the turn's
+ *  tool calls and results persist in the session thread (`TurnOutcome.responseMessages` →
+ *  `compactForThread`), so a follow-up "continue" resumes from that state instead of replaying
+ *  the turn blind. */
 export function budgetNotice(reason: BudgetReason, usage: BudgetUsage): string {
-  const spent = `${usage.steps} steps, ~${usage.tokens.toLocaleString('en-US')} tokens`;
+  const spent = `${usage.steps} steps, ~${usage.tokens.toLocaleString('en-US')} tokens billed`;
   const limit = reason === 'steps' ? 'step' : 'token';
   return (
     `I've reached this turn's ${limit} budget (${spent}), so I'm stopping here. ` +
-    `Tell me to continue and I'll pick up where I left off.`
+    `What I've done and found so far stays in our conversation — ` +
+    `tell me to continue and I'll pick up where I left off.`
   );
 }
 
