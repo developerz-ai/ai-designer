@@ -484,6 +484,35 @@ export default defineBackground(() => {
     return true; // async response
   });
 
+  /**
+   * Ceiling on ONE content round-trip. Every DOM/control tool rides the per-tab capture mutex
+   * (`withCaptureLock`), so a single call that never settles does not just lose its own result —
+   * it wedges that tab's chain forever and every later tool call in the session queues behind it.
+   * The observed symptom is a turn that simply stops, with the last tool chip spinning.
+   *
+   * `chrome.tabs.sendMessage` has no timeout of its own: if the content listener returns `true`
+   * (async) and then never calls `sendResponse` — a queued task awaiting something that never
+   * happens, a frame torn down mid-flight — the promise stays pending for the life of the worker.
+   * Generous enough for the slowest legitimate call (a full-page stitch's per-band settle, a
+   * `waitFor`), short enough that a wedged tab recovers on its own.
+   */
+  const CONTENT_TIMEOUT_MS = 45_000;
+
+  /** Reject `promise` if it has not settled within `ms`. The timer is always cleared, so a slow
+   *  round-trip that DOES land never leaves a pending timer holding the worker awake. */
+  function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`\`${what}\` did not answer within ${ms / 1000}s`)),
+        ms,
+      );
+    });
+    return Promise.race([promise, deadline]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    }) as Promise<T>;
+  }
+
   // The page the user is designing = the active tab of the last-focused normal window. The
   // side panel isn't a tab, so a panel RPC's `sender.tab` is undefined — resolve the target here.
   async function resolveTargetTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -510,7 +539,11 @@ export default defineBackground(() => {
     // holder, and the turn may have aborted during the wait.
     if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
     try {
-      const raw = await chrome.tabs.sendMessage(tabId, message, { frameId });
+      const raw = await withDeadline(
+        chrome.tabs.sendMessage(tabId, message, { frameId }),
+        CONTENT_TIMEOUT_MS,
+        message.type,
+      );
       const parsed = ToolResult.safeParse(raw);
       if (!parsed.success) {
         return { type: 'tool-result', ok: false, error: 'Malformed tool result from the page' };
@@ -524,6 +557,15 @@ export default defineBackground(() => {
       // install/update, but a tab opened before this build (or one loaded while the worker was
       // starting) can still land here, and Chrome's wording gives the model nothing to act on.
       const message = String(err);
+      if (/did not answer within/i.test(message)) {
+        return {
+          type: 'tool-result',
+          ok: false,
+          error:
+            `${message}. The page may be busy, mid-navigation, or blocked by a modal dialog. ` +
+            'Retry once; if it fails again use a different approach rather than repeating it.',
+        };
+      }
       if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
         return {
           type: 'tool-result',

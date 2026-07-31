@@ -248,7 +248,12 @@ describe('changeset store actions', () => {
 });
 
 describe('saveMarkdown', () => {
-  it('creates and revokes a blob URL via an anchor click', () => {
+  // This used to assert a SYNCHRONOUS revoke, which is what made the download silently fail:
+  // `a.click()` only schedules the download, so releasing the blob URL in the same tick pulls it
+  // out from under the browser before it reads it. The test encoded the bug, so it kept passing.
+  // The ordering contract now lives in test/unit/save-markdown.test.ts; this keeps the store-level
+  // check that the click happens at all.
+  it('creates a blob URL and clicks an anchor, WITHOUT revoking it in the same tick', () => {
     const createObjectURL = vi.fn(() => 'blob:mock-url');
     const revokeObjectURL = vi.fn();
     URL.createObjectURL = createObjectURL;
@@ -265,7 +270,7 @@ describe('saveMarkdown', () => {
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });
 

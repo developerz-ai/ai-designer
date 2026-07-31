@@ -425,16 +425,27 @@ function applyHandoffResult(r: HandoffResult): void {
 export function saveMarkdown(markdown: string, filename: string): void {
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.rel = 'noopener';
-    a.click();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  // Anchored in the document before the click. A detached anchor works in most engines, but not
+  // reliably in all of them, and appending costs nothing.
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked LATER, never in a `finally`. `a.click()` only *schedules* the download — the browser
+  // fetches the blob asynchronously after the click returns — so revoking in the same tick pulled
+  // the URL out from under it and the file silently never arrived. That is the whole bug behind
+  // "download brief not working": the click fired, the store reported success, nothing downloaded.
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
+
+/** How long a download blob URL is kept alive after the click. Long enough for the browser to
+ *  start reading it (which it does almost immediately), short enough that the panel does not
+ *  retain report-sized blobs if it stays open. */
+const REVOKE_DELAY_MS = 60_000;
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
