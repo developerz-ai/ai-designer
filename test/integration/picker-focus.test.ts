@@ -10,7 +10,13 @@ import { relayToPanel } from '@/shared/relay';
 // click on the picker emits a ContentToSw event, relayToPanel projects it to an SwToPanel
 // message, and reduceFocus folds it into the panel's FocusState the UI reads.
 
-const INITIAL: FocusState = { selector: null, rect: null, pickerActive: false, selectors: [] };
+const INITIAL: FocusState = {
+  selector: null,
+  xpath: null,
+  rect: null,
+  pickerActive: false,
+  selectors: [],
+};
 
 function pickerToFocus(): { picker: ReturnType<typeof createPicker>; state: () => FocusState } {
   let state = INITIAL;
@@ -37,7 +43,13 @@ describe('picker -> relay -> focus store', () => {
   it('starting the picker flips pickerActive in the panel store', () => {
     const { picker, state } = pickerToFocus();
     picker.start();
-    expect(state()).toEqual({ selector: null, rect: null, pickerActive: true, selectors: [] });
+    expect(state()).toEqual({
+      selector: null,
+      xpath: null,
+      rect: null,
+      pickerActive: true,
+      selectors: [],
+    });
     picker.destroy();
   });
 

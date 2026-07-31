@@ -3,7 +3,7 @@ import type { Edit } from '@/shared/changeset';
 import type { Mode, StableSelector, SwToPanel, TurnUsage } from '@/shared/messages';
 import { OkResult } from '@/shared/messages';
 import { request } from './bus';
-import { multiSelectors } from './focus';
+import { xpath as focusXpath, multiSelectors } from './focus';
 import { connectPort, subscribeToSw } from './sw-stream';
 
 // Chat store (slice 11): assembles the conversation thread purely from the `SwToPanel` stream —
@@ -236,6 +236,8 @@ export async function send(text: string, mode?: Mode, selector?: StableSelector)
         text: trimmed,
         mode,
         selector,
+        // Only meaningful alongside the single pin — a multi-select grounds on its selectors.
+        xpath: selector ? (focusXpath() ?? undefined) : undefined,
         // Omitted when empty: an empty array is the "user cleared it" signal on the way IN, and
         // grounding a turn on nothing is not the same message as not grounding it at all.
         selectors: multi.length > 0 ? multi : undefined,

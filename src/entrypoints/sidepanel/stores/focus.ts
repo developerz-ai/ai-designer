@@ -10,6 +10,10 @@ import { connectPort, subscribeToSw } from './sw-stream';
 
 export interface FocusState {
   selector: StableSelector | null;
+  /** The pinned element's absolute XPath, echoed back on the next `user-message` so the grounding
+   *  line can name an exact node even when the leading CSS selector is fragile. Null when the pick
+   *  came from a content script that predates it. */
+  xpath: string | null;
   rect: Rect | null;
   pickerActive: boolean;
   /** The shift-multi-select set (`focus-multi`) — several referents at once, chipped alongside the
@@ -21,7 +25,7 @@ export interface FocusState {
 export function reduceFocus(state: FocusState, msg: SwToPanel): FocusState {
   switch (msg.type) {
     case 'focus':
-      return { ...state, selector: msg.selector, rect: msg.rect };
+      return { ...state, selector: msg.selector, xpath: msg.xpath ?? null, rect: msg.rect };
     case 'focus-multi':
       // An EMPTY array is meaningful: the user cleared the multi-selection, so the chips go with
       // it (src/shared/messages.ts `focus-multi`).
@@ -38,6 +42,7 @@ export function reduceFocus(state: FocusState, msg: SwToPanel): FocusState {
 }
 
 const [selector, setSelector] = createSignal<StableSelector | null>(null);
+const [xpath, setXpath] = createSignal<string | null>(null);
 const [rect, setRect] = createSignal<Rect | null>(null);
 const [pickerActive, setPickerActive] = createSignal<boolean>(false);
 const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
@@ -46,7 +51,7 @@ const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
 // UI cannot show and Sentry records as a crash.
 const [error, setError] = createSignal<string | null>(null);
 
-export { error, multiSelectors, pickerActive, rect, selector };
+export { error, multiSelectors, pickerActive, rect, selector, xpath };
 
 let wired = false;
 
@@ -62,6 +67,7 @@ export function initFocusStore(): void {
     const next = reduceFocus(
       {
         selector: selector(),
+        xpath: xpath(),
         rect: rect(),
         pickerActive: pickerActive(),
         selectors: multiSelectors(),
@@ -69,6 +75,7 @@ export function initFocusStore(): void {
       msg,
     );
     setSelector(next.selector);
+    setXpath(next.xpath);
     setRect(next.rect);
     setPickerActive(next.pickerActive);
     setMultiSelectors(next.selectors);
@@ -78,6 +85,7 @@ export function initFocusStore(): void {
 /** Manual reset of the focus state — the one place a pin is dropped (the chip's dismiss). */
 export function clearFocus(): void {
   setSelector(null);
+  setXpath(null);
   setRect(null);
   setPickerActive(false);
   setMultiSelectors([]);

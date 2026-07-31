@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, stubAuthProbe, test } from './fixtures';
 
 // Stub the openai-compatible /models endpoint the extension's service worker calls
 // directly for BYOK validate + list-models (src/agent/provider.ts: raw SW-side fetch, no
@@ -17,6 +17,7 @@ async function stubModels(
       body: JSON.stringify({ data: models }),
     }),
   );
+  await stubAuthProbe(context, baseURL.replace(/\/+$/, ''));
 }
 
 test('OpenRouter preset: BYOK key validates, lists models, and persists (decrypts) across reload', async ({
@@ -33,9 +34,7 @@ test('OpenRouter preset: BYOK key validates, lists models, and persists (decrypt
 
   await page.locator('#dz-key').fill('sk-or-test-123');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('#dz-model option')).toHaveText(['Test Vision']);
-
-  await page.locator('#dz-model').selectOption('test/vision');
+  await expect(page.locator('#dz-model')).toHaveValue('test/vision');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 
@@ -47,7 +46,7 @@ test('OpenRouter preset: BYOK key validates, lists models, and persists (decrypt
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.locator('#dz-key')).toHaveAttribute('placeholder', /saved/);
   await expect(page.locator('.dz-settings__status')).toHaveText('Key saved.');
-  await expect(page.locator('#dz-model option')).toHaveText(['Test Vision']);
+  await expect(page.locator('#dz-model')).toHaveValue('test/vision');
 });
 
 // A not-yet-granted custom host needs a real chrome.permissions.request prompt, driven by
@@ -78,9 +77,7 @@ test('Custom base URL: validate -> list models -> persist across reload', async 
   await page.locator('.dz-settings__url').fill(base);
   await page.locator('#dz-key').fill('sk-custom-test-456');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('#dz-model option')).toHaveText(['Custom Vision']);
-
-  await page.locator('#dz-model').selectOption('custom/vision');
+  await expect(page.locator('#dz-model')).toHaveValue('custom/vision');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 
@@ -90,5 +87,5 @@ test('Custom base URL: validate -> list models -> persist across reload', async 
   await expect(page.locator('.dz-settings__url')).toHaveValue(base);
   await expect(page.locator('#dz-key')).toHaveAttribute('placeholder', /saved/);
   await expect(page.locator('.dz-settings__status')).toHaveText('Key saved.');
-  await expect(page.locator('#dz-model option')).toHaveText(['Custom Vision']);
+  await expect(page.locator('#dz-model')).toHaveValue('custom/vision');
 });

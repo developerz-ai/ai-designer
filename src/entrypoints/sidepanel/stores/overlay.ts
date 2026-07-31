@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { i18n } from '#i18n';
 import { OverlayEnabledResult } from '@/shared/messages';
 import { request } from './bus';
 
@@ -32,12 +33,16 @@ async function hydrateOverlayEnabled(): Promise<void> {
 }
 
 /** Flip the opt-in. The SW persists it and immediately pushes the new state to the active tab's
- *  overlay (so an already-open page reflects it without a reload). */
+ *  overlay (so an already-open page reflects it without a reload). When that push finds no content
+ *  script — the tab has been open since before the extension was installed or last reloaded, or it
+ *  is a chrome:// page — the preference IS saved but nothing will paint until the page reloads, so
+ *  say that instead of showing a green "On" over a page with no overlay. */
 export async function setOverlayEnabled(next: boolean): Promise<void> {
   setError(null);
   try {
     const r = await request({ type: 'set-overlay-enabled', enabled: next }, OverlayEnabledResult);
     setEnabledSignal(r.enabled);
+    if (r.enabled && r.reachedPage === false) setError(i18n.t('readiness.overlay.reloadNeeded'));
   } catch (e) {
     setError(errMsg(e));
   }

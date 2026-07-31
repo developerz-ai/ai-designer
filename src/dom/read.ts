@@ -1,4 +1,4 @@
-import { pickUnique, resolveShadowSelector } from '@/dom/selector';
+import { isXPath, pickUnique, resolveShadowSelector, resolveXPath } from '@/dom/selector';
 import type {
   A11yNode,
   A11yResult,
@@ -28,6 +28,12 @@ export function queryAll(root: ParentNode, selector: string): Element[] {
     const el = resolveShadowSelector(root, selector);
     return el ? [el] : [];
   }
+  // An XPath is unique by construction, so it resolves to at most one element (see `isXPath` —
+  // a CSS selector can never start with `/`, which is what makes the two safe to share one field).
+  if (isXPath(selector)) {
+    const el = resolveXPath(root, selector);
+    return el ? [el] : [];
+  }
   try {
     return Array.from(root.querySelectorAll(selector));
   } catch {
@@ -42,11 +48,45 @@ export function queryOne(root: ParentNode, selector: string): Element | null {
   return first ?? null;
 }
 
-/** Resolve `selector` to a stable, fragility-scored selector per matched element
- *  (`QueryResult`). Each match is re-derived through {@link pickUnique}, so the agent gets the
- *  resilient selector to mutate + hand off against, not the raw one it typed. */
-export function query(root: ParentNode, selector: string): QueryResult {
-  return { matches: queryAll(root, selector).map((el) => pickUnique(el, root)) };
+/** How many matches `query` returns per page. Unbounded, `query('a')` on a link-dense page
+ *  returned 38,905 characters in one tool result — ~10k tokens, because each match is a full
+ *  css-path like `#hnmain > tbody:nth-of-type(1) > tr:nth-of-type(1) > …`. And the whole
+ *  transcript is resent on every subsequent step, so one such call is paid for repeatedly. */
+const MAX_QUERY_MATCHES = 25;
+
+/**
+ * Resolve `selector` to a stable, fragility-scored selector per matched element (`QueryResult`),
+ * one PAGE at a time. Each match is re-derived through {@link pickUnique}, so the agent gets the
+ * resilient selector to mutate + hand off against, not the raw one it typed.
+ *
+ * Paged rather than merely capped: a capped result answers "there are more" and leaves the agent
+ * stuck, so it either guesses about what it cannot see (the confabulation failure this and
+ * `describe`'s truncation markers both exist for) or gives up on the tail. `offset` walks the rest
+ * a page at a time and the `note` says so explicitly, alongside the real `total` — so going deep
+ * costs several small results instead of one huge one, and never costs a fabricated answer.
+ */
+export function query(
+  root: ParentNode,
+  selector: string,
+  opts: { offset?: number; limit?: number } = {},
+): QueryResult {
+  const all = queryAll(root, selector);
+  const offset = Math.max(0, opts.offset ?? 0);
+  const limit = Math.min(opts.limit ?? MAX_QUERY_MATCHES, MAX_QUERY_MATCHES);
+  const page = all.slice(offset, offset + limit);
+  const matches = page.map((el) => pickUnique(el, root));
+  const shownTo = offset + matches.length;
+  const remaining = all.length - shownTo;
+
+  if (all.length <= limit && offset === 0) return { matches };
+
+  const note =
+    remaining > 0
+      ? `Showing matches ${offset + 1}-${shownTo} of ${all.length} for \`${selector}\`. ` +
+        `${remaining} more not shown — call query again with offset=${shownTo} for the next page, ` +
+        'or narrow the selector. Do not describe matches you have not received.'
+      : `Showing matches ${offset + 1}-${shownTo} of ${all.length} for \`${selector}\` (end of list).`;
+  return { matches, total: all.length, note };
 }
 
 // --- computed styles ------------------------------------------------------

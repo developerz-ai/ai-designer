@@ -94,7 +94,9 @@ describe('integration: readiness reflects config-store + MCP state through the b
       state: {
         provider: 'ok',
         model: 'ok',
+        apiKey: 'ok',
         hostPermission: 'granted',
+        pageAccess: 'needed',
         mcp: { connected: 0, total: 0 },
         ready: true,
       },
@@ -120,7 +122,9 @@ describe('integration: readiness reflects config-store + MCP state through the b
     expect(state).toEqual({
       provider: 'ok',
       model: 'ok',
+      apiKey: 'not-required', // loopback endpoint — a key is not part of this setup at all
       hostPermission: 'granted',
+      pageAccess: 'needed',
       mcp: { connected: 0, total: 0 },
       ready: true,
     });

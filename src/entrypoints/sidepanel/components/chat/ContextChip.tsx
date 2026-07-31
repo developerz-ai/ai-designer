@@ -17,6 +17,7 @@ const STRATEGY_LABEL: Record<StableSelector['strategy'], string> = {
   text: i18n.t('contextChip.strategy.text'),
   'css-path': i18n.t('contextChip.strategy.cssPath'),
   shadow: i18n.t('contextChip.strategy.shadow'),
+  xpath: i18n.t('contextChip.strategy.xpath'),
 };
 
 /** Formats a pinned selector for the chip's single-line label: value first (truncated so a

@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, stubAuthProbe, test } from './fixtures';
 
 // E2E: the header readiness pill + Start/Stop gate (slice 03), end to end against a
 // loaded, fresh-profile build — no stubbed chrome.* here, unlike the unit/integration
@@ -21,6 +21,7 @@ async function stubModels(
       body: JSON.stringify({ data: models }),
     }),
   );
+  await stubAuthProbe(context, baseURL.replace(/\/+$/, ''));
 }
 
 test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Start -> chat visible', async ({
@@ -44,12 +45,16 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
   ).toBeVisible();
 
   // Expand the pill and confirm the per-check rows all read not-ok before anything's set.
-  // Five rows total: the four readiness checks plus the "On-page overlay" toggle (slice 09).
-  // Only the four not-ok checks expose a "Fix" deep-link — the overlay toggle does not.
+  // Seven rows: six readiness checks (provider, model, API key, host permission, page access,
+  // MCP) plus the "On-page overlay" toggle (slice 09). Five expose a "Fix" deep-link; page
+  // access instead offers "Grant", because `chrome.permissions.request` only prompts inside the
+  // click that raised it and so cannot be fixed by navigating somewhere (stores/readiness.ts).
   await pill.click();
   const rows = page.locator('.dz-readiness__row');
-  await expect(rows).toHaveCount(5);
-  await expect(page.locator('.dz-readiness__link', { hasText: 'Fix' })).toHaveCount(4);
+  await expect(rows).toHaveCount(7);
+  await expect(page.locator('.dz-readiness__link', { hasText: 'Fix' })).toHaveCount(5);
+  const pageAccessRow = page.locator('.dz-readiness__row', { hasText: 'Page access' });
+  await expect(pageAccessRow.locator('.dz-readiness__link')).toHaveText('Grant');
   await pill.click(); // collapse again
 
   // Configure a provider (OpenRouter preset — already host-permitted via the manifest,
@@ -57,8 +62,7 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.locator('#dz-key').fill('sk-or-test-readiness');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('#dz-model option')).toHaveText(['Test Vision']);
-  await page.locator('#dz-model').selectOption('test/vision');
+  await expect(page.locator('#dz-model')).toHaveValue('test/vision');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 

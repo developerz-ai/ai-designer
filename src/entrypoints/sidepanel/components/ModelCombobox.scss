@@ -1,0 +1,104 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+// Combobox shell: a normal settings field with a popover list under it. The input inherits the
+// `.dz-settings input` treatment from SettingsPanel.scss (same field language as the key/URL
+// inputs); everything here is the popover and the caret that opens it.
+.dz-modelcombo {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+
+  &__input {
+    // Room for the caret button, which floats over the field's right edge.
+    padding-right: tokens.$dz-space-8;
+  }
+
+  &__caret {
+    position: absolute;
+    right: tokens.$dz-space-1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: tokens.$dz-control-sm;
+    height: tokens.$dz-control-sm;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-muted);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  &__list {
+    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.$dz-space-1);
+    @include mixins.scroll-area('y', false);
+    position: absolute;
+    top: calc(100% + #{tokens.$dz-space-1});
+    left: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.rem(2);
+    // Sized by its CONTENT, not by the field. Pinned to the input's width (which excludes the
+    // Refresh button beside it) every OpenRouter id truncated — `thinkingmachines/inkling-s…` —
+    // and the id is the part you are actually choosing between. Floor at the field width so a
+    // short list still lines up under it; cap at the panel so it can't overflow the 360px shell.
+    width: max-content;
+    min-width: 100%;
+    max-width: calc(100vw - #{tokens.$dz-space-8});
+    // One-off popover bound: tall enough to show ~6 rows of the OpenRouter catalogue without
+    // taking over the panel.
+    max-height: tokens.rem(240);
+  }
+
+  &__option {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.rem(1);
+    align-items: flex-start;
+    width: 100%;
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-xs;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &.is-active,
+    &:hover {
+      background: var(--dz-elev-hover);
+    }
+
+    // The selected model reads by tone only, so the row's text never shifts as selection moves
+    // (same rule as the chat ModelPicker).
+    &[aria-selected='true'] .dz-modelcombo__name {
+      color: var(--dz-fg-strong);
+      font-weight: tokens.$dz-weight-semibold;
+    }
+  }
+
+  &__name {
+    @include mixins.truncate;
+    max-width: 100%;
+    color: var(--dz-fg);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  // The raw id under the display name — monospace, because it is the string the user pastes and
+  // has to compare character by character.
+  &__id {
+    @include mixins.mono(tokens.$dz-font-xs);
+    @include mixins.truncate;
+    max-width: 100%;
+    color: var(--dz-fg-muted);
+  }
+}

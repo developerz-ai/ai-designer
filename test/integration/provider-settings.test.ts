@@ -9,7 +9,7 @@ import {
   saveProviderConfig,
 } from '@/agent/config-store';
 import { encryptSecret } from '@/agent/key-store';
-import { validateProvider } from '@/agent/provider';
+import { MISSING_KEY_ERROR, validateProvider } from '@/agent/provider';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import {
   GetProviderResult,
@@ -136,10 +136,30 @@ describe('integration: save-provider -> get-provider round trip through the bus'
 
     const result = await handleSaveProvider({
       type: 'save-provider',
-      config: { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' },
+      config: { baseURL: 'https://api.openai.com/v1', apiKey: 'sk-custom', model: 'gpt-4o' },
     });
 
     expect(result).toEqual({ ok: true, valid: true, error: undefined });
+    expect(await getProviderConfig()).toEqual({
+      baseURL: 'https://api.openai.com/v1',
+      apiKey: 'sk-custom',
+      model: 'gpt-4o',
+    });
+  });
+
+  it('persists a keyless HOSTED config but reports it invalid — it cannot run a turn', async () => {
+    // The save is kept (the user may be mid-setup and about to paste a key), but `valid` is
+    // false and names the reason, instead of the green "saved and reachable" that a public
+    // /models used to earn a config that then 401'd on its first model call.
+    installChromeFakes({ grantedOrigins: ['https://api.openai.com/*'] });
+    stubModelsEndpoint();
+
+    const result = await handleSaveProvider({
+      type: 'save-provider',
+      config: { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' },
+    });
+
+    expect(result).toEqual({ ok: true, valid: false, error: MISSING_KEY_ERROR });
     expect(await getProviderConfig()).toEqual({
       baseURL: 'https://api.openai.com/v1',
       model: 'gpt-4o',

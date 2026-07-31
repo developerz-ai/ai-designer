@@ -9,7 +9,21 @@ import { z } from 'zod';
 // the path root->host->shadowRoot->… (see `resolveShadowSelector` in src/dom/selector.ts). Open roots
 // pierce; a closed root can't be pierced, so its selector is flagged `fragile` and the agent falls back
 // to coordinate/vision interaction on the host.
-export const SelectorStrategy = z.enum(['data-attr', 'id', 'aria', 'text', 'css-path', 'shadow']);
+// `xpath` = an absolute XPath (`/html/body/div[2]/button[1]`), always unique BY CONSTRUCTION. It is
+// ranked last and flagged fragile — it encodes position, so any structural edit invalidates it —
+// but it is the one strategy that can always name the element the user pointed at, which is what
+// makes it the honest last resort (the old one was a bare tag name that matched N elements) and a
+// precise handle for a downstream dev-agent mapping the pick back to source. Light DOM only:
+// `document.evaluate` cannot cross a shadow boundary, so shadow-nested elements keep host-paths.
+export const SelectorStrategy = z.enum([
+  'data-attr',
+  'id',
+  'aria',
+  'text',
+  'css-path',
+  'shadow',
+  'xpath',
+]);
 export type SelectorStrategy = z.infer<typeof SelectorStrategy>;
 
 export const StableSelector = z.object({

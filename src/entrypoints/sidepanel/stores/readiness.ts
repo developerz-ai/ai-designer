@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { requestPageAccess } from '@/shared/host-permissions';
 import type { ReadinessState, SwToPanel } from '@/shared/messages';
 import { ReadinessResult } from '@/shared/messages';
 import { request } from './bus';
@@ -61,6 +62,22 @@ export async function hydrateReadiness(): Promise<void> {
   } finally {
     setLoading(false);
   }
+}
+
+/** Grant broad page access, then re-pull readiness so the row flips without a reload.
+ *
+ *  Called straight from the dropdown's Grant click: `chrome.permissions.request` only prompts
+ *  inside a live user gesture in the SAME call stack, so this cannot be an RPC to the service
+ *  worker (see src/shared/host-permissions.ts) — the panel has to ask for it itself, exactly like
+ *  `saveProvider` does for a custom provider origin. */
+export async function grantPageAccess(): Promise<void> {
+  setError(null);
+  const result = await requestPageAccess();
+  if (!result.ok) {
+    setError(result.error ?? 'Page access denied.');
+    return;
+  }
+  await hydrateReadiness();
 }
 
 function errMsg(e: unknown): string {

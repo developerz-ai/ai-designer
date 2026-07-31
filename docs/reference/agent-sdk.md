@@ -14,7 +14,7 @@ Cross-refs: [docs/idea/agent.md](../idea/agent.md) (loop + tool catalog), [docs/
 | `@openrouter/ai-sdk-provider` | OpenRouter provider (community alternative) | 3.x (peer: `ai@^7`) |
 | `zod` | Tool input/output schemas | 4.x |
 
-Why OpenAI-compatible: the provider is generalized to any `/v1` endpoint (OpenRouter, OpenAI, local llama.cpp, custom…) — one package, no vendor lock-in (see [principles.md](../idea/principles.md)). Endpoints are configured at runtime via ProviderConfig (see [agent.md](../idea/agent.md), Stack in [../../CLAUDE.md](../../CLAUDE.md)). OpenRouter is a sensible preset with automatic failover + immediate access to new models. Same pattern Tesote ai-dev's workers use.
+Why OpenAI-compatible: the provider is generalized to any `/v1` endpoint (OpenRouter, OpenAI, local llama.cpp, custom…) — one package, no vendor lock-in (see [principles.md](../idea/principles.md)). Endpoints are configured at runtime via ProviderConfig (see [agent.md](../idea/agent.md), Stack in [../../CLAUDE.md](../../CLAUDE.md)). OpenRouter is a sensible preset with automatic failover + immediate access to new models. Same pattern the developerz.ai backend workers use.
 
 ## Provider setup (OpenAI-compatible, BYOK)
 
@@ -179,4 +179,4 @@ Renamed in **v6 → v7** specifically:
 - [ToolLoopAgent reference](https://ai-sdk.dev/docs/reference/ai-sdk-core/tool-loop-agent) · [Agents: Loop Control](https://ai-sdk.dev/docs/agents/loop-control)
 - [MCP tools (AI SDK Core)](https://ai-sdk.dev/docs/ai-sdk-core/mcp-tools) · [createMCPClient reference](https://ai-sdk.dev/docs/reference/ai-sdk-core/create-mcp-client) · [@ai-sdk/mcp on npm](https://www.npmjs.com/package/@ai-sdk/mcp)
 - [OpenRouter provider](https://openrouter.ai/docs) · OpenRouter [usage accounting](https://openrouter.ai/docs/use-cases/usage-accounting)
-- Local: `tesote/ai-dev/docs/vercel-ai-sdk-v6-reference.md`, `tesote/ai-dev/worker/src/` (real prod patterns: `ToolLoopAgent`, `createOpenRouter`, `createMCPClient`)
+- Local: the developerz.ai backend worker sources (real prod patterns: `ToolLoopAgent`, `createOpenRouter`, `createMCPClient`)

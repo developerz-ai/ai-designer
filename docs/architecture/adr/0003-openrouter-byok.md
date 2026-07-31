@@ -4,7 +4,7 @@
 
 ## Context
 
-The design agent needs strong vision-capable models, cost control, and no vendor lock-in. We don't want to operate a billing relationship or resell tokens. Sibling products (ai-dev, tesote.ai) already standardize on OpenRouter.
+The design agent needs strong vision-capable models, cost control, and no vendor lock-in. We don't want to operate a billing relationship or resell tokens. The developerz.ai backend already standardizes on OpenRouter.
 
 ## Decision
 

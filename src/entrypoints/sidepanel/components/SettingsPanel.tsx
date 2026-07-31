@@ -1,6 +1,7 @@
-import { createMemo, For, onMount, Show } from 'solid-js';
+import { For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import { openOnboarding } from '../stores/onboarding';
+import { startSession } from '../stores/session';
 import {
   clearProvider,
   hydrate,
@@ -15,6 +16,7 @@ import {
   settings,
 } from '../stores/settings';
 import { AboutSection } from './AboutSection';
+import { ModelCombobox } from './ModelCombobox';
 import './SettingsPanel.scss';
 
 /** Wipe the key input only after a validated save. A host-permission denial or a rejected config
@@ -28,20 +30,25 @@ export function clearKeyOnSave(saveStatus: SaveStatus): boolean {
 // ../stores/settings (which talks to the service worker). The key input is never
 // echoed back: it's a password field and the placeholder reflects presence, not
 // the value (CLAUDE.md "MV3 three worlds" — the key never leaves the SW world).
-export function SettingsPanel() {
+export interface SettingsPanelProps {
+  /** Take the user to the conversation. Wired to the post-save "Start designing" CTA below, which
+   *  is the one thing missing from the install → configure → chat flow: with the form done, the
+   *  next action lived in a different tab behind a header dropdown. Deliberately a CTA rather than
+   *  an automatic tab switch — navigating away on save would rip the "saved and reachable" /
+   *  "needs an API key" verdict off screen before it could be read. */
+  onStart?: () => void;
+}
+
+export function SettingsPanel(props: SettingsPanelProps = {}) {
   let keyInput!: HTMLInputElement;
   onMount(() => {
     void hydrate();
   });
 
-  // The model `<select>` shows what the STORE holds, or nothing. Per-option `selected` alone left
-  // the element unbound: with `model` null no option carried it, the browser fell back to option 0,
-  // and the panel displayed a model Save then refused to accept (#165 S2). Reading `models` too
-  // matters — the list arrives after mount, and a re-render of the options must re-assert the
-  // value or the browser silently re-selects the first one.
-  const selectedModel = createMemo(() =>
-    settings.models.some((m) => m.id === settings.model) ? (settings.model ?? '') : '',
-  );
+  // The model control is a combobox, not a `<select>` (see ModelCombobox.tsx): it shows exactly
+  // what the store holds — including a pasted id that `/models` never listed — so the old
+  // "displayed option 0 while `model` was null" divergence (#165 S2) can't recur; there is no
+  // browser-side fallback selection to disagree with.
 
   function statusText(): string {
     switch (settings.saveStatus) {
@@ -114,24 +121,13 @@ export function SettingsPanel() {
           {i18n.t('settings.model.label')}
         </label>
         <div class="dz-settings__modelrow">
-          <select
+          <ModelCombobox
             id="dz-model"
-            value={selectedModel()}
-            disabled={settings.modelsLoading}
-            onChange={(e) => pickModel(e.currentTarget.value)}
-          >
-            <For each={settings.models}>
-              {(m) => (
-                // Belt to the element-level `value` above: an option inserted AFTER that binding
-                // ran (the list arrives async) re-asserts the selection from its own side, which
-                // no ordering can undo. The two can never disagree — `selectedModel()` is
-                // non-empty exactly when one option matches.
-                <option value={m.id} selected={m.id === settings.model}>
-                  {m.name}
-                </option>
-              )}
-            </For>
-          </select>
+            value={settings.model ?? ''}
+            options={settings.models}
+            loading={settings.modelsLoading}
+            onCommit={pickModel}
+          />
           <button
             type="button"
             disabled={settings.modelsLoading}
@@ -165,6 +161,19 @@ export function SettingsPanel() {
         >
           {statusText()}
         </p>
+        {/* The next step, at the moment it becomes available. */}
+        <Show when={settings.saveStatus === 'valid'}>
+          <button
+            type="button"
+            class="dz-settings__start"
+            onClick={() => {
+              void startSession();
+              props.onStart?.();
+            }}
+          >
+            {i18n.t('settings.startDesigning')}
+          </button>
+        </Show>
       </section>
 
       <section class="dz-settings__section">

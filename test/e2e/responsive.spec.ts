@@ -1,5 +1,5 @@
 import type { BrowserContext, Worker } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, stubAuthProbe, test } from './fixtures';
 
 // E2E: the slice-16 responsive/mobile tools driven against a loaded, real Chromium — the one
 // thing jsdom (test/unit, test/integration) can't prove: that background.ts's real
@@ -27,6 +27,7 @@ async function stubModels(context: BrowserContext): Promise<void> {
       body: JSON.stringify({ data: [{ id: 'test/responsive', name: 'Test Responsive' }] }),
     }),
   );
+  await stubAuthProbe(context, BASE_URL);
 }
 
 async function stubFixtures(context: BrowserContext, pages: Record<string, string>): Promise<void> {
@@ -108,8 +109,7 @@ async function configureProvider(page: import('@playwright/test').Page): Promise
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.locator('#dz-key').fill('sk-or-test-16');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.locator('#dz-model option')).toHaveText(['Test Responsive']);
-  await page.locator('#dz-model').selectOption('test/responsive');
+  await expect(page.locator('#dz-model')).toHaveValue('test/responsive');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 }

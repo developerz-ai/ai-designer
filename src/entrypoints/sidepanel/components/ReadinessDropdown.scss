@@ -25,12 +25,10 @@
     cursor: pointer;
     transition: background-color var(--dz-motion-fast) var(--dz-ease);
 
+    // Ready and running share the green: an open session is a healthy state, not an in-progress
+    // one (see `pillIcon` — no spinner either).
     &.is-ready {
       color: var(--dz-status-connected);
-    }
-
-    &.is-running {
-      color: var(--dz-primary);
     }
 
     &:hover {
@@ -69,13 +67,22 @@
     font-size: tokens.$dz-font-md;
   }
 
+  // Label over detail, one flexible column between the status glyph and the action button —
+  // see the comment in ReadinessDropdown.tsx for why they no longer share a row.
+  &__rowtext {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+  }
+
   &__rowlabel {
     @include mixins.truncate;
-    flex: 1;
     color: var(--dz-fg-body);
   }
 
   &__rowdetail {
+    @include mixins.truncate;
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }

@@ -54,6 +54,10 @@ export const UserMessage = z.object({
   // `agent/modes.ts` `resolveMode` infers it from `text`.
   mode: Mode.optional(),
   selector: StableSelector.optional(),
+  // The pinned element's absolute XPath, echoed back from the `focus` push. Carried beside
+  // `selector` rather than inside it because a `StableSelector.value` must always be a legal
+  // `querySelector` argument (see src/dom/selector.ts `xpathFor`).
+  xpath: z.string().optional(),
   // Bounded: a multi-select is a handful of elements, and the grounding line is prompt text.
   selectors: z.array(StableSelector).max(20).optional(),
 });
@@ -323,14 +327,26 @@ export const HistoryDelete = z.object({
 });
 
 // --- readiness + session (slice 03) ---------------------------------------
-// Header status-pill truth: whether the agent can run at all. `ready` gates chat entry
-// and is `provider && model` only — MCP is optional (copy/debug flows still work without
-// a connected backend, see 06/07). Computed SW-side in `src/agent/readiness.ts` from the
+// Header status-pill truth: whether the agent can run at all. `ready` gates chat entry and is
+// `provider && model && apiKey !== 'missing'` — MCP is optional (copy/debug flows still work
+// without a connected backend, see 06/07). Computed SW-side in `src/agent/readiness.ts` from the
 // config-store (01), the live `McpManager` (02), and the runtime host-permission grant.
+// `apiKey` is its own row rather than folded into `provider`: `not-required` is a real, valid
+// state (a keyless local llama.cpp/Ollama endpoint), while `missing` on a HOSTED endpoint is the
+// setup that used to pass every check and then fail the first model call with the provider's own
+// "Missing Authentication header".
 export const ReadinessState = z.object({
   provider: z.enum(['ok', 'missing']),
   model: z.enum(['ok', 'missing']),
+  apiKey: z.enum(['ok', 'missing', 'not-required']),
   hostPermission: z.enum(['granted', 'needed']),
+  // Broad PAGE access (`optional_host_permissions: ['<all_urls>']`) — distinct from
+  // `hostPermission`, which covers the PROVIDER origin. Advisory, like the MCP row: DOM reads and
+  // edits work without it (the content script is manifest-injected), but every capture
+  // (`screenshot` / `responsiveCapture` / `inspectVisually`) needs it or a live `activeTab` grant,
+  // and `activeTab` dies on the next navigation — so without it the agent's vision self-correction
+  // silently starts failing as soon as the user browses.
+  pageAccess: z.enum(['granted', 'needed']),
   mcp: z.object({
     connected: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
@@ -575,7 +591,16 @@ export const HistoryGetResult = z.object({
 export type HistoryGetResult = z.infer<typeof HistoryGetResult>;
 
 // RPC response for `set-overlay-enabled` / `get-overlay-enabled`.
-export const OverlayEnabledResult = z.object({ ok: z.boolean(), enabled: z.boolean() });
+// `reachedPage` answers the question the toggle alone can't: whether the ACTIVE TAB actually took
+// the new state. The content script is manifest-injected at document_idle, so a tab that was
+// already open when the extension was installed/reloaded has none — the push is dropped and the
+// switch flips to On over a page that will never paint an overlay. Undefined on `get`, which makes
+// no push. See background.ts's `set-overlay-enabled`.
+export const OverlayEnabledResult = z.object({
+  ok: z.boolean(),
+  enabled: z.boolean(),
+  reachedPage: z.boolean().optional(),
+});
 export type OverlayEnabledResult = z.infer<typeof OverlayEnabledResult>;
 
 // RPC response for `set-onboarding-dismissed` / `get-onboarding-dismissed`.
@@ -623,6 +648,13 @@ export type Target = z.infer<typeof Target>;
 export const QueryInput = z.object({
   type: z.literal('query'),
   selector: z.string(),
+  // Paging, so a broad selector can be explored IN DEPTH without one call flooding the context.
+  // Results are capped (`MAX_QUERY_MATCHES`, src/dom/read.ts) because each match is a full
+  // css-path; `offset` walks past the cap a page at a time, `limit` narrows a page further when
+  // the agent only needs a couple. The result reports `total` + a `note` naming both, so the model
+  // can decide between paging on and narrowing the selector instead of guessing.
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(50).optional(),
   ...Target.shape,
 });
 export const GetStylesInput = z.object({
@@ -775,6 +807,12 @@ export const OverlayToggleCmd = z.object({
 export const OverlayCmd = z.discriminatedUnion('type', [OverlayStepCmd, OverlayToggleCmd]);
 export type OverlayCmd = z.infer<typeof OverlayCmd>;
 
+// The content script's reply to an OverlayCmd. Carries no data — its only job is to exist, so the
+// SW can distinguish "the page has an overlay and took the command" from "this tab has no content
+// script" (a tab open since before the extension was installed/reloaded, or a chrome:// page).
+export const OverlayAck = z.object({ type: z.literal('overlay-ack') });
+export type OverlayAck = z.infer<typeof OverlayAck>;
+
 export const ToolResult = z.object({
   type: z.literal('tool-result'),
   ok: z.boolean(),
@@ -791,8 +829,14 @@ export type ToolResult = z.infer<typeof ToolResult>;
 // (the envelope); a consumer parses it with the matching schema once it knows the
 // tool it called. #11 pairs each with its input const.
 export const QueryResult = z.object({
-  // The winning stable selector per matched element (uniqueness resolved in content).
+  // The winning stable selector per matched element (uniqueness resolved in content). CAPPED —
+  // see `MAX_QUERY_MATCHES` in src/dom/read.ts: an uncapped broad selector returned ~39k chars in
+  // a single result, and every later step re-sends it.
   matches: z.array(StableSelector),
+  /** How many elements actually matched, when more matched than are listed. */
+  total: z.number().int().nonnegative().optional(),
+  /** Present only on a truncated result: what was withheld and what to do about it, in words. */
+  note: z.string().optional(),
 });
 export type QueryResult = z.infer<typeof QueryResult>;
 
@@ -1279,6 +1323,13 @@ export const ContentToSw = z.discriminatedUnion('type', [
     candidates: z.array(StableSelector),
     rect: Rect,
     styles: z.record(z.string(), z.string()).optional(),
+    // Absolute XPath of the picked element — its own field, NOT a seventh `StableSelector`
+    // strategy: every candidate value has to be a legal `querySelector` argument (consumers pass
+    // them straight to the DOM) and an XPath is not. It is the unambiguous answer to "which
+    // element did you mean?": unique by construction, and a positional handle a downstream
+    // dev-agent can map back to source. Every DOM tool accepts it as a `selector` too — see
+    // `isXPath` in src/dom/selector.ts. Optional so an older content script still validates.
+    xpath: z.string().optional(),
   }),
   // Shift-multi-select changed (add/remove/clear). Relayed to the panel as `focus-multi`
   // (`src/shared/relay.ts`) so the composer chips the selection and echoes it back on the next
@@ -1832,7 +1883,14 @@ export const SwToPanel = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('error'), message: z.string() }),
   // SW relays of ContentToSw picker events.
-  z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
+  z.object({
+    type: z.literal('focus'),
+    selector: StableSelector,
+    // Absolute XPath of the picked element (see `element-picked`). Optional — a pick relayed by
+    // an older content script won't carry one.
+    xpath: z.string().optional(),
+    rect: Rect,
+  }),
   // The shift-multi-select set (#165 S7): the relayed half of content's `multi-select-changed`.
   // Sibling of `focus` — same referent role, several elements — so the composer can chip them and
   // echo them back on the next `UserMessage.selectors`. An EMPTY array is meaningful: the user

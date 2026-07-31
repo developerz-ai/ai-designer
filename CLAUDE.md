@@ -52,6 +52,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 | build | `bun run build` · release: `bun run release` (build + zip, minified) |
 | local | `bun run local` — install/prepare if needed, build, print load-unpacked path (`--firefox`, `--check`, `--zip`) |
 | test | `bun run test` · unit: `test:unit` · integration: `test:integration` · e2e: `test:e2e` · only what your diff touches: `test:changed` |
+| live | `bun run debug:live` — loads the BUILT extension in real Chromium, configures the provider through the real Settings UI with the key from `.env`, runs a real turn on a real page, and prints the SW/panel/page consoles plus a per-turn agent trace (tool calls + latency + token spend). Flags: `--say`, `--url`, `--model`, `--overlay`, `--repeat N`, `--no-turn` (spends nothing), `--headed`. See `.env.example`. |
 | check | `bun run typecheck` (tsgo) · `bun run lint` (fix: `lint:fix`) |
 | gate | `bun run check` (lint+typecheck, concurrent) · `bun run verify` (+ tests) · `bun run gate` (+ build + e2e) |
 

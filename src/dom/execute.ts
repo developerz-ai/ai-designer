@@ -150,7 +150,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
     switch (tool.type) {
       // `query` never fails: no matches is the valid `{ matches: [] }` result the model reads.
       case 'query':
-        return ok(query(doc, tool.selector));
+        return ok(query(doc, tool.selector, { offset: tool.offset, limit: tool.limit }));
       case 'getStyles':
         return read(tool.selector, (el) => getStyles(el));
       case 'a11ySnapshot':

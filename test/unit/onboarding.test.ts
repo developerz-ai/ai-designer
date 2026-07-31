@@ -10,7 +10,9 @@ function readiness(over: Partial<ReadinessState> = {}): ReadinessState {
   return {
     provider: 'missing',
     model: 'missing',
+    apiKey: 'missing',
     hostPermission: 'needed',
+    pageAccess: 'needed',
     mcp: { connected: 0, total: 0 },
     ready: false,
     ...over,
@@ -25,14 +27,30 @@ describe('onboardingSteps', () => {
     expect(start).toEqual({ id: 'start', done: false, current: false });
   });
 
-  it('needs BOTH key and model for the provider step to complete', () => {
-    expect(onboardingSteps(readiness({ provider: 'ok', model: 'missing' }))[0].done).toBe(false);
-    expect(onboardingSteps(readiness({ provider: 'missing', model: 'ok' }))[0].done).toBe(false);
-    expect(onboardingSteps(readiness({ provider: 'ok', model: 'ok' }))[0].done).toBe(true);
+  it('needs endpoint, model AND a usable key for the provider step to complete', () => {
+    expect(
+      onboardingSteps(readiness({ provider: 'ok', model: 'missing', apiKey: 'ok' }))[0].done,
+    ).toBe(false);
+    expect(
+      onboardingSteps(readiness({ provider: 'missing', model: 'ok', apiKey: 'ok' }))[0].done,
+    ).toBe(false);
+    // A hosted endpoint with no key: Start stays blocked, so the step must not tick off either.
+    expect(
+      onboardingSteps(readiness({ provider: 'ok', model: 'ok', apiKey: 'missing' }))[0].done,
+    ).toBe(false);
+    expect(onboardingSteps(readiness({ provider: 'ok', model: 'ok', apiKey: 'ok' }))[0].done).toBe(
+      true,
+    );
+    // A local endpoint needs no key at all — `not-required` completes the step.
+    expect(
+      onboardingSteps(readiness({ provider: 'ok', model: 'ok', apiKey: 'not-required' }))[0].done,
+    ).toBe(true);
   });
 
   it('once the provider is configured, "start" becomes the current step (not provider)', () => {
-    const [provider, mcp, start] = onboardingSteps(readiness({ provider: 'ok', model: 'ok' }));
+    const [provider, mcp, start] = onboardingSteps(
+      readiness({ provider: 'ok', model: 'ok', apiKey: 'ok' }),
+    );
     expect(provider.current).toBe(false);
     expect(mcp.current).toBe(false);
     expect(start.current).toBe(true);

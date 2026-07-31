@@ -60,15 +60,55 @@
     }
   }
 
-  // Every unclassed button here is a primary action (Refresh, Save). The ghost variant is
-  // excluded rather than overridden: `.dz-settings button` outranks `.dz-settings__ghost`,
-  // so an override would lose and the ghost would render accent-filled.
-  button:not(#{&}__ghost) {
+  // A native `<select>` keeps the platform's own control chrome — on Linux/Chromium that is a
+  // light-grey scrollbar-styled arrow box glued to the right edge of an otherwise dark field, so
+  // the one native control in the panel was also the only one that didn't look like the panel.
+  // Reset it and draw our own chevron, matching the model combobox's caret exactly (same glyph,
+  // same muted tone, same inset) so the two dropdowns read as one control type.
+  select {
+    // `appearance` covers modern engines; the prefixed pair keeps older WebKit/Gecko honest.
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    // Room for the chevron drawn below, so a long option label never runs under it.
+    padding-right: tokens.$dz-space-8;
+    // Inline SVG data URI — self-contained, so it survives the extension's strict CSP (no remote
+    // fetch, nothing for `img-src` to block). `currentColor` cannot cross into a background
+    // image, hence the literal muted grey.
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%239ca3af' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right tokens.$dz-space-2 center;
+    background-size: tokens.rem(16) tokens.rem(16);
+    cursor: pointer;
+
+    // The dropdown list itself is rendered by the OS, not by us — the one thing we can set is the
+    // colour of its rows, which otherwise inherit the page default (black text on white) and
+    // flash bright against the dark panel.
+    option {
+      background: var(--dz-elev-card);
+      color: var(--dz-fg);
+    }
+  }
+
+  // Every unclassed button here is a primary action (Refresh, Save). Anything that styles ITSELF
+  // must be excluded rather than overridden: `.dz-settings button` outranks a single class, so an
+  // override loses and the element renders accent-filled. That is what happened to the entire
+  // model combobox — its chevron came out as a filled orange pill on top of the input, and every
+  // option row in its popover as an orange button with orange-on-orange text. The attribute
+  // match covers the whole component ('anything the combobox owns') instead of naming each of its
+  // parts here and re-breaking the next one that gets added.
+  button:not(#{&}__ghost):not([class*='dz-modelcombo']) {
     @include mixins.button-primary;
     flex: none;
   }
 
   &__save {
+    align-self: flex-start;
+  }
+
+  // Appears only after a validated save — the hand-off out of the form and into the
+  // conversation, so the flow doesn't dead-end on a finished form.
+  &__start {
     align-self: flex-start;
   }
 

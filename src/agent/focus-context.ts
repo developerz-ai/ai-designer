@@ -45,11 +45,19 @@ function unique(
 export function focusContextLine(
   selector?: StableSelector,
   selectors?: readonly StableSelector[],
+  xpath?: string,
 ): string | null {
   const picked = unique(selector, selectors);
   if (picked.length === 0) return null;
   if (picked.length === 1) {
-    return `[The user has an element selected on the page. "this"/"it" refers to ${describe(picked[0] as StableSelector)}.]`;
+    // The XPath is the tie-breaker. The leading CSS selector is the most STABLE candidate, which
+    // for an unremarkable element is something like `h1` or `div:nth-of-type(3)` — a selector that
+    // may match several nodes, so the model could still act on the wrong one. The XPath matches
+    // exactly the node the user pointed at, and every DOM tool accepts it as a `selector`.
+    const exact = xpath
+      ? ` Its exact node is \`${xpath}\` — pass that as the selector if the CSS one is ambiguous.`
+      : '';
+    return `[The user has an element selected on the page. "this"/"it" refers to ${describe(picked[0] as StableSelector)}.${exact}]`;
   }
   const list = picked.map((s) => describe(s)).join(', ');
   return `[The user has ${picked.length} elements selected on the page. "this"/"these"/"them" refers to: ${list}.]`;
@@ -64,7 +72,8 @@ export function groundUserText(
   text: string,
   selector?: StableSelector,
   selectors?: readonly StableSelector[],
+  xpath?: string,
 ): string {
-  const line = focusContextLine(selector, selectors);
+  const line = focusContextLine(selector, selectors, xpath);
   return line ? `${line}\n${text}` : text;
 }

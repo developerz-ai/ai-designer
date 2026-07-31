@@ -30,7 +30,10 @@ export type OnboardingStepTriple = [OnboardingStepState, OnboardingStepState, On
  *  (blocking) step. "start" is the terminal action, never auto-"done"; it's current once the
  *  required provider config is in place. */
 export function onboardingSteps(state: ReadinessState | null): OnboardingStepTriple {
-  const providerDone = state?.provider === 'ok' && state?.model === 'ok';
+  // Same three conditions `computeReadiness` gates `ready` on — the guide must not tick "provider"
+  // off for a hosted endpoint whose key is still missing, since Start stays blocked on it.
+  const providerDone =
+    state?.provider === 'ok' && state?.model === 'ok' && state?.apiKey !== 'missing';
   const mcpDone = (state?.mcp.connected ?? 0) > 0;
   const current: OnboardingStepId = providerDone ? 'start' : 'provider';
   return [

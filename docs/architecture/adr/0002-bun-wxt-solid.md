@@ -4,7 +4,7 @@
 
 ## Context
 
-Need a fast, typed build for an MV3 extension with multiple entrypoints (service worker, content script, side panel), HMR in dev, and CSP-clean output (no remote code / eval). Team already standardizes on Bun + Solid across developerz.ai and tesote.ai.
+Need a fast, typed build for an MV3 extension with multiple entrypoints (service worker, content script, side panel), HMR in dev, and CSP-clean output (no remote code / eval). Team already standardizes on Bun + Solid across developerz.ai.
 
 ## Decision
 

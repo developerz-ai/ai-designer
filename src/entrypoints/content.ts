@@ -41,6 +41,7 @@ import {
   DomTool,
   type IdentityResult,
   type ImageDescription,
+  type OverlayAck,
   OverlayCmd,
   PageMetricsRequest,
   type PageMetricsResult,
@@ -68,6 +69,42 @@ export default defineContentScript({
   allFrames: true,
   matchAboutBlank: true,
   main() {
+    // TAKEOVER, not a bail-out. `reinjectAllTabs()` (background.ts) re-runs this file in every open
+    // tab to repair the ones that were open before the extension loaded, and it cannot tell which
+    // of those already have a script. Two live instances in one frame is a real problem — doubled
+    // capture-phase listeners, two answers to every tool call, a picker that swallows its own
+    // clicks — but simply RETURNING when one is already there was worse:
+    //
+    // reloading an unpacked extension leaves the old content script in every open tab with its
+    // `chrome.*` bridge invalidated. It is a corpse that still holds capture-phase listeners and
+    // still calls `preventDefault()`. A boolean guard let that corpse win: the freshly injected
+    // script saw the flag, returned, and the tab was left with only the dead one — no tools, and a
+    // quick-pick chord that appeared to do nothing at all.
+    //
+    // So the NEWEST instance always wins: it tears down whatever came before, then installs its
+    // own teardown for the next one. The handle lives on the ISOLATED world's `window`, which is
+    // per-frame and invisible to the page.
+    type ContentWindow = typeof window & { __dzDesignerDispose?: () => void };
+    const self = window as ContentWindow;
+    try {
+      self.__dzDesignerDispose?.();
+    } catch {
+      // A corpse whose teardown throws must not stop the replacement from installing.
+    }
+    // Everything registered below that outlives `main()` — collected so the next injection (or a
+    // page teardown) can undo it.
+    const disposers: (() => void)[] = [];
+    self.__dzDesignerDispose = () => {
+      self.__dzDesignerDispose = undefined;
+      for (const off of disposers.splice(0)) {
+        try {
+          off();
+        } catch {
+          // Best-effort: one failed teardown must not strand the rest.
+        }
+      }
+    };
+
     // Push picker/recorder events to the SW (fire-and-forget). relay.ts maps them to the panel;
     // the SW folds recorder events into the changeset (slice 07). A dropped push (SW evicted
     // mid-session) is recoverable, so swallow the rejection rather than spam the page console.
@@ -80,6 +117,13 @@ export default defineContentScript({
     const executor = createDomExecutor({ mutator, recorder });
     const interactor = createInteractor();
     const picker = createPicker(emit);
+    // Alt+click pins whatever you clicked as the agent's context, with no mode to enter first
+    // (`QUICK_PICK_MODIFIER` in src/dom/picker.ts explains why not Ctrl/Cmd). This is the cheapest
+    // way to answer "what are you referring to?": the panel grounds the next instruction in the
+    // pinned element's stable selector, so "make this bigger" resolves to one node instead of the
+    // model guessing from prose. Armed for the page's whole life — the modifier is the gate.
+    picker.enableQuickPick();
+    disposers.push(() => picker.destroy());
 
     // The content script runs in EVERY frame (`allFrames: true`), so anything page-global has to
     // be gated on the top document — see the overlay below and the SPA-lifecycle block at the end.
@@ -92,7 +136,10 @@ export default defineContentScript({
     // F7): the card is `position: fixed` in ITS OWN frame, so a per-frame overlay stacks one
     // "Designer" card per embed over the embeds themselves.
     const overlay = isTopFrame ? createOverlay() : null;
-    if (overlay) void readOverlayEnabled().then((enabled) => overlay.toggle(enabled));
+    if (overlay) {
+      void readOverlayEnabled().then((enabled) => overlay.toggle(enabled));
+      disposers.push(() => overlay.destroy());
+    }
 
     // Complex-site reads/actions (slice 15, expose-to-agent): the MAIN-world bridge client
     // (read-only, non-secret — see the top-frame lifecycle block below) backs both the page-facts
@@ -100,6 +147,7 @@ export default defineContentScript({
     // gated to the top document) so an agent addressing a specific iframe's `frameId` still gets a
     // real chart/widget/page-facts read there.
     const bridge = createBridge();
+    disposers.push(() => bridge.dispose());
     const pageFacts = createPageFacts({ bridge });
     const chartReader = createChartReader({ bridge });
     const widgetDriver = createWidgetDriver();
@@ -121,6 +169,9 @@ export default defineContentScript({
     const diagnostics = createDiagnosticsCollector({
       onSignal: (signal) => emit({ type: 'diagnostics-signal', signal }),
     });
+    // Restores the console/network hooks it installed — a corpse that keeps them wrapped would
+    // keep intercepting the page's own traffic forever.
+    disposers.push(() => diagnostics.dispose());
 
     // `diagnostics` DomTool: `drain` hands back + clears the buffered runtime/network signals;
     // `scan` runs a fresh point-in-time a11y + layout pass (not buffered — always current).
@@ -354,7 +405,7 @@ export default defineContentScript({
     // The SW addresses this tab with three message kinds: agent DomTool + ControlTool calls (reply
     // with a frame-tagged ToolResult) and user-driven PickerCmds (start/stop the overlay, no
     // reply). Parse each with its own schema; anything else is a foreign message and is ignored.
-    chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+    const onBusMessage = (raw: unknown, _sender: unknown, sendResponse: (r?: unknown) => void) => {
       // Cross-site browse (slice 06): the SW opened this page in a background tab and wants its
       // compact design identity. Pure DOM read (src/dom/design-read.ts); reply with a typed result
       // (an extraction failure degrades to an error the SW surfaces, never a dropped response).
@@ -427,6 +478,11 @@ export default defineContentScript({
         return;
       }
 
+      // Overlay commands are addressed to frameId 0 (the overlay is top-frame only, see above), and
+      // are ACKed: the SW uses the reply to tell "the page took it" from "there is no content
+      // script in this tab" — a tab open since before the extension loaded has none, and without
+      // the ack the panel would report the overlay as On over a page that can never paint it.
+      // A child frame that somehow receives one has no overlay and stays silent.
       const overlayCmd = OverlayCmd.safeParse(raw);
       if (overlayCmd.success && overlay) {
         if (overlayCmd.data.type === 'overlay-toggle') overlay.toggle(overlayCmd.data.enabled);
@@ -437,9 +493,15 @@ export default defineContentScript({
             kind: overlayCmd.data.kind,
           });
         }
+        sendResponse({ type: 'overlay-ack' } satisfies OverlayAck);
+        return; // responded synchronously
       }
-      return; // no response for picker/overlay commands / foreign messages
-    });
+      return; // no response for picker commands / foreign messages
+    };
+    // Registered (and de-registered) explicitly: a re-injection must be able to remove the previous
+    // instance's listener, or both would answer every tool call.
+    chrome.runtime.onMessage.addListener(onBusMessage);
+    disposers.push(() => chrome.runtime.onMessage.removeListener(onBusMessage));
 
     // Complex-site lifecycle (slice 15A/F): warm the page-facts cache + observe SPA route changes.
     // Only the top frame runs this — a page's SPA navigation + framework stack are top-document

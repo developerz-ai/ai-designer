@@ -8,7 +8,10 @@ export function relayToPanel(msg: ContentToSw): SwToPanel | null {
   switch (msg.type) {
     case 'element-picked': {
       const first = msg.candidates[0];
-      return first ? { type: 'focus', selector: first, rect: msg.rect } : null;
+      // `xpath` rides along: it is the unambiguous answer to "which element?", and the panel
+      // echoes it back on the next `user-message` so the grounding line can name an exact node
+      // even when the CSS selector it leads with is fragile (`h1`, `div:nth-of-type(3)`).
+      return first ? { type: 'focus', selector: first, xpath: msg.xpath, rect: msg.rect } : null;
     }
     case 'picker-state':
       return { type: 'picker-state', active: msg.active };

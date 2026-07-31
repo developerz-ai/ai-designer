@@ -4,9 +4,34 @@ How the agent changes the page you're looking at in real time — and how those 
 
 ## The element picker
 
+Two ways in. Both end at the same place: the clicked element becomes the chat's focus ("this"),
+and the next instruction is grounded in its selector so the agent never has to guess the referent.
+
+**Armed** — the composer's attach button starts it; the page is in picking mode until Escape.
+
 - Hover → highlight overlay with tag, dims, and the resolved stable selector.
 - Click → element becomes the chat's focus ("this"). Agent edits target it.
 - Shift-select → multiple elements (e.g. "make all these cards equal height").
+
+**Quick pick** — no mode to enter, for when you are already looking at the thing.
+
+- Hold **Alt** (or **Ctrl**) → the element under the pointer highlights, with the same pill.
+- Click while held → pinned as context, confirmed by a flash on the page and a chip in the panel.
+- Release → the highlight goes.
+
+Ctrl is accepted because it is the chord people reach for, but not unconditionally: on a **link**
+Ctrl+click stays "open in a new tab", and on **macOS** it is a right-click, so Alt is the universal
+one. Highlighting is armed by either — it intercepts nothing.
+
+### What the agent receives
+
+The pin travels as the ranked stable-selector candidates **plus the element's absolute XPath**.
+The lead candidate is the most *stable* selector, which for an unremarkable element can be a bare
+tag (`h1`) that matches several nodes; the XPath is unique by construction, so the grounding line
+carries both and tells the model it may pass the XPath as a selector when the CSS one is ambiguous.
+Every DOM tool accepts an XPath wherever it takes a selector (a CSS selector can never begin with
+`/`, which is what lets one field carry either). XPath is deliberately *not* a seventh
+`StableSelector` strategy: those values must all be legal `querySelector` arguments.
 
 ## Mutation primitives
 
