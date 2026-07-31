@@ -26,8 +26,25 @@ export interface ElementLike {
 }
 
 const STABLE_DATA_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
+
 // Generated ids (hashed / framework) are not stable enough to ship.
-const GENERATED_ID = /[0-9a-f]{6,}|:r[0-9a-z]+:|^css-|^sc-/i;
+//
+// The hash test is ANCHORED to a whole `-`/`_` segment and needs a digit AND a letter (#165 F5).
+// The former unanchored `[0-9a-f]{6,}` matched any six consecutive hex chars ANYWHERE, so ordinary
+// hand-written ids were suppressed — `feedback` (f-e-e-d-b-a-c), `facade`, `decade`, `deface`,
+// `effaced`, `accede`, and anything carrying a ≥6-digit number (`product-123456`). Suppressing a
+// stable `#id` costs a fragile `#main > section:nth-of-type(4)` that names a DIFFERENT element as
+// soon as the SPA renders one more sibling.
+const FRAMEWORK_ID_PREFIX = /^(?:css-|sc-)/i;
+const REACT_USE_ID = /:r[0-9a-z]+:/i;
+// A whole segment of ≥6 hex chars mixing digits and letters — `a1b2c3`, an md5, a webpack hash.
+// All-letters (`facade`) and all-digits (`123456`) are ordinary words/numbers, not hashes.
+const HASH_SEGMENT = /^(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{6,}$/i;
+
+function isGeneratedId(id: string): boolean {
+  if (FRAMEWORK_ID_PREFIX.test(id) || REACT_USE_ID.test(id)) return true;
+  return id.split(/[-_]/).some((segment) => HASH_SEGMENT.test(segment));
+}
 
 // Separates two shadow-boundary segments in a `shadow`-strategy value. Always spaced, so it never
 // collides with the css-path child combinator (` > `) nor with an unspaced `>>>` inside a quoted
@@ -46,7 +63,7 @@ function attr(el: ElementLike, name: string): string | null {
  * candidate (the structural fallback). This is the shadow-agnostic core reused per boundary when
  * composing a host-path.
  */
-function localCandidates(el: ElementLike): StableSelector[] {
+function localCandidates(el: ElementLike, scope?: ParentNode): StableSelector[] {
   const candidates: StableSelector[] = [];
   const tag = el.tagName.toLowerCase();
 
@@ -55,7 +72,7 @@ function localCandidates(el: ElementLike): StableSelector[] {
     if (v) candidates.push(make(`[${name}=${cssValue(v)}]`, 'data-attr'));
   }
 
-  if (el.id && !GENERATED_ID.test(el.id)) {
+  if (el.id && !isGeneratedId(el.id)) {
     candidates.push(make(`#${cssEscape(el.id)}`, 'id'));
   }
 
@@ -72,7 +89,9 @@ function localCandidates(el: ElementLike): StableSelector[] {
   // re-selects the element.
   const text = el.textContent?.trim();
   candidates.push(
-    text && text.length <= 50 ? make(tag, 'text', true) : make(cssPath(el), 'css-path', true),
+    text && text.length <= 50
+      ? make(tag, 'text', true)
+      : make(cssPath(el, scope), 'css-path', true),
   );
 
   return candidates;
@@ -109,13 +128,20 @@ export function pickUnique(el: Element, doc: ParentNode): StableSelector {
   const hosts = hostChain(el, doc);
   if (hosts.length > 0) return pickShadow(el, hosts);
 
-  for (const candidate of localCandidates(el)) {
+  for (const candidate of localCandidates(el, doc)) {
     if (resolvesToExactly(doc, candidate.value, el)) return candidate;
   }
-  // The loop's guard rejects an unparseable candidate; this fallback bypasses it, so
-  // re-check here. Every emitted value must be a legal querySelector argument, even
-  // when it resolves to nothing. A bare tag always parses.
-  const path = cssPath(el);
+  // Fallbacks, verified — NEVER return a value the ranked loop already proved ambiguous (#165 F6):
+  // `queryOne` takes hits[0], so an ambiguous path silently mutates a DIFFERENT element while the
+  // user watches. First the scoped path (its id anchor is uniqueness-checked, see cssPath), then
+  // the full path from the root, which nth-of-type makes unique by construction.
+  const path = cssPath(el, doc);
+  if (resolvesToExactly(doc, path, el)) return make(path, 'css-path', true);
+  const full = cssPath(el, doc, false);
+  if (resolvesToExactly(doc, full, el)) return make(full, 'css-path', true);
+  // Nothing resolves — `el` is detached from `doc` (the pre-removal selector `removeNode` records
+  // by design). Emit the most descriptive value that still PARSES: every emitted value must be a
+  // legal querySelector argument even when it matches nothing. A bare tag always parses.
   if (parsesAsSelector(doc, path)) return make(path, 'css-path', true);
   return make(el.tagName.toLowerCase(), 'css-path', true);
 }
@@ -232,10 +258,15 @@ function ownerScopeOf(el: Element): ParentNode {
 // The selector that resolves to exactly `el` WITHIN `scope` (never crossing a boundary): the first
 // ranked local candidate that uniquely + identity-matches, else a fragile scoped css-path.
 function pickLocal(el: Element, scope: ParentNode): StableSelector {
-  for (const candidate of localCandidates(el)) {
+  for (const candidate of localCandidates(el, scope)) {
     if (resolvesToExactly(scope, candidate.value, el)) return candidate;
   }
-  return make(cssPath(el), 'css-path', true);
+  const path = cssPath(el, scope);
+  return make(
+    resolvesToExactly(scope, path, el) ? path : cssPath(el, scope, false),
+    'css-path',
+    true,
+  );
 }
 
 function parsesAsSelector(doc: ParentNode, value: string): boolean {
@@ -265,14 +296,20 @@ function resolvesToExactly(doc: ParentNode, value: string, el: Element): boolean
  * id (`#id > ...`) for a shorter, more resilient scope, else up to the root (the top of a shadow tree, or
  * the document). Degrades to a bare tag when the element-like exposes no tree. Never crosses a shadow
  * boundary — {@link pickShadow} composes across boundaries by calling this per root.
+ *
+ * `scope`: when supplied, an ancestor id anchors the path only if it resolves UNIQUELY within scope
+ * (#165 F6) — a legacy theme that renders `<div id="content">` twice would otherwise anchor at the
+ * FIRST one and re-select an element in the wrong subtree. Without a scope the id is trusted, as before
+ * (the pure {@link resolveSelector} path takes no document). `anchor: false` skips id anchoring entirely
+ * and climbs to the root — the unambiguous-by-construction fallback.
  */
-function cssPath(el: ElementLike): string {
+function cssPath(el: ElementLike, scope?: ParentNode, anchor = true): string {
   const segments: string[] = [];
   let cur: ElementLike | null | undefined = el;
   let isTarget = true;
   while (cur) {
     const tag = cur.tagName.toLowerCase();
-    if (!isTarget && cur.id && !GENERATED_ID.test(cur.id)) {
+    if (anchor && !isTarget && cur.id && !isGeneratedId(cur.id) && idAnchors(scope, cur)) {
       segments.unshift(`#${cssEscape(cur.id)}`);
       break;
     }
@@ -282,6 +319,18 @@ function cssPath(el: ElementLike): string {
     isTarget = false;
   }
   return segments.join(' > ');
+}
+
+// Whether `el`'s id can anchor a css-path within `scope`: it must select `el` and nothing else.
+// No scope (the pure element-like path) trusts the id, preserving the historical behavior.
+function idAnchors(scope: ParentNode | undefined, el: ElementLike): boolean {
+  if (!scope) return true;
+  try {
+    const hits = scope.querySelectorAll(`#${cssEscape(el.id)}`);
+    return hits.length === 1 && hits[0] === (el as unknown as Element);
+  } catch {
+    return false;
+  }
 }
 
 function nthOfType(el: ElementLike): number {

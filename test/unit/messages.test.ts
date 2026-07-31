@@ -47,6 +47,7 @@ import {
   SaveKeyResult,
   SaveProviderResult,
   ScreenshotInput,
+  SessionStateResult,
   SetDeviceInput,
   SetDeviceResult,
   SetStyleInput,
@@ -541,19 +542,140 @@ describe('SwToPanel (SW -> panel stream: relay of picker events)', () => {
     expect(discs).toContain('picker-state');
   });
 
-  it('does not carry multi-select / recorder-event — no panel store consumes them', () => {
+  it('does not carry the raw content event names — those are relayed, not forwarded', () => {
     const discs = SwToPanel.options.map((s) => s.shape.type.value);
-    expect(discs).not.toContain('multi-select');
+    expect(discs).not.toContain('multi-select-changed');
     expect(discs).not.toContain('recorder-event');
-    expect(SwToPanel.safeParse({ type: 'multi-select', selectors: [selector] }).success).toBe(
-      false,
-    );
+    expect(
+      SwToPanel.safeParse({ type: 'multi-select-changed', selectors: [selector] }).success,
+    ).toBe(false);
     expect(
       SwToPanel.safeParse({
         type: 'recorder-event',
         event: { kind: 'setStyle', selector, before: '', after: 'x', ts: 1 },
       }).success,
     ).toBe(false);
+  });
+
+  // #165 S7 — the relayed half of shift-multi-select.
+  it('accepts focus-multi with several selectors, and with an empty (cleared) set', () => {
+    const second = { value: '#hero', strategy: 'id' as const, fragile: false };
+    expect(
+      SwToPanel.safeParse({ type: 'focus-multi', selectors: [selector, second] }).success,
+    ).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'focus-multi', selectors: [] }).success).toBe(true);
+  });
+
+  it('rejects focus-multi carrying a malformed selector', () => {
+    expect(SwToPanel.safeParse({ type: 'focus-multi', selectors: [{ value: '#x' }] }).success).toBe(
+      false,
+    );
+  });
+
+  // #165 S8 — the outcome half of a tool chip.
+  it('accepts a tool-result outcome, with and without an id/error', () => {
+    expect(SwToPanel.safeParse({ type: 'tool-result', tool: 'setStyle', ok: true }).success).toBe(
+      true,
+    );
+    const failed = SwToPanel.safeParse({
+      type: 'tool-result',
+      tool: 'setStyle',
+      id: 'call_1',
+      ok: false,
+      error: 'no element matched .old-cta',
+    });
+    expect(failed.success).toBe(true);
+  });
+
+  it('rejects a tool-result with no ok flag — the whole point is the outcome', () => {
+    expect(SwToPanel.safeParse({ type: 'tool-result', tool: 'setStyle' }).success).toBe(false);
+  });
+
+  it('carries the correlation id on tool-call so a chip can be settled by its result', () => {
+    const parsed = SwToPanel.safeParse({ type: 'tool-call', tool: 'setStyle', id: 'call_1' });
+    expect(parsed.success && parsed.data).toMatchObject({ id: 'call_1' });
+    // Optional — a pre-#165 emitter without an id still validates.
+    expect(SwToPanel.safeParse({ type: 'tool-call', tool: 'undo' }).success).toBe(true);
+  });
+
+  // #165 S5 — the reconnect push.
+  it('accepts session-state with and without the turnRunning fact', () => {
+    expect(SwToPanel.safeParse({ type: 'session-state', state: 'running' }).success).toBe(true);
+    expect(
+      SwToPanel.safeParse({ type: 'session-state', state: 'running', turnRunning: false }).success,
+    ).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'session-state', state: 'paused' }).success).toBe(false);
+  });
+});
+
+describe('session-get (#165 S5: the panel can ask a woken worker)', () => {
+  it('is a PanelToSw variant taking no arguments', () => {
+    expect(PanelToSw.safeParse({ type: 'session-get' }).success).toBe(true);
+  });
+
+  it('round-trips a SessionStateResult carrying both facts + the tab it describes', () => {
+    const parsed = SessionStateResult.safeParse({
+      ok: true,
+      state: 'running',
+      turnRunning: false,
+      tabId: 7,
+    });
+    expect(parsed.success && parsed.data).toEqual({
+      ok: true,
+      state: 'running',
+      turnRunning: false,
+      tabId: 7,
+    });
+  });
+
+  it('allows a null tabId (no page tab resolved) but requires both facts', () => {
+    expect(
+      SessionStateResult.safeParse({ ok: true, state: 'idle', turnRunning: false, tabId: null })
+        .success,
+    ).toBe(true);
+    expect(SessionStateResult.safeParse({ ok: true, state: 'idle', tabId: null }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('UserMessage carries the picked element (#165 S6)', () => {
+  const second = { value: '#hero', strategy: 'id' as const, fragile: false };
+
+  it('accepts a single focused selector alongside the text', () => {
+    const parsed = PanelToSw.safeParse({
+      type: 'user-message',
+      text: 'make this bigger',
+      selector,
+    });
+    expect(parsed.success && parsed.data).toMatchObject({ selector });
+  });
+
+  it('accepts a multi-selection', () => {
+    const parsed = PanelToSw.safeParse({
+      type: 'user-message',
+      text: 'align these',
+      selectors: [selector, second],
+    });
+    expect(parsed.success && parsed.data).toMatchObject({ selectors: [selector, second] });
+  });
+
+  it('stays back-compatible: text alone is still a valid user-message', () => {
+    const parsed = PanelToSw.safeParse({ type: 'user-message', text: 'hello' });
+    expect(parsed.success && parsed.data).toEqual({ type: 'user-message', text: 'hello' });
+  });
+
+  it('rejects a malformed selector rather than dropping the grounding silently', () => {
+    expect(
+      PanelToSw.safeParse({ type: 'user-message', text: 'x', selector: { value: '#a' } }).success,
+    ).toBe(false);
+  });
+
+  it('bounds the multi-selection so the grounding line cannot be unbounded prompt text', () => {
+    const many = Array.from({ length: 21 }, () => selector);
+    expect(PanelToSw.safeParse({ type: 'user-message', text: 'x', selectors: many }).success).toBe(
+      false,
+    );
   });
 
   it('accepts an mcp-status push carrying a full McpServer record', () => {

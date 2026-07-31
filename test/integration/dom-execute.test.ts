@@ -9,6 +9,14 @@ import {
   type ToolResult,
 } from '@/shared/messages';
 
+// The overrides sheet is built through CSSOM (mutate.ts `renderSheet`) so a model-supplied
+// value can never escape its rule, which means the <style> element's textContent is empty
+// by design — read the live rules instead.
+function overridesCss(): string {
+  const el = document.getElementById('dz-designer-overrides') as HTMLStyleElement | null;
+  return Array.from(el?.sheet?.cssRules ?? [], (r) => r.cssText).join('\n');
+}
+
 // Integration: a validated DomTool routed through the real executor + mutator + recorder against a
 // live jsdom DOM, asserting the ToolResult shape and that mutations record + reverse. This is the
 // content script's dispatch path minus the chrome bus (screenshot's async SW round-trip is the
@@ -74,7 +82,7 @@ describe('DomTool execute — mutations record + reverse', () => {
     expect(emitted[0]).toMatchObject({ type: 'recorder-event', event: { kind: 'setStyle' } });
     // …and applied through the overrides stylesheet, never inline.
     expect(document.getElementById('cta')?.getAttribute('style')).toBeNull();
-    expect(document.getElementById('dz-designer-overrides')?.textContent).toContain('color');
+    expect(overridesCss()).toContain('color');
   });
 
   it('setText replaces text and records it', () => {

@@ -91,7 +91,9 @@ export class SessionStore {
   }
 
   /** Get-or-create the session for a tab. A freshly created one starts with an empty changeset
-   *  (the `sessionId` is the handoff idempotency key — minted by the caller) and is persisted. */
+   *  whose `sessionId` (minted by the caller) keys this tab's history entry — NOT a handoff
+   *  idempotency key, despite what this said before #165 S10: nothing under `src/mcp/` reads it and
+   *  the dispatched task spec carries no idempotency key at all. Persisted on create. */
   async ensure(tabId: number, url: string, sessionId: string): Promise<TurnSession> {
     const existing = this.cache.get(tabId);
     if (existing) return existing;

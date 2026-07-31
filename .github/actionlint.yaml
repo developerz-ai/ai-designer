@@ -1,5 +1,10 @@
-# Custom self-hosted runner labels (Blacksmith) so actionlint doesn't flag them.
+# actionlint validates `runs-on` against a hard-coded label list. Its list knows Blacksmith's
+# 2/4-vCPU tiers but not the larger ones — and declaring labels here REPLACES the Blacksmith
+# entries rather than adding to them, so every tier this repo uses must be listed, not just
+# the new ones. Keep this in sync when a job changes tier; the rule still catches real typos.
 self-hosted-runner:
   labels:
     - blacksmith-2vcpu-ubuntu-2404
     - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-8vcpu-ubuntu-2404
+    - blacksmith-16vcpu-ubuntu-2404

@@ -38,13 +38,26 @@ export const Rect = z.object({
 export type Rect = z.infer<typeof Rect>;
 
 // --- panel -> service worker ---------------------------------------------
+// `selector`/`selectors` carry the PICKED ELEMENT — the referent of "this" (#165 S6). The picker
+// resolves an element in the content world and relays it to the panel as `focus`/`focus-multi`
+// (see `SwToPanel` below); the panel echoes the still-attached selection back on the next send, so
+// the SW can ground the turn ("make this 20% bigger" on a page with four CTAs). Without it the
+// composer's context chip claims an attachment the agent never receives and the model guesses.
+// Both optional + back-compatible: a send with neither is exactly the pre-#165 message.
+// `selector` is the single focus; `selectors` is the shift-multi-select set (the other half of the
+// `multi-select-changed` relay). When both are present the SW grounds on the union, `selector`
+// first. Consumed in `background.ts`'s `user-message` case via `agent/focus-context.ts`.
 export const UserMessage = z.object({
   type: z.literal('user-message'),
   text: z.string(),
   // Explicit copy/debug choice, when the composer offers one (see 06/11). Absent ⇒
   // `agent/modes.ts` `resolveMode` infers it from `text`.
   mode: Mode.optional(),
+  selector: StableSelector.optional(),
+  // Bounded: a multi-select is a handful of elements, and the grounding line is prompt text.
+  selectors: z.array(StableSelector).max(20).optional(),
 });
+export type UserMessage = z.infer<typeof UserMessage>;
 
 // User-triggered Ship (slice 07) — hand the accepted design session to a connected coding backend,
 // or fall back to a downloadable brief. NEVER auto-ships: only the panel's Ship button / a chat
@@ -328,11 +341,27 @@ export type ReadinessState = z.infer<typeof ReadinessState>;
 
 export const Readiness = z.object({ type: z.literal('readiness') });
 
+// The panel-visible session tri-state: `idle` (pre-Start) -> `running` (session-start) ->
+// `stopped` (session-stop aborted the in-flight turn; the session stays open for the next
+// message). Named + shared so the `session-state` push, the `session-get` reply, and the SW's
+// per-tab `TurnSession.status` (`src/agent/session.ts` `TurnStatus`, which mirrors this) all speak
+// one vocabulary.
+export const SessionLifecycle = z.enum(['idle', 'running', 'stopped']);
+export type SessionLifecycle = z.infer<typeof SessionLifecycle>;
+
 // Start/Stop toggle. Start is only actionable once `ReadinessState.ready`; while a turn
 // runs the panel shows Stop, which aborts the in-flight agent turn (04) without ending the
 // session. Ending the session (toggling off) returns the panel to the pre-Start state.
 export const SessionStart = z.object({ type: z.literal('session-start') });
 export const SessionStop = z.object({ type: z.literal('session-stop') });
+// Pull the CURRENT session/turn state (#165 S5). The SW is ephemeral: a turn that stalls without
+// stream traffic (a slow provider, a 30s `waitFor`, a `chrome.debugger.attach` awaiting the user)
+// lets the 30s idle timer kill the worker mid-turn, and the woken worker pushes nothing — the
+// panel's in-flight assistant bubble is only ever closed by `turn-done`/`error`/a non-running
+// `session-state`, none of which will arrive. This RPC is how the panel ASKS instead of waiting
+// forever. The SW also posts the same state unsolicited on `chrome.runtime.onConnect`, so a
+// (re)connecting panel usually needs no explicit call; the RPC covers a later re-check.
+export const SessionGet = z.object({ type: z.literal('session-get') });
 
 // --- on-page agent-decision overlay, opt-in (slice 09) --------------------
 // Cursor-style "watch the agent work" surface (`src/dom/overlay.ts`). Opt-in + persisted to
@@ -407,6 +436,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   Readiness,
   SessionStart,
   SessionStop,
+  SessionGet,
   HistoryList,
   HistoryGet,
   HistoryDelete,
@@ -496,6 +526,22 @@ export type McpOriginRepoResult = z.infer<typeof McpOriginRepoResult>;
 // `ok` is always true here; the field is kept for the bus's shared response shape.
 export const ReadinessResult = z.object({ ok: z.boolean(), state: ReadinessState });
 export type ReadinessResult = z.infer<typeof ReadinessResult>;
+
+// RPC response for `session-get` (#165 S5) — two SEPARATE facts the panel needs after a reconnect:
+//   • `state` — the session lifecycle, persisted to `chrome.storage.session` so it survives an SW
+//     eviction (the module-level tri-state does not). "Is the user in a session at all?"
+//   • `turnRunning` — whether an agent turn is ACTUALLY in flight in the live worker. False on a
+//     woken worker even when a turn was running when it died, so the panel closes the orphaned
+//     in-flight assistant bubble instead of spinning forever.
+// `tabId` is the tab the answer describes (null when no page tab resolved), matching
+// `ChangesetResult`'s tab-keying rule so a reply can't be folded into a view of another tab.
+export const SessionStateResult = z.object({
+  ok: z.boolean(),
+  state: SessionLifecycle,
+  turnRunning: z.boolean(),
+  tabId: z.number().int().nullable(),
+});
+export type SessionStateResult = z.infer<typeof SessionStateResult>;
 
 // RPC response for `ship` / `send-report` / `download-report` (slice 07). `routed` says what
 // happened: 'tasks' = dispatched to a connected backend (per-task progress then streams as
@@ -1234,6 +1280,9 @@ export const ContentToSw = z.discriminatedUnion('type', [
     rect: Rect,
     styles: z.record(z.string(), z.string()).optional(),
   }),
+  // Shift-multi-select changed (add/remove/clear). Relayed to the panel as `focus-multi`
+  // (`src/shared/relay.ts`) so the composer chips the selection and echoes it back on the next
+  // `UserMessage.selectors` — the multi-element half of "this" (#165 S7).
   z.object({ type: z.literal('multi-select-changed'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
@@ -1731,6 +1780,26 @@ export const SwToPanel = z.discriminatedUnion('type', [
     tool: z.string(),
     selector: z.string().optional(),
     kind: z.enum(['read', 'act', 'info']).optional(),
+    // The SDK's tool-call id — correlates this chip with the `tool-result` that settles it
+    // (#165 S8). Optional so an emitter without one (a synthetic/test event) still validates.
+    id: z.string().optional(),
+  }),
+  // How the tool call named by `id` (else by `tool`, newest-unsettled-first) actually ENDED
+  // (#165 S8). `tool-call` above fires when the model REQUESTS a call — before execution — so a
+  // panel that renders a chip on it alone shows a green ✓ for an edit that failed on a stale
+  // selector and was silently retried elsewhere. This is the outcome half: fold it onto the chip.
+  // `ok: false` covers BOTH failure shapes: the SDK's `tool-error` part (the tool threw) and a
+  // tool that returned normally with an `ok: false` payload — which is how every content-routed
+  // tool reports failure (`ToolResult` further down this file). NOTE the discriminant collides by
+  // name with that content-bus `ToolResult`; they live in different unions and never mix on a
+  // wire — this one is SW -> panel and carries no page data, only the outcome.
+  z.object({
+    type: z.literal('tool-result'),
+    tool: z.string(),
+    ok: z.boolean(),
+    id: z.string().optional(),
+    // The failure reason, bounded — a chip tooltip, never a place to dump a provider payload.
+    error: z.string().max(500).optional(),
   }),
   // Record pushes are tab-stamped at the SW emit sites (turn path + curation): the panel folds
   // them only into a Diff view keyed to the same tab, so a turn on tab A can never bleed phantom
@@ -1764,6 +1833,11 @@ export const SwToPanel = z.discriminatedUnion('type', [
   z.object({ type: z.literal('error'), message: z.string() }),
   // SW relays of ContentToSw picker events.
   z.object({ type: z.literal('focus'), selector: StableSelector, rect: Rect }),
+  // The shift-multi-select set (#165 S7): the relayed half of content's `multi-select-changed`.
+  // Sibling of `focus` — same referent role, several elements — so the composer can chip them and
+  // echo them back on the next `UserMessage.selectors`. An EMPTY array is meaningful: the user
+  // cleared the multi-selection, so the panel drops its chips.
+  z.object({ type: z.literal('focus-multi'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   // Live connection-health push for one MCP server (add/connect/auth/remove, or an
   // explicit mcp-status refresh request) — the panel's mcpStore reflects this stream.
@@ -1771,10 +1845,17 @@ export const SwToPanel = z.discriminatedUnion('type', [
   // Unsolicited readiness push whenever provider/model/host-permission/MCP health
   // changes, so the header pill updates without the panel polling the `readiness` RPC.
   z.object({ type: z.literal('readiness'), state: ReadinessState }),
-  // Start/Stop session lifecycle: `idle` (pre-Start) -> `running` (session-start) ->
-  // `stopped` (session-stop aborted the in-flight turn; session stays open for the next
-  // message). See `SessionStart`/`SessionStop` above.
-  z.object({ type: z.literal('session-state'), state: z.enum(['idle', 'running', 'stopped']) }),
+  // Start/Stop session lifecycle (`SessionLifecycle` above). Pushed on every transition AND,
+  // since #165 S5, once per panel port on `chrome.runtime.onConnect` — a panel reconnecting to a
+  // woken worker learns the state instead of waiting for a transition that already happened.
+  // `turnRunning` rides along for the same reason it does on `SessionStateResult`: `state` alone
+  // cannot tell the panel whether the in-flight assistant bubble is still being written. Optional
+  // so a plain transition push (which changes only the lifecycle) can omit it.
+  z.object({
+    type: z.literal('session-state'),
+    state: SessionLifecycle,
+    turnRunning: z.boolean().optional(),
+  }),
   // Marks the end of one agent turn's stream (background.ts's `user-message` handler, emitted
   // once the turn settles — success or error — and was not superseded by a newer message). The
   // panel's chat store (11) uses this to close out the in-flight assistant bubble and flip its

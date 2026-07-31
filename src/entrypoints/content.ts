@@ -81,12 +81,18 @@ export default defineContentScript({
     const interactor = createInteractor();
     const picker = createPicker(emit);
 
+    // The content script runs in EVERY frame (`allFrames: true`), so anything page-global has to
+    // be gated on the top document — see the overlay below and the SPA-lifecycle block at the end.
+    const isTopFrame = window.top === window.self;
+
     // Agent-decision overlay (slice 09), opt-in: restore the persisted toggle at injection time —
     // a page reload gets its overlay back without waiting on a round-trip to the SW — then react
     // to any live `overlay-toggle`/`overlay-step` the SW forwards for the rest of this page's life
-    // (background.ts's `set-overlay-enabled` case / `forwardOverlayStep`).
-    const overlay = createOverlay();
-    void readOverlayEnabled().then((enabled) => overlay.toggle(enabled));
+    // (background.ts's `set-overlay-enabled` case / `forwardOverlayStep`). TOP FRAME ONLY (#165
+    // F7): the card is `position: fixed` in ITS OWN frame, so a per-frame overlay stacks one
+    // "Designer" card per embed over the embeds themselves.
+    const overlay = isTopFrame ? createOverlay() : null;
+    if (overlay) void readOverlayEnabled().then((enabled) => overlay.toggle(enabled));
 
     // Complex-site reads/actions (slice 15, expose-to-agent): the MAIN-world bridge client
     // (read-only, non-secret — see the top-frame lifecycle block below) backs both the page-facts
@@ -101,7 +107,7 @@ export default defineContentScript({
     // Chrome pins the top document to frameId 0; a child frame can't learn its own id, so the SW
     // stamps that from the frameId it routed to (later slice-13 SW task). Tag results from the top
     // frame so `query`/`screenshot`/`readImages` carry their frame; absent already means top.
-    const selfFrameId = window.top === window.self ? 0 : undefined;
+    const selfFrameId = isTopFrame ? 0 : undefined;
     const tagFrame = (result: ToolResult): ToolResult =>
       selfFrameId !== undefined && result.frameId === undefined
         ? { ...result, frameId: selfFrameId }
@@ -279,7 +285,16 @@ export default defineContentScript({
       if (tool.type === 'widgetAct') {
         return widgetDriver.run(tool.recipe);
       }
-      return interactor.run(tool);
+      // `handleDialog` ARMS the alert/confirm/prompt override for the NEXT action; every other
+      // interact tool IS that action, so the override is restored the moment it completes (#165
+      // F8). Without this the override outlived the turn — src/dom/interact.ts promises it "never
+      // leaks past the action it was armed for", and only the unit tests were calling
+      // `restoreDialogs`.
+      try {
+        return await interactor.run(tool);
+      } finally {
+        if (tool.type !== 'handleDialog') interactor.restoreDialogs();
+      }
     }
 
     // Describe-in-text + design-identity reads (slice 14): all pure DOM, routed to the tested
@@ -413,7 +428,7 @@ export default defineContentScript({
       }
 
       const overlayCmd = OverlayCmd.safeParse(raw);
-      if (overlayCmd.success) {
+      if (overlayCmd.success && overlay) {
         if (overlayCmd.data.type === 'overlay-toggle') overlay.toggle(overlayCmd.data.enabled);
         else {
           overlay.step({
@@ -430,7 +445,7 @@ export default defineContentScript({
     // Only the top frame runs this — a page's SPA navigation + framework stack are top-document
     // concerns. The bridge is read-only + non-secret (src/dom/bridge.ts): MAIN == the page's own
     // world, so no key ever crosses; page-facts falls back to DOM-only when it's unreachable.
-    if (window.top === window.self) {
+    if (isTopFrame) {
       // Warm the per-URL facts cache once the SPA has hydrated + settled (first agent query is then
       // instant); re-derive on client-side route changes (pushState/popstate/hash) that never reload.
       const deriveFacts = (): void => {

@@ -58,6 +58,38 @@ describe('query', () => {
     mount('<p class="x">one</p><p class="x">two</p>');
     expect(queryOne(document, '.x')?.textContent).toBe('one');
   });
+
+  // #165 F4: a ` >>> ` host-path is not a CSS selector — querySelectorAll threw SyntaxError, the
+  // catch swallowed it, and EVERY shadow-nested target silently resolved to nothing, so nothing
+  // downstream of the selector engine's shadow apparatus could ever fire.
+  describe('shadow host-paths', () => {
+    function mountShadow(): Element {
+      mount('<shop-button id="host"></shop-button>');
+      const root = byId('host').attachShadow({ mode: 'open' });
+      root.innerHTML = '<button data-testid="buy">Buy</button>';
+      const inner = root.querySelector('button');
+      if (!inner) throw new Error('fixture missing');
+      return inner;
+    }
+
+    it('queryOne replays a >>> host-path into the shadow root', () => {
+      const inner = mountShadow();
+      expect(queryOne(document, '#host >>> [data-testid="buy"]')).toBe(inner);
+    });
+
+    it('query re-derives the shadow selector for the matched element', () => {
+      mountShadow();
+      const { matches } = query(document, '#host >>> [data-testid="buy"]');
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.strategy).toBe('shadow');
+      expect(matches[0]?.value).toBe('#host >>> [data-testid="buy"]');
+    });
+
+    it('yields nothing for a host-path that no longer resolves', () => {
+      mount('<div id="host"></div>');
+      expect(queryOne(document, '#host >>> button')).toBeNull();
+    });
+  });
 });
 
 describe('getStyles', () => {

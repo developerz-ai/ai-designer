@@ -15,8 +15,16 @@ function byId(id: string): HTMLElement {
   return el;
 }
 
+// The overrides sheet is built through CSSOM (never string concatenation — #165 F1), so its
+// `<style>` element carries NO text: read the rules back off the live stylesheet instead.
+function sheetTextIn(root: Document | ShadowRoot): string {
+  const style = root.getElementById(SHEET_ID);
+  const sheet = style instanceof HTMLStyleElement ? style.sheet : null;
+  return sheet ? Array.from(sheet.cssRules, (r) => r.cssText).join('\n') : '';
+}
+
 function sheetText(): string {
-  return document.getElementById(SHEET_ID)?.textContent ?? '';
+  return sheetTextIn(document);
 }
 
 describe('createMutator setStyle', () => {
@@ -64,6 +72,57 @@ describe('createMutator setStyle', () => {
     expect(mutation.computed.color).toBe('rgb(1, 2, 3)');
     expect(mutation.kind).toBe('setStyle');
     expect(mutation.ruleId).toMatch(/^dz-\d+$/);
+  });
+
+  // #165 F1: a value carrying `}` used to close our rule by string concatenation, so everything
+  // after it landed as TOP-LEVEL page CSS (`* { background-image: url(https://attacker/...) }` —
+  // a same-cookie remote fetch + a repaint-the-whole-page channel). Built through CSSOM the value
+  // can't escape its own declaration.
+  it('cannot break out of its rule through a value carrying CSS syntax', () => {
+    mount('<button id="cta">Buy</button>');
+    const el = byId('cta');
+    createMutator(document).setStyle(el, {
+      color: 'red } * { background-image: url(https://attacker.example/p.png) } .z { color: blue',
+      'font-size': '20px',
+    });
+
+    const style = document.getElementById(SHEET_ID);
+    const sheet = style instanceof HTMLStyleElement ? style.sheet : null;
+    // Exactly ONE rule, and it is ours — no smuggled `*` / `.z` block.
+    expect(sheet?.cssRules).toHaveLength(1);
+    const rule = sheet?.cssRules[0] as CSSStyleRule;
+    expect(rule.selectorText).toBe(`[${MARKER_ATTR}="${el.getAttribute(MARKER_ATTR)}"]`);
+    expect(sheetText()).not.toContain('attacker.example');
+    expect(sheetText()).not.toContain('*');
+    // The invalid declaration is dropped; the legitimate one in the same call still applies.
+    expect(rule.style.getPropertyValue('color')).toBe('');
+    expect(rule.style.getPropertyValue('font-size')).toBe('20px');
+  });
+
+  // #165 F1 correctness half: an unbalanced `{` used to swallow every FOLLOWING block, so other
+  // elements' edits silently stopped rendering while the recorder still believed they were live.
+  it('keeps a later element’s rule rendering after a syntax-bearing value', () => {
+    mount('<button id="cta">Buy</button><p id="copy">hi</p>');
+    const mutator = createMutator(document);
+    mutator.setStyle(byId('cta'), { color: 'red { unbalanced' });
+    mutator.setStyle(byId('copy'), { color: 'green' });
+    expect(sheetText()).toContain('color: green !important');
+  });
+
+  // #165 F4: document CSS never crosses a shadow boundary, so a shadow-nested target gets its own
+  // sheet INSIDE that root — a rule in the document sheet reports "applied" and paints nothing.
+  // Asserted structurally: jsdom builds no CSSStyleSheet for a <style> inside a shadow root
+  // (`style.sheet === null` there), so the rules themselves are only observable in a real browser.
+  it('gives a shadow-nested target its own root’s sheet', () => {
+    mount('<div id="host"></div>');
+    const root = byId('host').attachShadow({ mode: 'open' });
+    root.innerHTML = '<button id="buy">Buy</button>';
+    const inner = root.getElementById('buy') as Element;
+
+    createMutator(document).setStyle(inner, { color: 'red' });
+
+    expect(root.getElementById(SHEET_ID)).toBeInstanceOf(HTMLStyleElement);
+    expect(sheetText()).toBe(''); // nothing landed in the document sheet, where it could not apply
   });
 });
 

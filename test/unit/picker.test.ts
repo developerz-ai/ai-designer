@@ -248,3 +248,91 @@ describe('keyboard', () => {
     expect(shadow().querySelector('.dz-hover')?.classList.contains('dz-hidden')).toBe(true);
   });
 });
+
+// #165 F3: the picker is a READ-ONLY affordance ("The pick click must never reach the page"), but
+// only `click` was cancelled. A mousedown/mouseup pair IS a drag on an HTML5 drag-and-drop board
+// (Trello/Jira-style), so a shift-click multi-selection dropped a real card into another column —
+// not a recorder event, so nothing could undo it.
+describe('read-only guarantee', () => {
+  const swallowed = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'contextmenu'];
+
+  function fire(el: Element, type: string): { defaultPrevented: boolean; sawPage: boolean } {
+    let sawPage = false;
+    const spy = (): void => {
+      sawPage = true;
+    };
+    el.addEventListener(type, spy);
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true });
+    el.dispatchEvent(e);
+    el.removeEventListener(type, spy);
+    return { defaultPrevented: e.defaultPrevented, sawPage };
+  }
+
+  it('cancels every page-mutating pointer event while active', () => {
+    document.body.innerHTML = '<div id="card" draggable="true">Card</div>';
+    const { picker } = spawn();
+    picker.start();
+
+    for (const type of swallowed) {
+      const { defaultPrevented, sawPage } = fire(byId('card'), type);
+      expect([type, defaultPrevented, sawPage]).toEqual([type, true, false]);
+    }
+  });
+
+  it('releases the page again after stop', () => {
+    document.body.innerHTML = '<div id="card">Card</div>';
+    const { picker } = spawn();
+    picker.start();
+    picker.stop();
+
+    for (const type of swallowed) {
+      const { defaultPrevented, sawPage } = fire(byId('card'), type);
+      expect([type, defaultPrevented, sawPage]).toEqual([type, false, true]);
+    }
+  });
+
+  it('leaves the page alone before start', () => {
+    document.body.innerHTML = '<div id="card">Card</div>';
+    spawn();
+    expect(fire(byId('card'), 'mousedown').sawPage).toBe(true);
+  });
+});
+
+// #165 F4: a composed event that crossed a shadow boundary is RETARGETED to the outermost host by
+// the time it reaches the picker's `document` listener, so `e.target` named the custom element and
+// the agent styled a host that is usually `display: contents` — nothing visibly changed and the
+// changeset shipped a selector for the wrong element.
+describe('shadow DOM targets', () => {
+  function mountShadow(): Element {
+    document.body.innerHTML = '<shop-button id="host"></shop-button>';
+    const root = byId('host').attachShadow({ mode: 'open' });
+    root.innerHTML = '<button data-testid="buy">Buy</button>';
+    const inner = root.querySelector('button');
+    if (!inner) throw new Error('fixture');
+    return inner;
+  }
+
+  it('hovers the node inside the shadow root, not the host', () => {
+    const inner = mountShadow();
+    const { picker } = spawn();
+    picker.start();
+    inner.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
+
+    expect(shadow().querySelector('.dz-tag')?.textContent).toBe('button');
+    expect(shadow().querySelector('.dz-sel')?.textContent).toBe('#host >>> [data-testid="buy"]');
+  });
+
+  it('picks the node inside the shadow root, not the host', () => {
+    const inner = mountShadow();
+    const { picker, msgs } = spawn();
+    picker.start();
+    inner.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, button: 0 }),
+    );
+
+    const picked = byType(msgs, 'element-picked')[0];
+    expect(picked?.type === 'element-picked' && picked.candidates[0]?.value).toBe(
+      '#host >>> [data-testid="buy"]',
+    );
+  });
+});

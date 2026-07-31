@@ -32,8 +32,34 @@ describe('resolveSelector', () => {
   });
 
   it('skips generated ids', () => {
-    const candidates = resolveSelector(el({ id: 'css-1a2b3c', tagName: 'SPAN' }));
-    expect(candidates.every((c) => c.strategy !== 'id')).toBe(true);
+    // Framework prefixes, React useId, and real content hashes (a segment mixing hex digits +
+    // letters).
+    for (const id of ['css-1a2b3c', 'sc-bdVaJa', ':r7:', 'a1b2c3', 'x-d41d8cd98f00b204e9800998']) {
+      const candidates = resolveSelector(el({ id, tagName: 'SPAN' }));
+      expect([id, candidates.every((c) => c.strategy !== 'id')]).toEqual([id, true]);
+    }
+  });
+
+  // #165 F5: the hash heuristic was UNANCHORED `[0-9a-f]{6,}`, so any six consecutive hex chars
+  // anywhere in an id suppressed the stable `#id` candidate — `feedback` is f-e-e-d-b-a-c, and a
+  // ≥6-digit number does it too. The fallback css-path then names a different element as soon as
+  // the SPA renders one more sibling above the target.
+  it('keeps ordinary hand-written ids that merely LOOK hex', () => {
+    const ids = [
+      'feedback',
+      'facade',
+      'decade',
+      'deface',
+      'defaced',
+      'effaced',
+      'accede',
+      'product-123456',
+      'order_654321',
+    ];
+    for (const id of ids) {
+      const [top] = resolveSelector(el({ id, tagName: 'SECTION' }));
+      expect([id, top?.strategy]).toEqual([id, 'id']);
+    }
   });
 
   it('uses aria role + label', () => {
@@ -134,6 +160,38 @@ describe('pickUnique', () => {
     expect(document.querySelector(pickedFirst.value)).toBe(first);
     expect(document.querySelector(pickedSecond.value)).toBe(second);
     expect(pickedFirst.value).not.toBe(pickedSecond.value);
+  });
+
+  // #165 F6: the ranked loop rejected the css-path for failing `resolvesToExactly`, then the
+  // fallback returned THE SAME value anyway (gated only on "does it parse"). `cssPath` anchored at
+  // the nearest ancestor id without checking that id is document-unique, so on a legacy theme that
+  // renders `<div id="content">` twice, `queryOne`'s hits[0] landed in the FIRST one — the user
+  // watched the wrong heading change.
+  it('never anchors a css-path at a DUPLICATED ancestor id', () => {
+    mount(
+      '<div id="content"><article><h2>First</h2></article></div>' +
+        '<div id="content"><article><h2>Second</h2></article></div>',
+    );
+    const [, second] = Array.from(document.querySelectorAll('h2'));
+    if (!second) throw new Error('fixture missing');
+
+    const picked = pickUnique(second, document);
+
+    expect(picked.value).not.toContain('#content');
+    const hits = document.querySelectorAll(picked.value);
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toBe(second);
+  });
+
+  it('never returns a css-path it already proved ambiguous', () => {
+    mount('<div id="dup"><p><span></span></p></div><div id="dup"><p><span></span></p></div>');
+    const [, second] = Array.from(document.querySelectorAll('span'));
+    if (!second) throw new Error('fixture missing');
+
+    const picked = pickUnique(second, document);
+
+    expect(document.querySelectorAll(picked.value)).toHaveLength(1);
+    expect(document.querySelector(picked.value)).toBe(second);
   });
 
   it('resolves a text-bearing anonymous element to itself via the css-path fallback', () => {

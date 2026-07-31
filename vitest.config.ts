@@ -1,13 +1,24 @@
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
+import solid from 'vite-plugin-solid';
 import { defineConfig } from 'vitest/config';
 
 const isCI = !!process.env.CI;
-const localMax = Math.min(4, availableParallelism());
+
+// Local worker count: use every core. The previous hard cap of 4 left 8 of 12 cores idle.
+// `DZ_TEST_WORKERS` throttles it back when you want the machine responsive
+// (e.g. `DZ_TEST_WORKERS=4 bun run test` on battery).
+const envWorkers = Number(process.env.DZ_TEST_WORKERS);
+const localMax =
+  Number.isFinite(envWorkers) && envWorkers > 0 ? envWorkers : availableParallelism();
 
 // Unit + integration share one runner; the npm scripts filter by directory
 // (`vitest run unit` / `vitest run integration`) so CI can run them as parallel jobs.
 export default defineConfig({
+  // Solid compiles JSX to fine-grained reactive calls, not to createElement — without
+  // this plugin a mounted component renders nothing and the failure looks like a bug
+  // in the component. `ssr: false` keeps the client (DOM) output, which is what jsdom runs.
+  plugins: [solid({ ssr: false })],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
@@ -21,10 +32,15 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     // On CI leave workers uncapped — Vitest defaults to available parallelism
-    // (all CPUs). Locally cap at 4 to keep dev machines responsive.
+    // (all CPUs). Locally use all but two cores (see localMax above).
     // (Vitest 4 dropped the `minWorkers` option; min stays at its default of 1.)
     maxWorkers: isCI ? undefined : localMax,
-    include: ['test/**/*.{test,spec}.ts'],
+    // `.tsx` is included so component specs can MOUNT a Solid component and assert the
+    // things that actually matter — roles, accessible names, keyboard reachability,
+    // what gets dispatched on click — instead of only exercising pure helpers.
+    // Plain-logic specs stay `.ts` and never touch the JSX transform.
+    include: ['test/**/*.{test,spec}.{ts,tsx}'],
+    setupFiles: ['./test/setup-dom.ts'],
     exclude: ['test/e2e/**', 'node_modules', '.output', '.wxt'],
     coverage: {
       provider: 'v8',

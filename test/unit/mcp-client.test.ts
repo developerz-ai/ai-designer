@@ -6,14 +6,29 @@ import { createConnection, type McpClientFactory, namespaceTool } from '@/mcp/cl
 import { McpManager } from '@/mcp/manager';
 
 // mcp/client + mcp/manager unit: the AI SDK MCP client is faked (no HTTP server), so this
-// asserts lazy open, `<id>__<tool>` namespacing, catalog caching, idle/explicit close, and
-// per-server health isolation without a real backend. SW-only modules; no chrome.* here.
+// asserts lazy open, `<id>__<tool>` namespacing, catalog caching, the #165 S2 lifecycle
+// (no idle close, leases deferring a close under an in-flight call, connect/close deadlines),
+// and per-server health isolation without a real backend. SW-only modules; no chrome.* here.
 
 /** A ToolSet whose keys are `names`, each a trivial static tool. */
 function toolSet(...names: string[]): ToolSet {
   const set: ToolSet = {};
   for (const name of names) set[name] = tool({ description: name, inputSchema: z.object({}) });
   return set;
+}
+
+/** The `ToolCallOptions` an SDK tool's `execute` takes — none of it matters to the lease wrapper. */
+function callOptions() {
+  return { toolCallId: 't1', messages: [], context: undefined };
+}
+
+/** An externally-settled promise, standing in for a backend call that outlives the caller. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 /** The MCP transport URL from a client config (the transport is always our HTTP literal). */
@@ -54,7 +69,7 @@ describe('createConnection', () => {
 
   it('opens lazily — nothing connects until tools() is called', async () => {
     const { connect } = fakeFactory();
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
     expect(connect).not.toHaveBeenCalled();
     expect(conn.isOpen()).toBe(false);
 
@@ -65,13 +80,13 @@ describe('createConnection', () => {
 
   it('namespaces discovered tools `<id>__<tool>`', async () => {
     const { connect } = fakeFactory(toolSet('task', 'kb'));
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
     expect(Object.keys(await conn.tools())).toEqual(['ai-dev__task', 'ai-dev__kb']);
   });
 
   it('caches the open client + catalog across repeated tools() calls', async () => {
     const { connect, toolsFn } = fakeFactory();
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
     await conn.tools();
     await conn.tools();
     expect(connect).toHaveBeenCalledTimes(1);
@@ -84,10 +99,7 @@ describe('createConnection', () => {
       .fn()
       .mockResolvedValueOnce({ Authorization: 'Bearer one' })
       .mockResolvedValueOnce({ Authorization: 'Bearer two' });
-    const conn = createConnection(
-      { id: 'ai-dev', url: 'https://x/mcp', getHeaders },
-      { connect, idleMs: 0 },
-    );
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp', getHeaders }, { connect });
 
     await conn.tools();
     await conn.close();
@@ -107,7 +119,7 @@ describe('createConnection', () => {
     const { connect } = fakeFactory();
     const conn = createConnection(
       { id: 'ai-dev', url: 'https://x/mcp', headers: { 'X-Key': 'k' } },
-      { connect, idleMs: 0 },
+      { connect },
     );
     await conn.tools();
     expect(connect.mock.calls[0]?.[0].transport).toMatchObject({ headers: { 'X-Key': 'k' } });
@@ -115,7 +127,7 @@ describe('createConnection', () => {
 
   it('closes the underlying client and reopens on the next tools()', async () => {
     const { connect, close } = fakeFactory();
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
     await conn.tools();
     await conn.close();
     expect(close).toHaveBeenCalledTimes(1);
@@ -131,7 +143,7 @@ describe('createConnection', () => {
       .fn<McpClientFactory>()
       .mockRejectedValueOnce(new Error('down'))
       .mockResolvedValueOnce({ tools: async () => toolSet('task'), close });
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
 
     await expect(conn.tools()).rejects.toThrow('down');
     expect(conn.isOpen()).toBe(false);
@@ -139,29 +151,113 @@ describe('createConnection', () => {
     expect(connect).toHaveBeenCalledTimes(2);
   });
 
-  it('auto-closes after the idle window and reopens on demand', async () => {
+  // #165 S2 — the shipped bug: an idle timer armed when `tools()` resolved and never reset by tool
+  // EXECUTION (the SDK's tool objects call `client.callTool` directly, bypassing the wrapper) tore
+  // the transport down 60s after discovery, while the model still held the tool closures. Every
+  // existing test constructed connections with `idleMs: 0`, which is exactly why it shipped — so
+  // these run at the DEFAULT lifecycle, with no idle option to opt out of.
+  it('keeps the connection open indefinitely with no calls (no idle close)', async () => {
     vi.useFakeTimers();
     const { connect, close } = fakeFactory();
-    const conn = createConnection(
-      { id: 'ai-dev', url: 'https://x/mcp' },
-      { connect, idleMs: 1000 },
-    );
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
     await conn.tools();
+
+    // Well past the old 60s window and then some — a design turn routinely runs minutes.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(close).not.toHaveBeenCalled();
+    expect(conn.isOpen()).toBe(true);
+  });
+
+  it('a tool held from an earlier discovery still executes minutes later', async () => {
+    vi.useFakeTimers();
+    const execute = vi.fn(async () => ({ ok: true }));
+    const { connect } = fakeFactory({
+      task: tool({ description: 'task', inputSchema: z.object({}), execute }),
+    });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
+    // The turn builds its ToolSet once, at t=0 — exactly what background.ts's `toolsFor()` does.
+    const held = (await conn.tools())['ai-dev__task'];
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await expect(held?.execute?.({}, callOptions())).resolves.toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers close() under an in-flight tool call, then closes on its release', async () => {
+    // A long-poll standing in for Ship's `task(watch)` — it always outlives a minute.
+    const watch = deferred<{ status: string }>();
+    const { connect, close } = fakeFactory({
+      task: tool({ description: 'task', inputSchema: z.object({}), execute: () => watch.promise }),
+    });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
+    const held = (await conn.tools())['ai-dev__task'];
+
+    const call = held?.execute?.({}, callOptions()) as Promise<unknown>;
+    await conn.close(); // a disable/unregister landing mid-watch
+    expect(close).not.toHaveBeenCalled();
     expect(conn.isOpen()).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(close).toHaveBeenCalledTimes(1);
+    watch.resolve({ status: 'pr_open' });
+    await expect(call).resolves.toEqual({ status: 'pr_open' });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     expect(conn.isOpen()).toBe(false);
   });
 
-  it('does not schedule an idle close when idleMs <= 0', async () => {
+  it('releases the lease when a tool call rejects, so a deferred close still lands', async () => {
+    const { connect, close } = fakeFactory({
+      task: tool({
+        description: 'task',
+        inputSchema: z.object({}),
+        execute: async (): Promise<{ ok: boolean }> => {
+          throw new Error('backend said no');
+        },
+      }),
+    });
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
+    const held = (await conn.tools())['ai-dev__task'];
+
+    const call = held?.execute?.({}, callOptions()) as Promise<unknown>;
+    await conn.close();
+    await expect(call).rejects.toThrow('backend said no');
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
+  it('fails discovery on the connect deadline and retries on the next call', async () => {
     vi.useFakeTimers();
-    const { connect, close } = fakeFactory();
-    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect, idleMs: 0 });
+    const close = vi.fn(async (): Promise<void> => {});
+    const connect = vi
+      .fn<McpClientFactory>()
+      .mockImplementationOnce(() => new Promise(() => {})) // never settles
+      .mockResolvedValueOnce({ tools: async () => toolSet('task'), close });
+    const conn = createConnection(
+      { id: 'ai-dev', url: 'https://x/mcp' },
+      { connect, connectTimeoutMs: 1000 },
+    );
+
+    // Assert BEFORE advancing: the rejection lands inside `advanceTimersByTimeAsync`, and a
+    // handler attached after it would make the run report an unhandled rejection.
+    const first = expect(conn.tools()).rejects.toThrow(/did not respond/);
+    await vi.advanceTimersByTimeAsync(1000);
+    await first;
+    expect(Object.keys(await conn.tools())).toEqual(['ai-dev__task']);
+  });
+
+  it('gives up on a wedged close rather than blocking the caller', async () => {
+    vi.useFakeTimers();
+    const connect = vi.fn<McpClientFactory>(async () => ({
+      tools: async () => toolSet('task'),
+      close: () => new Promise<void>(() => {}), // teardown never settles
+    }));
+    const conn = createConnection(
+      { id: 'ai-dev', url: 'https://x/mcp' },
+      { connect, closeTimeoutMs: 500 },
+    );
     await conn.tools();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(close).not.toHaveBeenCalled();
-    expect(conn.isOpen()).toBe(true);
+
+    const closing = conn.close();
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(closing).resolves.toBeUndefined();
+    expect(conn.isOpen()).toBe(false);
   });
 });
 
@@ -185,7 +281,7 @@ describe('McpManager', () => {
 
   it('connect() discovers + caches namespaced health', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task', 'kb') });
-    const mgr = new McpManager({ connect, idleMs: 0, now: () => 42 });
+    const mgr = new McpManager({ connect, now: () => 42 });
     mgr.register(AI_DEV);
 
     expect(mgr.health('ai-dev')).toMatchObject({ status: 'disconnected', toolCount: 0 });
@@ -205,7 +301,7 @@ describe('McpManager', () => {
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: toolSet('search'),
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
@@ -220,7 +316,7 @@ describe('McpManager', () => {
       [AI_DEV.url]: toolSet('task', 'kb'),
       [GITHUB.url]: toolSet('search'),
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
@@ -232,7 +328,7 @@ describe('McpManager', () => {
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: new Error('401 unauthorized'),
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
@@ -246,7 +342,7 @@ describe('McpManager', () => {
       [AI_DEV.url]: toolSet('task'),
       [GITHUB.url]: toolSet('search'),
     });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     mgr.register(GITHUB);
 
@@ -255,7 +351,7 @@ describe('McpManager', () => {
 
   it('closeAll() tears down connections and marks them disconnected', async () => {
     const { connect, closes } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     await mgr.connect('ai-dev');
 
@@ -266,7 +362,7 @@ describe('McpManager', () => {
 
   it('unregister() removes and tears down; unknown ids are null/no-op', async () => {
     const { connect } = factory({ [AI_DEV.url]: toolSet('task') });
-    const mgr = new McpManager({ connect, idleMs: 0 });
+    const mgr = new McpManager({ connect });
     mgr.register(AI_DEV);
     await mgr.unregister('ai-dev');
 

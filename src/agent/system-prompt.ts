@@ -111,6 +111,11 @@ DOM handle. Every read and every change is a tool call routed to the page.
   labels, and current values: they return text and are far cheaper than an image.
 - **Spend vision deliberately.** \`screenshot\` costs vision tokens. Use it to set a baseline, to verify a
   visual change, and to self-correct — not to read text you could get from the DOM or the a11y tree.
+- **A screenshot can only capture the ACTIVE tab.** The browser grabs whatever tab is frontmost in the
+  window, so \`screenshot\` / \`responsiveCapture\` / \`inspectVisually\` on a background tab (a reference
+  site you opened) is refused rather than silently returning the other tab's pixels. Call
+  \`tabs({ action: 'activate', tabId })\` first, capture, then activate the user's tab again — text reads
+  (\`describe\`, \`extractIdentity\`, \`query\`, \`getStyles\`) need no activation and are usually enough.
 - **Describe in text when you can.** Prefer \`describe\` / \`extractIdentity\` to turn a page, region, or
   image into words (layout regions, palette, type scale): cheaper than repeated screenshots and reusable
   — capture a site's identity once, then copy it and report in its own tokens.

@@ -51,12 +51,17 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 | dev | `bun run dev` (WXT, HMR) · `bun run dev:firefox` |
 | build | `bun run build` · release: `bun run release` (build + zip, minified) |
 | local | `bun run local` — install/prepare if needed, build, print load-unpacked path (`--firefox`, `--check`, `--zip`) |
-| test | `bun run test` · unit: `test:unit` · integration: `test:integration` · e2e: `test:e2e` |
-| check | `bun run typecheck` · `bun run lint` (fix: `lint:fix`) |
+| test | `bun run test` · unit: `test:unit` · integration: `test:integration` · e2e: `test:e2e` · only what your diff touches: `test:changed` |
+| check | `bun run typecheck` (tsgo) · `bun run lint` (fix: `lint:fix`) |
+| gate | `bun run check` (lint+typecheck, concurrent) · `bun run verify` (+ tests) · `bun run gate` (+ build + e2e) |
+
+Parallelism: vitest uses every core, playwright ~1 worker per 3 cores. Throttle with
+`DZ_TEST_WORKERS` / `DZ_E2E_WORKERS`. `typecheck` runs **tsgo** (the native TS port, ~6x
+faster than tsc); `typecheck:tsc` still runs stock tsc if you need to bisect a disagreement.
 
 ## Before a PR
 
-- `bun run lint` clean, `bun run typecheck` clean, unit + integration green.
+- `bun run verify` clean (lint + typecheck + unit + integration).
 - New module → add a unit test. New cross-world flow → add an integration test.
 
 ## Readiness + Start
