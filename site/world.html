@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Designer world, developerz.ai Designer</title>
+    <meta
+      name="description"
+      content="A scroll flight through the Designer loop: any page you own, click anything, say it in plain English, watch the page change, ship one real PR."
+    />
+    <link rel="canonical" href="https://designer.developerz.ai/world" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="color-scheme" content="dark" />
+    <!-- Dark launch (#160): unlinked and medialess until the reveal issue lands the
+         media + nginx rule; must not be indexable while /world.html resolves through
+         the try_files fallback. The reveal issue removes this meta. -->
+    <meta name="robots" content="noindex" />
+
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <link rel="preload" href="/fonts/manrope-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+
+    <!-- Pre-paint critical shell: avoids a light flash before the bundle loads. -->
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      html {
+        background: #0a0a0f;
+      }
+      body {
+        background: #0a0a0f;
+        color: #f8fafc;
+        font-family: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        font-size: 16px;
+        line-height: 1.65;
+        min-height: 100dvh;
+        -webkit-font-smoothing: antialiased;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <main id="main">
+      <!-- Static fallback. The scroll-world engine builds every string client-side via
+           innerHTML, so the real copy must live here or it is invisible to crawlers
+           and to a JS-disabled reader. world.ts hides this block before mounting. -->
+      <div class="world-static" id="world-static">
+        <header class="world-static__top">
+          <div class="container world-static__topbar">
+            <a class="world-static__brand" href="/">
+              <img class="world-static__logo" src="/logo.png" alt="" width="302" height="302" />
+              <span>developerz.ai<span class="world-static__sub"> Designer</span></span>
+            </a>
+            <nav class="world-static__nav" aria-label="Scenes">
+              <a href="#scene-page">The Page</a>
+              <a href="#scene-pick">The Pick</a>
+              <a href="#scene-talk">Talk</a>
+              <a href="#scene-see">See</a>
+              <a href="#scene-ship">Ship</a>
+            </nav>
+            <a class="world-static__cta" href="/#notify">Join the waitlist</a>
+          </div>
+        </header>
+
+        <div class="container container--narrow">
+          <p class="eyebrow">The Designer world</p>
+          <h1 class="world-static__title">Design in the live page. Ship the real code.</h1>
+          <p class="world-static__intro">
+            A scroll flight through the Designer loop, from any page you own to one real PR.
+          </p>
+
+          <section class="world-static__scene" id="scene-page" style="--scene-accent: #6366f1">
+            <p class="world-static__scene-eyebrow">01 · The Page</p>
+            <h2>Any page you own.</h2>
+            <p>Your prod app, a staging build, or <code>localhost</code>.</p>
+          </section>
+
+          <section class="world-static__scene" id="scene-pick" style="--scene-accent: #6366f1">
+            <p class="world-static__scene-eyebrow">02 · The Pick</p>
+            <h2>Click anything.</h2>
+            <p>The agent sees exactly what you see.</p>
+          </section>
+
+          <section class="world-static__scene" id="scene-talk" style="--scene-accent: #8b5cf6">
+            <p class="world-static__scene-eyebrow">03 · Talk</p>
+            <h2>Say it in plain English.</h2>
+            <p>&ldquo;Make the hero full-bleed, tighten the nav.&rdquo;</p>
+          </section>
+
+          <section class="world-static__scene" id="scene-see" style="--scene-accent: #10b981">
+            <p class="world-static__scene-eyebrow">04 · See</p>
+            <h2>Watch the page change.</h2>
+            <p>It mutates the real DOM and CSS while you react.</p>
+          </section>
+
+          <section class="world-static__scene" id="scene-ship" style="--scene-accent: #8b5cf6">
+            <p class="world-static__scene-eyebrow">05 · Ship</p>
+            <h2>One click, one real PR.</h2>
+            <p>A changeset goes over MCP; your dev agent edits the source.</p>
+            <p><a class="world-static__scene-cta" href="/#notify">Join the waitlist</a></p>
+          </section>
+
+          <!-- Poster fallback: stands in for the scrubbed clips when JS is off or the
+               media has not landed yet. Keep dimensions in sync with the generated stills. -->
+          <img
+            class="world-static__poster"
+            src="/world-assets/v1/img/01-page.webp"
+            alt="A web app open in Chrome with the Designer side panel docked alongside the page."
+            width="1920"
+            height="1080"
+          />
+        </div>
+      </div>
+
+      <!-- Engine mount container. The pre-JS scroll reservation (min-height: 1110vh)
+           lives on #world in world.scss — never on .sw-track, which the engine only
+           creates at runtime. Do not hand-write a .sw-track here: the engine appends
+           its own and never clears the container. -->
+      <div id="world"></div>
+
+      <footer class="container world-foot">
+        <p>
+          Made with <a href="https://github.com/KubeezMedia/kubeez-scroll-world-video" rel="noopener">Kubeez</a>
+          · &copy; 2026 developerz.ai. <a href="/">Back to the Designer waitlist</a>.
+        </p>
+      </footer>
+    </main>
+
+    <!-- Load order is load-bearing: the classic, blocking engine script defines
+         window.mountScrollWorld before the deferred module below calls it. -->
+    <script src="/world-assets/v1/scrub-engine.js"></script>
+    <script type="module" src="/src/world/world.ts"></script>
+  </body>
+</html>
