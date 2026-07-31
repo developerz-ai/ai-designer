@@ -7,17 +7,17 @@ Related: [RELEASING.md](./RELEASING.md) for how a tag turns into a build.
 
 ## Secrets, at a glance
 
-| Secret | Store | Where it comes from |
-|--|--|--|
-| `CRX_PRIVATE_KEY` | self-hosted `.crx` | `keys/designer.pem` from the first local build — **ours, not a store's** |
-| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload |
-| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) |
-| `CWS_CLIENT_SECRET` | Chrome | same OAuth client |
-| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client |
-| `AMO_JWT_ISSUER` | Firefox | AMO Developer Hub → API keys |
-| `AMO_JWT_SECRET` | Firefox | same page, shown **once** |
+| Secret | Store | Where it comes from | Set? |
+|--|--|--|--|
+| `CRX_PRIVATE_KEY` | self-hosted `.crx` | `keys/designer.pem` from the first local build — **ours, not a store's** | ✅ |
+| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload | |
+| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) | |
+| `CWS_CLIENT_SECRET` | Chrome | same OAuth client | |
+| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client | |
+| `AMO_JWT_ISSUER` | Firefox | AMO Developer Hub → API keys | |
+| `AMO_JWT_SECRET` | Firefox | same page, shown **once** | |
 
-## 1. Signing key (do this first, no account needed)
+## 1. Signing key — **done**, but see the backup note
 
 ```bash
 bun run build                     # generates keys/designer.pem on first run
@@ -25,9 +25,18 @@ bun run crx:id                    # the extension id this key produces
 gh secret set CRX_PRIVATE_KEY < keys/designer.pem
 ```
 
-Back the PEM up somewhere durable (password manager / secret store). It is the extension
-identity for self-hosted installs and for the `https://<id>.chromiumapp.org/` OAuth redirect.
-The Chrome Web Store does **not** use this key — it assigns its own.
+Status: `CRX_PRIVATE_KEY` is set on the repo (2026-07-31). Its extension ID —
+**`cmedikfcignmlchbfhliepgkafoopceh`** — is the fingerprint: any restored copy of the PEM
+is the right one iff `bun run crx:id` prints that string.
+
+> **A repo secret is not a backup.** GitHub secrets are write-only: once set, nobody —
+> not you, not CI logs, not the API — can read the value back. It is safe for Actions to
+> *use*, and useless for recovery. The only real backup is `keys/designer.pem` itself, in a
+> password manager or secret store, kept off git.
+>
+> Lose the PEM and every self-hosted install becomes a different extension, and the
+> `https://<id>.chromiumapp.org/` OAuth redirect registered with any MCP provider stops
+> matching (`src/mcp/auth.ts`). The Chrome Web Store is unaffected — it assigns its own key.
 
 ## 2. Chrome Web Store
 
@@ -94,7 +103,7 @@ AMO signs the `.xpi` on its side, so there is no key to keep.
 Once the accounts exist, what I need from you is just these, as repo secrets:
 
 ```bash
-gh secret set CRX_PRIVATE_KEY < keys/designer.pem
+gh secret set CRX_PRIVATE_KEY < keys/designer.pem   # done
 gh secret set CWS_EXTENSION_ID
 gh secret set CWS_CLIENT_ID
 gh secret set CWS_CLIENT_SECRET
