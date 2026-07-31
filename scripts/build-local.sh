@@ -71,7 +71,7 @@ Load it:
 EOF
 else
   cat <<EOF
-Load it:
+Load it (this is the one to QA — Chrome blocks drag-installing a .crx):
   1. chrome://extensions
   2. Developer mode → on
   3. Load unpacked → $ABS
@@ -81,10 +81,13 @@ EOF
 fi
 
 if [ "$ZIP" = 1 ]; then
-  printf '\nZips: %s\n' "$(cd build && ls -1 ./*.zip 2>/dev/null | tr '\n' ' ')"
+  printf '\nZip:  %s\n' "$(cd build && ls -1 ./*.zip 2>/dev/null | tr '\n' ' ')"
 fi
 
-# Chrome builds also sign a .crx (scripts/pack-crx.sh, run by `bun run build`).
+# Chrome builds also sign a .crx (scripts/pack-crx.sh, run by `bun run build`) — same key
+# as the manifest pins, so unpacked and packed share one extension ID.
 if [ "$BROWSER" = chrome ]; then
-  printf 'CRX:  %s\n' "$(cd build && ls -1 ./*.crx 2>/dev/null | tr '\n' ' ')"
+  printf '\nCRX:  %s  (self-hosted distribution)\n' \
+    "$(cd build && ls -1 ./*.crx 2>/dev/null | tr '\n' ' ')"
+  printf 'ID:   %s  (same for unpacked + crx)\n' "$(bun scripts/crx-key.ts --id)"
 fi

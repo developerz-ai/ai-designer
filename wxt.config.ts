@@ -1,4 +1,31 @@
 import { defineConfig } from 'wxt';
+import { extensionId, publicKeyBase64 } from './scripts/crx-key';
+
+// Pin the extension ID by baking the public half of the signing key into the manifest.
+// Without it every fresh profile / rebuild gets a random ID, and the OAuth redirect
+// (https://<id>.chromiumapp.org/, src/mcp/auth.ts) registered with an MCP provider stops
+// matching. Chrome-only: MV2/Firefox has no `key` field and would warn on it.
+const CRX_PUBLIC_KEY = publicKeyBase64();
+if (CRX_PUBLIC_KEY) {
+  console.info(`\x1b[2mextension id: ${extensionId(CRX_PUBLIC_KEY)}\x1b[0m`);
+}
+
+// The git tag is the version. WXT otherwise falls back to package.json, so tagging v1.4.0
+// would have shipped a manifest still reading 1.0.0 — and the Chrome Web Store rejects an
+// upload whose version isn't higher than the published one. GITHUB_REF_NAME is only trusted
+// when it parses as a version (it is "main" on a branch push); EXT_VERSION forces it locally.
+const TAG = (process.env.EXT_VERSION ?? process.env.GITHUB_REF_NAME ?? '').replace(/^v/, '');
+const RELEASE_VERSION = /^\d+(\.\d+){0,3}([-+][0-9A-Za-z.-]+)?$/.test(TAG) ? TAG : null;
+// Chrome's `version` is 1-4 dot-separated integers — a `-beta.1` suffix is invalid there,
+// so it lives in `version_name`, which is free-form and what the UI actually displays.
+const MANIFEST_VERSION = RELEASE_VERSION?.match(/^\d+(\.\d+){0,3}/)?.[0];
+const VERSION_FIELDS =
+  MANIFEST_VERSION && RELEASE_VERSION
+    ? {
+        version: MANIFEST_VERSION,
+        ...(RELEASE_VERSION === MANIFEST_VERSION ? {} : { version_name: RELEASE_VERSION }),
+      }
+    : {};
 
 // WXT config — https://wxt.dev/api/config.html
 // Release builds are tree-shaken + minified + css-optimized via the vite block below.
@@ -16,7 +43,13 @@ export default defineConfig({
   // `wxt prepare` generates _locales/ + the typed `#i18n` module. default_locale below is
   // required for the manifest __MSG_*__ substitutions to resolve.
   modules: ['@wxt-dev/module-solid', '@wxt-dev/i18n/module'],
-  manifest: {
+  manifest: ({ browser }) => ({
+    ...VERSION_FIELDS,
+    // `key` pins the ID for local/self-hosted builds. The Chrome Web Store assigns its own
+    // key, so store uploads omit it — see CWS_UPLOAD=1 below and docs/RELEASING.md.
+    ...(browser === 'chrome' && CRX_PUBLIC_KEY && !process.env.CWS_UPLOAD
+      ? { key: CRX_PUBLIC_KEY }
+      : {}),
     // Localized via src/locales/en.yml (top-level flat keys → generated _locales messages).
     default_locale: 'en',
     name: '__MSG_extName__',
@@ -67,7 +100,7 @@ export default defineConfig({
       '48': '/icon/icon-48.png',
       '128': '/icon/icon-128.png',
     },
-  },
+  }),
   vite: () => ({
     build: {
       target: 'esnext',

@@ -38,14 +38,32 @@ trap cleanup EXIT
 NEW_KEY=0
 [ -f "$KEY_PATH" ] || NEW_KEY=1
 
-VERSION="$(node -p "require('./package.json').version")"
+# From the built manifest, not package.json — in CI the git tag drives the version
+# (wxt.config.ts), so package.json would name the file after a stale number.
+VERSION="$(node -p "require('./$SRC/manifest.json').version")"
 NAME="$(basename "$SRC")"                      # chrome-mv3
 CRX="build/designer-${VERSION}-${NAME}.crx"
 
 mkdir -p "$(dirname "$KEY_PATH")"
+# Sweep older versions of this target first — the filename carries the version, so without
+# this build/ accumulates one .crx per version ever built and "the latest one" gets ambiguous.
+rm -f "build/designer-"*"-${NAME}.crx"
 bunx crx3 -p "$KEY_PATH" -o "$CRX" -- "$SRC" > /dev/null
+
+# The manifest pins `key` (wxt.config.ts) and the .crx carries a signature. Chrome refuses
+# to install a .crx where the two disagree, and the failure surfaces as an opaque
+# "package is invalid" at install time — catch it here instead.
+SIGNING_PUB="$(env -u CRX_PUBLIC_KEY -u CRX_PRIVATE_KEY CRX_KEY_PATH="$KEY_PATH" bun scripts/crx-key.ts --key)"
+MANIFEST_PUB="$(node -p "require('./$SRC/manifest.json').key || ''")"
+
+if [ -n "$MANIFEST_PUB" ] && [ "$MANIFEST_PUB" != "$SIGNING_PUB" ]; then
+  echo "pack-crx: $SRC/manifest.json 'key' does not match the signing key ($KEY_PATH)." >&2
+  echo "          Rebuild so both come from the same PEM — Chrome rejects the mismatch." >&2
+  exit 1
+fi
 
 if [ "$NEW_KEY" = 1 ] && [ "$CLEANUP_KEY" = 0 ]; then
   printf '\033[1;33m! generated a new signing key at %s — back it up; it defines the extension ID\033[0m\n' "$KEY_PATH"
 fi
 printf '\033[1;32m✓ crx\033[0m     %s\n' "$CRX"
+printf '  id      %s\n' "$(env -u CRX_PUBLIC_KEY CRX_KEY_PATH="$KEY_PATH" bun scripts/crx-key.ts --id)"

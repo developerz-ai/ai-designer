@@ -48,9 +48,13 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-      # --- Chrome Web Store publish (optional) -------------------------------
-      # Enable once the store listing + secrets exist. Requires repo secrets:
+      # --- Chrome Web Store publish (deliberately off until manual QA passes) ----
+      # Setup, account by account: docs/STORE-SETUP.md. Needs repo secrets
       #   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
+      # `zip:store` rebuilds with CWS_UPLOAD=1, which drops the manifest `key` — the store
+      # assigns its own, and an upload carrying ours is rejected.
+      # - name: Build store zip
+      #   run: bun run zip:store
       # - name: Publish to Chrome Web Store
       #   run: bunx chrome-webstore-upload-cli@3 upload --auto-publish \
       #     --source build/*-chrome.zip \
@@ -58,3 +62,11 @@ jobs:
       #     --client-id "${{ secrets.CWS_CLIENT_ID }}" \
       #     --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
       #     --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"
+
+      # --- Firefox AMO publish (blocked on code, not credentials) ---------------
+      # The firefox target builds but uses chrome.sidePanel / chrome.debugger, which
+      # Firefox does not implement. See docs/STORE-SETUP.md before enabling.
+      # - name: Publish to AMO
+      #   run: bunx web-ext sign --channel listed --source-dir build/firefox-mv2 \
+      #     --api-key "${{ secrets.AMO_JWT_ISSUER }}" \
+      #     --api-secret "${{ secrets.AMO_JWT_SECRET }}"

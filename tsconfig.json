@@ -38,6 +38,7 @@
     ".wxt/types/imports.d.ts",
     "src",
     "test",
+    "scripts",
     "wxt.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"
