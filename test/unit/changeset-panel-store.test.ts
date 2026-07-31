@@ -3,6 +3,7 @@ import {
   reduceChangeset,
   reduceTasks,
   saveMarkdown,
+  type TaskStatus,
 } from '@/entrypoints/sidepanel/stores/changeset';
 import type { Changeset, Edit } from '@/shared/changeset';
 import type { PanelToSw, SwToPanel } from '@/shared/messages';
@@ -42,6 +43,7 @@ describe('reduceTasks', () => {
     expect(reduceTasks([], taskQueued)).toEqual([
       {
         taskId: 't1',
+        key: 't1',
         title: 'Fix contrast',
         index: 0,
         total: 2,
@@ -60,6 +62,33 @@ describe('reduceTasks', () => {
     ]);
   });
 
+  it('keeps one row per failed create, which never got a taskId', () => {
+    // src/mcp/handoff.ts `dispatchTask` emits its catch with `taskId: ''` (the create threw before
+    // an id existed). Keyed on taskId alone, three failures collapsed onto one row reading
+    // "task 3/3" — so the user saw one error and believed two tasks had been created.
+    const failed = (index: number) => ({
+      ...taskQueued,
+      taskId: '',
+      title: `Problem ${index + 1}`,
+      index,
+      total: 3,
+      status: 'error',
+      error: 'backend unreachable',
+    });
+    const next = [0, 1, 2].reduce((acc, i) => reduceTasks(acc, failed(i)), [] as TaskStatus[]);
+
+    expect(next).toHaveLength(3);
+    expect(next.map((t) => t.key)).toEqual(['idx:0', 'idx:1', 'idx:2']);
+    expect(next.map((t) => t.title)).toEqual(['Problem 1', 'Problem 2', 'Problem 3']);
+  });
+
+  it('still upserts a failed task by index when its status pushes twice', () => {
+    const first = { ...taskQueued, taskId: '', index: 1, status: 'queued' };
+    const then = { ...first, status: 'error' };
+    const next = reduceTasks(reduceTasks([], first), then);
+    expect(next.map((t) => [t.key, t.status])).toEqual([['idx:1', 'error']]);
+  });
+
   it('ignores unrelated messages', () => {
     const msg = { type: 'error', message: 'boom' } as SwToPanel;
     expect(reduceTasks([], msg)).toEqual([]);
@@ -74,6 +103,23 @@ function installChromeFake(handle: SendMessage): { sendMessage: ReturnType<typeo
   const sendMessage = vi.fn(async (msg: unknown) => handle(msg as PanelToSw));
   (globalThis as { chrome?: unknown }).chrome = { runtime: { sendMessage } };
   return { sendMessage };
+}
+
+// Port fake for the push stream `initChangesetStore` folds (mirrors chat-panel-store.test.ts's).
+function installPortFake(): { emit: (msg: SwToPanel) => void } {
+  const listeners: Array<(msg: unknown) => void> = [];
+  const port = {
+    onMessage: { addListener: (fn: (msg: unknown) => void) => listeners.push(fn) },
+    onDisconnect: { addListener: (_fn: () => void) => {} },
+    postMessage: () => {},
+  };
+  const chromeFake = (globalThis as { chrome?: { runtime?: Record<string, unknown> } }).chrome;
+  if (chromeFake?.runtime) chromeFake.runtime.connect = () => port;
+  return {
+    emit: (msg) => {
+      for (const fn of listeners) fn(msg);
+    },
+  };
 }
 
 // jsdom doesn't implement URL.createObjectURL/revokeObjectURL — add them as plain static props
@@ -105,6 +151,26 @@ describe('changeset store actions', () => {
     );
     expect(store.shipping()).toBe(false);
     expect(store.error()).toBeNull();
+  });
+
+  it('a second ship starts a fresh timeline instead of appending to the first', async () => {
+    // Two fan-outs stacked in one list read as a single six-task dispatch — each ship's rows carry
+    // their own "task 1/2" counters.
+    vi.resetModules();
+    installUrlFake();
+    installChromeFake(() => ({ ok: true, routed: 'tasks', taskCount: 1 }));
+    const store = await import('@/entrypoints/sidepanel/stores/changeset');
+    const port = installPortFake();
+
+    store.initChangesetStore();
+    await store.ship();
+    port.emit({ ...taskQueued, taskId: 'first-ship' });
+    expect(store.tasks).toHaveLength(1);
+
+    await store.ship();
+    expect(store.tasks).toHaveLength(0);
+    port.emit({ ...taskQueued, taskId: 'second-ship' });
+    expect(store.tasks.map((t) => t.taskId)).toEqual(['second-ship']);
   });
 
   it('ship() surfaces a failure without downloading anything', async () => {

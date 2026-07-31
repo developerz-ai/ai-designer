@@ -1,0 +1,42 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// Tool activity is the *card* grammar in a surface that is otherwise unboxed prose — that
+// contrast is what makes an assistant turn readable as a document with a machine's working
+// notes attached, rather than as a wall of chat. Geometry only; the card itself is ToolChip.
+.dz-tool-call-list {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  &__item {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-1;
+  }
+
+  // Pending = "requested, never heard back". It borrows ToolChip's spinner glyph but must not
+  // spin: a chip that spins forever after the turn settled reads as a hung UI. The muted status
+  // color is ToolChip's default, so only the animation needs stilling.
+  &__item--pending .dz-icon--spin {
+    animation: none;
+  }
+
+  // The outcome word. Hidden on screen — the chip's glyph and border already carry it visually —
+  // but present in the accessibility tree, which color and an aria-hidden icon are not.
+  &__status {
+    @include mixins.visually-hidden;
+  }
+
+  &__error {
+    margin: 0;
+    padding-left: tokens.$dz-space-2;
+    color: var(--dz-status-error);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere; // tool errors quote selectors; they must not widen the 360px panel
+  }
+}

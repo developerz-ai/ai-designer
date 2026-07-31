@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildIconClass,
   buildIconSvg,
   ICON_NAMES,
   type IconName,
@@ -59,5 +60,36 @@ describe('buildIconSvg', () => {
     const send = buildIconSvg('send' satisfies IconName);
     const trash = buildIconSvg('trash' satisfies IconName);
     expect(send.getAttribute('data-icon')).not.toBe(trash.getAttribute('data-icon'));
+  });
+
+  // Generic over ICON_NAMES so registering a glyph is covered without touching this
+  // file — a bad import (wrong FontAwesome export, undefined definition) fails here.
+  it('builds a distinct, non-empty glyph for every registered name', () => {
+    const seen = new Set<string>();
+    for (const name of ICON_NAMES) {
+      const svg = buildIconSvg(name);
+      const dataIcon = svg.getAttribute('data-icon');
+      expect(dataIcon, name).toBeTruthy();
+      expect(svg.querySelector('path')?.getAttribute('d')?.length ?? 0, name).toBeGreaterThan(0);
+      expect(seen.has(dataIcon ?? ''), `duplicate glyph for "${name}"`).toBe(false);
+      seen.add(dataIcon ?? '');
+    }
+    expect(seen.size).toBe(ICON_NAMES.length);
+  });
+});
+
+describe('buildIconClass', () => {
+  it('defaults to the em-relative md size', () => {
+    expect(buildIconClass()).toBe('dz-icon dz-icon--md');
+  });
+
+  it('adds the fixed modifier so chrome glyphs stop scaling with the parent font-size', () => {
+    expect(buildIconClass({ size: 'sm', fixed: true })).toBe('dz-icon dz-icon--sm dz-icon--fixed');
+  });
+
+  it('keeps spin and a caller-supplied class alongside the size modifiers', () => {
+    expect(buildIconClass({ size: 'lg', fixed: true, spin: true, class: 'dz-header__glyph' })).toBe(
+      'dz-icon dz-icon--lg dz-icon--fixed dz-icon--spin dz-header__glyph',
+    );
   });
 });

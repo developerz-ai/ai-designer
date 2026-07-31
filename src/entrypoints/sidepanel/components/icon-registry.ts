@@ -1,23 +1,31 @@
 import type { AbstractElement, IconDefinition } from '@fortawesome/fontawesome-svg-core';
 import { icon as faIcon } from '@fortawesome/fontawesome-svg-core';
 import {
+  faArrowDown,
   faArrowLeft,
   faArrowPointer,
+  faArrowUp,
   faArrowUpRightFromSquare,
   faBug,
   faCheck,
   faChevronDown,
   faCircleDot,
+  faCircleInfo,
   faClockRotateLeft,
   faCodeBranch,
   faCodeCompare,
+  faCommentDots,
   faCopy,
   faDownload,
+  faEllipsisVertical,
   faEye,
   faFileLines,
   faGear,
   faGlobe,
+  faMagnifyingGlass,
+  faPaperclip,
   faPaperPlane,
+  faPenToSquare,
   faPlug,
   faPlus,
   faRocket,
@@ -26,6 +34,7 @@ import {
   faSpinner,
   faTrash,
   faTriangleExclamation,
+  faUpRightAndDownLeftFromCenter,
   faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
@@ -63,6 +72,17 @@ const REGISTRY = {
   undo: faRotateLeft,
   redo: faRotateRight,
   diff: faCodeCompare,
+  // Panel-shell glyphs, registered ahead of their consumers so no later slice has to
+  // reopen this file (a shared file is a serialization point between parallel slices).
+  arrowUp: faArrowUp, // circular send affordance
+  arrowDown: faArrowDown, // scroll-to-latest
+  compose: faPenToSquare, // new conversation
+  more: faEllipsisVertical, // overflow menu
+  expand: faUpRightAndDownLeftFromCenter, // open the panel full-window
+  info: faCircleInfo,
+  search: faMagnifyingGlass,
+  chat: faCommentDots,
+  attach: faPaperclip,
 } as const satisfies Record<string, IconDefinition>;
 
 /**
@@ -80,6 +100,13 @@ export type IconSize = 'sm' | 'md' | 'lg';
 export interface IconClassOptions {
   size?: IconSize;
   spin?: boolean;
+  /**
+   * Sizes the glyph in absolute px (the --dz-icon-size-* tokens) instead of `em`.
+   * The `em` default is right for an icon inline with a label, and wrong for chrome:
+   * a header ghost action inside a container carrying `font-size: 0.8em` otherwise
+   * shrinks with it. Use for toolbar/header/button glyphs that must not scale.
+   */
+  fixed?: boolean;
   class?: string;
 }
 
@@ -91,6 +118,7 @@ export interface IconClassOptions {
 export function buildIconClass(options: IconClassOptions = {}): string {
   const size = options.size ?? 'md';
   const classes = ['dz-icon', `dz-icon--${size}`];
+  if (options.fixed) classes.push('dz-icon--fixed');
   if (options.spin) classes.push('dz-icon--spin');
   if (options.class) classes.push(options.class);
   return classes.join(' ');

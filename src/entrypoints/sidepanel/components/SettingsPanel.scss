@@ -1,20 +1,31 @@
 @use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
 
+// D4 scroll contract: `.dz-app__body` clips, so every non-chat surface is its own single
+// scroller. Without the `flex: 1; min-height: 0` pair the root has no bounded height and
+// the scroll region never engages.
 .dz-settings {
-  padding: tokens.$dz-space-4;
+  @include mixins.scroll-area;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: tokens.$dz-space-4;
+  min-height: 0;
+  padding: tokens.$dz-space-6;
 
+  // One card per setting group — the flat 12px column gave labels, values and actions the
+  // same weight and no grouping at all.
   &__section {
+    @include mixins.card('card', tokens.$dz-space-4, tokens.$dz-radius-lg);
     display: flex;
     flex-direction: column;
-    gap: tokens.$dz-space-2;
+    gap: tokens.$dz-space-3;
   }
 
   &__label {
-    color: var(--dz-muted);
+    color: var(--dz-fg-strong);
     font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
   }
 
   &__presetrow,
@@ -25,68 +36,66 @@
   }
 
   &__url {
-    margin-top: tokens.$dz-space-2;
+    margin-top: tokens.$dz-space-1;
   }
 
   input,
   select {
+    @include mixins.surface('inset', 'strong', tokens.$dz-radius);
+    @include mixins.focus-ring;
     flex: 1;
     min-width: 0;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
+    height: tokens.$dz-control-md;
+    padding: 0 tokens.$dz-space-3;
     color: var(--dz-fg);
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
     font: inherit;
+    font-size: tokens.$dz-font-md;
+
+    &::placeholder {
+      color: var(--dz-fg-muted);
+    }
 
     &:disabled {
       opacity: 0.5;
     }
   }
 
-  button {
-    background: var(--dz-accent);
-    border: none;
-    border-radius: var(--dz-radius);
-    color: var(--dz-accent-fg);
-    padding: 0 tokens.$dz-space-5;
-    cursor: pointer;
-    font: inherit;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
+  // Every unclassed button here is a primary action (Refresh, Save). The ghost variant is
+  // excluded rather than overridden: `.dz-settings button` outranks `.dz-settings__ghost`,
+  // so an override would lose and the ghost would render accent-filled.
+  button:not(#{&}__ghost) {
+    @include mixins.button-primary;
+    flex: none;
   }
 
   &__save {
     align-self: flex-start;
-    padding: tokens.$dz-space-2 tokens.$dz-space-5;
   }
 
   &__ghost {
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    color: var(--dz-muted);
+    @include mixins.button-ghost;
+    flex: none;
+    color: var(--dz-fg-body);
   }
 
   &__status {
     margin: 0;
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
-    color: var(--dz-muted);
 
     &.is-ok {
-      color: var(--dz-accent);
+      color: var(--dz-status-connected);
     }
 
     &.is-bad {
-      color: tokens.$dz-danger;
+      color: var(--dz-status-error);
     }
   }
 
   &__hint {
     margin: 0;
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
-    color: var(--dz-muted);
+    line-height: tokens.$dz-leading-snug;
   }
 }

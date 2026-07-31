@@ -1,4 +1,4 @@
-import { createSignal, Show } from 'solid-js';
+import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import type { McpServer } from '@/shared/messages';
 import { Icon } from './Icon';
@@ -20,11 +20,56 @@ export function AuthDialog(props: AuthDialogProps) {
   const [mode, setMode] = createSignal<Mode>(
     props.server.authKind === 'oauth' ? 'oauth' : 'apikey',
   );
+  let dialogRef!: HTMLDivElement;
   let keyInput!: HTMLInputElement;
   let authEndpoint!: HTMLInputElement;
   let tokenEndpoint!: HTMLInputElement;
   let clientId!: HTMLInputElement;
   let scope!: HTMLInputElement;
+
+  // The modal contract `aria-modal="true"` promises, implemented the way `Onboarding.tsx` does:
+  // move focus in, keep Tab inside, Escape closes, and focus returns where it came from. This is
+  // the one screen in the panel where a CREDENTIAL is typed — with focus left on the "Authorize"
+  // button behind it, Tab walked out into content ARIA has declared inert, where a screen reader
+  // announces nothing (#165 S7).
+  let invoker: HTMLElement | null = null;
+  onMount(() => {
+    invoker = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    focusable()[0]?.focus();
+  });
+  // Restoring focus to the element that opened the dialog belongs to the dialog, not its caller:
+  // captured above at mount, so no parent has to hold a ref across the close.
+  onCleanup(() => invoker?.focus());
+
+  /** The dialog's tab ring, in DOM order. Re-queried per keystroke — the form swaps entirely
+   *  between the API-key and OAuth tabs. */
+  function focusable(): HTMLElement[] {
+    return [
+      ...dialogRef.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), a[href]',
+      ),
+    ];
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      props.onClose();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const ring = focusable();
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (!first || !last) return;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 
   const pending = () => authPending() === props.server.id;
 
@@ -55,7 +100,14 @@ export function AuthDialog(props: AuthDialogProps) {
         aria-label={i18n.t('auth.backdrop.ariaLabel')}
         onClick={props.onClose}
       />
-      <div class="dz-authdialog" role="dialog" aria-modal="true">
+      <div
+        ref={dialogRef}
+        class="dz-authdialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={i18n.t('auth.title', { label: props.server.label })}
+        onKeyDown={onKeyDown}
+      >
         <header class="dz-authdialog__header">
           <strong>{i18n.t('auth.title', { label: props.server.label })}</strong>
           <button

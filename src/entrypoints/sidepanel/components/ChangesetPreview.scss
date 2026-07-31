@@ -1,7 +1,13 @@
 @use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
 
+// D4 scroll contract: `.dz-app__body` clips, and this surface keeps its two-part shape —
+// a `flex: none` action bar pinned at the top with `__list` as the single scroll region
+// beneath it. The bar must stay put while the edits scroll, so the scroller is the list,
+// not the root (the root only supplies the bounded height that makes it engage).
 .dz-diff {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   height: 100%;
@@ -12,14 +18,14 @@
     justify-content: space-between;
     gap: tokens.$dz-space-2;
     flex: none;
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    border-bottom: 1px solid var(--dz-border);
+    padding: tokens.$dz-space-2 tokens.$dz-space-6;
+    border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
   &__count {
     font-size: tokens.$dz-font-sm;
-    font-weight: 600;
-    color: var(--dz-muted);
+    font-weight: tokens.$dz-weight-medium;
+    color: var(--dz-fg-muted);
   }
 
   &__actions {
@@ -29,45 +35,29 @@
   }
 
   &__action {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    font: inherit;
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
+    padding: 0 tokens.$dz-space-2;
     font-size: tokens.$dz-font-sm;
-    cursor: pointer;
-
-    &:hover:not(:disabled) {
-      background: var(--dz-surface-overlay);
-    }
-
-    &:disabled {
-      opacity: 0.4;
-      cursor: default;
-    }
 
     &--danger:hover:not(:disabled) {
-      border-color: tokens.$dz-danger;
-      color: tokens.$dz-danger;
+      border-color: var(--dz-status-error);
+      color: var(--dz-status-error);
     }
 
     // Armed two-click confirm (#142): the danger styling holds without hover so the armed
     // state reads as "about to fire".
     &--armed:not(:disabled) {
-      border-color: tokens.$dz-danger;
-      color: tokens.$dz-danger;
+      border-color: var(--dz-status-error);
+      color: var(--dz-status-error);
     }
   }
 
   &__empty {
     margin: 0;
-    padding: tokens.$dz-space-4;
-    color: var(--dz-muted);
+    padding: tokens.$dz-space-6;
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-body;
   }
 
   &__error {
@@ -75,30 +65,27 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     margin: 0;
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    color: tokens.$dz-danger;
+    padding: tokens.$dz-space-2 tokens.$dz-space-6;
+    color: var(--dz-status-error);
     font-size: tokens.$dz-font-sm;
   }
 
   &__list {
+    @include mixins.scroll-area;
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
     margin: 0;
-    padding: tokens.$dz-space-3;
+    padding: tokens.$dz-space-4 tokens.$dz-space-6;
     list-style: none;
-    overflow-y: auto;
     min-height: 0;
   }
 
   &__item {
+    @include mixins.card('card', tokens.$dz-space-3, tokens.$dz-radius-lg);
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
-    padding: tokens.$dz-space-3;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    background: var(--dz-surface-overlay);
   }
 
   &__head {
@@ -108,14 +95,10 @@
   }
 
   &__selector {
+    @include mixins.mono;
+    @include mixins.truncate;
     flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-sm;
-    color: var(--dz-fg);
+    color: var(--dz-fg-strong);
   }
 
   &__fragile {
@@ -123,39 +106,27 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     flex: none;
-    color: tokens.$dz-status-warning;
+    color: var(--dz-status-warning);
     font-size: tokens.$dz-font-xs;
   }
 
   &__remove {
-    display: inline-flex;
-    flex: none;
-    background: transparent;
-    border: none;
-    color: var(--dz-muted);
-    padding: tokens.$dz-space-1;
-    border-radius: var(--dz-radius);
-    cursor: pointer;
+    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, false, 'muted');
 
-    &:hover:not(:disabled) {
-      color: tokens.$dz-danger;
-      background: var(--dz-surface-overlay);
-    }
-
-    &:disabled {
-      opacity: 0.4;
-      cursor: default;
+    &:not(:disabled):hover {
+      color: var(--dz-status-error);
     }
   }
 
   &__intent {
     margin: 0;
     font-size: tokens.$dz-font-md;
-    color: var(--dz-fg);
+    line-height: tokens.$dz-leading-snug;
+    color: var(--dz-fg-body);
   }
 
   &__changes-wrap {
-    overflow-x: auto;
+    @include mixins.scroll-area('x', false);
   }
 
   &__changes {
@@ -165,10 +136,10 @@
 
     th {
       text-align: left;
-      font-weight: 600;
-      color: var(--dz-muted);
+      font-weight: tokens.$dz-weight-medium;
+      color: var(--dz-fg-muted);
       padding: tokens.$dz-space-1;
-      border-bottom: 1px solid var(--dz-border);
+      border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
     }
 
     td {
@@ -179,12 +150,12 @@
   }
 
   &__prop {
-    font-family: ui-monospace, monospace;
+    @include mixins.mono(tokens.$dz-font-xs);
     color: var(--dz-fg);
   }
 
   &__before {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     text-decoration: line-through;
   }
 
@@ -201,12 +172,12 @@
   }
 
   &__text-label {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
   &__text-before {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
   }
 
   &__text-after {
@@ -224,8 +195,8 @@
     max-width: 100%;
     height: auto;
     max-height: tokens.rem(96);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
+    border: tokens.$dz-border-width solid var(--dz-border-subtle);
+    border-radius: tokens.$dz-radius;
   }
 
   &__hints {
@@ -236,17 +207,14 @@
   }
 
   &__hints-label {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
   &__hint {
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-xs;
+    @include mixins.mono(tokens.$dz-font-xs);
+    @include mixins.surface('inset', true, tokens.$dz-radius-xs);
+    padding: tokens.rem(1) tokens.$dz-space-2;
     color: var(--dz-fg);
   }
 
@@ -258,17 +226,14 @@
   }
 
   &__classes-label {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
   &__class {
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-xs;
+    @include mixins.mono(tokens.$dz-font-xs);
+    @include mixins.surface('inset', true, tokens.$dz-radius-xs);
+    padding: tokens.rem(1) tokens.$dz-space-2;
     color: var(--dz-fg);
 
     &--add {
@@ -277,14 +242,14 @@
     }
 
     &--remove {
-      color: var(--dz-muted);
+      color: var(--dz-fg-muted);
       text-decoration: line-through;
     }
   }
 
   &__breakpoint {
     align-self: flex-start;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
@@ -297,17 +262,14 @@
   }
 
   &__structural-label {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
   &__structural-op {
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-xs;
+    @include mixins.mono(tokens.$dz-font-xs);
+    @include mixins.surface('inset', true, tokens.$dz-radius-xs);
+    padding: tokens.rem(1) tokens.$dz-space-2;
     color: var(--dz-fg);
 
     &--insert {
@@ -316,30 +278,26 @@
     }
 
     &--move {
-      color: tokens.$dz-status-warning;
-      border-color: tokens.$dz-status-warning;
+      color: var(--dz-status-warning);
+      border-color: var(--dz-status-warning);
     }
 
     &--remove {
-      color: var(--dz-muted);
+      color: var(--dz-fg-muted);
       text-decoration: line-through;
     }
   }
 
   &__structural-position {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
   &__structural-ref,
   &__structural-html {
-    min-width: 0;
+    @include mixins.mono(tokens.$dz-font-xs);
+    @include mixins.truncate;
     max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-xs;
     color: var(--dz-fg);
   }
 }

@@ -1,27 +1,33 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
+// D4 scroll contract: `.dz-app__body` clips, so this root is the tab's single scroller.
 .dz-mcp {
-  padding: tokens.$dz-space-4;
+  @include mixins.scroll-area;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: tokens.$dz-space-4;
+  min-height: 0;
+  padding: tokens.$dz-space-6;
 
   &__hint {
-    color: var(--dz-muted);
-    margin: 0;
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
+    margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
   }
 
   &__error {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: tokens.$dz-danger;
-    font-size: tokens.$dz-font-sm;
     margin: 0;
+    color: var(--dz-status-error);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__presets {
@@ -30,23 +36,16 @@
     gap: tokens.$dz-space-2;
   }
 
+  // Dashed = "not added yet". Solid once it's disabled (already added), which is the one
+  // place the dash-to-solid swap carries meaning.
   &__preset {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px dashed var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    cursor: pointer;
-    font: inherit;
+    @include mixins.button-ghost(tokens.$dz-control-md, tokens.$dz-radius, false);
+    border: tokens.$dz-border-width dashed var(--dz-border-strong);
     font-size: tokens.$dz-font-sm;
 
     &:disabled {
-      opacity: 0.5;
-      cursor: default;
       border-style: solid;
+      border-color: var(--dz-border-subtle);
     }
   }
 
@@ -60,14 +59,12 @@
   }
 
   &__item {
+    @include mixins.card('card', tokens.$dz-space-3 tokens.$dz-space-4, tokens.$dz-radius-lg);
     display: flex;
     align-items: center;
     // The #120 write-tools block wraps to a full-width second line under the row.
     flex-wrap: wrap;
     gap: tokens.$dz-space-3;
-    padding: tokens.$dz-space-3 tokens.$dz-space-4;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
 
     // #17: a disabled backend reads as parked — the row's identity stays visible but muted,
     // while the toggle itself keeps full contrast so the way back is obvious.
@@ -88,14 +85,17 @@
     flex-direction: column;
     gap: tokens.$dz-space-2;
     padding-top: tokens.$dz-space-2;
-    border-top: 1px dashed var(--dz-border);
+    border-top: tokens.$dz-border-width dashed var(--dz-border-subtle);
   }
 
   &__writes-hint {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
 
     strong {
-      color: var(--dz-fg);
+      color: var(--dz-fg-strong);
+      font-weight: tokens.$dz-weight-medium;
     }
   }
 
@@ -116,9 +116,9 @@
   }
 
   &__write-name {
-    font-family: ui-monospace, monospace;
-    font-size: tokens.$dz-font-sm;
-    color: var(--dz-fg);
+    @include mixins.mono;
+    @include mixins.truncate;
+    color: var(--dz-fg-body);
   }
 
   // Per-row enable/disable switch (#17). The native checkbox stays the interactive element
@@ -145,15 +145,15 @@
     display: block;
     width: tokens.rem(28);
     height: tokens.rem(16);
-    border-radius: tokens.rem(8);
-    background: var(--dz-surface-overlay);
-    border: 1px solid var(--dz-border);
+    border-radius: var(--dz-radius-pill);
+    background: var(--dz-elev-inset);
+    border: tokens.$dz-border-width solid var(--dz-border-strong);
     // Purely decorative — clicks must pass through to the checkbox beneath (the input is the
     // interactive element, and Playwright's hit-target check needs it that way too).
     pointer-events: none;
     transition:
-      background 120ms ease,
-      border-color 120ms ease;
+      background-color var(--dz-motion-fast) var(--dz-ease),
+      border-color var(--dz-motion-fast) var(--dz-ease);
 
     &::after {
       content: '';
@@ -161,11 +161,11 @@
       width: tokens.rem(12);
       height: tokens.rem(12);
       margin: tokens.rem(1);
-      border-radius: 50%;
-      background: var(--dz-muted);
+      border-radius: var(--dz-radius-pill);
+      background: var(--dz-fg-muted);
       transition:
-        transform 120ms ease,
-        background 120ms ease;
+        transform var(--dz-motion-fast) var(--dz-ease),
+        background-color var(--dz-motion-fast) var(--dz-ease);
     }
 
     input:checked + & {
@@ -179,11 +179,13 @@
     }
 
     input:focus-visible + & {
-      outline: 2px solid var(--dz-accent);
-      outline-offset: 1px;
+      outline: tokens.$dz-focus-width solid var(--dz-primary);
+      outline-offset: tokens.$dz-focus-offset;
     }
   }
 
+  // Class names are load-bearing — mcp.spec.ts / mcp-manage.spec.ts assert
+  // `is-connected` / `is-disconnected` on this element. Colour only; the glyph is the shape.
   &__status {
     flex: none;
     display: inline-flex;
@@ -206,16 +208,18 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: tokens.rem(2);
 
     strong {
-      color: var(--dz-fg);
+      color: var(--dz-fg-strong);
+      font-size: tokens.$dz-font-md;
+      font-weight: tokens.$dz-weight-medium;
     }
 
     small {
-      color: var(--dz-muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      @include mixins.truncate;
+      color: var(--dz-fg-muted);
+      font-size: tokens.$dz-font-xs;
     }
   }
 
@@ -224,7 +228,7 @@
   }
 
   &__errortext {
-    color: tokens.$dz-danger;
+    color: var(--dz-status-error);
   }
 
   &__actions {
@@ -234,59 +238,54 @@
     flex: none;
 
     button {
-      background: transparent;
-      border: 1px solid var(--dz-border);
-      border-radius: var(--dz-radius);
-      color: var(--dz-fg);
-      padding: tokens.$dz-space-1 tokens.$dz-space-3;
-      cursor: pointer;
-      font: inherit;
+      @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
       font-size: tokens.$dz-font-sm;
-      display: inline-flex;
-      align-items: center;
+    }
+
+    // Two classes, so it outranks the element rule above — `.dz-mcp__actions button` would
+    // otherwise win on specificity and the quiet actions would render at full contrast.
+    // `__ghost` covers both the text "Authorize" and the icon-only remove, so it stays a
+    // ghost button rather than a fixed-square icon button.
+    .dz-mcp__ghost {
+      color: var(--dz-fg-muted);
+
+      &:not(:disabled):hover {
+        color: var(--dz-fg);
+      }
     }
   }
 
-  &__ghost {
-    color: var(--dz-muted);
+  &__label {
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
   }
 
   &__add {
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
-    padding-top: tokens.$dz-space-3;
-    border-top: 1px solid var(--dz-border);
-  }
+    padding-top: tokens.$dz-space-4;
+    border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
 
-  &__label {
-    color: var(--dz-muted);
-    font-size: tokens.$dz-font-sm;
-  }
-
-  &__add {
     input,
     select {
-      background: var(--dz-surface);
-      border: 1px solid var(--dz-border);
-      border-radius: var(--dz-radius);
+      @include mixins.surface('inset', 'strong', tokens.$dz-radius);
+      @include mixins.focus-ring;
+      height: tokens.$dz-control-md;
+      padding: 0 tokens.$dz-space-3;
       color: var(--dz-fg);
-      padding: tokens.$dz-space-2 tokens.$dz-space-3;
       font: inherit;
+      font-size: tokens.$dz-font-md;
+
+      &::placeholder {
+        color: var(--dz-fg-muted);
+      }
     }
 
     button {
+      @include mixins.button-primary;
       align-self: flex-start;
-      display: inline-flex;
-      align-items: center;
-      gap: tokens.$dz-space-1;
-      background: var(--dz-accent);
-      border: none;
-      border-radius: var(--dz-radius);
-      color: var(--dz-accent-fg);
-      padding: tokens.$dz-space-2 tokens.$dz-space-5;
-      cursor: pointer;
-      font: inherit;
     }
   }
 }

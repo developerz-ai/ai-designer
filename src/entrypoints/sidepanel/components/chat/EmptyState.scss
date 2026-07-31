@@ -1,31 +1,66 @@
 @use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
 
+// Left-aligned, top-anchored — Leo's intro, not a centred hero. Centring made every line a
+// different length with a ragged edge on both sides, and it put the suggestions in the middle of
+// the panel instead of directly above the composer where the next tap happens.
 .dz-empty-state {
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  // Bottom-anchored via `margin-top: auto` on the first child (below), NOT
+  // `justify-content: flex-end`: an over-full flex column with flex-end overflows its START
+  // edge, and since nothing in this column scrolls (see ChatPanel.scss) the title would be
+  // clipped with no way to reach it. An auto margin collapses to 0 under pressure instead.
+  justify-content: flex-start;
   gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-5 tokens.$dz-space-4;
-  text-align: center;
+  padding: tokens.$dz-space-6;
+  text-align: left;
 
-  &__icon {
-    color: var(--dz-accent);
+  // A wrapper span, not the Icon element itself — see EmptyState.tsx.
+  &__avatar {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: tokens.$dz-control-lg;
+    height: tokens.$dz-control-lg;
+    // Takes the column's slack, pushing the intro down to sit against the composer.
+    margin-top: auto;
     margin-bottom: tokens.$dz-space-2;
+    border-radius: var(--dz-radius-pill);
+    background: var(--dz-elev-card);
+    color: var(--dz-accent);
   }
 
   &__title {
     margin: 0;
-    color: var(--dz-fg);
-    font-size: 1em;
-    font-weight: 600;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-xl;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-tight;
+  }
+
+  &__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  // Announced, not shown — the ⓘ carries it visually.
+  &__meta-hint {
+    @include mixins.visually-hidden;
   }
 
   &__subtitle {
-    margin: 0 0 tokens.$dz-space-3;
-    max-width: 32ch;
-    color: var(--dz-muted);
-    font-size: 0.85em;
+    margin: 0 0 tokens.$dz-space-2;
+    color: var(--dz-fg-body);
+    font-size: tokens.$dz-font-base;
+    line-height: tokens.$dz-leading-body;
   }
 }

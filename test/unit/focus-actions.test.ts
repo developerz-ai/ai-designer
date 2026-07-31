@@ -31,6 +31,22 @@ describe('focus store: startPicker/stopPicker', () => {
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'start-picker' }));
   });
 
+  it.each([
+    'startPicker',
+    'stopPicker',
+  ] as const)('%s surfaces a rejected RPC instead of rejecting into an unhandled rejection', async (action) => {
+    // The SW is mid-restart: chrome answers "Receiving end does not exist". Unhandled, the
+    // button silently does nothing and Sentry logs a crash.
+    vi.resetModules();
+    installChromeFake(() => {
+      throw new Error('Could not establish connection. Receiving end does not exist.');
+    });
+    const store = await import('@/entrypoints/sidepanel/stores/focus');
+
+    await expect(store[action]()).resolves.toBeUndefined();
+    expect(store.error()).toMatch(/Receiving end does not exist/);
+  });
+
   it('stopPicker clears local state immediately and dispatches stop-picker', async () => {
     vi.resetModules();
     const { sendMessage } = installChromeFake(() => ({ ok: true }));

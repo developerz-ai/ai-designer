@@ -1,35 +1,222 @@
+// Shared style patterns — the reuse layer over the tokens (CLAUDE.md "SCSS").
+//
+// Mixins, not %placeholders, deliberately: every component .scss is its own
+// compilation unit imported by its .tsx, so @extend cannot reach across files —
+// a placeholder would silently duplicate itself into every unit that used it, or
+// simply not resolve. Mixins also take parameters ($size, $level, $radius, $lines);
+// @extend cannot.
+//
+// Rule of thumb: a mixin owns the *pattern* (geometry, elevation, states), the
+// component owns the *layout* (where it sits, how it flexes). Nothing here
+// positions itself or sets a z-index — that belongs to the caller.
+
+@use 'sass:map';
 @use './tokens' as t;
 
-// Icon button — clickable icon with accessible hit target and hover state.
-// Usage: @include icon-button to create a button-like container for an Icon.
-// Supports :hover, :focus-visible, :active states; automatically sized to 44px
-// minimum hit target (WCAG AAA). Icon color inherits from --dz-fg; set custom
-// --icon-color on the element to override.
-@mixin icon-button {
+// ─── Elevation lookup ─────────────────────────────────────────────────────────
+// Private to this module (leading `_`). Keeps surface levels a named set instead of
+// a var() the caller has to remember.
+$_elevations: (
+  'base': var(--dz-elev-base),
+  'card': var(--dz-elev-card),
+  'hover': var(--dz-elev-hover),
+  'inset': var(--dz-elev-inset),
+  'none': transparent,
+);
+
+@function _elevation($level) {
+  @if not map.has-key($_elevations, $level) {
+    @error 'unknown elevation "#{$level}" — expected one of #{map.keys($_elevations)}';
+  }
+  @return map.get($_elevations, $level);
+}
+
+// ─── Focus ─────────────────────────────────────────────────────────────────────
+// One ring for the whole panel. Components previously disagreed on offset four ways
+// (-1px / 1px / -2px / 2px); pass a negative offset only when the control is flush
+// against a container edge and an outside ring would be clipped.
+@mixin focus-ring($offset: t.$dz-focus-offset, $color: var(--dz-primary), $width: t.$dz-focus-width) {
+  &:focus-visible {
+    outline: $width solid $color;
+    outline-offset: $offset;
+  }
+}
+
+// Screen-reader-only text that stays in the accessibility tree — for the composer's
+// keyboard hint (referenced by aria-describedby) and any icon-only label.
+// `clip-path` + 1px box, not `display: none`, which would remove it from the tree.
+@mixin visually-hidden {
+  position: absolute;
+  width: t.rem(1);
+  height: t.rem(1);
+  margin: t.rem(-1);
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+// Presents a >= 44px pointer target (WCAG 2.5.5) without growing the visual box —
+// an invisible centered pseudo-element, so a 32px icon button stays 32px on screen.
+// Caller must not also use ::after on the same element.
+@mixin hit-target($min: t.$dz-hit-target) {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: $min;
+    min-height: $min;
+    transform: translate(-50%, -50%);
+  }
+}
+
+// ─── Surfaces ──────────────────────────────────────────────────────────────────
+// The `background + 1px border + radius` triplet, ~20 hand-rolled copies collapsed.
+// `$border: 'strong'` for a boundary that is the control's ONLY affordance (3:1);
+// `true` is the subtle divider, legal only next to visible text or an icon.
+@mixin surface($level: 'card', $border: true, $radius: t.$dz-radius) {
+  background: _elevation($level);
+  border-radius: $radius;
+
+  @if $border == 'strong' {
+    border: t.$dz-border-width solid var(--dz-border-strong);
+  } @else if $border {
+    border: t.$dz-border-width solid var(--dz-border-subtle);
+  } @else {
+    border: none;
+  }
+}
+
+// A padded content block. Shadow off by default — Leo's cards are flat and separated
+// by tone, not by drop shadows; reserve elevation for things that actually float.
+@mixin card($level: 'card', $padding: t.$dz-space-4, $radius: t.$dz-radius-lg, $shadow: false) {
+  @include surface($level, true, $radius);
+  padding: $padding;
+
+  @if $shadow {
+    box-shadow: var(--dz-shadow-sm);
+  }
+}
+
+// Floating popover/menu container — the three divergent 0 8px 24px rgba(0,0,0,.35/.4/.45)
+// copies collapsed into one. Positioning and z-index stay with the caller.
+@mixin menu-surface($radius: t.$dz-radius-lg, $padding: t.$dz-space-1) {
+  @include surface('card', true, $radius);
+  box-shadow: var(--dz-shadow-lg);
+  padding: $padding;
+  margin: 0;
+  list-style: none;
+}
+
+// ─── Buttons ───────────────────────────────────────────────────────────────────
+// Shared skeleton — every button variant below starts here.
+@mixin _button-base($height, $radius) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: t.$dz-space-2; // 8px padding → 40px total with Icon.md (24px default)
-  min-width: t.rem(44);
-  min-height: t.rem(44);
-  background-color: transparent;
-  border: none;
-  border-radius: t.$dz-radius;
+  gap: t.$dz-space-1;
+  height: $height;
+  border-radius: $radius;
+  font: inherit;
+  font-size: t.$dz-font-md;
+  font-weight: t.$dz-weight-medium;
+  line-height: t.$dz-leading-tight;
   cursor: pointer;
-  color: var(--icon-color, var(--dz-fg));
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color var(--dz-motion-fast) var(--dz-ease),
+    color var(--dz-motion-fast) var(--dz-ease), border-color var(--dz-motion-fast) var(--dz-ease);
 
-  &:hover {
-    background-color: var(--dz-surface-overlay);
+  @include focus-ring;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+// Filled accent action — Ship, Save, Send-with-label.
+@mixin button-primary($height: t.$dz-control-md, $radius: t.$dz-radius) {
+  @include _button-base($height, $radius);
+  padding: 0 t.$dz-space-4;
+  background: var(--dz-accent);
+  border: none;
+  color: var(--dz-accent-fg);
+
+  &:not(:disabled):hover {
+    filter: brightness(1.08);
   }
 
-  &:focus-visible {
-    outline: 2px solid var(--dz-primary);
-    outline-offset: 2px;
+  &:not(:disabled):active {
+    filter: brightness(0.94);
+  }
+}
+
+// Quiet action — transparent until hovered, subtle outline for shape.
+@mixin button-ghost($height: t.$dz-control-md, $radius: t.$dz-radius, $border: true) {
+  @include _button-base($height, $radius);
+  padding: 0 t.$dz-space-3;
+  background: transparent;
+  color: var(--dz-fg);
+
+  @if $border {
+    border: t.$dz-border-width solid var(--dz-border-subtle);
+  } @else {
+    border: none;
+  }
+
+  &:not(:disabled):hover {
+    background: var(--dz-wash-hover);
+  }
+
+  &:not(:disabled):active {
+    background: var(--dz-wash-active);
+  }
+}
+
+// Icon-only button. Name kept (AuthDialog.scss consumes it) but reparameterized:
+// the box is now an explicit square and the 44px pointer area comes from the
+// hit-target pseudo instead of inflating min-width/min-height — which is what let
+// callers "fix" the size by overriding those and silently lose the target.
+@mixin icon-button($size: t.$dz-control-lg, $radius: t.$dz-radius, $hit: true, $tone: 'ghost') {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: $size;
+  height: $size;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: $radius;
+  cursor: pointer;
+  transition: background-color var(--dz-motion-fast) var(--dz-ease),
+    color var(--dz-motion-fast) var(--dz-ease);
+
+  // --icon-color still wins per-element, as before.
+  @if $tone == 'muted' {
+    color: var(--icon-color, var(--dz-fg-muted));
+  } @else {
+    color: var(--icon-color, var(--dz-fg));
+  }
+
+  @include focus-ring;
+
+  @if $hit {
+    @include hit-target;
+  }
+
+  &:hover {
+    background-color: var(--dz-wash-hover);
+    color: var(--dz-fg);
   }
 
   &:active {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: var(--dz-wash-active);
   }
 
   &:disabled {
@@ -42,47 +229,304 @@
   }
 }
 
-// Status indicator dot — small colored badge for connection/error/warning states.
-// Variants: connected, error, warning, muted.
-// Usage: @include status-dot('connected') or @include status-dot('error').
-// Renders as a 12px circle with a 2px ring, animates pulse on 'connected' state.
-@mixin status-dot($status: 'muted') {
+// Perfect circle — the composer's send affordance (arrow-up in a filled disc) and
+// the floating scroll-to-latest button. `$tone: 'ghost'` for the unfilled variant.
+@mixin circle-button($size: t.$dz-control-md, $tone: 'accent') {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: t.rem(12);
-  height: t.rem(12);
-  border-radius: 50%;
-  border: 2px solid currentColor;
   flex: none;
+  width: $size;
+  height: $size;
+  padding: 0;
+  border-radius: var(--dz-radius-pill);
+  cursor: pointer;
+  transition: background-color var(--dz-motion-fast) var(--dz-ease),
+    opacity var(--dz-motion-fast) var(--dz-ease);
 
-  @if $status == 'connected' {
-    background-color: var(--dz-status-connected);
-    color: var(--dz-status-connected);
-    animation: dz-status-pulse 2s ease-in-out infinite;
-  } @else if $status == 'error' {
-    background-color: var(--dz-status-error);
-    color: var(--dz-status-error);
-  } @else if $status == 'warning' {
-    background-color: var(--dz-status-warning);
-    color: var(--dz-status-warning);
-  } @else if $status == 'muted' {
-    background-color: var(--dz-status-muted);
-    color: var(--dz-status-muted);
+  @include focus-ring;
+
+  @if $tone == 'accent' {
+    background: var(--dz-accent);
+    border: none;
+    color: var(--dz-accent-fg);
+
+    &:not(:disabled):hover {
+      filter: brightness(1.08);
+    }
+  } @else {
+    // Border, not tone, carries the shape here — so it must clear 3:1 on its own.
+    background: var(--dz-elev-card);
+    border: t.$dz-border-width solid var(--dz-border-strong);
+    color: var(--dz-fg);
+
+    &:not(:disabled):hover {
+      background: var(--dz-elev-hover);
+    }
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 }
 
-// Pulse animation for connected status dot — gentle opacity fade.
-@keyframes dz-status-pulse {
-  0% {
-    opacity: 1;
+// Full-width tappable row — Leo's "Summarize this page" pattern: icon, label, whole
+// row is the target. Left-aligned text; `button` defaults would center it.
+@mixin action-row($radius: t.$dz-radius-lg, $level: 'card', $min-height: t.$dz-control-lg) {
+  @include surface($level, true, $radius);
+  display: flex;
+  align-items: center;
+  gap: t.$dz-space-3;
+  width: 100%;
+  min-height: $min-height;
+  padding: t.$dz-space-2 t.$dz-space-4;
+  color: var(--dz-fg);
+  font: inherit;
+  font-size: t.$dz-font-base;
+  line-height: t.$dz-leading-snug;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+  @include focus-ring;
+
+  &:not(:disabled):hover {
+    background: var(--dz-elev-hover);
   }
 
-  50% {
-    opacity: 0.6;
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+// Capsule — replaces three hand-rolled `border-radius: 999px` sites. Non-interactive
+// by default (badges, counts, filter chips); wrap in a button for the clickable kind.
+@mixin pill($level: 'card', $border: true, $size: t.$dz-font-sm) {
+  @include surface($level, $border, var(--dz-radius-pill));
+  display: inline-flex;
+  align-items: center;
+  gap: t.$dz-space-1;
+  padding: t.rem(3) t.$dz-space-2;
+  font-size: $size;
+  line-height: t.$dz-leading-snug;
+  white-space: nowrap;
+}
+
+// Small status disc. Color comes from `currentColor`, so the state class sets one
+// property instead of the mixin branching per state.
+@mixin dot($size: t.rem(8)) {
+  display: inline-block;
+  flex: none;
+  width: $size;
+  height: $size;
+  border-radius: var(--dz-radius-pill);
+  background-color: currentColor;
+}
+
+// ─── Inputs ────────────────────────────────────────────────────────────────────
+// One container owns the border, radius and focus state; the textarea/input inside
+// is chrome-less. That's how Leo's composer reads as a single object with a toolbar
+// living inside it — and note the inversion: the composer's outer frame is the PAGE
+// background with this shell (lighter) sitting on it, not the other way round.
+@mixin field-shell($radius: t.$dz-radius-xl, $padding: t.$dz-space-3) {
+  @include surface('card', true, $radius);
+  display: flex;
+  flex-direction: column;
+  gap: t.$dz-space-2;
+  padding: $padding;
+  transition: border-color var(--dz-motion-fast) var(--dz-ease);
+
+  // Any focus lifts the border; only keyboard focus draws the ring — a full accent
+  // outline every time someone clicks into the composer is noise. The ring lives on
+  // the shell, never on the inner control, or the outline traces the textarea and the
+  // container reads as two objects. `:has()` is fine — this surface is Chrome-only.
+  &:focus-within {
+    border-color: var(--dz-border-strong);
   }
 
-  100% {
-    opacity: 1;
+  &:has(:focus-visible) {
+    outline: t.$dz-focus-width solid var(--dz-primary);
+    outline-offset: t.rem(1);
+  }
+
+  input,
+  textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--dz-fg);
+    font: inherit;
+    font-size: t.$dz-font-lg;
+    line-height: t.$dz-leading-body;
+
+    &:focus,
+    &:focus-visible {
+      outline: none;
+    }
+
+    &::placeholder {
+      color: var(--dz-fg-muted);
+    }
+  }
+
+  textarea {
+    resize: none;
+  }
+}
+
+// ─── Text ──────────────────────────────────────────────────────────────────────
+// Single-line ellipsis, or a clamp at N lines. `min-width: 0` is the part everyone
+// forgets — without it a flex child refuses to shrink and never truncates.
+@mixin truncate($lines: 1) {
+  min-width: 0;
+
+  @if $lines == 1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  } @else {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: $lines;
+    line-clamp: $lines;
+    overflow: hidden;
+  }
+}
+
+// The one mono stack — five near-identical literals collapsed. Ligatures off so
+// selectors, arrows and `!=` in diffs render character-for-character.
+@mixin mono($size: t.$dz-font-sm) {
+  font-family: var(--dz-font-mono);
+  font-size: $size;
+  font-variant-ligatures: none;
+}
+
+// Scrollable region. `overscroll-behavior: contain` stops a scroll at the end of the
+// thread from chaining to the panel body; `scrollbar-gutter: stable` stops content
+// jumping sideways when the bar appears — cheap, and very visible at 360px.
+@mixin scroll-area($axis: 'y', $gutter: true) {
+  @if $axis == 'y' {
+    overflow-x: hidden;
+    overflow-y: auto;
+  } @else {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dz-border-strong) transparent;
+
+  @if $gutter {
+    scrollbar-gutter: stable;
+  }
+}
+
+// Long-form agent output. Body copy sits one step below the brightest value and bold
+// runs step up to it — that contrast between running text and its bold spans is what
+// makes Leo's answers readable; a wall of one brightness does not.
+@mixin prose($size: t.$dz-font-lg) {
+  color: var(--dz-fg-body);
+  font-size: $size;
+  line-height: t.$dz-leading-body;
+  overflow-wrap: anywhere; // URLs and selectors must not widen the 360px panel
+
+  p,
+  ul,
+  ol,
+  pre,
+  blockquote {
+    margin: 0 0 t.$dz-space-4;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: t.$dz-space-6 0 t.$dz-space-2;
+    color: var(--dz-fg-strong);
+    font-size: t.$dz-font-lg;
+    font-weight: t.$dz-weight-semibold;
+    line-height: t.$dz-leading-tight;
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+
+  strong,
+  b {
+    color: var(--dz-fg-strong);
+    font-weight: t.$dz-weight-semibold;
+  }
+
+  ul,
+  ol {
+    padding-left: t.$dz-space-7;
+  }
+
+  li {
+    margin-bottom: t.$dz-space-1;
+  }
+
+  // Nested lists are a list inside a li — reset the outer margin or spacing doubles.
+  li > ul,
+  li > ol {
+    margin: t.$dz-space-1 0 0;
+  }
+
+  a {
+    color: var(--dz-accent);
+    text-decoration: underline;
+    text-underline-offset: t.rem(2);
+  }
+
+  code {
+    @include mono(0.9em); // relative: inline code must track its surrounding text
+    padding: t.rem(1) t.rem(5);
+    background: var(--dz-elev-inset);
+    border-radius: t.$dz-radius-xs;
+  }
+
+  pre {
+    @include surface('inset', true, t.$dz-radius);
+    @include scroll-area('x', false);
+    padding: t.$dz-space-3;
+
+    code {
+      padding: 0;
+      background: none;
+      font-size: t.$dz-font-sm;
+    }
+  }
+
+  blockquote {
+    padding-left: t.$dz-space-4;
+    border-left: t.$dz-border-width-thick solid var(--dz-border-strong);
+    color: var(--dz-fg-muted);
+  }
+
+  hr {
+    height: t.$dz-border-width;
+    margin: t.$dz-space-6 0;
+    background: var(--dz-border-subtle);
+    border: none;
+  }
+}
+
+// ─── Motion ────────────────────────────────────────────────────────────────────
+// Local escape hatch for a component that needs to swap a behaviour rather than just
+// shorten it (e.g. replace a slide with a fade). The blanket kill-switch lives in
+// main.scss — this is for the cases that need more than "make it instant".
+@mixin reduced-motion {
+  @media (prefers-reduced-motion: reduce) {
+    @content;
   }
 }

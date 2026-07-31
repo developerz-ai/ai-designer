@@ -1,8 +1,9 @@
 import { createSignal } from 'solid-js';
 import type { Edit } from '@/shared/changeset';
-import type { Mode, SwToPanel, TurnUsage } from '@/shared/messages';
+import type { Mode, StableSelector, SwToPanel, TurnUsage } from '@/shared/messages';
 import { OkResult } from '@/shared/messages';
 import { request } from './bus';
+import { multiSelectors } from './focus';
 import { connectPort, subscribeToSw } from './sw-stream';
 
 // Chat store (slice 11): assembles the conversation thread purely from the `SwToPanel` stream —
@@ -15,6 +16,14 @@ export interface ToolCallEntry {
   tool: string;
   selector?: string;
   kind?: 'read' | 'act' | 'info';
+  /** The SDK's tool-call id, when the SW carried one — how a `tool-result` finds its chip. */
+  id?: string;
+  /** The call's real outcome, folded in from `tool-result`. `undefined` means NOTHING has reported
+   *  back yet: `tool-call` fires when the model REQUESTS a tool, so rendering it as success would
+   *  fabricate one (see `components/chat/ToolCallList.tsx` `toolCallOutcome`). */
+  ok?: boolean;
+  /** The failure reason the tool reported, for the chip to show under a failed call. */
+  error?: string;
 }
 
 export interface ChatMessage {
@@ -38,8 +47,13 @@ export function reduceChat(messages: ChatMessage[], msg: SwToPanel): ChatMessage
     case 'tool-call':
       return foldIntoAssistant(messages, (m) => ({
         ...m,
-        toolCalls: [...m.toolCalls, { tool: msg.tool, selector: msg.selector, kind: msg.kind }],
+        toolCalls: [
+          ...m.toolCalls,
+          { tool: msg.tool, selector: msg.selector, kind: msg.kind, id: msg.id },
+        ],
       }));
+    case 'tool-result':
+      return settleToolCall(messages, msg);
     case 'edit-recorded':
       return foldIntoAssistant(messages, (m) => ({ ...m, edits: [...m.edits, msg.edit] }));
     case 'error':
@@ -50,9 +64,52 @@ export function reduceChat(messages: ChatMessage[], msg: SwToPanel): ChatMessage
       return endStreaming(foldIntoAssistant(messages, (m) => ({ ...m, error: msg.message })));
     case 'turn-done':
       return endStreaming(messages);
+    case 'session-state':
+      // Two ways a turn ends without a `turn-done`: Stop (background.ts's `session-stop` handler
+      // clears `turnAbort` itself, so the aborted turn never emits one) and an SW eviction
+      // mid-turn (the woken worker reports `turnRunning: false` on connect — nothing will ever
+      // finish that turn). Both leave the MESSAGE's own `streaming` flag set, so the bubble and
+      // its last tool chip keep spinning as if the agent were still touching the page.
+      // A plain `running` transition carrying no `turnRunning` says nothing about the turn — leave
+      // the bubble alone.
+      return msg.state !== 'running' || msg.turnRunning === false
+        ? endStreaming(messages)
+        : messages;
     default:
       return messages;
   }
+}
+
+/** Fold one `tool-result` onto the call it settles: by `id` when the SW carried one, else the
+ *  newest still-unsettled call of the same name (the fallback the bus schema documents). Never
+ *  opens a bubble — an outcome with no call to attach to is dropped rather than invented. */
+function settleToolCall(
+  messages: ChatMessage[],
+  msg: Extract<SwToPanel, { type: 'tool-result' }>,
+): ChatMessage[] {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant') return messages;
+  const idx = findToolCall(last.toolCalls, msg);
+  const target = last.toolCalls[idx];
+  if (!target) return messages;
+  const toolCalls = last.toolCalls.slice();
+  toolCalls[idx] = { ...target, ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) };
+  return [...messages.slice(0, -1), { ...last, toolCalls }];
+}
+
+function findToolCall(
+  calls: ToolCallEntry[],
+  msg: Extract<SwToPanel, { type: 'tool-result' }>,
+): number {
+  if (msg.id) {
+    const byId = calls.findIndex((c) => c.id === msg.id);
+    if (byId !== -1) return byId;
+  }
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const c = calls[i];
+    if (c?.tool === msg.tool && c.ok === undefined) return i;
+  }
+  return -1;
 }
 
 /** Zero-spend baseline for a fresh session's usage meter. */
@@ -134,10 +191,14 @@ export function initChatStore(): void {
     setUsage((prev) => nextUsage(prev, msg));
     if (msg.type === 'turn-done' || msg.type === 'error') {
       setStreaming(false);
-    } else if (msg.type === 'session-state' && msg.state !== 'running') {
-      // Stop (or a session that never started) always ends any in-flight turn — belt-and-braces
-      // alongside `turn-done` for the abort path, where background.ts's `session-stop` handler
-      // clears `turnAbort` itself and so the aborted turn's own `turn-done` never fires.
+    } else if (
+      msg.type === 'session-state' &&
+      (msg.state !== 'running' || msg.turnRunning === false)
+    ) {
+      // Stop (or a session that never started, or a worker woken after dying mid-turn) always ends
+      // any in-flight turn — belt-and-braces alongside `turn-done` for the abort path, where
+      // background.ts's `session-stop` handler clears `turnAbort` itself and so the aborted turn's
+      // own `turn-done` never fires. `reduceChat` closes the bubble's own flag on the same signal.
       setStreaming(false);
     }
   });
@@ -154,15 +215,33 @@ export function clearChat(): void {
 
 /** Send a user instruction: appends it locally, closes out any prior in-flight bubble (the SW
  *  supersedes the old turn — see background.ts's `user-message` handler), and dispatches. Never
- *  throws — a dispatch failure surfaces via `error()` and clears `streaming`. */
-export async function send(text: string, mode?: Mode): Promise<void> {
+ *  throws — a dispatch failure surfaces via `error()` and clears `streaming`.
+ *
+ *  `selector` is the PICKED ELEMENT the composer's context chip is showing — the referent of
+ *  "this" (#165 S6). Before it was carried, the picker resolved a target, the chip claimed an
+ *  attachment, and the turn reached the SW as text alone: "make this 20% bigger" on a page with
+ *  four CTAs restyled whichever one the model guessed. The shift-multi-select set rides along the
+ *  same way, read straight off the focus store (the composer passes one pin, not the set). */
+export async function send(text: string, mode?: Mode, selector?: StableSelector): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) return;
   setError(null);
   setMessages((prev) => [...endStreaming(prev), newUserMessage(trimmed)]);
   setStreaming(true);
+  const multi = multiSelectors();
   try {
-    await request({ type: 'user-message', text: trimmed, mode }, OkResult);
+    await request(
+      {
+        type: 'user-message',
+        text: trimmed,
+        mode,
+        selector,
+        // Omitted when empty: an empty array is the "user cleared it" signal on the way IN, and
+        // grounding a turn on nothing is not the same message as not grounding it at all.
+        selectors: multi.length > 0 ? multi : undefined,
+      },
+      OkResult,
+    );
   } catch (e) {
     setStreaming(false);
     setError(errMsg(e));

@@ -2,7 +2,7 @@ import { createSignal } from 'solid-js';
 import type { ReadinessState, SwToPanel } from '@/shared/messages';
 import { ReadinessResult } from '@/shared/messages';
 import { request } from './bus';
-import { connectPort, subscribeToSw } from './sw-stream';
+import { connectPort, onReconnect, subscribeToSw } from './sw-stream';
 
 // Readiness store: thin reflection of the SW's `computeReadiness` (src/agent/readiness.ts).
 // The SW pushes an unsolicited `readiness` message on every provider/model/host-permission/
@@ -41,6 +41,10 @@ export function initReadinessStore(): void {
     setState((prev) => reduceReadiness(prev, msg));
   });
   void hydrateReadiness();
+  // A dropped Port means the SW may have restarted, and readiness counts live MCP health — which
+  // resets to `disconnected` with the worker. Re-pull rather than keep rendering the old worker's
+  // "1/1 connected" (#165 S5).
+  onReconnect(() => void hydrateReadiness());
 }
 
 /** Pull the current readiness snapshot from the SW (mount / manual refresh). Never throws

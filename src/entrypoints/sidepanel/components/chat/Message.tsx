@@ -1,18 +1,20 @@
-import { For, mergeProps, Show } from 'solid-js';
+import { mergeProps, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import type { Edit } from '@/shared/changeset';
 import type { ToolCallEntry } from '../../stores/chat';
 import { Icon } from '../Icon';
 import './Message.scss';
 import { MarkdownView } from './MarkdownView';
-import { ToolChip, type ToolChipStatus } from './ToolChip';
+import { ToolCallList } from './ToolCallList';
 
-// One bubble in the thread — user/assistant/system, rendered + dispatch-only (CLAUDE.md "SolidJS +
+// One turn in the thread — user/assistant/system, rendered + dispatch-only (CLAUDE.md "SolidJS +
 // SRP": no business logic here, just mapping a `ChatMessage`-shaped prop onto markup). Assistant
 // text renders through the bundled `MarkdownView` (no remote fetch/`innerHTML`); user text renders
-// as plain text since it's an instruction, not prose. `system` is a local-only notice row (e.g. a
-// future "session stopped") — the chat store doesn't emit it yet, but the type is here so `Thread`
-// doesn't need a second component when it does.
+// as plain text since it's an instruction, not prose. Tool activity is delegated to
+// `ToolCallList` — it takes the opposite (card) grammar to the assistant's unboxed prose and owns
+// its own status derivation. `system` is a local-only notice row (e.g. a future "session
+// stopped") — the chat store doesn't emit it yet, but the type is here so `Thread` doesn't need a
+// second component when it does.
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 export interface MessageProps {
@@ -31,27 +33,25 @@ export function showMarkdown(role: MessageRole): boolean {
   return role === 'assistant';
 }
 
-/** The "N edits recorded" summary line under a bubble's tool calls. Pure formatting, unit-tested
+// Speaker names, resolved once at module scope (mirrors `ToolChip`'s KIND_LABEL). `system` has
+// none by design: it is a local notice, not a turn anyone said.
+const SPEAKER: Partial<Record<MessageRole, string>> = {
+  user: i18n.t('thread.speaker.user'),
+  assistant: i18n.t('thread.speaker.assistant'),
+};
+
+/** Who this turn belongs to, as a word — the correct expression of what `role="user"` /
+ *  `role="assistant"` was trying to say. Those are not ARIA roles, so browsers dropped them and
+ *  every turn fell back to a generic element with nothing to tell the speakers apart. Rendered
+ *  visually-hidden, so it changes nothing on screen. */
+export function speakerLabel(role: MessageRole): string | undefined {
+  return SPEAKER[role];
+}
+
+/** The "N edits recorded" summary line under a turn's tool calls. Pure formatting, unit-tested
  *  independent of the `<Icon>` it renders alongside. */
 export function editsSummary(count: number): string {
   return i18n.t('message.editsSummary', count);
-}
-
-/** A tool call's chip status, derived rather than stored (the chat store doesn't carry a
- *  per-call status yet — see `ToolChip`'s module comment): only the most recent call in a still-
- *  streaming bubble shows `'running'`; it flips to `'error'` if the turn ended in one, otherwise
- *  `'done'` once the bubble closes out. Earlier calls in the same bubble are always `'done'` —
- *  the SW only ever emits a `tool-call` event once that tool has actually run. */
-export function toolCallStatus(
-  index: number,
-  total: number,
-  streaming: boolean,
-  hasError: boolean,
-): ToolChipStatus {
-  const isLast = index === total - 1;
-  if (isLast && hasError) return 'error';
-  if (isLast && streaming) return 'running';
-  return 'done';
 }
 
 export function Message(rawProps: MessageProps) {
@@ -68,31 +68,20 @@ export function Message(rawProps: MessageProps) {
         'dz-message--streaming': props.streaming,
       }}
     >
+      {/* First child, so a screen reader hears who is talking before what they said. Hidden
+          visually — on screen, position and tone already say it. It lives here rather than in the
+          announcer: the live region mirrors the reply text only (see Thread.tsx), so no turn is
+          ever announced with a stray speaker name. */}
+      <Show when={speakerLabel(props.role)}>
+        {(speaker) => <span class="dz-message__speaker">{speaker()}</span>}
+      </Show>
+
       <Show when={showMarkdown(props.role)} fallback={<p class="dz-message__text">{props.text}</p>}>
         <MarkdownView text={props.text} />
       </Show>
 
-      <Show when={props.toolCalls.length > 0}>
-        <ul class="dz-message__tools">
-          <For each={props.toolCalls}>
-            {(tc, i) => (
-              <li>
-                <ToolChip
-                  tool={tc.tool}
-                  selector={tc.selector}
-                  kind={tc.kind}
-                  status={toolCallStatus(
-                    i(),
-                    props.toolCalls.length,
-                    props.streaming,
-                    Boolean(props.error),
-                  )}
-                />
-              </li>
-            )}
-          </For>
-        </ul>
-      </Show>
+      {/* Renders nothing at all for a turn with no tool calls — no empty list node. */}
+      <ToolCallList calls={props.toolCalls} streaming={props.streaming} />
 
       <Show when={props.edits.length > 0}>
         <p class="dz-message__edits">

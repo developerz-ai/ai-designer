@@ -1,9 +1,16 @@
 // Global side-panel reset. Design tokens live in src/styles/_tokens.scss
 // (CLAUDE.md "SCSS"); this emits them as runtime custom properties.
+//
+// The panel is a fixed 360 CSS px — Chrome's side panel default IS its minimum
+// (kSidePanelDefaultContentWidth) and an extension can neither widen it nor choose
+// which side it docks on. Treat 360px as the only viewport.
 @use '../../styles/tokens' as tokens;
 
 :root {
   @include tokens.root-vars;
+  // Tells the UA to render native scrollbars, form controls and the caret dark —
+  // otherwise a light scrollbar sits on a #0f1115 panel.
+  color-scheme: dark;
 }
 
 * {
@@ -21,4 +28,22 @@ body {
   color: var(--dz-fg);
   font-family: var(--dz-font);
   font-size: tokens.$dz-font-base;
+  // Baseline rhythm — components previously inherited `normal` (≈1.2) and read
+  // cramped at 360px. Prose overrides to $dz-leading-body via the prose mixin.
+  line-height: tokens.$dz-leading-snug;
+}
+
+// Reduced-motion guard. Ships alongside the motion tokens on purpose: introducing
+// durations without an opt-out makes the panel worse for anyone who set the OS
+// preference. Near-zero rather than 0 so transitionend/animationend still fire and
+// nothing that waits on them hangs.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

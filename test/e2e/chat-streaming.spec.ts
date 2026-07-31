@@ -176,8 +176,26 @@ test('after Start: pick an element, send an instruction, watch it stream with a 
 
   await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(2);
 
+  // #165 S6/P1 — the signature interaction, proven end to end against a real provider request.
+  // The picker resolves `#cta` in the content world, the panel echoes it back on
+  // `UserMessage.selector`, and the SW grounds the instruction (src/agent/focus-context.ts)
+  // BEFORE the model sees it. Previously the selector reached the panel for display only and
+  // stopped there, so the model got the bare text and had to guess what "this" was.
+  const sentUser = requests[0]?.messages.filter((m) => m.role === 'user') ?? [];
+  // Unescape so the assertion reads as the text the model actually sees, not its JSON encoding.
+  const groundedText = sentUser
+    .map((m) => JSON.stringify(m.content))
+    .join('\n')
+    .replaceAll('\\"', '"');
+  expect(groundedText).toContain('Recolor the CTA and record it');
+  // Phrased as a fact about the referent, not an instruction competing with the user's request.
+  expect(groundedText).toContain('"this"/"it" refers to `#cta` (id)');
+
   // Thread renders the user instruction, the tool-call chip, and the assistant's final text.
-  await expect(panel.locator('.dz-message--user').last()).toHaveText(
+  // Scoped to __text, not the whole turn: each turn now carries a visually-hidden speaker
+  // label ("You" / "Agent") so a screen reader can tell them apart, and Playwright's
+  // toHaveText reads textContent — which includes hidden text.
+  await expect(panel.locator('.dz-message--user .dz-message__text').last()).toHaveText(
     'Recolor the CTA and record it',
   );
   const toolChip = panel.locator('.dz-tool-chip__name', { hasText: 'recordEdit' });

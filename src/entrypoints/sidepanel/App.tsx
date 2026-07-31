@@ -9,25 +9,35 @@ import { Onboarding } from './components/Onboarding';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
 import { SettingsPanel } from './components/SettingsPanel';
+import type { Tab } from './components/TabBar';
+import { TabBar } from './components/TabBar';
+import { initChatStore } from './stores/chat';
 import { initOnboardingStore, visible as onboardingVisible } from './stores/onboarding';
-import { sessionState } from './stores/session';
+import { initSessionStore, sessionState } from './stores/session';
 import './App.scss';
 
-type Tab = 'chat' | 'diff' | 'mcp' | 'history' | 'settings';
-
-// MCP server management is live (slice 02) — connect implement backends the agent
-// ships changesets to. See docs/idea/mcp.md.
-const SHOW_MCP = true;
-
-// Root side-panel shell. Surfaces: the header readiness pill (Start/Stop gate), the
-// design conversation (Chat), MCP backend management, and Settings (BYOK provider key +
-// model picker). See docs/idea/ui.md.
+// Root side-panel shell — composition only (CLAUDE.md "SolidJS + SRP"). Chrome is a quiet
+// title row (brand + the readiness pill and its Start/Stop toggle, the single loud element
+// in the panel) over the `TabBar`; the body hosts one surface at a time: the design
+// conversation (Chat), the changeset (Diff), MCP backend management, History and Settings
+// (BYOK provider key + model picker). See docs/idea/ui.md.
 export function App() {
   const [tab, setTab] = createSignal<Tab>('chat');
   // First-run guide: auto-shown on a fresh install and re-shown each open until skipped/finished
   // (see stores/onboarding.ts), plus re-openable from Settings. Rendered as an overlay below so it
   // sits above the tab shell.
-  onMount(() => initOnboardingStore());
+  // Both idempotent (and re-called by ChatPanel/ReadinessDropdown on their own mounts). They belong
+  // here because neither may wait on a TAB: the session store learns the SW's live lifecycle, and
+  // ChatPanel — the only other caller of `initChatStore` — mounts only once that lifecycle is
+  // non-idle. Reopening the panel mid-turn used to start at `idle`, render the pre-Start hint, and
+  // drop every token/tool-call push of the still-running turn on the floor; the only button on
+  // that screen was Start, which the SW treats as a new session and which aborted the live turn
+  // (#165 S5).
+  onMount(() => {
+    initOnboardingStore();
+    initSessionStore();
+    initChatStore();
+  });
   // Gates ChatPanel: false only in the pre-Start `idle` state — a `stopped` turn (Stop
   // clicked mid-run) keeps chat mounted, since the session itself is still open (see
   // stores/session.ts).
@@ -41,56 +51,25 @@ export function App() {
     <div class="dz-app">
       <header class="dz-app__header">
         <img class="dz-app__logo" src="/logo.png" alt={i18n.t('app.logo.alt')} />
+        <h1 class="dz-app__title">{i18n.t('app.panelTitle')}</h1>
         <ReadinessDropdown onNavigate={handleNavigate} />
-        <nav class="dz-app__tabs">
-          <button
-            type="button"
-            classList={{ 'is-active': tab() === 'chat' }}
-            onClick={() => setTab('chat')}
-          >
-            {i18n.t('app.tab.chat')}
-          </button>
-          <button
-            type="button"
-            classList={{ 'is-active': tab() === 'diff' }}
-            onClick={() => setTab('diff')}
-            aria-label={i18n.t('app.tab.diff.ariaLabel')}
-          >
-            <Icon name="diff" size="sm" />
-          </button>
-          <Show when={SHOW_MCP}>
-            <button
-              type="button"
-              classList={{ 'is-active': tab() === 'mcp' }}
-              onClick={() => setTab('mcp')}
-            >
-              {i18n.t('app.tab.mcp')}
-            </button>
-          </Show>
-          <button
-            type="button"
-            classList={{ 'is-active': tab() === 'history' }}
-            onClick={() => setTab('history')}
-            aria-label={i18n.t('app.tab.history.ariaLabel')}
-          >
-            <Icon name="history" size="sm" />
-          </button>
-          <button
-            type="button"
-            classList={{ 'is-active': tab() === 'settings' }}
-            onClick={() => setTab('settings')}
-          >
-            {i18n.t('app.tab.settings')}
-          </button>
-        </nav>
       </header>
+
+      <TabBar active={tab()} onSelect={setTab} />
 
       <main class="dz-app__body">
         <Switch>
           <Match when={tab() === 'chat'}>
             <Show
               when={sessionStarted()}
-              fallback={<p class="dz-app__empty">{i18n.t('app.chat.empty')}</p>}
+              fallback={
+                <div class="dz-app__empty">
+                  <Icon name="agent" size="lg" class="dz-icon--fixed dz-app__empty-icon" />
+                  {/* The copy is one text node in one element on purpose:
+                      test/e2e/readiness.spec.ts matches it verbatim with getByText. */}
+                  <p class="dz-app__empty-text">{i18n.t('app.chat.empty')}</p>
+                </div>
+              }
             >
               <ChatPanel />
             </Show>

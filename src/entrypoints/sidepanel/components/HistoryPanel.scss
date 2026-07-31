@@ -1,32 +1,40 @@
 @use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
 
+// D4 scroll contract: `.dz-app__body` clips, so this root is the tab's single scroller —
+// and it stays the single one when `ConversationView` swaps in, since that renders INSIDE
+// this element (HistoryPanel.tsx:29-33) rather than replacing it.
 .dz-history {
-  padding: tokens.$dz-space-4;
+  @include mixins.scroll-area;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: tokens.$dz-space-3;
+  gap: tokens.$dz-space-4;
+  min-height: 0;
+  padding: tokens.$dz-space-6;
 
   &__hint {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: var(--dz-muted);
     margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__error {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: tokens.$dz-danger;
-    font-size: tokens.$dz-font-sm;
     margin: 0;
+    color: var(--dz-status-error);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__empty {
-    color: var(--dz-muted);
-    font-size: tokens.$dz-font-md;
     margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-md;
   }
 
   &__list {
@@ -38,12 +46,14 @@
     gap: tokens.$dz-space-2;
   }
 
+  // Card without padding — `__row` is the tappable area and owns the inset, so the hover
+  // wash reaches the card's own edges instead of leaving a dead border strip.
   &__item {
+    @include mixins.surface('card', true, tokens.$dz-radius-lg);
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
+    overflow: hidden;
   }
 
   &__row {
@@ -59,15 +69,14 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    // Flush against the card edge — an outside ring would be clipped by the overflow above.
+    @include mixins.focus-ring(tokens.rem(-2));
 
     &:hover,
     &:focus-visible {
-      background: var(--dz-surface-overlay);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--dz-accent);
-      outline-offset: -2px;
+      background: var(--dz-elev-hover);
     }
   }
 
@@ -76,15 +85,15 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: tokens.rem(18);
-    height: tokens.rem(18);
-    color: var(--dz-muted);
+    width: var(--dz-icon-size-sm);
+    height: var(--dz-icon-size-sm);
+    color: var(--dz-fg-muted);
 
     img {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      border-radius: tokens.rem(3);
+      border-radius: tokens.$dz-radius-xs;
     }
   }
 
@@ -97,27 +106,22 @@
   }
 
   &__title {
-    color: var(--dz-fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    @include mixins.truncate;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-md;
+    font-weight: tokens.$dz-weight-medium;
   }
 
   &__sub {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    font-size: tokens.$dz-font-sm;
-    color: var(--dz-muted);
+    font-size: tokens.$dz-font-xs;
+    color: var(--dz-fg-muted);
   }
 
   &__badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px tokens.$dz-space-2;
-    border-radius: 999px;
-    background: var(--dz-surface-overlay);
-    border: 1px solid var(--dz-border);
+    @include mixins.pill('hover', false, tokens.$dz-font-xs);
     text-transform: capitalize;
 
     &.is-copy {
@@ -125,7 +129,7 @@
     }
 
     &.is-debug {
-      color: tokens.$dz-status-warning;
+      color: var(--dz-status-warning);
     }
   }
 
@@ -153,20 +157,11 @@
   }
 
   &__delete {
-    flex: none;
+    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, false, 'muted');
     margin-right: tokens.$dz-space-3;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-muted);
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
 
     &:hover {
-      color: tokens.$dz-danger;
-      border-color: tokens.$dz-danger;
+      color: var(--dz-status-error);
     }
   }
 }

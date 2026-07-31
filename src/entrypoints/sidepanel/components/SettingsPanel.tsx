@@ -1,4 +1,4 @@
-import { For, onMount, Show } from 'solid-js';
+import { createMemo, For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import { openOnboarding } from '../stores/onboarding';
 import {
@@ -33,6 +33,15 @@ export function SettingsPanel() {
   onMount(() => {
     void hydrate();
   });
+
+  // The model `<select>` shows what the STORE holds, or nothing. Per-option `selected` alone left
+  // the element unbound: with `model` null no option carried it, the browser fell back to option 0,
+  // and the panel displayed a model Save then refused to accept (#165 S2). Reading `models` too
+  // matters — the list arrives after mount, and a re-render of the options must re-assert the
+  // value or the browser silently re-selects the first one.
+  const selectedModel = createMemo(() =>
+    settings.models.some((m) => m.id === settings.model) ? (settings.model ?? '') : '',
+  );
 
   function statusText(): string {
     switch (settings.saveStatus) {
@@ -107,11 +116,16 @@ export function SettingsPanel() {
         <div class="dz-settings__modelrow">
           <select
             id="dz-model"
+            value={selectedModel()}
             disabled={settings.modelsLoading}
             onChange={(e) => pickModel(e.currentTarget.value)}
           >
             <For each={settings.models}>
               {(m) => (
+                // Belt to the element-level `value` above: an option inserted AFTER that binding
+                // ran (the list arrives async) re-asserts the selection from its own side, which
+                // no ordering can undo. The two can never disagree — `selectedModel()` is
+                // non-empty exactly when one option matches.
                 <option value={m.id} selected={m.id === settings.model}>
                   {m.name}
                 </option>

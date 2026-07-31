@@ -16,8 +16,18 @@ actionTitle: developerz.ai Designer
 # ─── App shell (App.tsx, index.html) ──────────────────────────────────────────────
 app:
   documentTitle: developerz.ai Designer
+  # Short form shown in the panel header bar — the document title is too wide at the
+  # 360px Chrome pins the side panel to.
+  panelTitle: Designer
   logo:
     alt: developerz.ai
+  header:
+    compose:
+      ariaLabel: New chat
+    expand:
+      ariaLabel: Open in a full window
+    more:
+      ariaLabel: More options
   tab:
     chat: Chat
     mcp: MCP
@@ -290,6 +300,12 @@ task:
 composer:
   modelFallback: Model
   placeholder: Tell the agent what to change…
+  input:
+    ariaLabel: Message the agent
+  # Rendered visually-hidden and pointed at by the textarea's aria-describedby — the
+  # shortcut is otherwise invisible to a screen-reader user.
+  hint:
+    keyboard: Press Enter to send, Shift+Enter for a new line
   attach:
     title: Pick an element to attach as context
   send:
@@ -313,6 +329,11 @@ contextChip:
 empty:
   title: Tell the agent what to build
   subtitle: 'It edits this page live — pin an element with the picker for context, or start with one of these:'
+  # Meta line under the title — mirrors Leo's "Automatic ⓘ". Mode is inferred from the
+  # message (src/agent/modes.ts); there is no picker.
+  meta: Automatic
+  metaHint:
+    ariaLabel: Copy, debug or plain chat — picked from what you ask
 
 # ─── Message (chat/Message.tsx) ───────────────────────────────────────────────────
 message:
@@ -332,12 +353,33 @@ suggestion:
     label: Ship to developerz.ai
     prompt: Ship my accepted edits to developerz.ai as a PR.
 
+# ─── Thread (chat/Thread.tsx) ─────────────────────────────────────────────────────
+thread:
+  # Visually-hidden speaker label. Replaces the invalid role="user"/"assistant" that
+  # browsers dropped, so a screen reader can still tell the turns apart.
+  speaker:
+    user: You
+    assistant: Agent
+  scrollToLatest:
+    ariaLabel: Scroll to latest
+  newMessages:
+    1: $1 new message
+    n: $1 new messages
+
 # ─── Tool chip (chat/ToolChip.tsx) ────────────────────────────────────────────────
 toolChip:
   kind:
     read: read
     act: act
     info: info
+  # Visually-hidden outcome word per call. "pending" is the honest default: the bus
+  # reports a tool CALL when the model requests it, so success is only ever asserted
+  # once a tool-result actually says so.
+  status:
+    pending: pending
+    running: running
+    done: done
+    failed: failed
 
 # ─── Message bus (stores/bus.ts) ──────────────────────────────────────────────────
 bus:

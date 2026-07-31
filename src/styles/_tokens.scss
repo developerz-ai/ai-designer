@@ -1,7 +1,16 @@
 // Design tokens — the single source of truth (CLAUDE.md "SCSS"). Sass vars for
 // build-time use; the root-vars mixin emits the runtime var(--dz-*) custom
-// properties that components consume. Values match the existing surfaces so this
-// extraction is visually a no-op.
+// properties that components consume.
+//
+// Scale calibrated against Brave's Nala design system (the Leo side panel is the
+// layout reference) — its steps, density and elevation, NOT its violet. Our accent
+// stays orange. Nala anchors kept here for review: radius 2/4/8/12/16/1000 ·
+// spacing 4/8/12/16/24/32 · dark surfaces page #141415 / container #1c1c1d /
+// highlight #252527 · text #e4e4e5 / #c9c9ca / #909093 · dividers #303032 / #464649.
+//
+// Panel width is fixed by Chrome: 360 CSS px is BOTH the default and the minimum
+// (kSidePanelDefaultContentWidth) and an extension cannot change it. No token here
+// may assume a wider viewport.
 
 // rem() unit primitive — anchors every length token to the 16px root default.
 @use './functions' as fn;
@@ -20,8 +29,49 @@ $dz-fg: $dz-on-surface;
 $dz-accent-fg: #1a1205; // text on the accent surface (matches ChatPanel)
 $dz-muted: #8b909a;
 $dz-border: #232733;
-$dz-surface-overlay: rgba(255, 255, 255, 0.04);
 $dz-danger: #ff6b6b;
+
+// ─── Elevation ────────────────────────────────────────────────────────────────
+// Opaque surfaces, not alpha layers — stacking translucent washes drifts as soon as
+// two of them overlap. Steps mirror Nala's page → container → highlight deltas
+// (+8, +8 in 0–255) so density reads the same as Leo at our (bluer) base hue.
+$dz-elev-base: $dz-surface; // page / panel background
+$dz-elev-card: #171a21; // cards, menus, composer body, message bubbles
+$dz-elev-hover: #1f232c; // hovered/selected row on top of a card
+$dz-elev-inset: #0b0d11; // recessed wells — code blocks, tracks, empty slots
+
+// ─── Foreground ramp ──────────────────────────────────────────────────────────
+// Long-form prose is NOT the brightest value — Leo caps its brightest text at
+// #e4e4e5 and sets running prose a step below. `$dz-fg` stays the default UI text
+// so nothing existing shifts.
+$dz-fg-strong: #edeff2; // titles, bold runs inside prose
+$dz-fg-body: #c9cdd4; // long-form prose / message bodies
+$dz-fg-muted: $dz-muted; // captions, meta, placeholders (5.9:1 on the page bg)
+
+// ─── Borders ──────────────────────────────────────────────────────────────────
+// `subtle` is 1.29:1 against the page — same ratio as Nala's divider-subtle on its
+// container, and legal for the same reason: it only ever outlines a control that
+// already carries visible text or an icon. `strong` is for the case WCAG 1.4.11
+// actually governs — a boundary that is a control's ONLY visual affordance — and
+// clears 3:1 against base, card AND hover (4.03 / 3.70 / 3.32).
+$dz-border-subtle: $dz-border;
+$dz-border-strong: #6b7285;
+// Hairline width as a token so the "no raw px" rule holds for the ~20 `1px solid`
+// literals too, and so there is one place to revisit if a fractional rem border ever
+// renders unevenly at non-integer device pixel ratios.
+$dz-border-width: fn.rem(1);
+$dz-border-width-thick: fn.rem(2);
+
+// ─── Interaction washes ───────────────────────────────────────────────────────
+// Translucent so they compose over any elevation. These replace the ad-hoc
+// rgba(255,255,255,.04/.08) and rgba(0,0,0,.25/.5/.55) literals scattered in
+// components.
+$dz-wash-hover: rgba(255, 255, 255, 0.06);
+$dz-wash-active: rgba(255, 255, 255, 0.1);
+$dz-wash-inset: rgba(255, 255, 255, 0.03);
+$dz-scrim: rgba(0, 0, 0, 0.55); // modal/dialog backdrop
+// Legacy name for the hover wash — aliased, never a second value, so the two can't drift.
+$dz-surface-overlay: $dz-wash-hover;
 
 // Status colors
 $dz-status-connected: #22c55e; // green — online/ready state
@@ -34,8 +84,17 @@ $dz-icon-size-sm: fn.rem(16);
 $dz-icon-size-md: fn.rem(24);
 $dz-icon-size-lg: fn.rem(32);
 
-// radius
-$dz-radius: fn.rem(8);
+// ─── Radius ───────────────────────────────────────────────────────────────────
+// `$dz-radius` remains the default control radius; the scale gives the rest a name
+// instead of a literal. `pill` is 1000px (Nala's `full`) — a huge fixed radius, not
+// 50%, so it stays a capsule at any width.
+$dz-radius-xs: fn.rem(4); // inline chips, code spans, menu items
+$dz-radius-sm: fn.rem(6); // small controls
+$dz-radius: fn.rem(10); // default — buttons, inputs, rows
+$dz-radius-md: $dz-radius; // explicit alias for scale-order reads
+$dz-radius-lg: fn.rem(12); // cards, popovers
+$dz-radius-xl: fn.rem(16); // composer shell, large panels
+$dz-radius-pill: fn.rem(1000);
 
 // spacing
 $dz-space-1: fn.rem(4);
@@ -43,16 +102,69 @@ $dz-space-2: fn.rem(8);
 $dz-space-3: fn.rem(10);
 $dz-space-4: fn.rem(12);
 $dz-space-5: fn.rem(14);
+$dz-space-6: fn.rem(16); // Leo's panel gutter — the missing step
+$dz-space-7: fn.rem(20);
+$dz-space-8: fn.rem(24); // section rhythm
+$dz-space-9: fn.rem(32); // empty-state / hero breathing room
 
 // font-size scale (rem)
 $dz-font-xs: fn.rem(11);
 $dz-font-sm: fn.rem(12);
 $dz-font-md: fn.rem(13);
 $dz-font-base: fn.rem(14);
+$dz-font-lg: fn.rem(15); // long-form prose
+$dz-font-xl: fn.rem(17); // panel + section titles
+
+// Line heights — unitless so they inherit correctly through nested type.
+$dz-leading-tight: 1.25; // titles, single-line controls
+$dz-leading-snug: 1.4; // dense UI text, chips
+$dz-leading-body: 1.55; // prose (Nala runs 14/22 ≈ 1.57)
+
+// Weights — 700 is deliberately absent; Nala tops out at 600.
+$dz-weight-regular: 400;
+$dz-weight-medium: 500;
+$dz-weight-semibold: 600;
 
 $dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+// One mono stack — components hand-rolled five slightly different ones.
+$dz-font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
 
-// Runtime CSS custom properties consumed via var(--dz-*).
+// ─── Control geometry ─────────────────────────────────────────────────────────
+// Three heights, no fourth. `$dz-hit-target` is the WCAG 2.5.5 pointer area — a
+// control can be visually 32px and still present 44px (see the hit-target mixin);
+// it is NOT a box size.
+$dz-control-sm: fn.rem(28);
+$dz-control-md: fn.rem(32);
+$dz-control-lg: fn.rem(40);
+$dz-hit-target: fn.rem(44);
+
+// ─── Elevation shadows ────────────────────────────────────────────────────────
+// Heavier than Nala's (its #00000014 is tuned for a light theme); on a #0f1115
+// surface an 8%-black shadow is invisible. Three steps, so the three divergent
+// popover shadows (.35/.4/.45) collapse to one.
+$dz-shadow-sm: 0 fn.rem(1) fn.rem(2) rgba(0, 0, 0, 0.24), 0 fn.rem(1) fn.rem(3) rgba(0, 0, 0, 0.16);
+$dz-shadow-md: 0 fn.rem(4) fn.rem(12) rgba(0, 0, 0, 0.32), 0 fn.rem(1) fn.rem(3) rgba(0, 0, 0, 0.2);
+$dz-shadow-lg: 0 fn.rem(10) fn.rem(24) rgba(0, 0, 0, 0.4), 0 fn.rem(4) fn.rem(8) rgba(0, 0, 0, 0.24);
+
+// ─── Focus ring ───────────────────────────────────────────────────────────────
+// One width, one offset, one color — components disagreed on offset four ways.
+// The ring is the accent: #f97316 on #0f1115 is 6.8:1, comfortably past the 3:1
+// non-text minimum (Leo's own #5b67e8 ring only makes 3.99:1).
+$dz-focus-width: fn.rem(2);
+$dz-focus-offset: fn.rem(2);
+
+// ─── Motion ───────────────────────────────────────────────────────────────────
+// Always paired with the reduced-motion guard in main.scss — motion tokens without
+// one make the panel worse, not better.
+$dz-motion-fast: 120ms; // hover/press feedback
+$dz-motion-base: 180ms; // menus, disclosure
+$dz-motion-slow: 240ms; // panel-level transitions
+$dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles soft
+
+// Runtime CSS custom properties consumed via var(--dz-*). Emitted for values a
+// component may need at runtime (colors, geometry a calc() reads, motion). Purely
+// build-time scales (spacing, font-size, leading, weights) stay Sass vars — the
+// established split.
 @mixin root-vars {
   // Brand palette
   --dz-primary: #{$dz-primary};
@@ -65,7 +177,26 @@ $dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --dz-accent-fg: #{$dz-accent-fg};
   --dz-muted: #{$dz-muted};
   --dz-border: #{$dz-border};
+  --dz-danger: #{$dz-danger};
+  // Elevation
+  --dz-elev-base: #{$dz-elev-base};
+  --dz-elev-card: #{$dz-elev-card};
+  --dz-elev-hover: #{$dz-elev-hover};
+  --dz-elev-inset: #{$dz-elev-inset};
+  // Foreground ramp
+  --dz-fg-strong: #{$dz-fg-strong};
+  --dz-fg-body: #{$dz-fg-body};
+  --dz-fg-muted: #{$dz-fg-muted};
+  // Borders
+  --dz-border-subtle: #{$dz-border-subtle};
+  --dz-border-strong: #{$dz-border-strong};
+  --dz-border-width: #{$dz-border-width};
+  // Interaction washes
   --dz-surface-overlay: #{$dz-surface-overlay};
+  --dz-wash-hover: #{$dz-wash-hover};
+  --dz-wash-active: #{$dz-wash-active};
+  --dz-wash-inset: #{$dz-wash-inset};
+  --dz-scrim: #{$dz-scrim};
   // Status colors
   --dz-status-connected: #{$dz-status-connected};
   --dz-status-error: #{$dz-status-error};
@@ -75,7 +206,31 @@ $dz-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --dz-icon-size-sm: #{$dz-icon-size-sm};
   --dz-icon-size-md: #{$dz-icon-size-md};
   --dz-icon-size-lg: #{$dz-icon-size-lg};
-  // Other
+  // Radius
   --dz-radius: #{$dz-radius};
+  --dz-radius-xs: #{$dz-radius-xs};
+  --dz-radius-sm: #{$dz-radius-sm};
+  --dz-radius-lg: #{$dz-radius-lg};
+  --dz-radius-xl: #{$dz-radius-xl};
+  --dz-radius-pill: #{$dz-radius-pill};
+  // Control geometry
+  --dz-control-sm: #{$dz-control-sm};
+  --dz-control-md: #{$dz-control-md};
+  --dz-control-lg: #{$dz-control-lg};
+  --dz-hit-target: #{$dz-hit-target};
+  // Elevation shadows
+  --dz-shadow-sm: #{$dz-shadow-sm};
+  --dz-shadow-md: #{$dz-shadow-md};
+  --dz-shadow-lg: #{$dz-shadow-lg};
+  // Focus ring
+  --dz-focus-width: #{$dz-focus-width};
+  --dz-focus-offset: #{$dz-focus-offset};
+  // Motion
+  --dz-motion-fast: #{$dz-motion-fast};
+  --dz-motion-base: #{$dz-motion-base};
+  --dz-motion-slow: #{$dz-motion-slow};
+  --dz-ease: #{$dz-ease};
+  // Type
   --dz-font: #{$dz-font};
+  --dz-font-mono: #{$dz-font-mono};
 }

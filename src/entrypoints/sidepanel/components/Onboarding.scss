@@ -1,4 +1,5 @@
 @use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
 
 .dz-onboarding {
   position: fixed;
@@ -8,10 +9,12 @@
   align-items: center;
   justify-content: center;
   padding: tokens.$dz-space-4;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--dz-scrim);
   overflow: auto;
 
   &__card {
+    @include mixins.card('card', tokens.$dz-space-6, tokens.$dz-radius-xl);
+    @include mixins.scroll-area;
     position: relative;
     display: flex;
     flex-direction: column;
@@ -19,38 +22,20 @@
     width: 100%;
     max-width: tokens.rem(360);
     max-height: 100%;
-    overflow: auto;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    padding: tokens.rem(20);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--dz-shadow-lg);
   }
 
   &__skip {
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
     position: absolute;
     top: tokens.$dz-space-2;
     right: tokens.$dz-space-2;
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: none;
-    color: var(--dz-muted);
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    cursor: pointer;
-    font: inherit;
+    padding: 0 tokens.$dz-space-2;
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
-    border-radius: var(--dz-radius);
 
-    &:hover {
+    &:not(:disabled):hover {
       color: var(--dz-fg);
-      background: var(--dz-surface-overlay);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--dz-primary);
-      outline-offset: 2px;
     }
   }
 
@@ -64,24 +49,26 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: tokens.rem(36);
-    height: tokens.rem(36);
-    border-radius: 50%;
-    background: var(--dz-surface-overlay);
+    width: var(--dz-icon-size-lg);
+    height: var(--dz-icon-size-lg);
+    border-radius: var(--dz-radius-pill);
+    background: var(--dz-elev-hover);
     color: var(--dz-primary);
   }
 
   &__title {
     margin: 0;
-    color: var(--dz-fg);
-    font-size: tokens.rem(18);
-    font-weight: 600;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-xl;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-tight;
   }
 
   &__subtitle {
     margin: 0;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-md;
+    line-height: tokens.$dz-leading-snug;
   }
 
   &__steps {
@@ -94,16 +81,15 @@
   }
 
   &__step {
+    @include mixins.surface('base', true, tokens.$dz-radius-lg);
     display: flex;
     align-items: flex-start;
     gap: tokens.$dz-space-3;
     padding: tokens.$dz-space-3;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
 
     &.is-current {
       border-color: var(--dz-primary);
-      background: var(--dz-surface-overlay);
+      background: var(--dz-elev-hover);
     }
   }
 
@@ -112,13 +98,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: tokens.rem(22);
-    height: tokens.rem(22);
-    border-radius: 50%;
-    border: 1px solid var(--dz-border);
-    color: var(--dz-muted);
+    width: tokens.$dz-space-8;
+    height: tokens.$dz-space-8;
+    border-radius: var(--dz-radius-pill);
+    border: tokens.$dz-border-width solid var(--dz-border-strong);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
-    font-weight: 600;
+    font-weight: tokens.$dz-weight-semibold;
     line-height: 1;
 
     .is-done & {
@@ -144,60 +130,44 @@
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    color: var(--dz-fg);
+    color: var(--dz-fg-strong);
     font-size: tokens.$dz-font-md;
-    font-weight: 600;
+    font-weight: tokens.$dz-weight-semibold;
   }
 
   &__optional {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
-    font-weight: 400;
+    font-weight: tokens.$dz-weight-regular;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   &__stepdesc {
     margin: 0;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
-    line-height: 1.4;
+    line-height: tokens.$dz-leading-snug;
   }
 
   &__cta {
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
     flex: 0 0 auto;
     align-self: center;
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-1 tokens.$dz-space-3;
-    cursor: pointer;
-    font: inherit;
+    padding: 0 tokens.$dz-space-3;
     font-size: tokens.$dz-font-xs;
     white-space: nowrap;
 
-    &:hover {
-      background: var(--dz-surface-overlay);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--dz-primary);
-      outline-offset: 2px;
-    }
-
+    // The card's one loud element — the step the user is actually on.
     &.is-primary {
       background: var(--dz-accent);
-      border-color: var(--dz-accent);
+      border-color: transparent;
       color: var(--dz-accent-fg);
-      font-weight: 600;
+      font-weight: tokens.$dz-weight-semibold;
 
-      &:hover {
-        filter: brightness(1.05);
+      &:not(:disabled):hover {
         background: var(--dz-accent);
+        filter: brightness(1.08);
       }
     }
   }
@@ -205,15 +175,15 @@
   &__footer {
     display: flex;
     gap: tokens.$dz-space-4;
-    padding-top: tokens.$dz-space-2;
-    border-top: 1px solid var(--dz-border);
+    padding-top: tokens.$dz-space-3;
+    border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
   &__link {
     display: inline-flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
     text-decoration: none;
 

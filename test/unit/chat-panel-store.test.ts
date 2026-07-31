@@ -6,7 +6,7 @@ import {
   ZERO_USAGE,
 } from '@/entrypoints/sidepanel/stores/chat';
 import type { Edit } from '@/shared/changeset';
-import type { PanelToSw, SwToPanel } from '@/shared/messages';
+import type { PanelToSw, StableSelector, SwToPanel } from '@/shared/messages';
 
 // Pure fold: mirrors test/unit/mcp-panel-store.test.ts's reduceServers coverage — no chrome, no
 // Solid mount required.
@@ -101,6 +101,36 @@ describe('reduceChat: streaming assembly', () => {
     expect(messages).toEqual(before);
   });
 
+  it('session-state stopped closes the in-flight bubble (no turn-done ever comes)', () => {
+    // background.ts's `session-stop` clears `turnAbort` itself, so the aborted turn never emits
+    // `turn-done`: without this the bubble — and its last tool chip — spun forever after Stop.
+    let messages = reduceChat([], { type: 'token', text: 'working' });
+    messages = reduceChat(messages, { type: 'session-state', state: 'stopped' });
+    expect(messages[0]?.streaming).toBe(false);
+  });
+
+  it('a woken worker reporting turnRunning:false closes the orphaned bubble', () => {
+    let messages = reduceChat([], { type: 'token', text: 'working' });
+    messages = reduceChat(messages, {
+      type: 'session-state',
+      state: 'running',
+      turnRunning: false,
+    });
+    expect(messages[0]?.streaming).toBe(false);
+  });
+
+  it('a plain running transition leaves a live turn alone', () => {
+    let messages = reduceChat([], { type: 'token', text: 'working' });
+    messages = reduceChat(messages, { type: 'session-state', state: 'running' });
+    expect(messages[0]?.streaming).toBe(true);
+    messages = reduceChat(messages, {
+      type: 'session-state',
+      state: 'running',
+      turnRunning: true,
+    });
+    expect(messages[0]?.streaming).toBe(true);
+  });
+
   it('ignores unrelated message types', () => {
     const msg = { type: 'mcp-status' } as unknown as SwToPanel;
     expect(reduceChat([], msg)).toEqual([]);
@@ -123,6 +153,55 @@ describe('reduceChat: streaming assembly', () => {
     expect(next).toHaveLength(2);
     expect(next[0]).toEqual(withUser[0]);
     expect(next[1]).toMatchObject({ role: 'assistant', text: 'hello' });
+  });
+});
+
+describe('reduceChat: tool-result settles the chip that requested it', () => {
+  const call = (tool: string, id?: string): SwToPanel => ({ type: 'tool-call', tool, id });
+
+  it('matches by tool-call id when the SW carried one', () => {
+    let messages = reduceChat([], call('setStyle', 'c1'));
+    messages = reduceChat(messages, call('query', 'c2'));
+    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: true, id: 'c1' });
+    expect(messages[0]?.toolCalls.map((c) => [c.tool, c.ok])).toEqual([
+      ['setStyle', true],
+      ['query', undefined],
+    ]);
+  });
+
+  it('carries the failure reason onto the failed call', () => {
+    let messages = reduceChat([], call('setStyle', 'c1'));
+    messages = reduceChat(messages, {
+      type: 'tool-result',
+      tool: 'setStyle',
+      ok: false,
+      id: 'c1',
+      error: 'no element matches #gone',
+    });
+    expect(messages[0]?.toolCalls[0]).toMatchObject({
+      ok: false,
+      error: 'no element matches #gone',
+    });
+  });
+
+  it('with no id, settles the NEWEST unsettled call of that name', () => {
+    let messages = reduceChat([], call('setStyle'));
+    messages = reduceChat(messages, call('setStyle'));
+    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: false });
+    expect(messages[0]?.toolCalls.map((c) => c.ok)).toEqual([undefined, false]);
+
+    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: true });
+    expect(messages[0]?.toolCalls.map((c) => c.ok)).toEqual([true, false]);
+  });
+
+  it('never opens a bubble for a result with no call to attach to', () => {
+    expect(reduceChat([], { type: 'tool-result', tool: 'setStyle', ok: true })).toEqual([]);
+    const withUser: ChatMessage[] = [
+      { id: 'u1', role: 'user', text: 'hi', toolCalls: [], edits: [], streaming: false },
+    ];
+    expect(reduceChat(withUser, { type: 'tool-result', tool: 'setStyle', ok: true })).toBe(
+      withUser,
+    );
   });
 });
 
@@ -153,6 +232,14 @@ function installChromeFake(handle: SendMessage): { sendMessage: ReturnType<typeo
   return { sendMessage };
 }
 
+// What the picker resolves and the composer's context chip displays — the referent of "this".
+const pickedSelector: StableSelector = {
+  value: '[data-testid="cta"]',
+  strategy: 'data-attr',
+  fragile: false,
+};
+const otherSelector: StableSelector = { value: '#hero', strategy: 'id', fragile: false };
+
 afterEach(() => {
   (globalThis as { chrome?: unknown }).chrome = undefined;
   vi.restoreAllMocks();
@@ -173,6 +260,47 @@ describe('chat store actions', () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'user-message', text: 'make the hero pink' }),
     );
+  });
+
+  it('send() carries the picked element so "this" has a referent', async () => {
+    // The signature bug: the picker resolved a target, the context chip showed it, and the turn
+    // reached the SW as text alone — on a page with four CTAs the agent restyled a guess.
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    await store.send('make this 20% bigger', undefined, pickedSelector);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'user-message', selector: pickedSelector }),
+    );
+  });
+
+  it('send() carries the shift-multi-select set from the focus store', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const port = installPortFake();
+    const focus = await import('@/entrypoints/sidepanel/stores/focus');
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    focus.initFocusStore();
+    port.emit({ type: 'focus-multi', selectors: [pickedSelector, otherSelector] });
+    await store.send('align these');
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ selectors: [pickedSelector, otherSelector] }),
+    );
+  });
+
+  it('send() omits `selectors` entirely when nothing is multi-selected', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(() => ({ ok: true }));
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    await store.send('make the hero pink');
+
+    const sent = sendMessage.mock.calls[0]?.[0] as PanelToSw & { selectors?: unknown };
+    expect(sent.selectors).toBeUndefined();
   });
 
   it('send() ignores a blank/whitespace-only draft', async () => {

@@ -1,0 +1,99 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// Leo's model control is *text*, not a box: the composer shell already owns a border, so a
+// second one around a control sitting inside it reads as a nested field. Tone and the chevron
+// carry the affordance instead.
+.dz-modelpicker {
+  position: relative;
+  display: inline-flex;
+  // Lets the trigger shrink (and its label truncate) instead of pushing Send off the toolbar
+  // at the 360px panel floor.
+  min-width: 0;
+  flex: 0 1 auto;
+
+  &__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    min-width: 0;
+    height: tokens.$dz-control-sm;
+    padding: 0 tokens.$dz-space-2;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-muted);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-tight;
+    cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease),
+      color var(--dz-motion-fast) var(--dz-ease);
+
+    @include mixins.focus-ring;
+
+    &:not(:disabled):hover {
+      background: var(--dz-wash-hover);
+      color: var(--dz-fg);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  &__label {
+    @include mixins.truncate;
+  }
+
+  // A `div role="menu"` holding its `menuitemradio` buttons directly (see ModelPicker.tsx) —
+  // `menu-surface`'s list resets are inert here and left in place rather than forked.
+  &__menu {
+    @include mixins.menu-surface;
+    @include mixins.scroll-area('y', false);
+    // Opens upward — the composer is docked to the foot of the panel.
+    position: absolute;
+    bottom: calc(100% + #{tokens.$dz-space-1});
+    left: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: tokens.rem(2);
+    // No width scale in the tokens; these are one-off popover bounds, floored wide enough for a
+    // model id and capped short of the 360px panel.
+    min-width: tokens.rem(180);
+    max-width: tokens.rem(280);
+    max-height: tokens.rem(220);
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    text-align: left;
+    cursor: pointer;
+
+    @include mixins.truncate;
+    @include mixins.focus-ring(tokens.rem(-2));
+
+    &:hover {
+      background: var(--dz-elev-hover);
+    }
+
+    // The checked model reads as selected without a check glyph — tone only, so the row's text
+    // never shifts when selection moves.
+    &[aria-checked='true'] {
+      color: var(--dz-fg-strong);
+      font-weight: tokens.$dz-weight-semibold;
+    }
+  }
+}

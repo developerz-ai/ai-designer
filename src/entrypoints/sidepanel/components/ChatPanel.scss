@@ -1,13 +1,25 @@
 @use '../../../styles/tokens' as tokens;
 
+// Chat column's half of the panel scroll contract. `flex: 1; min-height: 0` — NOT
+// `height: 100%`: the shell (`.dz-app__body`) is a `min-height: 0` flex column that hands each
+// panel its own scrolling, and a percentage height there resolves against a parent that is
+// itself flexing, so the column overflows its track instead of shrinking to it. `min-height: 0`
+// is the part that actually lets it shrink (flex items floor at their content size otherwise).
+//
+// Exactly one descendant scrolls: `.dz-thread` (`@include scroll-area('y')`, `flex: 1;
+// min-height: 0`). Nothing else in this column may take `overflow-y: auto` — the Composer is a
+// fixed-size foot and must stay docked; if the column itself scrolled, the composer would ride
+// off-screen mid-turn, which is the failure Leo's docked layout exists to avoid.
 .dz-chat {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 
   &__error {
-    margin: 0 tokens.$dz-space-4 tokens.$dz-space-2;
+    margin: 0 tokens.$dz-space-6 tokens.$dz-space-2;
     color: var(--dz-status-error);
-    font-size: 0.85em;
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
   }
 }

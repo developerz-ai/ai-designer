@@ -1,24 +1,29 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
+// The header's status cluster: a quiet capsule that reports readiness, plus the Start/Stop
+// toggle — the one loud (accent-filled) element in the whole panel. Everything else in the
+// chrome is ghost or borderless by design.
 .dz-readiness {
   position: relative;
   display: flex;
+  flex: none;
   align-items: center;
   gap: tokens.$dz-space-2;
 
   &__pill {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
+    // `'none'` elevation + no border: the capsule reads as text with a hover wash, not as
+    // a bordered control competing with the toggle next to it.
+    @include mixins.pill('none', false);
+    @include mixins.focus-ring;
+    height: tokens.$dz-control-sm;
+    padding: 0 tokens.$dz-space-2;
     color: var(--dz-status-warning);
-    padding: tokens.$dz-space-1 tokens.$dz-space-3;
-    cursor: pointer;
     font: inherit;
     font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+    cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
 
     &.is-ready {
       color: var(--dz-status-connected);
@@ -29,92 +34,66 @@
     }
 
     &:hover {
-      background: var(--dz-surface-overlay);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--dz-primary);
-      outline-offset: 2px;
+      background: var(--dz-wash-hover);
     }
   }
 
   &__chevron {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
   }
 
   &__toggle {
-    background: var(--dz-accent);
-    border: none;
-    border-radius: var(--dz-radius);
-    color: var(--dz-accent-fg);
-    padding: tokens.$dz-space-1 tokens.$dz-space-4;
-    cursor: pointer;
-    font: inherit;
-    font-size: tokens.$dz-font-sm;
-    font-weight: 600;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
+    @include mixins.button-primary(tokens.$dz-control-sm);
+    font-weight: tokens.$dz-weight-semibold;
   }
 
+  // Anchored to the cluster's right edge, not its left: the cluster now sits hard right in
+  // the header, so a left-anchored popover would hang off the 360px panel.
   &__panel {
+    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.$dz-space-3);
     position: absolute;
     top: calc(100% + #{tokens.$dz-space-2});
-    left: 0;
+    right: 0;
     z-index: 10;
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
     min-width: tokens.rem(240);
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    padding: tokens.$dz-space-3;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    max-width: calc(100vw - #{tokens.$dz-space-8});
   }
 
   &__row {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
+    font-size: tokens.$dz-font-md;
   }
 
   &__rowlabel {
+    @include mixins.truncate;
     flex: 1;
-    min-width: 0;
-    color: var(--dz-fg);
+    color: var(--dz-fg-body);
   }
 
   &__rowdetail {
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
   }
 
   &__link {
-    display: inline-flex;
-    align-items: center;
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
+    flex: none;
     gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    cursor: pointer;
-    font: inherit;
+    padding: 0 tokens.$dz-space-2;
     font-size: tokens.$dz-font-xs;
-
-    &:hover {
-      background: var(--dz-surface-overlay);
-    }
   }
 
   &__error {
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: tokens.$dz-danger;
-    font-size: tokens.$dz-font-sm;
     margin: 0;
+    color: var(--dz-status-error);
+    font-size: tokens.$dz-font-sm;
   }
 }

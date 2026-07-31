@@ -1,37 +1,56 @@
 @use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
 
+// One shell, not three boxes. This used to be a `border-top` strip wrapping a separately
+// bordered textarea next to a separately bordered model trigger — three nested rectangles where
+// Leo has a single rounded container. The container owns the border, the radius and the focus
+// treatment (`field-shell`); the textarea inside it is chrome-less, and the model control is
+// plain text (see ModelPicker.scss).
+//
+// The outer `.dz-composer` is now transparent: the panel background shows through and the
+// lighter shell sits on it. That inversion is what makes the composer read as an object docked
+// on the page rather than a bar welded to its bottom edge.
 .dz-composer {
   display: flex;
   flex-direction: column;
   gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-2;
-  border-top: 1px solid var(--dz-border);
+  padding: tokens.$dz-space-2 tokens.$dz-space-6 tokens.$dz-space-6;
+  // Never scrolls, never shrinks: the thread is the one scroll area in this column
+  // (see ChatPanel.scss). A composer that can shrink loses its toolbar first.
+  flex: none;
+
+  &__shell {
+    @include mixins.field-shell(tokens.$dz-radius-xl, tokens.$dz-space-3);
+  }
+
+  // Name + shortcut hint: in the accessibility tree, out of the layout. `visually-hidden` keeps
+  // them announced (a `display: none` hint would leave aria-describedby pointing at nothing).
+  &__label,
+  &__hint {
+    @include mixins.visually-hidden;
+  }
 
   &__input {
-    resize: none;
-    min-height: tokens.rem(36);
-    max-height: tokens.rem(140);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    font: inherit;
-
-    &:disabled {
-      opacity: 0.6;
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--dz-primary);
-      outline-offset: -1px;
-    }
+    // Auto-grow with zero JS. `rows="1"` sets the floor; `field-sizing: content` (Baseline,
+    // Chrome 123+ — this surface is Chrome-only) grows the box with its content up to the cap
+    // below, which is what makes the old `max-height` meaningful for the first time. No resize
+    // observer, no manual DOM in the component (which the house rules forbid anyway).
+    field-sizing: content;
+    // ~11 lines at the shell's 15px/1.55 body before it starts scrolling, near Leo's cap. The
+    // previous 140px cut off at ~5, mid-paragraph.
+    max-height: tokens.rem(300);
+    @include mixins.scroll-area('y', false);
+    // `resize: none` comes from field-shell and is correct for an auto-growing box — a drag
+    // handle would fight `field-sizing`.
   }
 
   &__toolbar {
     display: flex;
     align-items: center;
-    gap: tokens.$dz-space-2;
+    gap: tokens.$dz-space-1;
+    // The toolbar lives *inside* the shell, so it must not reintroduce a horizontal scrollbar
+    // at the 360px floor — the model label truncates instead (ModelPicker.scss).
+    min-width: 0;
   }
 
   &__spacer {
@@ -39,123 +58,30 @@
   }
 
   &__attach {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: tokens.rem(28);
-    height: tokens.rem(28);
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-muted);
-    cursor: pointer;
+    @include mixins.icon-button(tokens.$dz-control-md, tokens.$dz-radius, true, 'muted');
 
-    &:hover {
-      color: var(--dz-fg);
-      background: var(--dz-surface-overlay);
-    }
-
+    // Pressed state (`aria-pressed`) — the picker is armed or an element is pinned.
     &.is-active {
+      background-color: var(--dz-accent);
       color: var(--dz-accent-fg);
-      background: var(--dz-accent);
-      border-color: var(--dz-accent);
-    }
-  }
-
-  &__model {
-    position: relative;
-  }
-
-  &__model-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.8em;
-    max-width: tokens.rem(160);
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-
-    &:not(:disabled):hover {
-      background: var(--dz-surface-overlay);
-    }
-  }
-
-  &__model-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  &__model-menu {
-    position: absolute;
-    bottom: calc(100% + #{tokens.$dz-space-1});
-    left: 0;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: tokens.rem(2);
-    min-width: tokens.rem(180);
-    max-height: tokens.rem(220);
-    overflow-y: auto;
-    margin: 0;
-    padding: tokens.$dz-space-1;
-    list-style: none;
-    background: var(--dz-surface);
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-
-    button {
-      width: 100%;
-      text-align: left;
-      background: transparent;
-      border: none;
-      border-radius: tokens.rem(4);
-      color: var(--dz-fg);
-      padding: tokens.$dz-space-1 tokens.$dz-space-2;
-      cursor: pointer;
-      font: inherit;
-      font-size: 0.8em;
 
       &:hover {
-        background: var(--dz-surface-overlay);
+        background-color: var(--dz-accent);
+        color: var(--dz-accent-fg);
       }
     }
   }
 
-  &__send,
-  &__stop {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: tokens.$dz-space-1;
-    background: var(--dz-accent);
-    border: none;
-    border-radius: var(--dz-radius);
-    color: var(--dz-accent-fg);
-    height: tokens.rem(28);
-    padding: 0 tokens.$dz-space-4;
-    cursor: pointer;
-    font: inherit;
+  // Leo's send is a filled disc with an arrow-up glyph, not a rectangular accent slab with
+  // horizontal padding. Same element becomes Stop while a turn streams (see Composer.tsx).
+  &__action {
+    @include mixins.circle-button(tokens.$dz-control-md, 'accent');
 
-    &:disabled {
-      opacity: 0.5;
-      cursor: default;
+    // Stop must never be mistakable for Send. Only the fill changes — `--dz-accent-fg` is the
+    // dark ink `circle-button` already applies, and it is the legible choice on this light red
+    // too (the previous `--dz-on-surface` was light-on-light, ~2:1).
+    &--stop {
+      background: var(--dz-danger);
     }
-  }
-
-  &__stop {
-    background: var(--dz-danger);
-    color: var(--dz-on-surface);
   }
 }

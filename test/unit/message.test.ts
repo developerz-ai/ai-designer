@@ -1,14 +1,26 @@
+import { render, within } from '@solidjs/testing-library';
 import { describe, expect, it } from 'vitest';
 import {
   editsSummary,
+  Message,
   showMarkdown,
-  toolCallStatus,
+  speakerLabel,
 } from '@/entrypoints/sidepanel/components/chat/Message';
 
 // Message's rendering contract exercised through its pure building blocks (mirrors
-// tool-chip.test.ts / icon.test.ts) — role variant, edits pluralization, and the derived
-// per-call ToolChip status that gives "ToolChip running -> done" real behavior instead of a
-// dead prop (docs/plans task #70).
+// tool-chip.test.ts / icon.test.ts) — role variant and edits pluralization — plus a mounted
+// check that a turn still names its speaker now that the invalid `role="user"`/`role="assistant"`
+// is gone. The per-call tool status moved out with the tool region itself: see
+// tool-call-list.test.tsx.
+//
+// Mounted without JSX (a Solid component is just a function of props), so this spec stays a
+// plain `.ts` file. `Message` renders an `<li>`, so it is mounted into a real `<ul>` — that is
+// what maps it to the `listitem` role.
+function mountTurn(props: Parameters<typeof Message>[0]) {
+  const list = document.body.appendChild(document.createElement('ul'));
+  render(() => Message(props), { container: list });
+  return within(list).getByRole('listitem');
+}
 
 describe('showMarkdown', () => {
   it('renders assistant text through markdown', () => {
@@ -20,6 +32,45 @@ describe('showMarkdown', () => {
   });
 });
 
+describe('speakerLabel', () => {
+  it('names the two speakers a thread actually has', () => {
+    expect(speakerLabel('user')).toBe('You');
+    expect(speakerLabel('assistant')).toBe('Agent');
+  });
+
+  it('gives a system notice no speaker — nobody said it', () => {
+    expect(speakerLabel('system')).toBeUndefined();
+  });
+});
+
+describe('<Message> speaker', () => {
+  it('names its speaker before the turn content, without showing it', () => {
+    const turn = mountTurn({ role: 'user', text: 'Recolor the CTA' });
+
+    // The label is the turn's first content, so it is read before the words.
+    expect(turn).toHaveTextContent(/^You/);
+    const speaker = turn.querySelector('.dz-message__speaker');
+    expect(speaker).toHaveTextContent('You');
+    // Off-screen, not display:none — removing it from the a11y tree would defeat the point.
+    expect(speaker).toBeInTheDocument();
+    expect(speaker).toHaveClass('dz-message__speaker');
+  });
+
+  it('distinguishes the agent turn from the user turn by name, not just by tone', () => {
+    const turn = mountTurn({ role: 'assistant', text: 'Recolored it.' });
+
+    expect(turn).toHaveTextContent(/^Agent/);
+    expect(turn).toHaveClass('dz-message--assistant');
+  });
+
+  it('adds no speaker text to a system notice', () => {
+    const turn = mountTurn({ role: 'system', text: 'Session stopped.' });
+
+    expect(turn.querySelector('.dz-message__speaker')).toBeNull();
+    expect(turn).toHaveTextContent('Session stopped.');
+  });
+});
+
 describe('editsSummary', () => {
   it('uses the singular for exactly one edit', () => {
     expect(editsSummary(1)).toBe('1 edit recorded');
@@ -27,33 +78,5 @@ describe('editsSummary', () => {
 
   it.each([0, 2, 5])('uses the plural for %i edits', (count) => {
     expect(editsSummary(count)).toBe(`${count} edits recorded`);
-  });
-});
-
-describe('toolCallStatus', () => {
-  it('marks only the most recent call as running while the bubble still streams', () => {
-    expect(toolCallStatus(0, 2, true, false)).toBe('done');
-    expect(toolCallStatus(1, 2, true, false)).toBe('running');
-  });
-
-  it('marks the most recent call as error when the turn ended in one', () => {
-    expect(toolCallStatus(1, 2, false, true)).toBe('error');
-  });
-
-  it('error takes priority over a still-streaming flag on the last call', () => {
-    expect(toolCallStatus(1, 2, true, true)).toBe('error');
-  });
-
-  it('settles to done once streaming ends without error', () => {
-    expect(toolCallStatus(1, 2, false, false)).toBe('done');
-  });
-
-  it('a single call follows the same last-index rule as any other', () => {
-    expect(toolCallStatus(0, 1, true, false)).toBe('running');
-    expect(toolCallStatus(0, 1, false, false)).toBe('done');
-  });
-
-  it('never marks an earlier, already-completed call as running or error', () => {
-    expect(toolCallStatus(0, 3, true, true)).toBe('done');
   });
 });
