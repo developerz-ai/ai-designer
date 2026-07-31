@@ -100,12 +100,13 @@ jobs:
 
   test-e2e:
     name: Test (e2e)
-    # E2E is the long pole and by far the most expensive job: a build, a Chromium download,
-    # then N persistent-context browser launches. It ran 138s serial on 2 vCPU because the
-    # local worker formula floors at 1 there; on CI playwright.config.ts now asks for 50% of
-    # cores, so 4 vCPU gives 2 real workers — about half the wall clock of the 2-vCPU run at
-    # the same vCPU-seconds, and half the cost of doing it on 8.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # E2E is the long pole and by far the most expensive job. MEASURED, because the intuition
+    # here is wrong: 2 vCPU = 138s = 276 vCPU-s, 4 vCPU = 104s = 416 vCPU-s. More cores buy
+    # only 25% wall clock for 50% more money, because the cost is dominated by the build and
+    # the Chromium install — both serial no matter how many Playwright workers run. Keep it on
+    # the small runner; if you ever need e2e faster, cut the serial prologue (reuse the build
+    # artifact from the `build` job), don't add cores.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     needs: [lint, typecheck]
     steps:
