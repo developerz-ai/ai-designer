@@ -1,0 +1,56 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+// The panel's surface switcher, styled as one segmented control on an inset track rather
+// than five bordered rectangles. Leo's chrome is quiet: the track carries the shape, the
+// selected segment lifts one elevation step, and nothing here competes with the single
+// loud element in the header (the Start/Stop toggle).
+.dz-tabbar {
+  display: flex;
+  flex: none;
+  gap: tokens.rem(2);
+  margin: 0 tokens.$dz-space-6 tokens.$dz-space-4;
+  padding: tokens.rem(2);
+
+  @include mixins.surface('inset', false, tokens.$dz-radius);
+
+  &__tab {
+    // Equal segments: at the 360px floor the three word tabs and two glyph tabs still
+    // need a predictable column each, and `min-width: 0` lets a long localized label
+    // shrink instead of widening the panel.
+    flex: 1 1 0;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: tokens.$dz-control-sm;
+    padding: 0 tokens.$dz-space-2;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-muted);
+    font: inherit;
+    font-size: tokens.$dz-font-md;
+    font-weight: tokens.$dz-weight-medium;
+    line-height: tokens.$dz-leading-tight;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color var(--dz-motion-fast) var(--dz-ease),
+      color var(--dz-motion-fast) var(--dz-ease);
+
+    @include mixins.truncate;
+    // Flush inside the track — an outside ring would be clipped by the inset well.
+    @include mixins.focus-ring(tokens.rem(-2));
+
+    &:hover:not(.is-active) {
+      background: var(--dz-wash-hover);
+      color: var(--dz-fg);
+    }
+
+    &.is-active {
+      background: var(--dz-elev-hover);
+      color: var(--dz-fg-strong);
+    }
+  }
+}

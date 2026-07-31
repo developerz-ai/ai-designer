@@ -1,29 +1,35 @@
 @use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
 
+// Leo's context card: a full-width card sitting directly above the composer shell, sharing its
+// left/right edges, rather than a small pill floated to one side. Look only — the markup stays a
+// single-line label (`describeSelector` produces one string, and both an e2e assertion and its
+// unit test match it whole), so the two-line variant of Leo's card is deliberately not attempted.
 .dz-context-chip {
-  display: inline-flex;
+  @include mixins.card('card', tokens.$dz-space-2 tokens.$dz-space-3, tokens.$dz-radius-lg);
+  display: flex;
   align-items: center;
-  gap: tokens.$dz-space-1;
-  align-self: flex-start;
-  margin: 0 tokens.$dz-space-2;
-  padding: tokens.$dz-space-1 tokens.$dz-space-2;
-  border: 1px solid color-mix(in srgb, var(--dz-accent) 45%, var(--dz-border));
-  border-radius: var(--dz-radius);
-  background: var(--dz-surface-overlay);
+  gap: tokens.$dz-space-2;
+  // Full width of the composer column — was `inline-flex` + `align-self: flex-start` + a margin,
+  // which left it visibly narrower than, and misaligned with, the shell below it.
+  width: 100%;
   color: var(--dz-fg);
-  font-size: 0.8em;
-  max-width: calc(100% - #{tokens.$dz-space-4});
+  font-size: tokens.$dz-font-sm;
+  line-height: tokens.$dz-leading-snug;
+  // The accent edge is the "pinned" signal; it replaces the old color-mix border.
+  border-color: color-mix(in srgb, var(--dz-accent) 45%, var(--dz-border-subtle));
 
   &--picking {
     border-color: var(--dz-accent);
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
   }
 
   &__label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: ui-monospace, 'SF Mono', monospace;
+    @include mixins.mono(tokens.$dz-font-sm);
+    @include mixins.truncate;
+    // Takes the slack so the dismiss button stays pinned right and the selector truncates
+    // instead of pushing it out of the card at 360px.
+    flex: 1;
 
     &--fragile {
       color: var(--dz-status-warning);
@@ -31,20 +37,6 @@
   }
 
   &__dismiss {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: tokens.$dz-space-1;
-    padding: tokens.rem(2);
-    background: transparent;
-    border: none;
-    border-radius: tokens.rem(4);
-    color: var(--dz-muted);
-    cursor: pointer;
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--dz-fg);
-    }
+    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, true, 'muted');
   }
 }

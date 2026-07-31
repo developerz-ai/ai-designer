@@ -4,14 +4,14 @@
   display: flex;
   flex-direction: column;
   gap: tokens.$dz-space-2;
-  border-top: 1px solid var(--dz-border);
+  border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
   padding-top: tokens.$dz-space-4;
 
   &__link {
     display: inline-flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
     text-decoration: none;
 

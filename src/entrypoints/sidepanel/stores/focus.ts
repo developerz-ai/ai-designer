@@ -12,6 +12,9 @@ export interface FocusState {
   selector: StableSelector | null;
   rect: Rect | null;
   pickerActive: boolean;
+  /** The shift-multi-select set (`focus-multi`) — several referents at once, chipped alongside the
+   *  single pin and echoed back as `UserMessage.selectors`. */
+  selectors: StableSelector[];
 }
 
 /** Pure reducer: derives the next focus state from an SW->panel message. */
@@ -19,11 +22,16 @@ export function reduceFocus(state: FocusState, msg: SwToPanel): FocusState {
   switch (msg.type) {
     case 'focus':
       return { ...state, selector: msg.selector, rect: msg.rect };
+    case 'focus-multi':
+      // An EMPTY array is meaningful: the user cleared the multi-selection, so the chips go with
+      // it (src/shared/messages.ts `focus-multi`).
+      return { ...state, selectors: msg.selectors };
     case 'picker-state':
-      if (!msg.active) {
-        return { pickerActive: false, selector: null, rect: null };
-      }
-      return { ...state, pickerActive: true };
+      // Only the picker's activation state. `src/dom/picker.ts` does NOT stop after a pick, so the
+      // natural "done picking" gesture — Escape, i.e. `picker.stop()` — arrives here as
+      // `{active:false}`; clearing the selection on it threw away the pin the user had just made.
+      // The selection is dropped on an explicit `clearFocus()` (the chip's dismiss) instead.
+      return { ...state, pickerActive: msg.active };
     default:
       return state;
   }
@@ -32,8 +40,13 @@ export function reduceFocus(state: FocusState, msg: SwToPanel): FocusState {
 const [selector, setSelector] = createSignal<StableSelector | null>(null);
 const [rect, setRect] = createSignal<Rect | null>(null);
 const [pickerActive, setPickerActive] = createSignal<boolean>(false);
+const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
+// Picker RPC failures (a worker mid-restart answers "Receiving end does not exist"): every other
+// store action surfaces its failure rather than rejecting into an unhandled rejection, which the
+// UI cannot show and Sentry records as a crash.
+const [error, setError] = createSignal<string | null>(null);
 
-export { pickerActive, rect, selector };
+export { error, multiSelectors, pickerActive, rect, selector };
 
 let wired = false;
 
@@ -47,27 +60,40 @@ export function initFocusStore(): void {
   connectPort();
   subscribeToSw((msg) => {
     const next = reduceFocus(
-      { selector: selector(), rect: rect(), pickerActive: pickerActive() },
+      {
+        selector: selector(),
+        rect: rect(),
+        pickerActive: pickerActive(),
+        selectors: multiSelectors(),
+      },
       msg,
     );
     setSelector(next.selector);
     setRect(next.rect);
     setPickerActive(next.pickerActive);
+    setMultiSelectors(next.selectors);
   });
 }
 
-/** Manual reset of the focus state. */
+/** Manual reset of the focus state — the one place a pin is dropped (the chip's dismiss). */
 export function clearFocus(): void {
   setSelector(null);
   setRect(null);
   setPickerActive(false);
+  setMultiSelectors([]);
 }
 
 /** Composer's "attach" affordance: ask the content script (via the SW) to start the
  *  Cursor-style element picker on the active tab. The resulting `focus`/`picker-state`
- *  pushes fold in through `initFocusStore` above — this only fires the request. */
+ *  pushes fold in through `initFocusStore` above — this only fires the request.
+ *  Never throws: a failed RPC surfaces via `error()` like every other store action. */
 export async function startPicker(): Promise<void> {
-  await request({ type: 'start-picker' }, OkResult);
+  setError(null);
+  try {
+    await request({ type: 'start-picker' }, OkResult);
+  } catch (e) {
+    setError(errMsg(e));
+  }
 }
 
 /** Cancel an in-flight pick (ContextChip's dismiss while `pickerActive`). Clears local
@@ -75,5 +101,14 @@ export async function startPicker(): Promise<void> {
  *  without a round-trip flicker. */
 export async function stopPicker(): Promise<void> {
   clearFocus();
-  await request({ type: 'stop-picker' }, OkResult);
+  setError(null);
+  try {
+    await request({ type: 'stop-picker' }, OkResult);
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }

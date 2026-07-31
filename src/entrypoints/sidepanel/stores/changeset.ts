@@ -5,7 +5,7 @@ import { addEdit, type Changeset } from '@/shared/changeset';
 import type { Mode, PanelToSw, SwToPanel } from '@/shared/messages';
 import { ChangesetResult, HandoffResult, type ShipRequest } from '@/shared/messages';
 import { request } from './bus';
-import { connectPort, subscribeToSw } from './sw-stream';
+import { connectPort, onReconnect, subscribeToSw } from './sw-stream';
 
 // Changeset/Ship store: thin reflection of the SW session (src/changeset/store.ts) driving
 // ShipBar + TaskTimeline. Every mutation is an RPC (`ship`/`download-report`/`send-report`,
@@ -17,8 +17,19 @@ import { connectPort, subscribeToSw } from './sw-stream';
 // fetch) belongs here rather than in a component.
 
 /** One task's live status on the Ship timeline — the non-`type` fields of the `task-status`
- *  stream message (`src/shared/messages.ts` `SwToPanel`). */
-export type TaskStatus = Omit<Extract<SwToPanel, { type: 'task-status' }>, 'type'>;
+ *  stream message (`src/shared/messages.ts` `SwToPanel`), plus the row identity below. */
+export type TaskStatus = Omit<Extract<SwToPanel, { type: 'task-status' }>, 'type'> & {
+  /** Row identity for the timeline — `taskId` is NOT one: a `create` that throws never got an id,
+   *  and `src/mcp/handoff.ts`'s `dispatchTask` emits its catch with `taskId: ''` (see its
+   *  `let taskId = ''`). Three failing creates then collapsed onto a single row reading
+   *  "task 3/3", telling the user two tasks had been created. `index` is unique per fan-out. */
+  key: string;
+};
+
+/** Row identity for one `task-status` push (see `TaskStatus.key`). */
+export function taskRowKey(msg: { taskId: string; index: number }): string {
+  return msg.taskId || `idx:${msg.index}`;
+}
 
 /** Pure fold: apply one SW->panel message onto the live changeset. Unrelated message types are a
  *  no-op (identity) — mirrors `stores/mcp.ts` `reduceServers`. Exported for a mock-free unit test. */
@@ -61,15 +72,16 @@ function isUndoShaped(prior: Changeset | null, incoming: Changeset): boolean {
   });
 }
 
-/** Pure fold: upsert one task's status by `taskId` onto the timeline, preserving arrival order for
- *  unseen tasks (index/total come from the SW's fan-out, not recomputed here). */
+/** Pure fold: upsert one task's status by row identity onto the timeline, preserving arrival order
+ *  for unseen tasks (index/total come from the SW's fan-out, not recomputed here). */
 export function reduceTasks(tasks: TaskStatus[], msg: SwToPanel): TaskStatus[] {
   if (msg.type !== 'task-status') return tasks;
   const { type: _type, ...status } = msg;
-  const idx = tasks.findIndex((t) => t.taskId === status.taskId);
-  if (idx === -1) return [...tasks, status];
+  const row: TaskStatus = { ...status, key: taskRowKey(msg) };
+  const idx = tasks.findIndex((t) => t.key === row.key);
+  if (idx === -1) return [...tasks, row];
   const next = tasks.slice();
-  next[idx] = status;
+  next[idx] = row;
   return next;
 }
 
@@ -172,7 +184,9 @@ export function initChangesetStore(): void {
     // reconcile (keyed by `taskId`) so a status push updates only the changed task's fields —
     // a plain array replace remounts every keyed `<For>` row in TaskTimeline.
     else if (msg.type === 'task-status')
-      setTasks(reconcile(reduceTasks(tasks, msg), { key: 'taskId' }));
+      // Keyed by the row identity, not `taskId`: a failed fan-out emits several rows with an EMPTY
+      // taskId, and duplicate reconcile keys mis-map rows onto each other.
+      setTasks(reconcile(reduceTasks(tasks, msg), { key: 'key' }));
     // A turn just finished (or was Stopped — the aborted turn's finally never emits turn-done, so
     // the non-running session-state is the only settle signal on that path) — the agent may have
     // recorded/undone edits, so refresh authoritative undo/redo availability for the now-enabled
@@ -197,6 +211,10 @@ export function initChangesetStore(): void {
   };
   chrome.tabs?.onActivated?.addListener?.(retarget);
   chrome.windows?.onFocusChanged?.addListener?.(retarget);
+  // Every `edit-recorded`/`changeset` push sent while the Port was down is gone — the durable
+  // record lives on in `chrome.storage.session`, so re-read it rather than show the pre-drop view
+  // (#165 S5). Same guard as a tab switch: never race an in-flight curation reply.
+  onReconnect(retarget);
 }
 
 // --- diff review: changeset curation (slice 10) --------------------------------------------------
@@ -329,6 +347,9 @@ export async function ship(opts: ShipOptions = {}): Promise<void> {
   setShipping(true);
   setError(null);
   setFallbackReason(null);
+  // A ship's timeline is that ship's tasks. Left uncleared, a second ship appended its rows under
+  // the first ship's, and the two fan-outs' "task 1/2" counters read as one six-task dispatch.
+  setTasks(reconcile([], { key: 'key' }));
   try {
     const msg: ShipRequest = {
       type: 'ship',
@@ -371,6 +392,7 @@ export async function sendReport(
   setShipping(true);
   setError(null);
   setFallbackReason(null);
+  setTasks(reconcile([], { key: 'key' })); // same fresh-timeline rule as `ship`
   try {
     const r = await request(
       { type: 'send-report', target, mode: opts.mode, problems: opts.problems },

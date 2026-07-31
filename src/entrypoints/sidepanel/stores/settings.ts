@@ -143,7 +143,19 @@ export async function loadModels(apiKeyText?: string): Promise<void> {
         : { type: 'list-models', baseURL: settings.baseURL, apiKey: typed || undefined },
       ModelsResult,
     );
-    set({ models: r.models ?? [], error: r.error ?? null });
+    const models = r.models ?? [];
+    // Adopt the model the dropdown is ALREADY showing when nothing is chosen yet: a `<select>`
+    // with no selected option displays its first one, so leaving `model` null meant the panel
+    // showed "GPT-4o mini" while Save stayed disabled on `!settings.model` — and re-picking the
+    // displayed entry fires no `change` event, so a fresh install could only escape by choosing a
+    // model it didn't want (#165 S2). Never overrides an existing choice (a saved model missing
+    // from a filtered list stays the user's).
+    const first = models[0];
+    set({
+      models,
+      error: r.error ?? null,
+      ...(settings.model === null && first ? { model: first.id } : {}),
+    });
   } catch (e) {
     set({ error: errMsg(e) });
   } finally {

@@ -1,13 +1,23 @@
 @use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
 
 .dz-thread {
+  @include mixins.scroll-area('y');
   flex: 1;
   min-height: 0;
-  list-style: none;
-  margin: 0;
-  padding: tokens.$dz-space-4;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: tokens.$dz-space-2;
+  // Load-bearing, not cosmetic: with the assistant's bubble gone, this gap IS the turn
+  // separation. At the old 8px, an unboxed answer and the next instruction run together into one
+  // block of text. 16px is Leo's gutter and its inter-turn rhythm.
+  gap: tokens.$dz-space-6;
+  margin: 0;
+  padding: tokens.$dz-space-6;
+  list-style: none;
+}
+
+// Sibling of the transcript, not a child — a `<ul>` may only contain `<li>`. Off-screen but in
+// the accessibility tree; it carries the in-flight reply only (see Thread.tsx).
+.dz-thread__announcer {
+  @include mixins.visually-hidden;
 }

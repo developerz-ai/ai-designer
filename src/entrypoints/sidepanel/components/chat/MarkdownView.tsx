@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch } from 'solid-js';
 import type { MdBlock, MdInline } from './markdown';
 import { parseMarkdown } from './markdown';
+import './MarkdownView.scss';
 
 // Walks the pure `markdown.ts` AST into real Solid elements — every string ends up in a JSX text
 // node, never `innerHTML`, so this stays XSS-safe by construction (CLAUDE.md "No remote code, no

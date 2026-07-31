@@ -1,0 +1,35 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// Moved out of Message.scss, where these rules squatted (CLAUDE.md: one component = one .tsx +
+// one co-located .scss, same basename). They also rendered headings at UA defaults — `margin: 0`
+// with no `font-size`, so an `h2` came out at 1.5em ≈ 21px, oversized in a 360px panel — and
+// paragraphs 8px apart, too tight for long-form output.
+//
+// The whole block is now the `prose` mixin: ~15px at 1.55, body copy one step below the brightest
+// value with bold runs stepping up to it, block rhythm at 12px, headings sized and weighted
+// rather than left to the UA, inline code a faint inset wash rather than a hard black chip, and
+// `overflow-wrap: anywhere` so a selector or URL cannot widen the panel.
+.dz-markdown {
+  @include mixins.prose(tokens.$dz-font-lg);
+
+  // Nesting depth reads as depth: disc -> hollow circle -> square, each with a real indent (the
+  // indent comes from prose's `padding-left`). NOTE: `markdown.ts` does not yet emit nested
+  // lists — it strips leading indentation and flattens every item into one list — so these rules
+  // are inert until the parser learns nesting. Kept because the styling half is correct and this
+  // file is where it belongs.
+  ul {
+    list-style: disc;
+  }
+
+  li > ul {
+    list-style: circle;
+  }
+
+  li > ul ul {
+    list-style: square;
+  }
+
+  // `__code` / `__code-block` are the TSX's hooks onto `code` / `pre`, both of which `prose`
+  // already styles; they exist for targeting, not for a second set of values.
+}

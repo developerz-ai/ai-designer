@@ -10,7 +10,7 @@ import { relayToPanel } from '@/shared/relay';
 // click on the picker emits a ContentToSw event, relayToPanel projects it to an SwToPanel
 // message, and reduceFocus folds it into the panel's FocusState the UI reads.
 
-const INITIAL: FocusState = { selector: null, rect: null, pickerActive: false };
+const INITIAL: FocusState = { selector: null, rect: null, pickerActive: false, selectors: [] };
 
 function pickerToFocus(): { picker: ReturnType<typeof createPicker>; state: () => FocusState } {
   let state = INITIAL;
@@ -37,7 +37,7 @@ describe('picker -> relay -> focus store', () => {
   it('starting the picker flips pickerActive in the panel store', () => {
     const { picker, state } = pickerToFocus();
     picker.start();
-    expect(state()).toEqual({ selector: null, rect: null, pickerActive: true });
+    expect(state()).toEqual({ selector: null, rect: null, pickerActive: true, selectors: [] });
     picker.destroy();
   });
 
@@ -53,29 +53,37 @@ describe('picker -> relay -> focus store', () => {
     picker.destroy();
   });
 
-  it('stopping the picker clears the focused selection', () => {
+  it('stopping the picker ends picking but KEEPS the pick', () => {
+    // `createPicker` does not stop itself after a pick, so Escape — the natural "I'm done picking"
+    // gesture — is what calls stop(). Clearing the selection on it threw away the pin the user had
+    // just made, one keystroke after making it (#165 S9).
     document.body.innerHTML = '<button id="b" data-testid="cta">Buy</button>';
     const { picker, state } = pickerToFocus();
     picker.start();
     click(byId('b'));
-    expect(state().selector).not.toBeNull();
+    const picked = state().selector;
+    expect(picked).not.toBeNull();
 
     picker.stop();
-    expect(state()).toEqual({ selector: null, rect: null, pickerActive: false });
+    expect(state()).toMatchObject({ selector: picked, pickerActive: false });
     picker.destroy();
   });
 
-  it('a shift-click multi-selection does not affect the single-focus selector', () => {
+  it('a shift-click multi-selection lands in `selectors`, leaving the single focus alone', () => {
     document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
     const { picker, state } = pickerToFocus();
     picker.start();
 
     click(byId('a'), { shiftKey: true });
 
-    // multi-select-changed relays to `multi-select`, which reduceFocus has no case for (its
-    // default branch returns state unchanged) — the two selection modes stay independent.
+    // multi-select-changed relays to `focus-multi` — the set the composer chips and `send()`
+    // echoes back as `UserMessage.selectors`. The two selection modes stay independent.
+    expect(state().selectors).toHaveLength(1);
     expect(state().selector).toBeNull();
     expect(state().pickerActive).toBe(true);
+
+    click(byId('a'), { shiftKey: true }); // toggling the last one off clears the set
+    expect(state().selectors).toEqual([]);
     picker.destroy();
   });
 });

@@ -12,7 +12,7 @@ import type {
 } from '@/shared/messages';
 import { McpListResult, McpOriginRepoResult, McpServerResult, OkResult } from '@/shared/messages';
 import { request } from './bus';
-import { connectPort, subscribeToSw } from './sw-stream';
+import { connectPort, onReconnect, subscribeToSw } from './sw-stream';
 
 // MCP store: thin reflection of the SW's server registry (src/mcp/store.ts) + live
 // connection health (src/mcp/manager.ts). Every mutation — add/remove/connect/auth —
@@ -107,6 +107,11 @@ export function initMcpStore(): void {
   // activeOrigin follows tab switches + active-tab navigations so the origin→repo form always
   // edits the page the user is looking at (all guarded — the unit-test chrome fake carries only
   // `runtime`; mirrors stores/changeset.ts's own guarded tab listeners).
+  // The manager's connection health is IN-MEMORY in the SW: a worker restart resets every server
+  // to `disconnected` while this store still shows green rows — and McpPanel hides its Connect
+  // button on a `connected` row, so nothing in the UI could restore truth until the tab remounted
+  // (#165 S5). Re-pull the registry (its live health merged) after every Port re-connect.
+  onReconnect(() => void hydrateMcp());
   void refreshActiveOrigin();
   chrome.tabs?.onActivated?.addListener?.(() => void refreshActiveOrigin());
   chrome.tabs?.onUpdated?.addListener?.((_tabId, changeInfo, tab) => {

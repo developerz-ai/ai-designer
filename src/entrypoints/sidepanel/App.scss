@@ -1,55 +1,77 @@
 @use '../../styles/tokens' as tokens;
+@use '../../styles/mixins' as mixins;
 
 .dz-app {
   display: flex;
   flex-direction: column;
   height: 100vh;
 
+  // Quiet title row: brand + name on the left, the readiness pill and its Start/Stop
+  // toggle on the right. One hairline beneath it and nothing else — the tab strip below
+  // reads as content chrome, not as a second toolbar.
   &__header {
     display: flex;
+    flex: none;
     align-items: center;
-    gap: tokens.$dz-space-4;
-    padding: tokens.$dz-space-2 tokens.$dz-space-4;
-    border-bottom: 1px solid var(--dz-border);
+    gap: tokens.$dz-space-3;
+    min-height: tokens.$dz-hit-target;
+    padding: tokens.$dz-space-2 tokens.$dz-space-6;
+    border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
   &__logo {
-    width: tokens.$dz-icon-size-md;
-    height: tokens.$dz-icon-size-md;
-    border-radius: tokens.rem(6);
+    flex: none;
+    width: tokens.$dz-icon-size-sm;
+    height: tokens.$dz-icon-size-sm;
+    border-radius: tokens.$dz-radius-xs;
   }
 
-  &__tabs {
-    display: flex;
-    gap: tokens.$dz-space-1;
-    margin-left: auto;
-
-    button {
-      background: transparent;
-      border: 1px solid transparent;
-      color: var(--dz-muted);
-      padding: tokens.$dz-space-1 tokens.$dz-space-3;
-      border-radius: var(--dz-radius);
-      cursor: pointer;
-      font: inherit;
-
-      &.is-active {
-        color: var(--dz-fg);
-        border-color: var(--dz-border);
-        background: rgba(255, 255, 255, 0.04);
-      }
-    }
-  }
-
-  &__body {
+  // Takes the slack so the readiness cluster sits hard right without a foreign selector,
+  // and truncates first if a localized title ever outgrows the 360px floor.
+  &__title {
+    @include mixins.truncate;
     flex: 1;
+    margin: 0;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-lg;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-tight;
+  }
+
+  // Single-scroller contract: the body clips, and whichever surface is mounted owns its
+  // own scroll region (Thread for chat; the panel roots for the rest). Two nested
+  // `overflow: auto` boxes gave two scrollbars the moment content outgrew the viewport.
+  &__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
   }
 
   &__empty {
-    color: var(--dz-muted);
-    padding: tokens.rem(24);
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: tokens.$dz-space-4;
+    padding: tokens.$dz-space-9 tokens.$dz-space-6;
+    // Set here, not on the glyph: `.dz-icon` declares `color: currentColor` at the same
+    // specificity, so colouring the icon element itself is a source-order coin toss.
+    color: var(--dz-fg-muted);
     text-align: center;
+  }
+
+  &__empty-icon {
+    opacity: 0.7;
+  }
+
+  &__empty-text {
+    max-width: tokens.rem(260);
+    margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-base;
+    line-height: tokens.$dz-leading-body;
   }
 }

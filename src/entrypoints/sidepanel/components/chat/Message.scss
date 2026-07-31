@@ -1,59 +1,77 @@
 @use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
 
+// Leo's core move: the assistant's answer is NOT a bubble. It is full-bleed prose that reads as a
+// document, and turns are separated by vertical rhythm (Thread's gap) rather than by boxes. Only
+// the user's own instruction keeps a container — it is a short aside, and it has to stay
+// identifiably "mine".
 .dz-message {
   display: flex;
   flex-direction: column;
-  gap: tokens.$dz-space-1;
-  padding: tokens.$dz-space-2 tokens.$dz-space-3;
-  border-radius: var(--dz-radius);
-  max-width: 85%;
+  gap: tokens.$dz-space-2;
+
+  &--assistant {
+    // `stretch`, not merely "no max-width": Thread is a flex column, so an assistant turn that
+    // doesn't stretch shrink-wraps its longest line and the prose ragged-edges at random widths.
+    align-self: stretch;
+  }
 
   &--user {
     align-self: flex-end;
-    background: var(--dz-accent);
-    color: var(--dz-accent-fg);
-  }
-
-  &--assistant {
-    align-self: flex-start;
-    background: var(--dz-surface-overlay);
+    max-width: 85%;
+    padding: tokens.$dz-space-3 tokens.$dz-space-4;
+    // Accent-tinted surface, not the solid accent slab: a filled orange block with near-black
+    // text dominates a 360px panel and out-shouts the answer it precedes. Tinted, it still reads
+    // as ours and as the user's side of the conversation, at a fraction of the visual weight.
+    background: color-mix(in srgb, var(--dz-accent) 16%, var(--dz-elev-card));
+    border-radius: tokens.$dz-radius-lg;
+    color: var(--dz-fg);
   }
 
   &--system {
     align-self: center;
-    background: transparent;
-    color: var(--dz-muted);
-    font-size: 0.85em;
     max-width: 100%;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
     text-align: center;
   }
 
-  &--streaming {
-    opacity: 0.85;
+  // Streaming used to dim the whole turn (`opacity: .85`). On a bubble that read as "pending";
+  // on unboxed prose it reads as "this text is broken". Leo never dims its answer. A caret at
+  // the foot of the turn carries the same information without touching the text's contrast —
+  // and doubles as the only feedback for a turn that has produced no tokens yet.
+  &--streaming::after {
+    content: '';
+    align-self: flex-start;
+    width: tokens.$dz-border-width-thick;
+    height: 1em;
+    background: var(--dz-accent);
+    // Global reduced-motion guard in main.scss already neutralizes this.
+    animation: dz-message-caret 1s steps(2, start) infinite;
+  }
+
+  // In the accessibility tree, off the screen — the visual channel already carries the speaker
+  // (side of the panel, tinted surface vs bare prose), so a visible label would be redundant.
+  &__speaker {
+    @include mixins.visually-hidden;
   }
 
   &__text {
     margin: 0;
+    font-size: tokens.$dz-font-base;
+    line-height: tokens.$dz-leading-snug;
     white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  &__tools {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: tokens.$dz-space-1;
-    margin: tokens.$dz-space-1 0 0;
-    padding: 0;
+    overflow-wrap: anywhere;
   }
 
   &__edits,
   &__error {
     display: inline-flex;
     align-items: center;
-    gap: tokens.$dz-space-1;
-    margin: tokens.$dz-space-1 0 0;
-    font-size: 0.85em;
+    gap: tokens.$dz-space-2;
+    margin: 0;
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
   }
 
   &__edits {
@@ -62,61 +80,15 @@
 
   &__error {
     color: var(--dz-status-error);
+    overflow-wrap: anywhere;
   }
 }
 
-// Bundled markdown rendering (MarkdownView) — scoped here since it only ever appears inside a
-// message bubble.
-.dz-markdown {
-  display: flex;
-  flex-direction: column;
-  gap: tokens.$dz-space-2;
-
-  > :first-child {
-    margin-top: 0;
+@keyframes dz-message-caret {
+  from {
+    opacity: 1;
   }
-
-  > :last-child {
-    margin-bottom: 0;
-  }
-
-  p,
-  h2,
-  h3,
-  h4,
-  ul,
-  ol {
-    margin: 0;
-    word-break: break-word;
-  }
-
-  ul,
-  ol {
-    padding-left: 1.2em;
-  }
-
-  a {
-    color: inherit;
-    text-decoration: underline;
-  }
-
-  &__code {
-    padding: 0 tokens.$dz-space-1;
-    border-radius: tokens.rem(4);
-    background: rgba(0, 0, 0, 0.25);
-    font-family: ui-monospace, 'SF Mono', monospace;
-  }
-
-  &__code-block {
-    margin: 0;
-    padding: tokens.$dz-space-2;
-    border-radius: var(--dz-radius);
-    background: rgba(0, 0, 0, 0.3);
-    overflow-x: auto;
-
-    code {
-      font-family: ui-monospace, 'SF Mono', monospace;
-      white-space: pre;
-    }
+  to {
+    opacity: 0;
   }
 }

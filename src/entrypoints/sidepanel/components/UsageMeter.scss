@@ -2,19 +2,21 @@
 
 // Session usage meter (#25): quiet, single-line spend readout that sits at the foot of the thread.
 // Muted so it never competes with the conversation — it's reference, not content.
+// Absolute type scale, not `0.75em`: a relative size here silently rescaled any glyph the
+// row ever carries (Icon sizes in `em`) and drifted with whatever parent it was mounted in.
 .dz-usage {
   display: flex;
   align-items: baseline;
   gap: tokens.$dz-space-2;
   margin: 0;
-  padding: tokens.$dz-space-1 tokens.$dz-space-2;
-  color: var(--dz-muted);
-  font-size: 0.75em;
+  padding: tokens.$dz-space-1 tokens.$dz-space-6;
+  color: var(--dz-fg-muted);
+  font-size: tokens.$dz-font-xs;
 
   &__label {
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    font-weight: 600;
+    font-weight: tokens.$dz-weight-semibold;
   }
 
   &__spend {

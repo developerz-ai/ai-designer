@@ -1,8 +1,8 @@
 import { createSignal } from 'solid-js';
 import type { SwToPanel } from '@/shared/messages';
-import { OkResult } from '@/shared/messages';
+import { OkResult, SessionStateResult } from '@/shared/messages';
 import { request } from './bus';
-import { connectPort, subscribeToSw } from './sw-stream';
+import { connectPort, onReconnect, publishLocal, subscribeToSw } from './sw-stream';
 
 // Session store: thin reflection of the SW's Start/Stop lifecycle (background.ts's
 // `session-start`/`session-stop` RPCs + the unsolicited `session-state` push from
@@ -29,8 +29,11 @@ export { error, sessionState };
 
 let wired = false;
 
-/** Open the SW port and fold incoming `session-state` pushes into `sessionState`.
- *  Idempotent — safe to call on every mount. */
+/** Open the SW port, fold incoming `session-state` pushes into `sessionState`, and pull the
+ *  current value once up front — mirrors stores/readiness.ts. Idempotent — safe to call on every
+ *  mount. Without the hydrate, a panel re-opened mid-turn started at `idle` (module state died
+ *  with the last panel), so App rendered the pre-Start hint and its only button — Start — aborted
+ *  the turn that was still running (#165 S5). */
 export function initSessionStore(): void {
   if (wired) return;
   wired = true;
@@ -38,6 +41,24 @@ export function initSessionStore(): void {
   subscribeToSw((msg) => {
     setSessionState((prev) => reduceSessionState(prev, msg));
   });
+  void hydrateSession();
+  // The SW's lifecycle is re-read on every reconnect: it persists `state` but `turnRunning` is
+  // live-worker-only, so a worker that died mid-turn answers `false` and the panel closes the
+  // orphaned bubble instead of spinning on a turn nothing will ever finish.
+  onReconnect(() => void hydrateSession());
+}
+
+/** Pull the CURRENT session lifecycle + turn liveness from the SW (mount / reconnect / re-check).
+ *  The reply is the same fact as the `session-state` push the SW sends on connect, so it is
+ *  replayed onto the stream: the chat store closes an orphaned in-flight bubble on
+ *  `turnRunning: false` through its own fold, with no store-to-store reach-in. */
+export async function hydrateSession(): Promise<void> {
+  try {
+    const r = await request({ type: 'session-get' }, SessionStateResult);
+    publishLocal({ type: 'session-state', state: r.state, turnRunning: r.turnRunning });
+  } catch (e) {
+    setError(errMsg(e));
+  }
 }
 
 /** Start the session (only meaningful once `ReadinessState.ready` — the caller gates

@@ -1,28 +1,29 @@
 @use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
 
+// D4 scroll contract, nested case: this renders INSIDE `.dz-history` (HistoryPanel.tsx:32),
+// which is already the History tab's single scroller. So the root does NOT open a scroll
+// region of its own, and `__thread` drops the `max-height: 60vh; overflow-y: auto` pair it
+// used to carry — that was a scroller inside a scroller, i.e. exactly the trap D4 names.
 .dz-convview {
-  padding: tokens.$dz-space-4;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: tokens.$dz-space-3;
+  gap: tokens.$dz-space-4;
+  min-height: 0;
 
   &__header {
     display: flex;
   }
 
   &__back {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: none;
-    color: var(--dz-muted);
-    padding: 0;
-    cursor: pointer;
-    font: inherit;
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+    padding: 0 tokens.$dz-space-2;
+    margin-left: tokens.rem(-8);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
 
-    &:hover {
+    &:not(:disabled):hover {
       color: var(--dz-fg);
     }
   }
@@ -31,8 +32,9 @@
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-1;
-    color: var(--dz-muted);
     margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__meta {
@@ -40,38 +42,34 @@
     flex-wrap: wrap;
     align-items: center;
     gap: tokens.$dz-space-2;
-    padding-bottom: tokens.$dz-space-3;
-    border-bottom: 1px solid var(--dz-border);
+    padding-bottom: tokens.$dz-space-4;
+    border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
   &__title {
     flex-basis: 100%;
-    color: var(--dz-fg);
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-lg;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-tight;
   }
 
   &__url {
-    color: var(--dz-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    @include mixins.truncate;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
   }
 
   &__badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px tokens.$dz-space-2;
-    border-radius: 999px;
-    background: var(--dz-surface-overlay);
-    border: 1px solid var(--dz-border);
+    @include mixins.pill('hover', false, tokens.$dz-font-xs);
     text-transform: capitalize;
-    font-size: tokens.$dz-font-xs;
 
     &.is-copy {
       color: var(--dz-accent);
     }
 
     &.is-debug {
-      color: tokens.$dz-status-warning;
+      color: var(--dz-status-warning);
     }
   }
 
@@ -80,7 +78,7 @@
     align-items: center;
     gap: tokens.$dz-space-1;
     margin-left: auto;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
   }
 
@@ -91,17 +89,14 @@
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
-    max-height: 60vh;
-    overflow-y: auto;
   }
 
   &__line {
+    @include mixins.surface('card', false, tokens.$dz-radius-lg);
     display: flex;
     flex-direction: column;
     gap: tokens.rem(2);
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    border-radius: var(--dz-radius);
-    background: var(--dz-surface-overlay);
 
     &.is-user {
       align-self: flex-end;
@@ -119,11 +114,13 @@
     font-size: tokens.$dz-font-xs;
     text-transform: uppercase;
     letter-spacing: 0.02em;
-    color: var(--dz-muted);
+    color: var(--dz-fg-muted);
   }
 
   &__text {
     margin: 0;
+    font-size: tokens.$dz-font-md;
+    line-height: tokens.$dz-leading-body;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -131,22 +128,13 @@
   &__footer {
     display: flex;
     gap: tokens.$dz-space-2;
-    padding-top: tokens.$dz-space-3;
-    border-top: 1px solid var(--dz-border);
+    padding-top: tokens.$dz-space-4;
+    border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
   &__action {
-    display: inline-flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
-    background: transparent;
-    border: 1px solid var(--dz-border);
-    border-radius: var(--dz-radius);
-    color: var(--dz-fg);
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    cursor: pointer;
-    font: inherit;
-    font-size: tokens.$dz-font-sm;
+    @include mixins.button-ghost;
     text-decoration: none;
+    font-size: tokens.$dz-font-sm;
   }
 }
