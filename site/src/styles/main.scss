@@ -239,7 +239,7 @@ strong {
   border-color: $border;
 
   &:hover {
-    border-color: $slate-500;
+    border-color: $slate-400;
     background: $surface;
     transform: translateY(-2px);
   }
@@ -390,7 +390,7 @@ strong {
 }
 .hero__fine {
   font-size: 0.85rem;
-  color: $slate-500;
+  color: $slate-400;
 }
 
 // restrained product-demo card (chat + diff)
@@ -471,7 +471,7 @@ strong {
 }
 .diff__ctx {
   display: block;
-  color: $slate-500;
+  color: $slate-400;
 }
 .chip-row {
   display: flex;
@@ -539,7 +539,7 @@ strong {
 .how__step {
   font-family: $font-mono;
   font-size: 0.85rem;
-  color: $slate-500;
+  color: $slate-400;
 }
 .icon-chip {
   display: inline-flex;
@@ -640,7 +640,7 @@ strong {
   transition: border-color $dur-2 $ease-out, box-shadow $dur-2 $ease-out;
 
   &::placeholder {
-    color: $slate-500;
+    color: $slate-400;
   }
   &:focus {
     outline: none;
@@ -780,10 +780,10 @@ strong {
   gap: $space-3;
   justify-content: space-between;
   font-size: 0.85rem;
-  color: $slate-500;
+  color: $slate-400;
 }
 .footer__bot {
-  color: $slate-500;
+  color: $slate-400;
 }
 
 // ─── Motion (gated behind no-preference) ──────────────────────

@@ -187,6 +187,10 @@ function mountScrollWorld(container, config) {
     copylayer.appendChild(c); copies.push(c);
 
     const dot = el('button', 'sw-route__dot'); dot.style.setProperty('--sw-accent', s.accent || '');
+    // The label span is a hover tooltip at opacity:0, which contributes no
+    // accessible name — these read as five unnamed "button"s to a screen
+    // reader. Name the control itself; the tooltip stays a visual affordance.
+    dot.setAttribute('aria-label', s.label || `Scene ${i + 1}`);
     dot.innerHTML = `<span class="sw-route__label">${esc(s.label || '')}</span><i></i>`;
     dot.addEventListener('click', () => jumpTo(i)); route.appendChild(dot); dots.push(dot);
 
