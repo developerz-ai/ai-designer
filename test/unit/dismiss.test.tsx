@@ -1,5 +1,5 @@
 import { render } from '@solidjs/testing-library';
-import { createSignal } from 'solid-js';
+import { createSignal, onCleanup } from 'solid-js';
 import { describe, expect, it, vi } from 'vitest';
 import { dismissOnOutsidePress } from '@/entrypoints/sidepanel/components/dismiss';
 
@@ -13,6 +13,7 @@ function mount(open: () => boolean, close: () => void) {
   document.body.append(outside);
 
   const rendered = render(() => {
+    onCleanup(() => outside.remove());
     dismissOnOutsidePress(() => root, open, close);
     return (
       <div ref={root}>
