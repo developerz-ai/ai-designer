@@ -23,7 +23,11 @@ export function PreStart(props: PreStartProps) {
 
   return (
     <div class="dz-prestart">
-      <Icon name="agent" size="lg" class="dz-icon--fixed dz-prestart__icon" />
+      {/* A wrapper span, not the Icon element itself: `.dz-icon` sets its own sizing at the
+          same specificity, so an override on that element wins or loses on stylesheet order. */}
+      <span class="dz-prestart__icon">
+        <Icon name="agent" size="sm" class="dz-icon--fixed" />
+      </span>
       <h2 class="dz-prestart__title">
         {ready() ? i18n.t('prestart.ready.title') : i18n.t('prestart.setup.title')}
       </h2>
@@ -36,6 +40,7 @@ export function PreStart(props: PreStartProps) {
         when={ready()}
         fallback={
           <button type="button" class="dz-prestart__cta" onClick={() => props.onOpenSettings()}>
+            <Icon name="sliders" size="sm" class="dz-icon--fixed" />
             {i18n.t('prestart.setup.cta')}
           </button>
         }
@@ -47,6 +52,7 @@ export function PreStart(props: PreStartProps) {
             void startSession();
           }}
         >
+          <Icon name="play" size="sm" class="dz-icon--fixed" />
           {i18n.t('prestart.ready.cta')}
         </button>
       </Show>

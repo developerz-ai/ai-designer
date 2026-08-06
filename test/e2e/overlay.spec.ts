@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the on-page agent-decision overlay (slice 09), opt-in, against a loaded, real Chromium —
 // the one thing jsdom (test/unit/overlay.test.ts, test/integration/overlay-forward.test.ts) can't
@@ -91,7 +91,7 @@ async function stubChat(context: BrowserContext, turns: string[]): Promise<numbe
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-09');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/overlay');
@@ -138,7 +138,9 @@ test('enable overlay -> run a turn -> it shows steps and highlights the mutated 
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
-  await expect(toggle).toHaveText('On');
+  // The state is the switch's own affordance now (aria-checked + the filled track), not an
+  // "On"/"Off" word that read as a third status column next to the checks above it.
+  await expect(toggle.locator('.dz-readiness__track')).toHaveClass(/is-on/);
 
   await sendUserMessage(panel, 'Recolor the CTA');
 

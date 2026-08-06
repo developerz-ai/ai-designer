@@ -43,17 +43,22 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: tokens.$dz-space-2;
   }
 
-  // Card without padding — `__row` is the tappable area and owns the inset, so the hover
-  // wash reaches the card's own edges instead of leaving a dead border strip.
+  // A flat row, not a card. Ten bordered cards down a 360px column is ten hairlines competing
+  // with the ten titles that are the actual content; a hover wash carries "this is a target"
+  // just as well and leaves the list quiet at rest.
   &__item {
-    @include mixins.surface('card', true, tokens.$dz-radius-lg);
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    overflow: hidden;
+    padding: tokens.$dz-space-1 0;
+    border-radius: tokens.$dz-radius-sm;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      background: var(--dz-wash-hover);
+    }
   }
 
   &__row {
@@ -62,24 +67,19 @@
     display: flex;
     align-items: center;
     gap: tokens.$dz-space-3;
-    padding: tokens.$dz-space-3 tokens.$dz-space-4;
+    padding: tokens.rem(5) tokens.$dz-space-2;
     background: transparent;
     border: none;
     color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
-    transition: background-color var(--dz-motion-fast) var(--dz-ease);
 
-    // Flush against the card edge — an outside ring would be clipped by the overflow above.
     @include mixins.focus-ring(tokens.rem(-2));
-
-    &:hover,
-    &:focus-visible {
-      background: var(--dz-elev-hover);
-    }
   }
 
+  // A rounded well behind the favicon, so a site with no icon (or a transparent one) still
+  // leaves a consistent 16px block at the head of the row rather than a ragged left edge.
   &__favicon {
     flex: none;
     display: inline-flex;
@@ -87,7 +87,10 @@
     justify-content: center;
     width: var(--dz-icon-size-sm);
     height: var(--dz-icon-size-sm);
+    background: var(--dz-elev-hover);
+    border-radius: tokens.$dz-radius-xs;
     color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
 
     img {
       width: 100%;
@@ -120,9 +123,15 @@
     color: var(--dz-fg-muted);
   }
 
+  // An inset well, not a filled pill: this is a count/mode label sitting in a dense row, and a
+  // pill per row turned the list into a column of badges with titles attached.
   &__badge {
-    @include mixins.pill('hover', false, tokens.$dz-font-xs);
-    text-transform: capitalize;
+    @include mixins.mono(tokens.$dz-font-xs);
+    flex: none;
+    padding: tokens.rem(2) tokens.rem(5);
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
 
     &.is-copy {
       color: var(--dz-accent);
@@ -158,10 +167,19 @@
 
   &__delete {
     @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, false, 'muted');
-    margin-right: tokens.$dz-space-3;
+    margin-right: tokens.$dz-space-1;
 
     &:hover {
+      background-color: transparent;
       color: var(--dz-status-error);
     }
+  }
+
+  &__error {
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
+    align-items: flex-start;
+    overflow-wrap: anywhere;
   }
 }

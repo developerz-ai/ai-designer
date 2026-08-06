@@ -139,9 +139,20 @@ export function Onboarding(props: OnboardingProps) {
           {i18n.t('onboarding.skip')} <Icon name="close" size="sm" />
         </button>
 
+        {/* One segment per step, filled as each is done. The list below says WHAT each step is;
+            this says how far through you are, which a list with one card highlighted does not
+            communicate at a glance. */}
+        <div class="dz-onboarding__progress" aria-hidden="true">
+          <For each={steps()}>
+            {(step) => (
+              <span class="dz-onboarding__segment" classList={{ 'is-filled': step.done }} />
+            )}
+          </For>
+        </div>
+
         <div class="dz-onboarding__head">
           <span class="dz-onboarding__badge">
-            <Icon name="agent" size="md" />
+            <Icon name="agent" size="md" class="dz-icon--fixed" />
           </span>
           <h1 class="dz-onboarding__title">{i18n.t('onboarding.title')}</h1>
           <p class="dz-onboarding__subtitle">{i18n.t('onboarding.subtitle')}</p>

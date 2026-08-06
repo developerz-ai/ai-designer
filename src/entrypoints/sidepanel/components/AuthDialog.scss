@@ -97,16 +97,24 @@
   }
 
   &__submit {
-    @include mixins.button-primary;
+    @include mixins.button-primary(tokens.$dz-control-md, var(--dz-radius-pill));
     margin-top: tokens.$dz-space-1;
   }
 
+  // A tinted strip, not a bare red line. Every error the panel surfaces is a whole sentence
+  // from a backend or an endpoint, and a sentence in red body text under a form is easy to
+  // scroll straight past.
   &__error {
     display: flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
+    align-items: flex-start;
+    gap: tokens.rem(6);
     margin: 0;
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
     color: var(--dz-status-error);
     font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 }

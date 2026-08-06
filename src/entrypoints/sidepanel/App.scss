@@ -4,18 +4,27 @@
 .dz-app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  // `100%` (off `html, body { height: 100% }` in main.scss), NOT `100vh`. In Chrome's side
+  // panel `vh` resolves against the window's viewport, not the panel's — so the shell was
+  // taller than its own frame and the bottom of the column (the composer, the ship bar) sat
+  // below the fold with nothing able to scroll to it, because `__body` clips by contract.
+  height: 100%;
 
   // Quiet title row: brand + name on the left, the readiness pill and its Start/Stop
   // toggle on the right. One hairline beneath it and nothing else — the tab strip below
   // reads as content chrome, not as a second toolbar.
+  //
+  // Fixed 40px, not `min-height: 44px`. The row holds two 28px controls, so 44 left a
+  // visible band of dead space above the tab strip; the controls keep their 44px POINTER
+  // area through the hit-target pseudo (mixins.hit-target), which is what 2.5.5 asks for
+  // — it governs the target, not the bar it sits in.
   &__header {
     display: flex;
     flex: none;
     align-items: center;
-    gap: tokens.$dz-space-3;
-    min-height: tokens.$dz-hit-target;
-    padding: tokens.$dz-space-2 tokens.$dz-space-6;
+    gap: tokens.$dz-space-2;
+    height: tokens.rem(40);
+    padding: 0 tokens.$dz-space-6;
     border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
   }
 
@@ -26,16 +35,41 @@
     border-radius: tokens.$dz-radius-xs;
   }
 
-  // Takes the slack so the readiness cluster sits hard right without a foreign selector,
-  // and truncates first if a localized title ever outgrows the 360px floor.
-  &__title {
+  // The four secondary surfaces get a 32px bar naming where you are and how to leave. It
+  // replaces the tab strip's only two remaining jobs — "where am I" and "get me back" — at half
+  // the height, on four screens instead of five, and never on Chat.
+  &__roombar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    height: tokens.rem(32);
+    padding: 0 tokens.$dz-space-6;
+    border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
+  }
+
+  &__back {
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+    gap: tokens.$dz-space-1;
+    padding: 0 tokens.$dz-space-2 0 tokens.$dz-space-1;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+  }
+
+  // `tabindex="-1"` and focused on every room change (App.tsx) — programmatically focusable,
+  // never in the tab order.
+  &__roomtitle {
     @include mixins.truncate;
-    flex: 1;
     margin: 0;
     color: var(--dz-fg-strong);
-    font-size: tokens.$dz-font-lg;
+    font-size: tokens.$dz-font-sm;
     font-weight: tokens.$dz-weight-semibold;
-    line-height: tokens.$dz-leading-tight;
+    line-height: tokens.$dz-leading-snug;
+
+    // It is a focus TARGET, not a control: the ring would announce a heading as interactive.
+    &:focus {
+      outline: none;
+    }
   }
 
   // Single-scroller contract: the body clips, and whichever surface is mounted owns its
@@ -47,6 +81,22 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    // 360px is the panel's default and minimum, NOT its only width — the user can drag the
+    // divider, and at 900px an uncapped column turns every full-width row into a slab with its
+    // label hard left and its chevron hard right across 700px of nothing, and assistant prose
+    // into a ~150-character measure. Capped HERE, once, rather than per surface: the thread, the
+    // composer, the empty state and the other four surfaces then share one column edge, so
+    // nothing drifts out of alignment with the composer docked beneath it.
+    width: 100%;
+    max-width: tokens.rem(680);
+    margin-inline: auto;
+
+    // Tab change = a new element mounted here (App.tsx's <Switch> tears the old surface down),
+    // so a plain CSS animation on the child runs once per switch with no transition group and
+    // no JS. Shared keyframe from main.scss; the reduced-motion guard there covers it.
+    > * {
+      animation: dz-rise var(--dz-motion-base) var(--dz-ease);
+    }
   }
 
   &__empty {

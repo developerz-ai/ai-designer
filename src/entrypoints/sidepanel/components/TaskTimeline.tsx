@@ -38,48 +38,61 @@ function rowKey(task: TaskStatus): string {
 export function TaskTimeline() {
   return (
     <Show when={tasks.length > 0}>
-      <ol class="dz-tasktimeline" aria-label={i18n.t('task.timeline.ariaLabel')}>
-        <For each={tasks} fallback={null}>
-          {(task) => {
-            const s = () => stage(task.status);
-            return (
-              <li class="dz-tasktimeline__item" data-task-id={rowKey(task)}>
-                <span class={`dz-tasktimeline__stage is-${s().tone}`}>
-                  <Icon name={s().icon} size="sm" spin={s().spin} />
-                </span>
-                <div class="dz-tasktimeline__meta">
-                  <strong class="dz-tasktimeline__title">{task.title}</strong>
-                  <small class="dz-tasktimeline__status">
-                    {statusLabel(task.status)}
-                    <Show when={task.total > 1}>
-                      {' '}
-                      {i18n.t('task.counter', {
-                        index: String(task.index + 1),
-                        total: String(task.total),
-                      })}
-                    </Show>
-                  </small>
-                  <Show when={task.error}>
-                    <small class="dz-tasktimeline__error">{task.error}</small>
+      {/* One card holding N rows, not N cards. A fan-out ships several tasks at once, and a
+          stack of separate cards read as unrelated notices rather than as one run's progress. */}
+      <div class="dz-tasktimeline">
+        <p class="dz-tasktimeline__heading">{i18n.t('task.timeline.ariaLabel')}</p>
+        <ol class="dz-tasktimeline__list" aria-label={i18n.t('task.timeline.ariaLabel')}>
+          <For each={tasks} fallback={null}>
+            {(task) => {
+              const s = () => stage(task.status);
+              return (
+                <li class="dz-tasktimeline__item" data-task-id={rowKey(task)}>
+                  {/* Title line: glyph · title · the backend's own status word, right-aligned
+                      and mono so a column of them lines up down the card. */}
+                  <div class="dz-tasktimeline__row">
+                    <span class={`dz-tasktimeline__stage is-${s().tone}`}>
+                      <Icon name={s().icon} size="sm" spin={s().spin} class="dz-icon--fixed" />
+                    </span>
+                    <span class="dz-tasktimeline__title">{task.title}</span>
+                    <span class="dz-tasktimeline__status">{statusLabel(task.status)}</span>
+                  </div>
+                  {/* Second line, indented under the title: the fan-out counter and the PR link
+                      only exist for some tasks, so the row renders only when one of them does. */}
+                  <Show when={task.total > 1 || task.prUrl}>
+                    <div class="dz-tasktimeline__meta">
+                      <Show when={task.total > 1}>
+                        <span class="dz-tasktimeline__counter">
+                          {i18n.t('task.counter', {
+                            index: String(task.index + 1),
+                            total: String(task.total),
+                          })}
+                        </span>
+                      </Show>
+                      <Show when={task.prUrl}>
+                        {(url) => (
+                          <a
+                            class="dz-tasktimeline__pr"
+                            href={url()}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Icon name="externalLink" size="sm" class="dz-icon--fixed" />
+                            {i18n.t('task.prLink')}
+                          </a>
+                        )}
+                      </Show>
+                    </div>
                   </Show>
-                </div>
-                <Show when={task.prUrl}>
-                  {(url) => (
-                    <a
-                      class="dz-tasktimeline__pr"
-                      href={url()}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <Icon name="externalLink" size="sm" /> {i18n.t('task.prLink')}
-                    </a>
-                  )}
-                </Show>
-              </li>
-            );
-          }}
-        </For>
-      </ol>
+                  <Show when={task.error}>
+                    <p class="dz-tasktimeline__error">{task.error}</p>
+                  </Show>
+                </li>
+              );
+            }}
+          </For>
+        </ol>
+      </div>
     </Show>
   );
 }

@@ -7,38 +7,63 @@
 // treatment (`field-shell`); the textarea inside it is chrome-less, and the model control is
 // plain text (see ModelPicker.scss).
 //
-// The outer `.dz-composer` is now transparent: the panel background shows through and the
-// lighter shell sits on it. That inversion is what makes the composer read as an object docked
-// on the page rather than a bar welded to its bottom edge.
+// The outer `.dz-composer` is transparent: the panel background shows through and the lighter
+// shell sits on it. That inversion is what makes the composer read as an object docked on the
+// page rather than a bar welded to its bottom edge. The hairline above it is what separates it
+// from the thread now that the thread's scrollbar no longer draws that line for free.
 .dz-composer {
   display: flex;
   flex-direction: column;
-  gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-2 tokens.$dz-space-6 tokens.$dz-space-6;
+  padding: tokens.$dz-space-3 tokens.$dz-space-6;
+  border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
   // Never scrolls, never shrinks: the thread is the one scroll area in this column
   // (see ChatPanel.scss). A composer that can shrink loses its toolbar first.
   flex: none;
 
   &__shell {
-    @include mixins.field-shell(tokens.$dz-radius-xl, tokens.$dz-space-3);
+    @include mixins.field-shell(tokens.$dz-radius-xl, 0);
+    gap: 0;
+
+    // Armed picker: the shell itself takes the accent edge. The attach button is 28px in a
+    // 360px panel — too small to be the only signal that the next page click will be captured.
+    &--picking {
+      border-color: var(--dz-accent);
+    }
   }
 
-  // Name + shortcut hint: in the accessibility tree, out of the layout. `visually-hidden` keeps
-  // them announced (a `display: none` hint would leave aria-describedby pointing at nothing).
-  &__label,
-  &__hint {
+  // The textarea's accessible name — a placeholder is not one, since it disappears the moment
+  // the field has content. In the tree, out of the layout.
+  &__label {
     @include mixins.visually-hidden;
   }
 
-  &__input {
+  // The keyboard hint, now on screen under the shell. Muted and 11px: present for the first
+  // few sends, invisible to anyone who has stopped needing it.
+  &__hint {
+    margin: tokens.rem(6) 0 0;
+    padding: 0 tokens.rem(2);
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  // Two classes, deliberately. `field-shell` styles its inner controls as `.dz-composer__shell
+  // textarea` (0,1,1), which outranks a single `&__input` class (0,1,0) — so a one-class rule
+  // here silently lost its padding and the placeholder rendered flush against the shell's top
+  // border. Scoping to the shell wins at 0,2,0.
+  &__shell &__input {
     // Auto-grow with zero JS. `rows="1"` sets the floor; `field-sizing: content` (Baseline,
     // Chrome 123+ — this surface is Chrome-only) grows the box with its content up to the cap
     // below, which is what makes the old `max-height` meaningful for the first time. No resize
     // observer, no manual DOM in the component (which the house rules forbid anyway).
     field-sizing: content;
-    // ~11 lines at the shell's 15px/1.55 body before it starts scrolling, near Leo's cap. The
-    // previous 140px cut off at ~5, mid-paragraph.
-    max-height: tokens.rem(300);
+    // ~6 lines at 14px/1.5 before it starts scrolling. Deliberately lower than the old 300px:
+    // past about a third of the panel the composer is eating the conversation it is supposed to
+    // be part of, and the last turn scrolls out of sight while you type.
+    max-height: tokens.rem(132);
+    padding: tokens.$dz-space-3 tokens.$dz-space-4 tokens.rem(6);
+    font-size: tokens.$dz-font-base;
+    line-height: 1.5;
     @include mixins.scroll-area('y', false);
     // `resize: none` comes from field-shell and is correct for an auto-growing box — a drag
     // handle would fight `field-sizing`.
@@ -47,7 +72,13 @@
   &__toolbar {
     display: flex;
     align-items: center;
-    gap: tokens.$dz-space-1;
+    // 8px, not 2: `__attach` is a 28px `icon-button` with `$hit: true`, i.e. a centred 44px
+    // ::after that overhangs 8px per side. At a 2px gap it covered — and, being a positioned
+    // element's pseudo painted over a static later sibling, WON the hit test on — the first 6px
+    // of the model trigger. ContextChip.scss documents the same trap. The gap is the cheap side
+    // of the fix; the button stays genuinely small.
+    gap: tokens.$dz-space-2;
+    padding: 0 tokens.rem(6) tokens.rem(6);
     // The toolbar lives *inside* the shell, so it must not reintroduce a horizontal scrollbar
     // at the 360px floor — the model label truncates instead (ModelPicker.scss).
     min-width: 0;
@@ -58,7 +89,7 @@
   }
 
   &__attach {
-    @include mixins.icon-button(tokens.$dz-control-md, tokens.$dz-radius, true, 'muted');
+    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, true, 'muted');
 
     // Pressed state (`aria-pressed`) — the picker is armed or an element is pinned.
     &.is-active {
@@ -77,11 +108,27 @@
   &__action {
     @include mixins.circle-button(tokens.$dz-control-md, 'accent');
 
-    // Stop must never be mistakable for Send. Only the fill changes — `--dz-accent-fg` is the
-    // dark ink `circle-button` already applies, and it is the legible choice on this light red
-    // too (the previous `--dz-on-surface` was light-on-light, ~2:1).
+    // Send is disabled whenever the draft is empty — i.e. it is in its disabled state 100% of
+    // the time on a fresh panel. `circle-button`'s blanket `opacity: .5` over the accent fill
+    // renders #f97316 at half strength on the card as a muddy brown disc, and it is the most
+    // saturated thing on the empty-chat screen. Recede instead of dimming.
+    &:disabled {
+      background: var(--dz-elev-hover);
+      color: var(--dz-fg-muted);
+      opacity: 1;
+    }
+
+    // Stop is an outlined disc, not a red one. Red says "something went wrong"; stopping a turn
+    // is an ordinary thing to want, and the glyph swap already makes it unmistakable.
     &--stop {
-      background: var(--dz-danger);
+      background: var(--dz-elev-hover);
+      border: tokens.$dz-border-width solid var(--dz-border-strong);
+      color: var(--dz-fg);
+
+      &:not(:disabled):hover {
+        background: var(--dz-elev-card);
+        filter: none;
+      }
     }
   }
 }

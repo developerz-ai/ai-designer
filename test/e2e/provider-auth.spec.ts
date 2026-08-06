@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the "Missing Authentication header" regression, against a loaded extension with the real
 // key-store, the real readiness push and the real Settings UI.
@@ -36,7 +36,7 @@ test('a keyless hosted provider is refused at Save and blocks Start, instead of 
   await stubOpenRouter(context);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   // No key typed at all — the exact setup that used to validate green off the public /models.
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -64,7 +64,7 @@ test('adding the key clears the block — Save goes green and Start enables', as
   await stubOpenRouter(context);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-auth');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -82,7 +82,7 @@ test('a model id the endpoint never listed can be pasted and saved', async ({
   await stubOpenRouter(context);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-paste');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -99,7 +99,7 @@ test('a model id the endpoint never listed can be pasted and saved', async ({
 
   // It survives a reload — i.e. it was really persisted, not just held in the input.
   await page.reload();
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await expect(page.locator('#dz-model')).toHaveValue('minimax/hailuo-3');
 });
 
@@ -123,7 +123,7 @@ test('the model list is searchable — typing filters the catalogue', async ({
   await stubAuthProbe(context, BASE_URL);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-search');
   await page.getByRole('button', { name: 'Refresh' }).click();
 

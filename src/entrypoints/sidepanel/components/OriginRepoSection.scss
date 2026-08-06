@@ -14,12 +14,9 @@
   }
 
   &__title {
+    @include mixins.eyebrow-label;
     margin: 0;
-    color: var(--dz-fg-muted);
-    font-size: tokens.$dz-font-xs;
     font-weight: tokens.$dz-weight-semibold;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 
   &__hint {
@@ -105,7 +102,7 @@
     }
 
     button {
-      @include mixins.button-primary;
+      @include mixins.button-primary(tokens.$dz-control-sm, var(--dz-radius-pill));
       align-self: flex-start;
     }
   }

@@ -21,13 +21,21 @@
     line-height: tokens.$dz-leading-snug;
   }
 
+  // A tinted strip, not a bare red line. Every error the panel surfaces is a whole sentence
+  // from a backend or an endpoint, and a sentence in red body text under a form is easy to
+  // scroll straight past.
   &__error {
     display: flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
+    align-items: flex-start;
+    gap: tokens.rem(6);
     margin: 0;
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
     color: var(--dz-status-error);
     font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 
   &__presets {
@@ -39,7 +47,7 @@
   // Dashed = "not added yet". Solid once it's disabled (already added), which is the one
   // place the dash-to-solid swap carries meaning.
   &__preset {
-    @include mixins.button-ghost(tokens.$dz-control-md, tokens.$dz-radius, false);
+    @include mixins.button-ghost(tokens.$dz-control-md, var(--dz-radius-pill), false);
     border: tokens.$dz-border-width dashed var(--dz-border-strong);
     font-size: tokens.$dz-font-sm;
 
@@ -131,10 +139,20 @@
     cursor: pointer;
 
     input {
+      // The INPUT grows, not a pseudo-element on the label. The label shrink-wraps its 28×16
+      // track, so the target was 8px under WCAG 2.5.8 AA's 24px floor on the short axis — but a
+      // `hit-target` ::after here paints over the input and swallows its clicks, for the same
+      // reason `__track` below has to declare `pointer-events: none`. (Verified, not theorised:
+      // the ::after version turned three MCP e2e specs red with "label intercepts pointer
+      // events".) Centred on the track so the overhang is symmetric.
       position: absolute;
-      inset: 0;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
       width: 100%;
       height: 100%;
+      min-width: tokens.rem(24);
+      min-height: tokens.rem(24);
       margin: 0;
       opacity: 0;
       cursor: pointer;
@@ -238,7 +256,7 @@
     flex: none;
 
     button {
-      @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
+      @include mixins.button-ghost(tokens.$dz-control-sm, var(--dz-radius-pill));
       font-size: tokens.$dz-font-sm;
     }
 
@@ -284,7 +302,7 @@
     }
 
     button {
-      @include mixins.button-primary;
+      @include mixins.button-primary(tokens.$dz-control-sm, var(--dz-radius-pill));
       align-self: flex-start;
     }
   }

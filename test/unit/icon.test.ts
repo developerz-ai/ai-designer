@@ -11,29 +11,46 @@ import {
 // untested-in-isolation thin wrapper; these are the tests that matter for its behavior.
 
 describe('Icon — name resolves to expected SVG', () => {
-  const cases: Array<[IconName, string]> = [
-    ['send', 'paper-plane'],
-    ['settings', 'gear'],
-    ['mcp', 'plug'],
-    ['ship', 'rocket'],
-    ['check', 'check'],
-    ['close', 'xmark'],
-    ['warning', 'triangle-exclamation'],
-    ['spinner', 'spinner'],
-    ['picker', 'arrow-pointer'],
-    ['trash', 'trash'],
-    ['add', 'plus'],
-    ['chevronDown', 'chevron-down'],
-    ['externalLink', 'arrow-up-right-from-square'],
-    ['copy', 'copy'],
-    ['eye', 'eye'],
-    ['agent', 'wand-magic-sparkles'],
-    ['status', 'circle-dot'],
+  const names: IconName[] = [
+    'settings',
+    'mcp',
+    'ship',
+    'check',
+    'close',
+    'warning',
+    'spinner',
+    'target',
+    'trash',
+    'add',
+    'chevronDown',
+    'externalLink',
+    'copy',
+    'eye',
+    'agent',
+    'status',
   ];
 
-  it.each(cases)('renders the registered glyph for "%s"', (name, expectedGlyph) => {
-    const svg = buildIconSvg(name);
-    expect(svg.getAttribute('data-icon')).toBe(expectedGlyph);
+  it.each(names)('renders the registered glyph for "%s"', (name) => {
+    expect(buildIconSvg(name).getAttribute('data-icon')).toBe(name);
+  });
+});
+
+// The glyphs are one stroke language (16 viewBox, 1.5 stroke, currentColor). A CSS `fill`
+// on the <svg> would outrank this and flood every outline solid, so the root attributes
+// are part of the contract, not decoration — see the comment in Icon.scss.
+describe('Icon — stroke language', () => {
+  it('sets the shared stroke attributes on the root, not on each node', () => {
+    const svg = buildIconSvg('check' satisfies IconName);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 16 16');
+    expect(svg.getAttribute('fill')).toBe('none');
+    expect(svg.getAttribute('stroke')).toBe('currentColor');
+    expect(svg.getAttribute('stroke-width')).toBe('1.5');
+  });
+
+  it('lets a deliberately-filled glyph override the root on its own node', () => {
+    const dot = buildIconSvg('status' satisfies IconName).querySelectorAll('circle')[1];
+    expect(dot?.getAttribute('fill')).toBe('currentColor');
+    expect(dot?.getAttribute('stroke')).toBe('none');
   });
 });
 

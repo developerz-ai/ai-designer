@@ -4,7 +4,7 @@ import { send as sendMessage, stopTurn, streaming } from '../../stores/chat';
 import { pickerActive, selector, startPicker } from '../../stores/focus';
 import { Icon } from '../Icon';
 import './Composer.scss';
-import { ContextChip } from './ContextChip';
+import { ElementRefs } from './ElementRefs';
 import { ModelPicker } from './ModelPicker';
 
 // The message composer: one Leo-style shell (the container owns the border + focus treatment)
@@ -52,7 +52,10 @@ export function Composer() {
   const [draft, setDraft] = createSignal('');
 
   const canSend = createMemo(() => draft().trim().length > 0 && !streaming());
-  const attachActive = createMemo(() => pickerActive() || selector() !== null);
+  // Lit only while the picker is ARMED. It used to stay lit for as long as anything was pinned,
+  // which made an accent-filled button the resting state of the composer — and now that pinned
+  // elements are chips sitting directly above, the button was saying the same thing twice.
+  const attachActive = createMemo(() => pickerActive());
 
   function submit(): void {
     const text = draft();
@@ -74,9 +77,9 @@ export function Composer() {
 
   return (
     <div class="dz-composer">
-      <ContextChip />
+      <ElementRefs />
 
-      <div class="dz-composer__shell">
+      <div class="dz-composer__shell" classList={{ 'dz-composer__shell--picking': attachActive() }}>
         {/* A placeholder is not an accessible name — it disappears the moment the field has
             content, leaving the textarea nameless mid-message. Visually hidden, so the shell
             still looks like Leo's. */}
@@ -99,12 +102,6 @@ export function Composer() {
             editable so the next instruction can be drafted while the agent works; only the send
             affordance is gated (and it is the Stop button by then anyway). */}
 
-        {/* Announced via aria-describedby — `aria-keyshortcuts` above is metadata with no
-            behaviour and tells a user nothing on its own; this line is what does. */}
-        <p id={HINT_ID} class="dz-composer__hint">
-          {i18n.t('composer.hint.keyboard')}
-        </p>
-
         <div class="dz-composer__toolbar">
           <button
             type="button"
@@ -120,8 +117,10 @@ export function Composer() {
           >
             {/* `dz-icon--fixed`: absolute 16px, so a toolbar glyph doesn't scale with whatever
                 font-size its container carries. Icon.tsx does not forward the `fixed` prop yet —
-                the class is the documented way in (Icon.scss). */}
-            <Icon name="picker" size="sm" class="dz-icon--fixed" />
+                the class is the documented way in (Icon.scss).
+                A crosshair, not an arrow cursor: the same glyph the on-page rectangles are drawn
+                around, so the button and its result are recognisably the same feature. */}
+            <Icon name="target" size="sm" class="dz-icon--fixed" />
           </button>
 
           <ModelPicker />
@@ -140,10 +139,18 @@ export function Composer() {
             disabled={!streaming() && !canSend()}
             onClick={() => (streaming() ? void stopTurn() : submit())}
           >
-            <Icon name={streaming() ? 'close' : 'arrowUp'} size="sm" class="dz-icon--fixed" />
+            <Icon name={streaming() ? 'stop' : 'arrowUp'} size="sm" class="dz-icon--fixed" />
           </button>
         </div>
       </div>
+
+      {/* Below the shell, and VISIBLE. It was inside the shell and visually hidden, which made
+          it announced-only: Enter-sends is the one thing about this composer that surprises
+          people, and it cost nothing to say it. Still the `aria-describedby` target, so a
+          screen-reader user hears it exactly once, from here. */}
+      <p id={HINT_ID} class="dz-composer__hint">
+        {i18n.t('composer.hint.keyboard')}
+      </p>
     </div>
   );
 }

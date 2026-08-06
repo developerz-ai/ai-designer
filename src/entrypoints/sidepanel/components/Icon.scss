@@ -51,10 +51,13 @@
     animation: dz-icon-spin 1s linear infinite;
   }
 
+  // No `fill` here on purpose. The glyphs are a stroke language (icon-registry.ts sets
+  // `fill="none" stroke="currentColor"` on the root), and a CSS `fill` on the <svg>
+  // outranks that presentation attribute and inherits down — which floods every outline
+  // shape solid. The two deliberately-filled nodes carry `fill` on themselves.
   svg {
     width: 100%;
     height: 100%;
-    fill: currentColor;
   }
 }
 

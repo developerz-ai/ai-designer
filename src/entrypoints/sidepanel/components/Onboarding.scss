@@ -10,7 +10,10 @@
   justify-content: center;
   padding: tokens.$dz-space-4;
   background: var(--dz-scrim);
-  overflow: auto;
+  // No `overflow: auto` here — `__card` is capped at `max-height: 100%` and opens its own
+  // `scroll-area`, so a scroller on the scrim too is the nested pair the single-scroller
+  // contract forbids. It never paints today only because the cap holds; drop the cap and you
+  // get two bars.
 
   &__card {
     @include mixins.card('card', tokens.$dz-space-6, tokens.$dz-radius-xl);
@@ -36,6 +39,29 @@
 
     &:not(:disabled):hover {
       color: var(--dz-fg);
+    }
+  }
+
+  // Three segments across the head of the card, filling as steps complete. The step LIST below
+  // says what each step is; this says how far through you are — which a list of three cards with
+  // one highlighted does not, at a glance.
+  &__progress {
+    display: flex;
+    gap: tokens.rem(6);
+    // Clears the absolutely-positioned Skip button in the same corner — without it the third
+    // segment runs under the button and reads as a shorter step.
+    padding-right: tokens.rem(96);
+  }
+
+  &__segment {
+    flex: 1;
+    height: tokens.rem(3);
+    background: var(--dz-elev-inset);
+    border-radius: var(--dz-radius-pill);
+    transition: background-color var(--dz-motion-slow) var(--dz-ease);
+
+    &.is-filled {
+      background: var(--dz-accent);
     }
   }
 
@@ -80,11 +106,16 @@
     gap: tokens.$dz-space-2;
   }
 
+  // A two-column grid, not a three-item flex row. Side by side, the label and its button fought
+  // over ~150px each: "Connect a backend" wrapped onto three lines while the button beside it sat
+  // on one. The button now drops to its own line under the copy, so the copy gets the full width
+  // and every step is the same shape regardless of how long its label is.
   &__step {
-    @include mixins.surface('base', true, tokens.$dz-radius-lg);
-    display: flex;
-    align-items: flex-start;
-    gap: tokens.$dz-space-3;
+    @include mixins.surface('base', true, tokens.$dz-radius);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: tokens.$dz-space-2 tokens.$dz-space-3;
     padding: tokens.$dz-space-3;
 
     &.is-current {
@@ -94,10 +125,10 @@
   }
 
   &__stepnum {
-    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    grid-row: 1;
     width: tokens.$dz-space-8;
     height: tokens.$dz-space-8;
     border-radius: var(--dz-radius-pill);
@@ -126,13 +157,17 @@
     gap: tokens.$dz-space-1;
   }
 
+  // `baseline`, so the OPTIONAL tag sits on the label's line rather than centring itself against
+  // a label that has wrapped to two.
   &__steplabel {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-items: baseline;
     gap: tokens.$dz-space-2;
     color: var(--dz-fg-strong);
     font-size: tokens.$dz-font-md;
     font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-snug;
   }
 
   &__optional {
@@ -150,10 +185,11 @@
     line-height: tokens.$dz-leading-snug;
   }
 
+  // Second row of column 2 — under the copy, hard left, never beside it.
   &__cta {
-    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
-    flex: 0 0 auto;
-    align-self: center;
+    @include mixins.button-ghost(tokens.$dz-control-sm, var(--dz-radius-pill));
+    grid-column: 2;
+    justify-self: start;
     padding: 0 tokens.$dz-space-3;
     font-size: tokens.$dz-font-xs;
     white-space: nowrap;

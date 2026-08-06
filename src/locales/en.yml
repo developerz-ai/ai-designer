@@ -28,6 +28,11 @@ app:
       ariaLabel: Open in a full window
     more:
       ariaLabel: More options
+  # The wordmark disclosure that replaced the tab strip (NavMenu.tsx). The five destination
+  # names stay under `tab:` — byte-identical to what the strip carried, because the whole e2e
+  # suite locates them by accessible name.
+  nav:
+    ariaLabel: Sections
   tab:
     chat: Chat
     mcp: MCP
@@ -206,6 +211,10 @@ readiness:
   button:
     stop: Stop
     start: Start
+  panel:
+    # Eyebrow over the check list, so the popover names itself instead of opening as
+    # an unlabelled stack of rows.
+    title: Readiness
   label:
     running: Running…
     ready: Ready
@@ -224,12 +233,18 @@ readiness:
   grant: Grant
   overlay:
     label: On-page overlay
+    # Sub-line under the switch label — the row is a control, not a check, so it says
+    # what it turns on rather than reporting a status.
+    detail: Draw rectangles and narrate steps on the page
     on: 'On'
     off: 'Off'
     reloadNeeded: Saved — reload the page to show the overlay on it.
 
 # ─── Settings (SettingsPanel.tsx + stores/settings.ts) ────────────────────────────
 settings:
+  groups:
+    provider: Provider
+    about: About
   status:
     valid: Provider saved and reachable.
     invalidFallback: Provider rejected the config.
@@ -237,7 +252,8 @@ settings:
     keySaved: Key saved.
     noKey: No key set — add one to connect.
   provider:
-    label: Provider
+    label: Preset
+    urlLabel: Base URL
     customUrlPlaceholder: https://api.example.com/v1
   apiKey:
     label: API key
@@ -327,8 +343,13 @@ composer:
   placeholder: Tell the agent what to change…
   input:
     ariaLabel: Message the agent
-  # Rendered visually-hidden and pointed at by the textarea's aria-describedby — the
-  # shortcut is otherwise invisible to a screen-reader user.
+  model:
+    # $1 is the catalogue size. A gateway lists ~300 models; saying how many is what tells the
+    # user why there is a search field at all.
+    search: Search $1 models…
+    noMatch: No model matches that.
+  # On screen under the composer AND the textarea's aria-describedby target — Enter-sends is
+  # the one surprising thing about this control, so it says so out loud.
   hint:
     keyboard: Press Enter to send, Shift+Enter for a new line
   attach:
@@ -348,8 +369,22 @@ contextChip:
     shadow: shadow
     xpath: XPath
   picking: Picking element…
+  # Sits beside the Picking… chip. The picker runs on the PAGE, so the panel has to say
+  # where to look and how to get out — neither is discoverable from the panel alone.
+  pickingHint: Click an element on the page · Esc to cancel
+  stopPicking:
+    ariaLabel: Stop picking
   remove:
-    ariaLabel: Remove context
+    ariaLabel: Remove this element
+  # Tooltip on the chip's warning glyph. A fragile reference resolves today and may not
+  # after the page re-renders — worth saying, not worth a whole row.
+  fragile: Fragile selector — may not survive a page change
+  # Collapsed stack chip, shown from the 4th reference on.
+  count:
+    1: $1 element
+    n: $1 elements
+  clear: Clear
+  collapse: Collapse
 
 # ─── Empty state (chat/EmptyState.tsx) ────────────────────────────────────────────
 empty:
@@ -366,6 +401,8 @@ message:
   editsSummary:
     1: $1 edit recorded
     n: $1 edits recorded
+  # Shown from send until the first token lands — the gap where a silent panel reads as hung.
+  working: Editing the page…
 
 # ─── Suggestion chips (chat/SuggestionChips.tsx) ──────────────────────────────────
 suggestion:
@@ -406,6 +443,17 @@ toolChip:
     running: running
     done: done
     failed: failed
+
+# ─── Tool run group header (chat/ToolCallList.tsx) ────────────────────────────────
+# A turn commonly fires 6–12 calls. They collapse behind this header; the running call
+# and any failure stay visible even when collapsed, so the interesting rows never hide.
+toolRun:
+  actions:
+    1: $1 action
+    n: $1 actions
+  failed:
+    1: $1 failed
+    n: $1 failed
 
 # ─── Message bus (stores/bus.ts) ──────────────────────────────────────────────────
 bus:

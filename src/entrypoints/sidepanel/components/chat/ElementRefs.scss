@@ -1,0 +1,109 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// The reference row: everything the conversation is currently attached to, directly above the
+// composer shell. Wraps rather than scrolls — a horizontal scroller here hides references, and a
+// hidden reference is one the agent will act on that the user cannot see.
+.dz-element-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: tokens.rem(6);
+  padding: 0 tokens.rem(2) tokens.$dz-space-2;
+
+  // "Click an element on the page · Esc to cancel". Takes the rest of the line beside the
+  // Picking… chip, and wraps under it when the localized string is long.
+  &__hint {
+    flex: 1;
+    min-width: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
+  }
+
+  // Four or more references fold into this one chip. The composer must not move as the user
+  // attaches more elements — a row that grows to two or three lines pushes the input down
+  // mid-sentence, which is the single worst thing a composer can do.
+  &__stack {
+    @include mixins.tinted-chip(var(--dz-accent-fill), var(--dz-accent-line));
+    @include mixins.focus-ring;
+    padding-right: tokens.rem(6);
+    padding-left: tokens.rem(7);
+    color: var(--dz-fg);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+    cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      background: var(--dz-wash-hover);
+    }
+  }
+
+  &__indices {
+    display: inline-flex;
+    flex: none;
+    gap: tokens.rem(2);
+  }
+
+  // Solid accent squares, not outlined: at 14px an outline is one pixel of hairline and reads
+  // as dirt. Filled, three of them scan as "a set of things" at a glance.
+  &__index {
+    @include mixins.mono(tokens.$dz-font-xs);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: tokens.rem(14);
+    height: tokens.rem(14);
+    background: var(--dz-accent);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-accent-fg);
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: 1;
+  }
+
+  &__count {
+    @include mixins.truncate;
+  }
+
+  &__chevron {
+    @include mixins.chevron-toggle;
+    flex: none;
+    color: var(--dz-fg-muted);
+  }
+
+  // Quiet text actions beside the stack chip — they act on the whole set, so they must not
+  // compete with the individual chips' own dismiss buttons.
+  &__clear,
+  &__collapse {
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    height: tokens.rem(24);
+    padding: 0 tokens.$dz-space-1;
+    background: none;
+    border: none;
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+    font: inherit;
+    font-size: tokens.$dz-font-xs;
+    cursor: pointer;
+    transition: color var(--dz-motion-fast) var(--dz-ease);
+
+    @include mixins.focus-ring(tokens.rem(-1));
+    // 28px, not the default 44px: these sit in a 24px-tall row directly beside the stack chip,
+    // and a 44px pointer box centred on them would overhang 10px into it — stealing the clicks
+    // that expand the references. Same reasoning as the chip's dismiss button.
+    @include mixins.hit-target(tokens.$dz-control-sm);
+
+    &:hover {
+      color: var(--dz-fg);
+    }
+  }
+
+  &__collapse {
+    font-size: tokens.$dz-font-sm;
+  }
+}

@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the Ship / handoff slice (07 — `docs/idea/handoff.md`) driven against a loaded, real
 // Chromium, mirroring copy-debug.spec.ts's approach: ShipBar/TaskTimeline aren't mounted in the
@@ -136,7 +136,7 @@ function stubProvider(
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-07');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -313,7 +313,7 @@ function stubTaskServer(
 }
 
 async function connectMcpServer(page: Page, label: string, url: string): Promise<void> {
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
   await page.locator('#dz-mcp-label').fill(label);
   await page.locator('#dz-mcp-url').fill(url);
   await page.locator('.dz-mcp__add button[type="submit"]').click();
@@ -379,7 +379,7 @@ test.describe('handoff: ship + send-report', () => {
     await configureProvider(panel);
     await connectMcpServer(panel, 'Acme Dev', devUrl);
     await connectMcpServer(panel, 'Devin', devinUrl);
-    await panel.getByRole('button', { name: 'Chat' }).click();
+    await openRoom(panel, 'Chat');
 
     const sw = await serviceWorker(context);
     await sw.evaluate(

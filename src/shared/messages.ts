@@ -152,6 +152,15 @@ export const ClearKey = z.object({ type: z.literal('clear-openrouter-key') });
 // content). Distinct from the agent's DomTool calls; the picker is never agent-run.
 export const StartPicker = z.object({ type: z.literal('start-picker') });
 export const StopPicker = z.object({ type: z.literal('stop-picker') });
+// Detach ONE already-selected element (a reference chip's dismiss). `multi-select-changed` is
+// the only write path into the panel's multi-selection, so a panel-local removal was reverted by
+// the picker's next echo — the user's detach undone, and the agent grounded on an element they
+// explicitly removed. The removal therefore has to reach the content world and come back through
+// the same relay. Identified by the selector VALUE, which is what the panel holds.
+export const DeselectElement = z.object({
+  type: z.literal('deselect-element'),
+  value: z.string(),
+});
 
 // --- MCP servers (panel <-> service worker) -------------------------------
 // Server management + auth: docs/idea/mcp.md. Mirrors the non-secret shape persisted by
@@ -445,6 +454,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   ClearKey,
   StartPicker,
   StopPicker,
+  DeselectElement,
   McpAdd,
   McpRemove,
   McpList,
@@ -841,6 +851,10 @@ export type DiagnosticsToolResult = z.infer<typeof DiagnosticsToolResult>;
 export const PickerCmd = z.discriminatedUnion('type', [
   z.object({ type: z.literal('picker-start') }),
   z.object({ type: z.literal('picker-stop') }),
+  // Drop one element from the picker's committed selection. The picker answers with the usual
+  // `multi-select-changed`, so the panel heals through the reducer it already has rather than
+  // through a second, divergent write path.
+  z.object({ type: z.literal('picker-deselect'), value: z.string() }),
 ]);
 export type PickerCmd = z.infer<typeof PickerCmd>;
 

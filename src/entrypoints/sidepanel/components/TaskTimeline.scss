@@ -1,23 +1,45 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
-// Leo's citation card, structurally: leading status glyph, title + status stacked, trailing
-// link. This is the reference card for the rest of the panel — anything that groups an
-// icon, a two-line identity and an action should look like this.
+// The backend's side of a Ship, as ONE card holding a row per task. It used to be a card per
+// task, which read as a pile of unrelated notices — a fan-out is a single run with several
+// legs, and the shared container is what says so.
 .dz-tasktimeline {
-  display: flex;
-  flex-direction: column;
+  @include mixins.card('card', tokens.$dz-space-1, tokens.$dz-radius);
   flex: none;
-  gap: tokens.$dz-space-2;
-  margin: 0;
-  padding: tokens.$dz-space-4 tokens.$dz-space-6 0;
-  list-style: none;
+  margin: tokens.$dz-space-3 tokens.$dz-space-6 0;
+  animation: dz-rise var(--dz-motion-base) var(--dz-ease);
+
+  &__heading {
+    @include mixins.eyebrow-label;
+    margin: 0;
+    padding: tokens.rem(6) tokens.$dz-space-2 tokens.$dz-space-1;
+  }
+
+  &__list {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
   &__item {
-    @include mixins.card('card', tokens.$dz-space-3, tokens.$dz-radius-lg);
+    padding: tokens.rem(7) tokens.$dz-space-2;
+    border-radius: tokens.$dz-radius-sm;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      background: var(--dz-elev-hover);
+    }
+  }
+
+  // Title row: glyph, title, status word. The status is mono and right-aligned so a column of
+  // them lines up and the eye can run down it.
+  &__row {
     display: flex;
-    align-items: flex-start;
-    gap: tokens.$dz-space-3;
+    align-items: center;
+    gap: tokens.rem(6);
   }
 
   &__stage {
@@ -25,7 +47,6 @@
     align-items: center;
     justify-content: center;
     flex: none;
-    margin-top: tokens.rem(2);
     color: var(--dz-fg-muted);
 
     &.is-accent {
@@ -41,30 +62,45 @@
     }
   }
 
-  &__meta {
-    display: flex;
-    flex-direction: column;
-    gap: tokens.rem(2);
-    min-width: 0;
-    flex: 1;
-  }
-
   &__title {
     @include mixins.truncate;
-    color: var(--dz-fg-strong);
+    flex: 1;
+    color: var(--dz-fg);
     font-size: tokens.$dz-font-md;
-    font-weight: tokens.$dz-weight-medium;
+    font-weight: tokens.$dz-weight-regular;
   }
 
+  // `pr_open`, `ci_green` — machine words, so they take the machine face. Left as-is rather
+  // than prettified: these are the backend's own status strings, and a user chasing one in a
+  // log wants the string the log contains.
   &__status {
+    @include mixins.mono(tokens.$dz-font-xs);
+    flex: none;
     color: var(--dz-fg-muted);
-    text-transform: capitalize;
-    font-size: tokens.$dz-font-sm;
+  }
+
+  // Second line, indented under the title so it reads as belonging to it rather than to the
+  // row below. 19px = glyph width + gap.
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    margin-top: tokens.rem(3);
+    padding-left: tokens.rem(22);
+  }
+
+  &__counter {
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
   }
 
   &__error {
+    margin: tokens.$dz-space-1 0 0;
+    padding-left: tokens.rem(22);
     color: var(--dz-status-error);
-    font-size: tokens.$dz-font-sm;
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 
   &__pr {
@@ -73,9 +109,12 @@
     gap: tokens.$dz-space-1;
     flex: none;
     color: var(--dz-accent);
+    font-size: tokens.$dz-font-xs;
+    font-weight: tokens.$dz-weight-medium;
     text-decoration: none;
-    font-size: tokens.$dz-font-sm;
     white-space: nowrap;
+
+    @include mixins.focus-ring;
 
     &:hover {
       text-decoration: underline;

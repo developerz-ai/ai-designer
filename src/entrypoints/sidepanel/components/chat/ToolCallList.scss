@@ -1,32 +1,99 @@
 @use '../../../../styles/tokens' as tokens;
 @use '../../../../styles/mixins' as mixins;
 
-// Tool activity is the *card* grammar in a surface that is otherwise unboxed prose — that
-// contrast is what makes an assistant turn readable as a document with a machine's working
-// notes attached, rather than as a wall of chat. Geometry only; the card itself is ToolChip.
+// Tool activity is the *card* grammar in a surface that is otherwise unboxed prose —
+// that contrast is what makes an assistant turn readable as a document with a machine's
+// working notes attached, rather than as a wall of chat.
+//
+// The run collapses behind a one-line header. Twelve expanded cards pushed the answer
+// itself off the top of the thread; collapsed, the header states the shape of the run
+// ("12 actions · 1 failed") and keeps the in-flight and failed rows on screen.
 .dz-tool-call-list {
   display: flex;
   flex-direction: column;
-  gap: tokens.$dz-space-2;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  gap: tokens.rem(6);
+  margin-top: tokens.$dz-space-3;
+
+  // A text row, not a button-shaped control: it is a disclosure inside the turn's own
+  // prose column, and a bordered box here would read as a third grammar.
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: tokens.rem(6);
+    width: 100%;
+    padding: tokens.$dz-space-1 tokens.rem(2);
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    text-align: left;
+    cursor: pointer;
+    transition: color var(--dz-motion-fast) var(--dz-ease);
+
+    @include mixins.focus-ring(tokens.rem(-2));
+
+    &:hover {
+      color: var(--dz-fg);
+    }
+  }
+
+  &__glyph {
+    flex: none;
+    color: var(--dz-status-connected);
+
+    &.is-spinner {
+      color: var(--dz-accent);
+    }
+
+    &.is-warning {
+      color: var(--dz-status-error);
+    }
+  }
+
+  &__count {
+    font-weight: tokens.$dz-weight-medium;
+  }
+
+  &__failed {
+    color: var(--dz-status-error);
+  }
+
+  &__chevron {
+    @include mixins.chevron-toggle;
+    flex: none;
+    margin-left: auto;
+  }
+
+  &__items {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-1;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
   &__item {
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-1;
+    // Each card arrives rather than popping in — with a run streaming, chips appear one
+    // at a time, and an instant swap reads as a flicker at this size.
+    animation: dz-rise var(--dz-motion-fast) var(--dz-ease);
   }
 
-  // Pending = "requested, never heard back". It borrows ToolChip's spinner glyph but must not
-  // spin: a chip that spins forever after the turn settled reads as a hung UI. The muted status
-  // color is ToolChip's default, so only the animation needs stilling.
+  // Pending = "requested, never heard back". It borrows ToolChip's spinner glyph but
+  // must not spin: a chip spinning forever after the turn settled reads as a hung UI.
   &__item--pending .dz-icon--spin {
     animation: none;
   }
 
-  // The outcome word. Hidden on screen — the chip's glyph and border already carry it visually —
-  // but present in the accessibility tree, which color and an aria-hidden icon are not.
+  // The outcome word. Hidden on screen — the chip's glyph and border already carry it
+  // visually — but present in the accessibility tree, which colour and an aria-hidden
+  // icon are not.
   &__status {
     @include mixins.visually-hidden;
   }
@@ -35,8 +102,8 @@
     margin: 0;
     padding-left: tokens.$dz-space-2;
     color: var(--dz-status-error);
-    font-size: tokens.$dz-font-sm;
+    font-size: tokens.$dz-font-xs;
     line-height: tokens.$dz-leading-snug;
-    overflow-wrap: anywhere; // tool errors quote selectors; they must not widen the 360px panel
+    overflow-wrap: anywhere; // tool errors quote selectors; they must not widen 360px
   }
 }

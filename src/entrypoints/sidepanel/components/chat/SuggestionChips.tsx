@@ -62,6 +62,9 @@ export function SuggestionChips(props: SuggestionChipsProps) {
                 )}
               </Show>
               <span class="dz-suggestion-chips__label">{s.label}</span>
+              {/* Trailing chevron: without it a bordered row with a leading glyph reads as a
+                  status card. This is the affordance that says tapping it does something. */}
+              <Icon name="chevronRight" size="sm" class="dz-suggestion-chips__go dz-icon--fixed" />
             </button>
           </li>
         )}

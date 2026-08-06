@@ -474,6 +474,7 @@ export default defineContentScript({
       const cmd = PickerCmd.safeParse(raw);
       if (cmd.success) {
         if (cmd.data.type === 'picker-start') picker.start();
+        else if (cmd.data.type === 'picker-deselect') picker.deselect(cmd.data.value);
         else picker.stop();
         return;
       }

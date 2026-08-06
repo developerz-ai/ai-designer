@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the two headline agent activities (plan 06, `06-browse-copy-debug.md`) driven against a
 // loaded, real Chromium. The composer itself is still a UI stub (ChatPanel.tsx: "Wiring to the SW
@@ -130,7 +130,7 @@ async function stubChat(context: BrowserContext, turns: string[]): Promise<ChatR
 // Configure a BYOK provider through the real Settings UI (mirrors settings.spec.ts /
 // readiness.spec.ts) so `getProviderConfig()` is populated before `user-message` is sent.
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-06');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');

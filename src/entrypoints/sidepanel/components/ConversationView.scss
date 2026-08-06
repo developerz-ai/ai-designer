@@ -73,13 +73,20 @@
     }
   }
 
+  // An outlined capsule, not a muted caption. Read-only is the one thing about this surface a
+  // user needs to know before they try to type into it, and a bare grey word next to two other
+  // bare grey words is not that signal.
   &__readonly {
     display: inline-flex;
     align-items: center;
     gap: tokens.$dz-space-1;
     margin-left: auto;
+    padding: tokens.rem(3) tokens.$dz-space-2;
+    border: tokens.$dz-border-width solid var(--dz-border-subtle);
+    border-radius: var(--dz-radius-pill);
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
+    white-space: nowrap;
   }
 
   &__thread {
@@ -133,7 +140,7 @@
   }
 
   &__action {
-    @include mixins.button-ghost;
+    @include mixins.button-ghost(tokens.$dz-control-md, var(--dz-radius-pill));
     text-decoration: none;
     font-size: tokens.$dz-font-sm;
   }

@@ -47,53 +47,92 @@
     @include mixins.truncate;
   }
 
-  // A `div role="menu"` holding its `menuitemradio` buttons directly (see ModelPicker.tsx) —
-  // `menu-surface`'s list resets are inert here and left in place rather than forked.
-  &__menu {
-    @include mixins.menu-surface;
-    @include mixins.scroll-area('y', false);
-    // Opens upward — the composer is docked to the foot of the panel.
+  // The popover: search field over the menu. Opens UPWARD — the composer is docked to the foot
+  // of the panel, so a downward menu would open off the bottom edge.
+  &__popover {
+    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.rem(6));
     position: absolute;
     bottom: calc(100% + #{tokens.$dz-space-1});
     left: 0;
     z-index: 10;
-    display: flex;
-    flex-direction: column;
-    gap: tokens.rem(2);
     // No width scale in the tokens; these are one-off popover bounds, floored wide enough for a
     // model id and capped short of the 360px panel.
-    min-width: tokens.rem(180);
-    max-width: tokens.rem(280);
-    max-height: tokens.rem(220);
+    width: tokens.rem(228);
+    max-width: calc(100vw - #{tokens.$dz-space-8});
+    transform-origin: bottom left;
+    animation: dz-pop var(--dz-motion-base) var(--dz-ease);
+  }
+
+  &__search {
+    display: flex;
+    align-items: center;
+    gap: tokens.rem(6);
+    height: tokens.$dz-control-sm;
+    margin-bottom: tokens.rem(6);
+    padding: 0 tokens.$dz-space-2;
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-muted);
+
+    input {
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: none;
+      color: var(--dz-fg);
+      font: inherit;
+      font-size: tokens.$dz-font-sm;
+      outline: none;
+
+      &::placeholder {
+        color: var(--dz-fg-muted);
+      }
+    }
+  }
+
+  // The list itself is the ONE scroller allowed inside a popover — the single-scroller contract
+  // governs page regions, and a 300-entry catalogue has nowhere else to go.
+  &__menu {
+    @include mixins.scroll-area('y', false);
+    display: flex;
+    flex-direction: column;
+    max-height: tokens.rem(168);
   }
 
   &__item {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
-    background: transparent;
-    border: none;
-    border-radius: tokens.$dz-radius-xs;
-    color: var(--dz-fg);
-    font: inherit;
-    font-size: tokens.$dz-font-sm;
-    line-height: tokens.$dz-leading-snug;
-    text-align: left;
-    cursor: pointer;
+    @include mixins.menu-row(tokens.$dz-radius-sm);
+    gap: tokens.rem(6);
 
-    @include mixins.truncate;
-    @include mixins.focus-ring(tokens.rem(-2));
-
-    &:hover {
-      background: var(--dz-elev-hover);
-    }
-
-    // The checked model reads as selected without a check glyph — tone only, so the row's text
-    // never shifts when selection moves.
     &[aria-checked='true'] {
       color: var(--dz-fg-strong);
-      font-weight: tokens.$dz-weight-semibold;
     }
+  }
+
+  // Always in the layout, transparent when unselected: hiding it moved every row's text sideways
+  // as the selection changed, and a list that reflows while you arrow through it is hard to track.
+  &__check {
+    flex: none;
+    color: transparent;
+
+    &.is-on {
+      color: var(--dz-accent);
+    }
+  }
+
+  // Mono: these are ids (`anthropic/claude-sonnet-4.6`), and a proportional face makes two
+  // similar ids hard to tell apart at a glance.
+  &__name {
+    @include mixins.mono(tokens.$dz-font-sm);
+    flex: 1;
+    min-width: 0;
+    color: var(--dz-fg-body);
+    overflow-wrap: anywhere;
+  }
+
+  &__empty {
+    margin: 0;
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
   }
 }

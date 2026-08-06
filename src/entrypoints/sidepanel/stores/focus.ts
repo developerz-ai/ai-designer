@@ -91,6 +91,56 @@ export function clearFocus(): void {
   setMultiSelectors([]);
 }
 
+/** The conversation's attached elements as ONE ordered list: the single pin first, then the
+ *  shift-multi set. The panel shows these as numbered chips and echoes them back on the next
+ *  send, so the numbering a user sees in a chip is the numbering the agent is grounded on.
+ *  Pure over its inputs — exported so the ordering contract is unit-testable. */
+export function orderedReferences(
+  pin: StableSelector | null,
+  multi: StableSelector[],
+): StableSelector[] {
+  return pin ? [pin, ...multi] : multi;
+}
+
+/** Detach ONE reference by its position in `orderedReferences`. Index 0 with a pin present drops
+ *  the pin; anything else splices the multi set.
+ *
+ *  The multi half is ROUND-TRIPPED to the content script, not merely forgotten here. The picker
+ *  owns the committed selection and `multi-select-changed` is the only write path into
+ *  `multiSelectors`, so a panel-local removal was reverted by the picker's very next echo: the
+ *  user dismissed a chip, shift-clicked one more element, and the dismissed one silently
+ *  reappeared — and went to the model as grounding. The local splice stays as an optimistic
+ *  update so the chip disappears without a round-trip; the echo then confirms it.
+ *
+ *  The pin has no content-side state (it is not in the picker's `selected` set), so index 0 is
+ *  panel-local by nature — but it still travels, because the picker draws the pin as box 1 and
+ *  that outline has to go with the chip. */
+export function removeReference(index: number): void {
+  const hasPin = selector() !== null;
+  const target = orderedReferences(selector(), multiSelectors())[index];
+  if (hasPin && index === 0) {
+    setSelector(null);
+    setXpath(null);
+    setRect(null);
+  } else {
+    const multiIndex = hasPin ? index - 1 : index;
+    setMultiSelectors((current) => current.filter((_, i) => i !== multiIndex));
+  }
+  if (target) void deselectOnPage(target.value);
+}
+
+/** Tell the content script to drop this element from the picker's committed selection. Failure is
+ *  surfaced like every other store action rather than rejecting into an unhandled rejection — the
+ *  chip is already gone locally, so a dead content script degrades to the old panel-local
+ *  behaviour instead of blocking the dismiss. */
+async function deselectOnPage(value: string): Promise<void> {
+  try {
+    await request({ type: 'deselect-element', value }, OkResult);
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
 /** Composer's "attach" affordance: ask the content script (via the SW) to start the
  *  Cursor-style element picker on the active tab. The resulting `focus`/`picker-state`
  *  pushes fold in through `initFocusStore` above — this only fires the request.

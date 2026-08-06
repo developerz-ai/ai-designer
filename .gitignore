@@ -44,3 +44,6 @@ tmp/
 
 # editor settings — per-machine (extensions.json stays shared)
 .vscode/settings.json
+
+# Live-debug + QA screenshots — local artefacts, never committed.
+.debug-shots/

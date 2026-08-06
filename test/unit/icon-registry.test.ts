@@ -7,14 +7,14 @@ import {
   resolveIconName,
 } from '@/entrypoints/sidepanel/components/icon-registry';
 
-// buildIconSvg builds real SVG DOM from FontAwesome's abstract node data — no
+// buildIconSvg builds real SVG DOM from the literal glyph table in icon-registry.ts — no
 // `innerHTML`/HTML-string parsing anywhere in the path (CLAUDE.md "Icon component
 // (inline SVG, tree-shaken, no innerHTML-of-remote)"). These tests exercise the actual
 // DOM shape it produces, not a snapshot of markup.
 
 describe('resolveIconName', () => {
   it('passes through a registered name', () => {
-    expect(resolveIconName('send')).toBe('send');
+    expect(resolveIconName('ship')).toBe('ship');
   });
 
   it('falls back to a safe placeholder for an unregistered name', () => {
@@ -33,10 +33,18 @@ describe('resolveIconName', () => {
 
 describe('buildIconSvg', () => {
   it('renders a namespaced <svg data-icon> element for a known name', () => {
-    const svg = buildIconSvg('send' satisfies IconName);
+    const svg = buildIconSvg('ship' satisfies IconName);
     expect(svg.namespaceURI).toBe('http://www.w3.org/2000/svg');
     expect(svg.tagName.toLowerCase()).toBe('svg');
-    expect(svg.getAttribute('data-icon')).toBe('paper-plane');
+    expect(svg.getAttribute('data-icon')).toBe('ship');
+  });
+
+  it('sets the stroke language once on the root so children inherit it', () => {
+    const svg = buildIconSvg('check' satisfies IconName);
+    expect(svg.getAttribute('viewBox')).toBe('0 0 16 16');
+    expect(svg.getAttribute('fill')).toBe('none');
+    expect(svg.getAttribute('stroke')).toBe('currentColor');
+    expect(svg.getAttribute('stroke-width')).toBe('1.5');
   });
 
   it('builds a nested <path> with real path data, no innerHTML', () => {
@@ -57,22 +65,29 @@ describe('buildIconSvg', () => {
   });
 
   it('produces distinct markup per registered icon', () => {
-    const send = buildIconSvg('send' satisfies IconName);
+    const ship = buildIconSvg('ship' satisfies IconName);
     const trash = buildIconSvg('trash' satisfies IconName);
-    expect(send.getAttribute('data-icon')).not.toBe(trash.getAttribute('data-icon'));
+    expect(ship.innerHTML).not.toBe(trash.innerHTML);
   });
 
-  // Generic over ICON_NAMES so registering a glyph is covered without touching this
-  // file — a bad import (wrong FontAwesome export, undefined definition) fails here.
+  // Generic over ICON_NAMES so registering a glyph is covered without touching this file.
+  // The geometry — not `data-icon`, which is just the key — is what's compared: the path
+  // data is hand-written here now, so the live failure mode is a copy-pasted glyph or an
+  // entry whose nodes carry no drawing at all.
   it('builds a distinct, non-empty glyph for every registered name', () => {
-    const seen = new Set<string>();
+    const seen = new Map<string, IconName>();
     for (const name of ICON_NAMES) {
       const svg = buildIconSvg(name);
-      const dataIcon = svg.getAttribute('data-icon');
-      expect(dataIcon, name).toBeTruthy();
-      expect(svg.querySelector('path')?.getAttribute('d')?.length ?? 0, name).toBeGreaterThan(0);
-      expect(seen.has(dataIcon ?? ''), `duplicate glyph for "${name}"`).toBe(false);
-      seen.add(dataIcon ?? '');
+      expect(svg.getAttribute('data-icon'), name).toBe(name);
+      // `stop` is a lone <rect>, `status`/`spinner` lead with <circle> — geometry, not
+      // specifically a <path>, is the contract.
+      const geometry = [...svg.children]
+        .map((node) => `${node.tagName}:${[...node.attributes].map((a) => a.value).join(',')}`)
+        .join('|');
+      expect(svg.children.length, name).toBeGreaterThan(0);
+      expect(geometry.length, name).toBeGreaterThan(0);
+      expect(seen.get(geometry), `"${name}" duplicates "${seen.get(geometry)}"`).toBeUndefined();
+      seen.set(geometry, name);
     }
     expect(seen.size).toBe(ICON_NAMES.length);
   });

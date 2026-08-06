@@ -13,11 +13,14 @@ test('side panel mounts on the Chat tab, gated behind Start on a fresh profile',
   // App shell rendered (App.tsx → <div class="dz-app">).
   await expect(page.locator('.dz-app')).toBeVisible({ timeout: 10_000 });
 
-  // Default tab is Chat, but a fresh profile has no provider configured yet, so
-  // ChatPanel stays gated behind the pre-Start empty state (App.tsx `sessionStarted`,
-  // see readiness.spec.ts for the full configure -> Ready -> Start walk). Static DOM, no
+  // Chat owns the panel at rest — there is no strip, so what proves "mounted on Chat" is the
+  // nav trigger being present with NO room bar over the surface (a room would show a back
+  // button and its own heading). A fresh profile has no provider configured yet, so ChatPanel
+  // stays gated behind the pre-Start empty state (App.tsx `sessionStarted`, see
+  // readiness.spec.ts for the full configure -> Ready -> Start walk). Static DOM, no
   // chrome.* / network dependency at mount, so this is deterministic across CI retries.
-  await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Designer' })).toBeVisible();
+  await expect(page.locator('.dz-app__roombar')).toHaveCount(0);
   await expect(
     page.getByText('Configure a provider above, then hit Start to begin chatting.'),
   ).toBeVisible();

@@ -116,7 +116,7 @@ export function AuthDialog(props: AuthDialogProps) {
             onClick={props.onClose}
             aria-label={i18n.t('auth.close.ariaLabel')}
           >
-            <Icon name="close" size="sm" />
+            <Icon name="close" size="sm" class="dz-icon--fixed" />
           </button>
         </header>
 

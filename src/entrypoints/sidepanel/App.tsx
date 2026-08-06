@@ -1,17 +1,18 @@
-import { createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
+import { createEffect, createMemo, Match, onMount, Show, Switch } from 'solid-js';
 import { i18n } from '#i18n';
 import { ChangesetPreview } from './components/ChangesetPreview';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
+import { Icon } from './components/Icon';
 import { McpPanel } from './components/McpPanel';
+import { NavMenu, roomName } from './components/NavMenu';
 import { Onboarding } from './components/Onboarding';
 import { PreStart } from './components/PreStart';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { Tab } from './components/TabBar';
-import { TabBar } from './components/TabBar';
 import { initChatStore } from './stores/chat';
+import { setTab, tab } from './stores/nav';
 import { initOnboardingStore, visible as onboardingVisible } from './stores/onboarding';
 import { initSessionStore, sessionState } from './stores/session';
 import './App.scss';
@@ -22,7 +23,6 @@ import './App.scss';
 // conversation (Chat), the changeset (Diff), MCP backend management, History and Settings
 // (BYOK provider key + model picker). See docs/idea/ui.md.
 export function App() {
-  const [tab, setTab] = createSignal<Tab>('chat');
   // First-run guide: auto-shown on a fresh install and re-shown each open until skipped/finished
   // (see stores/onboarding.ts), plus re-openable from Settings. Rendered as an overlay below so it
   // sits above the tab shell.
@@ -47,15 +47,39 @@ export function App() {
     setTab(target);
   }
 
+  // A room change is a route change: without moving focus it is a silent swap for a screen
+  // reader — the body is replaced and the user is still parked on whatever they clicked. The
+  // `<Show>` keeps the same heading node across room-to-room moves, so this has to be an effect
+  // on `tab`, not a `ref` callback (which fires once, on mount).
+  let roomTitle: HTMLHeadingElement | undefined;
+  createEffect(() => {
+    if (tab() !== 'chat') roomTitle?.focus();
+  });
+
   return (
     <div class="dz-app">
       <header class="dz-app__header">
         <img class="dz-app__logo" src="/logo.png" alt={i18n.t('app.logo.alt')} />
-        <h1 class="dz-app__title">{i18n.t('app.panelTitle')}</h1>
+        <NavMenu />
         <ReadinessDropdown onNavigate={handleNavigate} />
       </header>
 
-      <TabBar active={tab()} onSelect={setTab} />
+      {/* Only the four secondary surfaces get a bar. Chat is not a room you visit — it is the
+          panel, and giving it a "back to itself" affordance would say otherwise. The bar is
+          also the only heading MCP, History and Diff have ever had; the strip was their label. */}
+      <Show when={tab() !== 'chat'}>
+        <div class="dz-app__roombar">
+          {/* Named "Chat", not "Back": it names the destination rather than a direction, and it
+              keeps the accessible name every spec already looks for when returning. */}
+          <button type="button" class="dz-app__back" onClick={() => setTab('chat')}>
+            <Icon name="back" size="sm" class="dz-icon--fixed" />
+            {i18n.t('app.tab.chat')}
+          </button>
+          <h2 ref={roomTitle} class="dz-app__roomtitle" tabindex="-1">
+            {roomName(tab())}
+          </h2>
+        </div>
+      </Show>
 
       <main class="dz-app__body">
         <Switch>

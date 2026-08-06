@@ -125,12 +125,28 @@ describe('ModelPicker', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
-  it('opens with focus on the current model, not on the first item', () => {
+  // The catalogue can run to ~300 entries, so the menu opens onto its SEARCH field — a keystroke
+  // there should narrow the list, not scroll it. The current model is still the row the first
+  // arrow press lands on (below); it just doesn't steal the cursor on open.
+  it('opens with focus on the search field, not on a row', () => {
     mocked.__setSettings({ models: MODELS, model: 'google/gemini-3-pro' });
+    render(() => <ModelPicker />);
+    fireEvent.click(screen.getByRole('button', { name: 'google/gemini-3-pro' }));
+
+    expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+
+  it('narrows the list as you type, and Enter takes the top match', () => {
+    mocked.__setSettings({ models: MODELS, model: null });
     render(() => <ModelPicker />);
     fireEvent.click(screen.getByRole('button'));
 
-    expect(screen.getByRole('menuitemradio', { name: 'Gemini 3 Pro' })).toHaveFocus();
+    const search = screen.getByRole('textbox');
+    fireEvent.input(search, { target: { value: 'gemini' } });
+
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(1);
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(mocked.switchModel).toHaveBeenCalledExactlyOnceWith('google/gemini-3-pro');
   });
 
   it('moves focus between items with the arrow keys, wrapping at the end', () => {
@@ -139,6 +155,10 @@ describe('ModelPicker', () => {
     fireEvent.click(screen.getByRole('button'));
     const menu = screen.getByRole('menu');
 
+    // Focus starts in the search field; the first arrow press is what moves it onto a row.
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitemradio', { name: 'GPT-5' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'Home' });
     expect(screen.getByRole('menuitemradio', { name: 'Claude Opus 4' })).toHaveFocus();
     fireEvent.keyDown(menu, { key: 'ArrowDown' });
     expect(screen.getByRole('menuitemradio', { name: 'GPT-5' })).toHaveFocus();

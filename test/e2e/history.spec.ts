@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the History SPA (slice 08 — `docs/idea/history.md`/`08-history.md`) driven against a loaded,
 // real Chromium, mirroring handoff.spec.ts's approach: two real `user-message` turns (same RPC a
@@ -110,7 +110,7 @@ function stubProvider(
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-08');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -182,7 +182,7 @@ test.describe('History SPA', () => {
 
     // Open History — the entry (title = the first turn's message) shows a mode badge, a date, and
     // the "Report" badge (has a report, no PR link yet).
-    await panel.getByRole('button', { name: 'History' }).click();
+    await openRoom(panel, 'History');
     const rows = panel.locator('.dz-history__item');
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText(TURN_1_TEXT);

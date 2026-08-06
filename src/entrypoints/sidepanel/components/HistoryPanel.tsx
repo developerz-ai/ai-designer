@@ -64,7 +64,10 @@ function HistoryRow(props: { conversation: ConversationSummary }) {
     <li class="dz-history__item">
       <button type="button" class="dz-history__row" onClick={open}>
         <span class="dz-history__favicon">
-          <Show when={faviconOk()} fallback={<Icon name="site" size="sm" />}>
+          {/* `--fixed`: the `img` branch below fills the 16px well outright, so an em-sized
+              fallback (0.875em of an 11px well = 9.6px, sub-pixel stroke) rendered a grey smudge
+              exactly where its neighbours showed a crisp favicon. */}
+          <Show when={faviconOk()} fallback={<Icon name="site" size="sm" class="dz-icon--fixed" />}>
             <img
               src={faviconUrl(props.conversation.url)}
               alt=""

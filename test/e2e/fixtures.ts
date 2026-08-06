@@ -91,3 +91,20 @@ export const test = base.extend<{
 });
 
 export const expect = test.expect;
+
+/** The five panel surfaces, by their accessible name. */
+export type Room = 'Chat' | 'MCP' | 'Settings' | 'Diff' | 'History';
+
+/**
+ * Navigate the side panel to a surface.
+ *
+ * Every spec goes through this instead of clicking a named button directly, so the panel's
+ * navigation can change shape without touching 52 call sites. The rows live inside the
+ * wordmark's `popover`, which is `display: none` while closed — hence the trigger click first,
+ * and hence the `#dz-nav-menu` scope: the room bar's back button is also named "Chat", and an
+ * unscoped lookup would be a strict-mode violation with the menu open over a room.
+ */
+export async function openRoom(p: Page, name: Room): Promise<void> {
+  await p.getByRole('button', { name: 'Designer' }).click();
+  await p.locator('#dz-nav-menu').getByRole('button', { name }).click();
+}

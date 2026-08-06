@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import {
+  changeset,
   downloadReport,
   error,
   fallbackReason,
@@ -10,6 +11,7 @@ import {
   shipping,
 } from '../stores/changeset';
 import { hydrateMcp, initMcpStore, isNoRepoReason, loadOriginRepos, servers } from '../stores/mcp';
+import { setTab } from '../stores/nav';
 import { Icon } from './Icon';
 import { OriginRepoSection } from './OriginRepoSection';
 import './ShipBar.scss';
@@ -30,6 +32,7 @@ export function ShipBar() {
   });
 
   const connected = createMemo(() => servers.filter((s) => s.status === 'connected'));
+  const editCount = createMemo(() => changeset()?.edits.length ?? 0);
   // #20 one-click promise: a Ship that fell back because this origin has no repo mapped surfaces
   // the mapping form INLINE (not a dialog) — save once, then the same Ship goes to the backend.
   const noRepoFallback = createMemo(() => isNoRepoReason(fallbackReason()));
@@ -52,14 +55,18 @@ export function ShipBar() {
           {i18n.t('ship.button')}
         </button>
 
+        {/* Icon-only, with a real accessible name. Three labelled buttons could not share one
+            328px row without each of them truncating; Ship is the action anyone came here for,
+            so it keeps its words and the two secondary actions become squares. */}
         <button
           type="button"
           class="dz-shipbar__ghost"
           disabled={shipping()}
+          aria-label={i18n.t('ship.download')}
+          title={i18n.t('ship.download')}
           onClick={() => void downloadReport()}
         >
-          <Icon name="download" size="sm" />
-          {i18n.t('ship.download')}
+          <Icon name="download" size="sm" class="dz-icon--fixed" />
         </button>
 
         <div class="dz-shipbar__send">
@@ -68,20 +75,26 @@ export function ShipBar() {
             class="dz-shipbar__ghost"
             disabled={shipping() || connected().length === 0}
             aria-expanded={sendOpen()}
+            aria-haspopup="menu"
+            aria-label={i18n.t('ship.sendTo')}
+            title={i18n.t('ship.sendTo')}
             onClick={() => setSendOpen((v) => !v)}
           >
-            <Icon name="send" size="sm" />
-            {i18n.t('ship.sendTo')}
-            <Icon name="chevronDown" size="sm" />
+            <Icon name="mcp" size="sm" class="dz-icon--fixed" />
+            <Icon name="chevronDown" size="sm" class="dz-shipbar__caret" />
           </button>
 
+          {/* Opens UPWARD. The ship bar is docked directly above the composer, so a downward
+              menu covers the input the user is about to type into. */}
           <Show when={sendOpen()}>
             <ul class="dz-shipbar__menu">
+              <li class="dz-shipbar__menuTitle">{i18n.t('ship.sendTo')}</li>
               <For each={connected()}>
                 {(s) => (
                   <li>
                     <button type="button" onClick={() => void handleSend(s.id)}>
-                      {s.label}
+                      <span class="dz-shipbar__dot" />
+                      <span class="dz-shipbar__menuLabel">{s.label}</span>
                     </button>
                   </li>
                 )}
@@ -89,6 +102,19 @@ export function ShipBar() {
             </ul>
           </Show>
         </div>
+
+        {/* The changeset is the one non-chat surface INSIDE the design loop, so it keeps a
+            one-click entry even though the nav moved behind the wordmark. Docked here rather
+            than under a turn: this row is pinned above the composer and always on screen,
+            whereas an in-thread link is gone the moment the thread scrolls — and it answers
+            "what would Ship ship?" adjacent to the button that ships it. */}
+        <Show when={editCount() > 0}>
+          <button type="button" class="dz-shipbar__edits" onClick={() => setTab('diff')}>
+            <Icon name="check" size="sm" class="dz-icon--fixed" />
+            <span>{i18n.t('diff.count', editCount())}</span>
+            <Icon name="chevronRight" size="sm" class="dz-icon--fixed" />
+          </button>
+        </Show>
       </div>
 
       <Show when={fallbackReason()}>

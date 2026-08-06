@@ -9,55 +9,66 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: tokens.$dz-space-4;
+  align-items: flex-start;
+  gap: tokens.$dz-space-3;
   min-height: 0;
   padding: tokens.$dz-space-6;
 
-  // One card per setting group — the flat 12px column gave labels, values and actions the
-  // same weight and no grouping at all.
-  &__section {
-    @include mixins.card('card', tokens.$dz-space-4, tokens.$dz-radius-lg);
+  // Group heading: eyebrow, then a hairline taking the rest of the row. One card per group
+  // put a border around each of four controls that are all one form; the rule separates them
+  // for the same cost and none of the nesting.
+  &__group {
+    @include mixins.eyebrow-label;
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    align-self: stretch;
+    margin: tokens.$dz-space-2 0 0;
+
+    &:first-child {
+      margin-top: 0;
+    }
+
+    &::after {
+      flex: 1;
+      height: tokens.$dz-border-width;
+      background: var(--dz-border-subtle);
+      content: '';
+    }
+  }
+
+  &__fields {
     display: flex;
     flex-direction: column;
+    align-self: stretch;
     gap: tokens.$dz-space-3;
   }
 
-  &__label {
-    color: var(--dz-fg-strong);
-    font-size: tokens.$dz-font-sm;
-    font-weight: tokens.$dz-weight-medium;
+  // The whole field language — 11px muted label over a 32px inset shell — comes from the
+  // shared mixin, so the settings form and every other labelled control in the panel stay
+  // one control type. The combobox's own input is a descendant, so it inherits it too
+  // (ModelCombobox.scss relies on exactly that).
+  &__field {
+    @include mixins.labelled-field;
   }
 
-  &__presetrow,
-  &__keyrow,
-  &__modelrow {
+  // A control that shares its line with an action (Clear, Refresh). The input takes the
+  // slack; `min-width: 0` lets it shrink past its intrinsic size instead of pushing the
+  // button off the 360px panel.
+  &__row {
     display: flex;
     gap: tokens.$dz-space-2;
+
+    > input,
+    .dz-modelcombo {
+      flex: 1;
+      min-width: 0;
+    }
   }
 
+  // A pasted endpoint URL is the one value here worth reading character by character.
   &__url {
-    margin-top: tokens.$dz-space-1;
-  }
-
-  input,
-  select {
-    @include mixins.surface('inset', 'strong', tokens.$dz-radius);
-    @include mixins.focus-ring;
-    flex: 1;
-    min-width: 0;
-    height: tokens.$dz-control-md;
-    padding: 0 tokens.$dz-space-3;
-    color: var(--dz-fg);
-    font: inherit;
-    font-size: tokens.$dz-font-md;
-
-    &::placeholder {
-      color: var(--dz-fg-muted);
-    }
-
-    &:disabled {
-      opacity: 0.5;
-    }
+    @include mixins.mono;
   }
 
   // A native `<select>` keeps the platform's own control chrome — on Linux/Chromium that is a
@@ -98,36 +109,66 @@
   // match covers the whole component ('anything the combobox owns') instead of naming each of its
   // parts here and re-breaking the next one that gets added.
   button:not(#{&}__ghost):not([class*='dz-modelcombo']) {
-    @include mixins.button-primary;
+    @include mixins.button-primary(tokens.$dz-control-md, var(--dz-radius-pill));
     flex: none;
+    padding: 0 tokens.$dz-space-5;
   }
 
-  &__save {
-    align-self: flex-start;
-  }
-
-  // Appears only after a validated save — the hand-off out of the form and into the
-  // conversation, so the flow doesn't dead-end on a finished form.
-  &__start {
-    align-self: flex-start;
+  // Action and verdict share a line. It wraps, so a short verdict sits beside the button while a
+  // whole sentence from the endpoint drops to its own full-width line and reads as the strip.
+  &__saverow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    align-self: stretch;
+    gap: tokens.$dz-space-2;
+    margin-top: tokens.$dz-space-1;
   }
 
   &__ghost {
-    @include mixins.button-ghost;
+    @include mixins.button-ghost(tokens.$dz-control-md, var(--dz-radius-pill));
     flex: none;
-    color: var(--dz-fg-body);
+    border-color: var(--dz-border-strong);
+    color: var(--dz-fg);
+
+    // Replay-onboarding sits under the About links as an aside, not as the section's action —
+    // one step down in height keeps it from reading as the primary thing to do there.
+    &.is-compact {
+      height: tokens.$dz-control-sm;
+      padding: 0 tokens.$dz-space-3;
+      font-size: tokens.$dz-font-sm;
+    }
   }
 
+  // The save verdict. A failure is a tinted strip — it is usually a whole sentence from the
+  // endpoint ("replied 404 for model …"), and one line of red text under a form is easy to miss.
   &__status {
+    display: flex;
+    flex: 1;
+    align-items: flex-start;
+    gap: tokens.rem(5);
+    min-width: 0;
     margin: 0;
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
+
+    // Optical: the glyph is centred in its own box, which sits a hair high against a cap-height
+    // first line.
+    .dz-icon {
+      flex: none;
+      margin-top: tokens.rem(1);
+    }
 
     &.is-ok {
       color: var(--dz-status-connected);
     }
 
     &.is-bad {
+      padding: tokens.rem(6) tokens.$dz-space-2;
+      background: var(--dz-error-fill);
+      border-radius: tokens.$dz-radius-sm;
       color: var(--dz-status-error);
     }
   }
@@ -137,5 +178,13 @@
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
     line-height: tokens.$dz-leading-snug;
+  }
+
+  // The group rule above it already separates About from the form — the section's own top
+  // border would draw a second line one gap below the first.
+  .dz-about {
+    align-self: stretch;
+    border-top: none;
+    padding-top: 0;
   }
 }

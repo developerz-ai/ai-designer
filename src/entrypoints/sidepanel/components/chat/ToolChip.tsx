@@ -79,7 +79,10 @@ export function ToolChip(props: ToolChipProps) {
         <Show when={props.kind}>
           {(kind) => <span class="dz-tool-chip__kind">{toolChipKindLabel(kind())}</span>}
         </Show>
-        <Show when={props.summary}>
+        {/* The summary is the row's only elastic column; when a call has none, an empty
+            spacer takes the slack so the chevron stays pinned right and every row in a
+            run keeps the same shape. */}
+        <Show when={props.summary} fallback={<span class="dz-tool-chip__spacer" />}>
           {(summary) => <span class="dz-tool-chip__summary">{summary()}</span>}
         </Show>
         <Show when={expandable()}>

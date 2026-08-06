@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: #120 per-tool opt-in for backend write-shaped tools, driven against a loaded, real
 // Chromium. The stubbed MCP backend's catalog mixes a write-shaped tool (`deploy`) with a read
@@ -161,7 +161,7 @@ async function stubMcpServer(context: BrowserContext, url: string, tools: string
 // --- shared drivers ---------------------------------------------------------------
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-120');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -170,7 +170,7 @@ async function configureProvider(page: Page): Promise<void> {
 }
 
 async function addMcpServer(page: Page, label: string, url: string): Promise<void> {
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
   await page.locator('#dz-mcp-label').fill(label);
   await page.locator('#dz-mcp-url').fill(url);
   await page.locator('.dz-mcp__add button[type="submit"]').click();
@@ -237,7 +237,7 @@ test('MCP #120: write-tool grants render unchecked, persist across a reload, and
   // …and a panel reload re-renders it checked — the grant lives in chrome.storage.local, not
   // in the panel's in-memory store.
   await page.reload();
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
   const itemAfter = page.locator('.dz-mcp__item', { hasText: 'Grants MCP' });
   await expect(itemAfter.locator('.dz-mcp__status')).toHaveClass(/is-connected/, {
     timeout: 10_000,
@@ -283,7 +283,7 @@ test('MCP #120: a design turn offers a write-shaped tool only once granted', asy
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(panel.locator('.dz-readiness__pill')).toHaveText(/Running…/);
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
 
   const ownPage = await context.newPage();
   await ownPage.goto(`${FIXTURE_PREFIX}own`);
@@ -299,11 +299,11 @@ test('MCP #120: a design turn offers a write-shaped tool only once granted', asy
 
   // Grant via the panel toggle (the same RPC the user drives), then the NEXT turn's merge
   // picks the grant up (background.ts: it takes effect on the next toolsFor call).
-  await panel.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(panel, 'MCP');
   await deployToggle(panel.locator('.dz-mcp__item', { hasText: 'Grants MCP' })).check();
   await expect.poll(async () => (await listServers(panel))[0]?.grantedTools).toEqual(['deploy']);
 
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
   await panel.getByPlaceholder('Tell the agent what to change…').fill('Second turn, granted');
   await panel.getByRole('button', { name: 'Send', exact: true }).click();
   await expect.poll(() => streamed().length, { timeout: 20_000 }).toBe(2);

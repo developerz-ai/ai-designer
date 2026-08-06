@@ -10,13 +10,18 @@ import './AboutSection.scss';
 export function AboutSection() {
   return (
     <section class="dz-about" aria-label={i18n.t('about.section.ariaLabel')}>
+      {/* Leading glyph says what the link is, trailing glyph says it leaves the panel — the
+          second one matters here because a side panel opening a real browser tab is a bigger
+          jump than a normal in-page link. */}
       <a class="dz-about__link" href={REPO_URL} target="_blank" rel="noopener noreferrer">
-        <Icon name="repo" size="sm" />
-        {i18n.t('about.repoLink')}
+        <Icon name="repo" size="sm" class="dz-icon--fixed" />
+        <span>{i18n.t('about.repoLink')}</span>
+        <Icon name="externalLink" size="sm" class="dz-icon--fixed" />
       </a>
       <a class="dz-about__link" href={NEW_ISSUE_URL} target="_blank" rel="noopener noreferrer">
-        <Icon name="bug" size="sm" />
-        {i18n.t('about.issueLink')}
+        <Icon name="bug" size="sm" class="dz-icon--fixed" />
+        <span>{i18n.t('about.issueLink')}</span>
+        <Icon name="externalLink" size="sm" class="dz-icon--fixed" />
       </a>
     </section>
   );

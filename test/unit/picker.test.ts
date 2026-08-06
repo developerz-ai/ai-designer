@@ -181,6 +181,109 @@ describe('selection', () => {
     expect(byType(msgs, 'element-picked')).toHaveLength(0);
   });
 
+  // Each pinned box carries the same 1-based index its chip carries in the panel, so a user can
+  // tell which outline a chip is talking about without hovering anything.
+  it('numbers each pinned box and labels it with the element it caught', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    click(byId('b'), { shiftKey: true });
+
+    const badges = [...shadow().querySelectorAll('.dz-idx')].map((el) => el.textContent);
+    expect(badges).toEqual(['1 · button#a', '2 · button#b']);
+  });
+
+  // The numbering is a CONTRACT with the panel: `stores/focus.ts` `orderedReferences` puts the
+  // single pin first and the shift-multi set after it, and the chips are numbered off that list.
+  // Numbering the multi set from 1 and drawing nothing for the pin made every badge on the page
+  // disagree with the chip it was supposed to identify.
+  it('draws the pin as box 1 and numbers the multi-selection from 2', () => {
+    document.body.innerHTML =
+      '<button id="a">A</button><button id="b">B</button><button id="c">C</button>';
+    const { picker } = spawn();
+    picker.start();
+
+    click(byId('a')); // plain click -> the pin
+    click(byId('b'), { shiftKey: true });
+    click(byId('c'), { shiftKey: true });
+
+    const badges = [...shadow().querySelectorAll('.dz-idx')].map((el) => el.textContent);
+    expect(badges).toEqual(['1 · button#a', '2 · button#b', '3 · button#c']);
+  });
+
+  // A quick pick happens on a page the user is only reading — its confirmation is the flash, and
+  // a box left behind would be litter on a page nobody asked to annotate.
+  it('leaves no persistent box behind a quick pick', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker } = spawn();
+    picker.enableQuickPick();
+
+    click(byId('a'), { altKey: true });
+
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
+  });
+
+  // The content-world half of a reference chip's dismiss. Without it the removal was panel-local,
+  // and the picker's next `multi-select-changed` echo resurrected the detached element — sending
+  // the agent to edit something the user had explicitly removed.
+  it('deselect() drops one element, repaints, and re-announces the survivors', () => {
+    document.body.innerHTML =
+      '<button id="a">A</button><button id="b">B</button><button id="c">C</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'), { shiftKey: true });
+    click(byId('b'), { shiftKey: true });
+    click(byId('c'), { shiftKey: true });
+
+    picker.deselect('#b');
+
+    expect(values(msgs).at(-1)).toEqual(['#a', '#c']);
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(2);
+    // Renumbered, so the surviving chips and boxes still agree.
+    expect([...shadow().querySelectorAll('.dz-idx')].map((el) => el.textContent)).toEqual([
+      '1 · button#a',
+      '2 · button#c',
+    ]);
+
+    // The dropped element does NOT come back on the next pick — the whole point of the round-trip.
+    click(byId('b'), { shiftKey: true });
+    expect(values(msgs).at(-1)).toEqual(['#a', '#c', '#b']);
+  });
+
+  it('deselect() drops the pin and its box, without touching the multi-selection', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a')); // pin
+    click(byId('b'), { shiftKey: true });
+    const before = values(msgs).length;
+
+    picker.deselect('#a');
+
+    expect([...shadow().querySelectorAll('.dz-idx')].map((el) => el.textContent)).toEqual([
+      '1 · button#b',
+    ]);
+    // The pin is not part of `selected`, so there is no multi-selection change to announce.
+    expect(values(msgs).length).toBe(before);
+  });
+
+  it('deselect() with a value that matches nothing is a silent no-op', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+    click(byId('a'), { shiftKey: true });
+    const before = values(msgs).length;
+
+    picker.deselect('#nope');
+
+    expect(values(msgs).length).toBe(before);
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
   it('a plain click resets a prior multi-selection', () => {
     document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
     const { picker, msgs } = spawn();
@@ -191,7 +294,12 @@ describe('selection', () => {
 
     expect(msgs.at(-1)).toMatchObject({ type: 'element-picked' });
     expect(values(msgs).at(-1)).toEqual([]);
-    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
+    // The multi-selection is gone, but the PIN is now outlined as box 1 — it is a reference the
+    // panel shows as chip 1, and leaving it undrawn was what made every badge disagree with the
+    // chips. Exactly one box: b's.
+    const boxes = shadow().querySelectorAll('.dz-box');
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]?.querySelector('.dz-idx')?.textContent).toBe('1 · button#b');
   });
 
   it('reflow prunes a disconnected multi-selected target and re-emits the selector set', () => {

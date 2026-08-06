@@ -18,7 +18,12 @@
 }
 
 html,
-body {
+body,
+// The mount point counts: `.dz-app { height: 100% }` resolves against #root, and a bare
+// div is content-height — so the shell sized to its content, `flex: 1` on a surface had no
+// free space to take, and anything meant to centre (PreStart) or fill (the thread) sat
+// pinned to the top instead.
+#root {
   margin: 0;
   height: 100%;
 }
@@ -31,6 +36,59 @@ body {
   // Baseline rhythm — components previously inherited `normal` (≈1.2) and read
   // cramped at 360px. Prose overrides to $dz-leading-body via the prose mixin.
   line-height: tokens.$dz-leading-snug;
+}
+
+// ─── Shared keyframes ──────────────────────────────────────────────────────────
+// Global on purpose. Every component .scss is its own compilation unit, so a keyframe
+// declared inside a mixin would be emitted once per consuming file; declared here it
+// exists exactly once in the bundle and every component can name it.
+
+// Staggered opacity — the streaming "Editing the page…" dots.
+@keyframes dz-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+// Rows and turns arriving in the thread: a short rise, never a slide from off-screen.
+@keyframes dz-rise {
+  from {
+    opacity: 0;
+    transform: translateY(#{tokens.rem(4)});
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+// Popovers and menus. Scales from 96% about their own anchor edge, so the menu reads
+// as growing out of its trigger rather than fading in on top of it.
+@keyframes dz-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+// Chips and inline badges appearing — same idea, tighter.
+@keyframes dz-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 // Reduced-motion guard. Ships alongside the motion tokens on purpose: introducing

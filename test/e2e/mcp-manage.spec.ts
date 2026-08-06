@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the #17/#20 panel surface, driven against a loaded, real Chromium.
 //   (a) the per-backend enable/disable switch on an MCP server row (#17) — the toggle flips the
@@ -249,7 +249,7 @@ function stubTaskServer(
 // --- shared drivers ----------------------------------------------------------
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-20');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -258,7 +258,7 @@ async function configureProvider(page: Page): Promise<void> {
 }
 
 async function addMcpServer(page: Page, label: string, url: string): Promise<void> {
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
   await page.locator('#dz-mcp-label').fill(label);
   await page.locator('#dz-mcp-url').fill(url);
   await page.locator('.dz-mcp__add button[type="submit"]').click();
@@ -379,7 +379,7 @@ test('Ship #20: no mapping → inline mapping form → save & Ship again routes 
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(panel.locator('.dz-readiness__pill')).toHaveText(/Running…/);
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
 
   const ownPage = await context.newPage();
   await ownPage.goto(`${FIXTURE_PREFIX}own`);
@@ -417,7 +417,7 @@ test('Ship #20: no mapping → inline mapping form → save & Ship again routes 
     .toBe(1);
 
   // The mapping persisted: the MCP panel's origin→repo section lists it.
-  await panel.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(panel, 'MCP');
   const row = panel.locator('.dz-originrepo__row', { hasText: 'openrouter.ai' });
   await expect(row).toBeVisible();
   await expect(row).toContainText('acme/storefront');

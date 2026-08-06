@@ -13,10 +13,12 @@
   color: var(--dz-fg-muted);
   font-size: tokens.$dz-font-xs;
 
+  // Sentence case, regular weight. Uppercase + semibold made a spend readout look like a
+  // section heading, which is a lot of emphasis for a number nobody acts on mid-turn.
   &__label {
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-weight: tokens.$dz-weight-semibold;
+    &::after {
+      content: ' ·';
+    }
   }
 
   &__spend {

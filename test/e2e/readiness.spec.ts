@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the header readiness pill + Start/Stop gate (slice 03), end to end against a
 // loaded, fresh-profile build — no stubbed chrome.* here, unlike the unit/integration
@@ -45,13 +45,16 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
   ).toBeVisible();
 
   // Expand the pill and confirm the per-check rows all read not-ok before anything's set.
-  // Seven rows: six readiness checks (provider, model, API key, host permission, page access,
-  // MCP) plus the "On-page overlay" toggle (slice 09). Five expose a "Fix" deep-link; page
-  // access instead offers "Grant", because `chrome.permissions.request` only prompts inside the
-  // click that raised it and so cannot be fixed by navigating somewhere (stores/readiness.ts).
+  // Six CHECK rows (provider, model, API key, host permission, page access, MCP). The
+  // "On-page overlay" control is no longer one of them: it turns something on rather than
+  // reporting a state, so it renders as a switch below a hairline (asserted separately in
+  // overlay.spec.ts). Five checks expose a "Fix" deep-link; page access instead offers "Grant",
+  // because `chrome.permissions.request` only prompts inside the click that raised it and so
+  // cannot be fixed by navigating somewhere (stores/readiness.ts).
   await pill.click();
   const rows = page.locator('.dz-readiness__row');
-  await expect(rows).toHaveCount(7);
+  await expect(rows).toHaveCount(6);
+  await expect(page.getByRole('switch')).toHaveCount(1);
   await expect(page.locator('.dz-readiness__link', { hasText: 'Fix' })).toHaveCount(5);
   const pageAccessRow = page.locator('.dz-readiness__row', { hasText: 'Page access' });
   await expect(pageAccessRow.locator('.dz-readiness__link')).toHaveText('Grant');
@@ -59,7 +62,7 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
 
   // Configure a provider (OpenRouter preset — already host-permitted via the manifest,
   // so no runtime permission prompt) the same way settings.spec.ts does.
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-readiness');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -76,7 +79,7 @@ test('fresh profile: Setup needed + Start disabled -> configure -> Ready -> Star
   await expect(pill).toHaveText(/Running…/);
   await expect(toggle).toHaveText('Stop');
 
-  await page.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(page, 'Chat');
   await expect(page.getByPlaceholder('Tell the agent what to change…')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
 });
