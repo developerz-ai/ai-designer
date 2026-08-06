@@ -60,7 +60,10 @@ const REGISTRY = {
   trash: [p('M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.2a1 1 0 0 0 1 .8h3.8a1 1 0 0 0 1-.8l.6-8.2')],
   search: [c(7, 7, 4.3), p('M10.2 10.2 14 14')],
   download: [p('M8 2.5v7.5M8 10 4.6 6.6M8 10l3.4-3.4M3 13h10')],
-  ship: [p('M8 1.8c2 1.6 3 3.6 3 6l-3 6.4-3-6.4c0-2.4 1-4.4 3-6Z'), c(8, 6.6, 1.4)],
+  // A paper plane. The previous glyph was a teardrop with a circle in it, meant to read as a
+  // rocket/pin; at 16px next to the word "Ship" it read as a leaf, and nobody could name it.
+  // A plane is the one shape that already means "send this off" everywhere else.
+  ship: [p('M14.2 2.2 1.9 7.4l4.6 1.9 1.9 4.6 5.8-11.7Z'), p('M6.5 9.3 14.2 2.2')],
   copy: [rect(5.5, 2.5, 8, 9, 1.5), p('M10.5 13.5H4a1.5 1.5 0 0 1-1.5-1.5V5')],
   bug: [
     rect(5, 5.5, 6, 7.5, 3),

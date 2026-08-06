@@ -105,10 +105,14 @@
     gap: tokens.rem(2);
     padding: tokens.$dz-space-2 tokens.$dz-space-3;
 
+    // Plain card, not accent — the live thread reached this conclusion first (Message.scss
+    // `--user`: "tinting it orange put a second accent surface on a screen whose only accent
+    // should be the thing you press") and the replay was still rendering the same message as an
+    // orange slab. Position says "mine"; colour does not have to.
     &.is-user {
       align-self: flex-end;
-      background: var(--dz-accent);
-      color: var(--dz-accent-fg);
+      background: var(--dz-elev-card);
+      color: var(--dz-fg);
 
       .dz-convview__role {
         color: inherit;

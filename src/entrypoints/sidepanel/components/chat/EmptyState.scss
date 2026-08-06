@@ -22,13 +22,17 @@
   // A wrapper span, not the Icon element itself — see EmptyState.tsx. 24px and outlined: it is
   // the assistant's mark, not a hero graphic, and at 40px it was the loudest thing on a screen
   // whose job is to get you typing.
+  // 32px ring holding a 24px glyph. It was 24-holding-16, which fixed the overflow but overshot
+  // the other way — the mark read as a stray dot above the title rather than as the assistant's
+  // avatar. 24-in-32 keeps a 4px inset and gives the glyph enough area for its three strokes to
+  // resolve at all.
   &__avatar {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
-    width: tokens.$dz-icon-size-md;
-    height: tokens.$dz-icon-size-md;
+    width: tokens.$dz-icon-size-lg;
+    height: tokens.$dz-icon-size-lg;
     margin-bottom: tokens.$dz-space-2;
     background: var(--dz-elev-card);
     border: tokens.$dz-border-width solid var(--dz-border-subtle);

@@ -26,7 +26,7 @@ export function PreStart(props: PreStartProps) {
       {/* A wrapper span, not the Icon element itself: `.dz-icon` sets its own sizing at the
           same specificity, so an override on that element wins or loses on stylesheet order. */}
       <span class="dz-prestart__icon">
-        <Icon name="agent" size="sm" class="dz-icon--fixed" />
+        <Icon name="agent" size="md" class="dz-icon--fixed" />
       </span>
       <h2 class="dz-prestart__title">
         {ready() ? i18n.t('prestart.ready.title') : i18n.t('prestart.setup.title')}

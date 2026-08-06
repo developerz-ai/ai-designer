@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import { settings, switchModel } from '../../stores/settings';
+import { dismissOnOutsidePress } from '../dismiss';
 import { Icon } from '../Icon';
 import './ModelPicker.scss';
 
@@ -47,6 +48,7 @@ export function filterModels<T extends { id: string; name: string }>(
 
 export function ModelPicker() {
   const [open, setOpen] = createSignal(false);
+  let rootEl: HTMLDivElement | undefined;
   // Roving focus: only the active item is tabbable (`tabindex="-1"` on the rest), which is what
   // `role="menu"` requires — Tab leaves the menu, arrows move within it.
   const [activeIndex, setActiveIndex] = createSignal(0);
@@ -99,6 +101,15 @@ export function ModelPicker() {
     setOpen(false);
     triggerEl?.focus();
   }
+
+  // Pressing anywhere outside the picker closes it. `setOpen(false)` rather than `closeMenu()`:
+  // closing pulls focus back to the trigger, which is right for Escape and wrong for a press —
+  // it would yank focus away from whatever the user just clicked.
+  dismissOnOutsidePress(
+    () => rootEl,
+    open,
+    () => setOpen(false),
+  );
 
   /** Typing narrows the list under the cursor, so the roving index has to come back to the top —
    *  otherwise index 4 of the old list points at nothing, or at the wrong model. */
@@ -155,7 +166,7 @@ export function ModelPicker() {
   }
 
   return (
-    <div class="dz-modelpicker">
+    <div class="dz-modelpicker" ref={rootEl}>
       <button
         type="button"
         id={TRIGGER_ID}
