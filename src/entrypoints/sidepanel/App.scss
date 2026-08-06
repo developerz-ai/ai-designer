@@ -66,10 +66,11 @@
     font-weight: tokens.$dz-weight-semibold;
     line-height: tokens.$dz-leading-snug;
 
-    // It is a focus TARGET, not a control: the ring would announce a heading as interactive.
-    &:focus {
-      outline: none;
-    }
+    // It is a focus TARGET, not a control — but it IS focused programmatically on every room
+    // change, so it still needs a visible indicator or a keyboard user lands somewhere they
+    // cannot see (WCAG 2.4.7). `:focus-visible` rather than `:focus`: the ring should answer a
+    // keyboard navigation, not decorate a mouse click that happened to land on the heading.
+    @include mixins.focus-ring;
   }
 
   // Single-scroller contract: the body clips, and whichever surface is mounted owns its

@@ -197,15 +197,24 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       case 'batch': {
         const results = tool.ops.map((op, index) => {
           const result = exec(op);
-          return { index, type: op.type, ok: result.ok };
+          return {
+            index,
+            type: op.type,
+            ok: result.ok,
+            // The op's OWN error, kept verbatim: "op #1 failed" cannot tell a selector that
+            // matched nothing (worth retrying elsewhere) from a deny-list refusal (never worth
+            // retrying), and those call for opposite next moves.
+            ...(result.error !== undefined ? { error: result.error } : {}),
+          };
         });
         const failed = results.filter((r) => !r.ok).length;
         const data: BatchResult = { applied: results.length - failed, failed, results };
-        // `ok` is all-or-nothing so a partially-applied batch cannot read as success, while the
-        // per-op list says exactly which ones landed.
+        // `ok` is all-or-nothing so a partially-applied batch cannot read as success — but `data`
+        // rides along either way. Returning only the summary string on failure threw away every
+        // op's own error, i.e. exactly the detail the model needs to decide what to do next.
         return failed === 0
           ? ok(data)
-          : { type: 'tool-result', ok: false, error: batchError(data) };
+          : { type: 'tool-result', ok: false, data, error: batchError(data) };
       }
       // Structural mutations (#58): the mutator clipboard-tracks every inserted/moved/removed
       // node, so the recorded undo restores node identity + the original parent/nextSibling

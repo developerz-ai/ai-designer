@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from 'solid-js';
+import { createMemo, createSignal, Show } from 'solid-js';
 import { i18n } from '#i18n';
 import type { StableSelector } from '@/shared/messages';
 import { send as sendMessage, stopTurn, streaming } from '../../stores/chat';
@@ -153,12 +153,18 @@ export function Composer() {
         <label class="dz-composer__label" for={INPUT_ID}>
           {i18n.t('composer.input.ariaLabel')}
         </label>
-        <MentionMenu
-          items={recentReferences()}
-          query={mention()?.query ?? ''}
-          active={activeMention()}
-          onPick={takeMention}
-        />
+        {/* Gated on `mentionOpen()`, not merely on having items: MentionMenu renders whenever
+            its filtered list is non-empty, and an empty query matches everything — so once
+            anything had been pinned this session the listbox sat permanently above the composer,
+            with no combobox state on the textarea and no keys wired to it. */}
+        <Show when={mentionOpen()}>
+          <MentionMenu
+            items={recentReferences()}
+            query={mention()?.query ?? ''}
+            active={activeMention()}
+            onPick={takeMention}
+          />
+        </Show>
         {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: the rule resolves the textarea's
             IMPLICIT role and cannot see that `role` below becomes "combobox" under exactly the
             same condition — `aria-expanded` is only ever present while this IS a combobox. */}

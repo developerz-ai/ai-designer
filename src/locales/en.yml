@@ -338,6 +338,11 @@ task:
   prLink: PR
 
 # ─── Composer (chat/Composer.tsx) ─────────────────────────────────────────────────
+# Element focus / picker round-trips (stores/focus.ts)
+focus:
+  error:
+    pageUnreachable: This page didn't respond — reload it and try again.
+
 # The composer's `@` menu (MentionMenu.tsx)
 mention:
   ariaLabel: Recently referenced elements

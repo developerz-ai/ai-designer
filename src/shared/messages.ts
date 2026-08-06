@@ -848,7 +848,18 @@ export type BatchInput = z.infer<typeof BatchInput>;
 export const BatchResult = z.object({
   applied: z.number(),
   failed: z.number(),
-  results: z.array(z.object({ index: z.number(), type: z.string(), ok: z.boolean() })),
+  results: z.array(
+    z.object({
+      index: z.number(),
+      type: z.string(),
+      ok: z.boolean(),
+      // The op's OWN error, verbatim. Without it every failure collapses to "op #1 failed" and
+      // the model cannot tell a selector that matched nothing (retry with a different one) from
+      // a refusal by the `setAttr` deny-list or the own-chrome guard (never retry) — two
+      // outcomes that call for opposite next moves.
+      error: z.string().optional(),
+    }),
+  ),
 });
 export type BatchResult = z.infer<typeof BatchResult>;
 

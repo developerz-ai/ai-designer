@@ -70,6 +70,17 @@ describe('batch', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('#1');
     expect(result.error).toContain('2 of 3 applied');
+    // The structured result rides along on the FAILURE too, carrying each op's own error. A
+    // summary string alone cannot distinguish "selector matched nothing" (retry elsewhere) from
+    // "refused by a guard" (never retry), and those need opposite next moves.
+    const data = result.data as {
+      applied: number;
+      results: { index: number; ok: boolean; error?: string }[];
+    };
+    expect(data.applied).toBe(2);
+    expect(data.results[1]).toMatchObject({ index: 1, ok: false });
+    expect(data.results[1]?.error).toBeTruthy();
+    expect(data.results[0]?.error).toBeUndefined();
     // …and the ops that did land stayed landed, which is why the error tells the model not to
     // re-send the whole batch.
     expect(document.querySelector('.sub')?.classList.contains('lead')).toBe(true);

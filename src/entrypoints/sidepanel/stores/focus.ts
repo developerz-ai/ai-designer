@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { i18n } from '#i18n';
 import { OkResult, type Rect, type StableSelector, type SwToPanel } from '@/shared/messages';
 import { request } from './bus';
 import { connectPort, subscribeToSw } from './sw-stream';
@@ -160,7 +161,12 @@ export function removeReference(index: number): void {
  *  behaviour instead of blocking the dismiss. */
 async function deselectOnPage(value: string): Promise<void> {
   try {
-    await request({ type: 'deselect-element', value }, OkResult);
+    // `request` resolves on ANY response matching `OkResult` — including `{ ok: false }`, which
+    // is what a tab with no content script answers. Ignoring it meant the chip vanished locally
+    // while the page kept its rectangle and the picker kept the element committed, ready to echo
+    // it back on the next pick.
+    const result = await request({ type: 'deselect-element', value }, OkResult);
+    if (!result.ok) setError(i18n.t('focus.error.pageUnreachable'));
   } catch (e) {
     setError(errMsg(e));
   }
@@ -175,7 +181,11 @@ async function deselectOnPage(value: string): Promise<void> {
 export async function mentionReference(value: string): Promise<void> {
   setError(null);
   try {
-    await request({ type: 'select-element', value }, OkResult);
+    // Same trap as `deselectOnPage`: `{ ok: false }` satisfies `OkResult`. Here it matters more
+    // — the composer has already deleted the `@query` run, so a silently-dropped attach leaves
+    // the user with neither the text they typed nor the reference they asked for.
+    const result = await request({ type: 'select-element', value }, OkResult);
+    if (!result.ok) setError(i18n.t('focus.error.pageUnreachable'));
   } catch (e) {
     setError(errMsg(e));
   }
