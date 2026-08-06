@@ -16,7 +16,7 @@ export interface EmptyStateProps {
 export function EmptyState(props: EmptyStateProps) {
   return (
     <div class="dz-empty-state">
-      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--sm`
+      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--md`
           (width/height in `em`) on the same element, and an equal-specificity override from this
           component would win or lose on stylesheet order alone.
           `md` (24px absolute) in a 32px ring. Not `md` in a 24px ring — that was the original
