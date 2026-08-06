@@ -36,10 +36,16 @@ vi.mock('@/entrypoints/sidepanel/stores/focus', async () => {
   // derives its numbered chips through `orderedReferences`. Both are part of the store's real
   // surface, so the fake carries them rather than letting the component throw on `undefined()`.
   const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
+  // The `@` menu (#175) reads the session's recents and attaches through `mentionReference`.
+  // Empty by default, so every assertion below sees the composer with no menu — which is also
+  // the state a fresh panel is in.
+  const [recentReferences, setRecentReferences] = createSignal<StableSelector[]>([]);
   return {
     selector,
     pickerActive,
     multiSelectors,
+    recentReferences,
+    mentionReference: vi.fn(async () => {}),
     orderedReferences: (pin: StableSelector | null, multi: StableSelector[]) =>
       pin ? [pin, ...multi] : multi,
     removeReference: vi.fn(),
@@ -49,6 +55,7 @@ vi.mock('@/entrypoints/sidepanel/stores/focus', async () => {
     __setSelector: setSelector,
     __setPickerActive: setPickerActive,
     __setMultiSelectors: setMultiSelectors,
+    __setRecentReferences: setRecentReferences,
   };
 });
 

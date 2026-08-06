@@ -4,7 +4,7 @@ import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
 import type { RecordExtras, Recorder } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
 import type { StructuralChange } from '@/shared/changeset';
-import type { DomTool, StableSelector, ToolResult } from '@/shared/messages';
+import type { BatchResult, DomTool, StableSelector, ToolResult } from '@/shared/messages';
 
 // Synchronous DOM-tool executor — the content script's dispatch core. Routes a validated DomTool
 // to the reversible mutators (src/dom/mutate.ts) + readers (src/dom/read.ts), recording every
@@ -139,6 +139,16 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
     };
   }
 
+  // A batch's failure text. The model's next move is to fix the named op, so the message leads
+  // with which indices failed rather than with a count it would have to cross-reference.
+  function batchError(data: BatchResult): string {
+    const bad = data.results
+      .filter((r) => !r.ok)
+      .map((r) => `#${r.index} (${r.type})`)
+      .join(', ');
+    return `${data.applied} of ${data.results.length} applied; failed: ${bad}. Re-check those selectors — the applied ops are already live and must not be re-sent.`;
+  }
+
   // Resolve `selector` to a single element and project it through a pure reader.
   function read(selector: string, project: (el: Element) => unknown): ToolResult {
     const el = queryOne(doc, selector);
@@ -178,6 +188,25 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         return mutate(tool.selector, (el) => mutator.addClass(el, tool.name), contentGuard());
       case 'removeClass':
         return mutate(tool.selector, (el) => mutator.removeClass(el, tool.name), contentGuard());
+      // One round-trip, many mutations (#173). Each op goes through the SAME `exec` path it would
+      // have taken alone — same guards, same deny-list, same recorder entry — so undo/redo
+      // granularity is per-op and unchanged: a batch is a transport optimization, never a
+      // transaction. A failing op is reported by INDEX and the rest still run, because the common
+      // failure is one stale selector out of eight and aborting there would throw away seven good
+      // mutations the model would then have to re-derive.
+      case 'batch': {
+        const results = tool.ops.map((op, index) => {
+          const result = exec(op);
+          return { index, type: op.type, ok: result.ok };
+        });
+        const failed = results.filter((r) => !r.ok).length;
+        const data: BatchResult = { applied: results.length - failed, failed, results };
+        // `ok` is all-or-nothing so a partially-applied batch cannot read as success, while the
+        // per-op list says exactly which ones landed.
+        return failed === 0
+          ? ok(data)
+          : { type: 'tool-result', ok: false, error: batchError(data) };
+      }
       // Structural mutations (#58): the mutator clipboard-tracks every inserted/moved/removed
       // node, so the recorded undo restores node identity + the original parent/nextSibling
       // anchor (never an index — sibling indices shift under concurrent mutations).

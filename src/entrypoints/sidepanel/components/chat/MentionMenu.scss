@@ -1,0 +1,53 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// The `@` menu, opening UPWARD from the composer — the composer is docked at the foot, so a
+// downward menu would cover the input the user is still typing into. Same reason ShipBar's
+// "Send to…" opens upward.
+.dz-mention {
+  @include mixins.menu-surface;
+  @include mixins.scroll-area('y');
+  position: absolute;
+  bottom: calc(100% + #{tokens.$dz-space-1});
+  left: 0;
+  right: 0;
+  z-index: 2;
+  // Six rows, then it scrolls. A popover is the legitimate exception to the single-scroller
+  // contract (it is not a page region) — the same exception ModelPicker's list takes.
+  max-height: tokens.rem(216);
+  margin: 0;
+}
+
+.dz-mention__row {
+  @include mixins.menu-row;
+  display: flex;
+  align-items: center;
+  gap: tokens.$dz-space-2;
+  width: 100%;
+  color: var(--dz-fg-body);
+}
+
+// The human name leads; the raw selector is context, not the label. Same hierarchy the
+// reference chips use — a person recognises "Hero heading", not ".hero > div:nth-child(2)".
+.dz-mention__name {
+  @include mixins.truncate;
+  flex: none;
+  max-width: 45%;
+  color: var(--dz-fg-strong);
+}
+
+.dz-mention__selector {
+  @include mixins.mono(tokens.$dz-font-xs);
+  @include mixins.truncate;
+  flex: 1;
+  text-align: right;
+  color: var(--dz-fg-muted);
+}
+
+// Keyboard highlight. `is-active` tracks `aria-activedescendant`, NOT focus — focus stays in the
+// textarea the whole time, which is the entire point of typing `@` instead of reaching for the
+// picker.
+.dz-mention__row.is-active {
+  background: var(--dz-elev-hover);
+  color: var(--dz-fg-strong);
+}

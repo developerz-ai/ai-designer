@@ -338,6 +338,10 @@ task:
   prLink: PR
 
 # ─── Composer (chat/Composer.tsx) ─────────────────────────────────────────────────
+# The composer's `@` menu (MentionMenu.tsx)
+mention:
+  ariaLabel: Recently referenced elements
+
 composer:
   modelFallback: Model
   placeholder: Tell the agent what to change…

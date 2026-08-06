@@ -15,6 +15,7 @@ import { tool } from 'ai';
 import {
   A11ySnapshotInput,
   AddClassInput,
+  BatchInput,
   DiagnosticsInput,
   DiscardUndoInput,
   type DomTool,
@@ -89,6 +90,20 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: SetStyleInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'setStyle', ...input }, abortSignal),
+    }),
+    batch: tool({
+      description:
+        'Apply up to 20 property-level mutations in ONE call — `ops` is an ordered list of ' +
+        '`setStyle` / `setText` / `setAttr` / `addClass` / `removeClass` objects, each with its ' +
+        'own `selector`. Prefer this whenever you are making more than one change you already ' +
+        'know: it is one round-trip instead of one per mutation. Each op is recorded as its own ' +
+        'reversible edit. ToolResult.data = { applied, failed, results: [{ index, type, ok }] }; ' +
+        'on failure the applied ops are ALREADY LIVE — fix only the named indices, do not re-send ' +
+        'the whole batch. Structural changes (insertNode/moveNode/removeNode) are not batchable: ' +
+        'each one moves the anchors the later ops were written against.',
+      inputSchema: BatchInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'batch', ...input }, abortSignal),
     }),
     setText: tool({
       description:

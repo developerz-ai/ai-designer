@@ -22,6 +22,8 @@
 
   &__shell {
     @include mixins.field-shell(tokens.$dz-radius-xl, 0);
+    // Positioning context for the `@` menu, which opens upward out of the shell (#175).
+    position: relative;
     gap: 0;
 
     // Armed picker: the shell itself takes the accent edge. The attach button is 28px in a

@@ -29,6 +29,14 @@ export interface Picker {
    */
   deselect(value: string): void;
   /**
+   * Commit ONE element to the selection by its unique selector value, with no pick gesture — the
+   * content-world half of the composer's `@` menu. The mirror of {@link Picker.deselect}, and
+   * necessary for the same reason: the panel cannot add locally, because the next
+   * `multi-select-changed` echo is authoritative and would drop it. A value that matches nothing
+   * in the document, or an element already selected, is a no-op (and emits nothing).
+   */
+  select(value: string): boolean;
+  /**
    * Arm modifier-click quick-pick: {@link QUICK_PICK_MODIFIER}+click pins the clicked element as
    * chat context WITHOUT arming the full picker first, so "make THIS bigger" needs no mode switch
    * — you point at the thing while you are already looking at it. Emits the same `element-picked`
@@ -367,6 +375,27 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     emitMultiSelect();
   }
 
+  /** Content-world half of an `@` mention — see the `select` doc on {@link Picker}. Resolves the
+   *  value against the live document rather than trusting a remembered node, so a mention of an
+   *  element the page has since re-rendered away is a clean no-op instead of a stale reference. */
+  function select(value: string): boolean {
+    // `querySelector`, not a remembered node: a mention may name an element the page has since
+    // re-rendered away, and a bad selector must be a no-op rather than a throw that kills the
+    // picker. Shadow-piercing values (`>>>`) are deliberately not resolved here — those come from
+    // a real pick, which already put the element in `selected`.
+    let el: Element | null = null;
+    try {
+      el = doc.querySelector(value);
+    } catch {
+      return false;
+    }
+    if (!el || selected.has(el)) return false;
+    selected.add(el);
+    renderSelected();
+    emitMultiSelect();
+    return true;
+  }
+
   /** Briefly outline `target` to confirm a quick pick landed. Mounts the shadow host if needed —
    *  the armed picker is not running, so nothing else has — and tears the box out again on a
    *  timer, so the page is left exactly as it was found. */
@@ -652,6 +681,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     stop,
     isActive: () => active,
     deselect,
+    select,
     enableQuickPick,
     disableQuickPick,
     destroy,

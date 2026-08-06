@@ -51,7 +51,27 @@ const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
 // UI cannot show and Sentry records as a crash.
 const [error, setError] = createSignal<string | null>(null);
 
-export { error, multiSelectors, pickerActive, rect, selector, xpath };
+// Every element pinned this session, newest first, deduped by selector and capped (#175). It is
+// what the composer's `@` menu offers: without a history the menu could only list what is ALREADY
+// attached, which is exactly the set the user has no reason to attach again. Detaching a chip
+// deliberately does NOT evict from here — "I removed that by mistake" is the single most likely
+// reason to reach for the menu.
+const RECENT_MAX = 8;
+const [recentReferences, setRecentReferences] = createSignal<StableSelector[]>([]);
+
+export { error, multiSelectors, pickerActive, recentReferences, rect, selector, xpath };
+
+/** Fold newly-seen pins into the recents, newest first. Pure over its inputs so the dedupe and
+ *  cap are unit-testable without a store. */
+export function foldRecent(current: StableSelector[], seen: StableSelector[]): StableSelector[] {
+  const next = [...current];
+  for (const sel of seen) {
+    const at = next.findIndex((r) => r.value === sel.value);
+    if (at !== -1) next.splice(at, 1);
+    next.unshift(sel);
+  }
+  return next.slice(0, RECENT_MAX);
+}
 
 let wired = false;
 
@@ -79,6 +99,11 @@ export function initFocusStore(): void {
     setRect(next.rect);
     setPickerActive(next.pickerActive);
     setMultiSelectors(next.selectors);
+    // Recents are fed from the SAME echo that feeds the chips, so a mention and a pick are
+    // indistinguishable downstream — there is no second write path into the reference set.
+    setRecentReferences((current) =>
+      foldRecent(current, orderedReferences(next.selector, next.selectors)),
+    );
   });
 }
 
@@ -136,6 +161,21 @@ export function removeReference(index: number): void {
 async function deselectOnPage(value: string): Promise<void> {
   try {
     await request({ type: 'deselect-element', value }, OkResult);
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+/** Attach a remembered element without a pick gesture — the composer's `@` menu (#175). Goes to
+ *  the content world and comes back through `multi-select-changed`, exactly like `removeReference`
+ *  does in the other direction, so there is only ever ONE write path into the reference set and a
+ *  mention is indistinguishable from a shift-click downstream. Optimistically local? No: the
+ *  picker draws the numbered box, and a chip without its rectangle is the desync this design
+ *  exists to prevent. */
+export async function mentionReference(value: string): Promise<void> {
+  setError(null);
+  try {
+    await request({ type: 'select-element', value }, OkResult);
   } catch (e) {
     setError(errMsg(e));
   }
