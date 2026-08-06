@@ -139,20 +139,39 @@ $_elevations: (
   }
 }
 
-// Filled accent action — Ship, Save, Send-with-label.
+// The primary action — Ship, Save, Start designing.
+//
+// ACCENTED, NOT FILLED. A solid #f97316 slab is the loudest thing a 360px dark panel can
+// contain, and there is one on nearly every screen: at that density the accent stops being a
+// signal and becomes the background noise you have to look past to read the page you are
+// editing. The panel's whole job is to not compete with that page.
+//
+// So the brand is stated in three quiet channels instead of one loud one — a 10% wash, a 60%
+// edge, and the accent as TEXT (6:1 on the resulting surface, comfortably AA). It still reads
+// unmistakably as the primary control next to a ghost button (transparent, neutral text), and it
+// is still recognisably ours. The saturated accent survives where it is small and load-bearing:
+// the streaming caret, the element-reference indices and their on-page rectangles, the
+// unshipped-work count, on/off switches.
 @mixin button-primary($height: t.$dz-control-md, $radius: t.$dz-radius) {
   @include _button-base($height, $radius);
   padding: 0 t.$dz-space-4;
-  background: var(--dz-accent);
-  border: none;
-  color: var(--dz-accent-fg);
+  background: var(--dz-accent-fill);
+  border: t.$dz-border-width solid var(--dz-accent-edge);
+  color: var(--dz-accent);
+  font-weight: t.$dz-weight-semibold;
 
+  // Deepen the wash rather than brightening a fill — `filter: brightness` on a translucent
+  // surface shifts whatever shows through it too, which is how a hover ends up tinting the card
+  // behind the button.
   &:not(:disabled):hover {
-    filter: brightness(1.08);
+    background: var(--dz-accent-fill-strong);
+    border-color: var(--dz-accent);
   }
 
   &:not(:disabled):active {
-    filter: brightness(0.94);
+    background: var(--dz-accent-fill-strong);
+    border-color: var(--dz-accent);
+    color: var(--dz-fg-strong);
   }
 }
 
@@ -247,12 +266,16 @@ $_elevations: (
   @include focus-ring;
 
   @if $tone == 'accent' {
-    background: var(--dz-accent);
-    border: none;
-    color: var(--dz-accent-fg);
+    // Same reasoning as `button-primary`: the send disc sits at the foot of every screen, so a
+    // solid accent puck is permanently the brightest object in the panel. Washed + edged reads
+    // as the primary affordance without owning the composer.
+    background: var(--dz-accent-fill);
+    border: t.$dz-border-width solid var(--dz-accent-edge);
+    color: var(--dz-accent);
 
     &:not(:disabled):hover {
-      filter: brightness(1.08);
+      background: var(--dz-accent-fill-strong);
+      border-color: var(--dz-accent);
     }
   } @else {
     // Border, not tone, carries the shape here — so it must clear 3:1 on its own.

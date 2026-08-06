@@ -16,14 +16,15 @@ export interface EmptyStateProps {
 export function EmptyState(props: EmptyStateProps) {
   return (
     <div class="dz-empty-state">
-      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--sm`
+      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--md`
           (width/height in `em`) on the same element, and an equal-specificity override from this
           component would win or lose on stylesheet order alone.
-          `sm` (16px absolute), NOT `md`: the wrapper IS 24px, so a `md` glyph resolved to 24px too
-          and the wand filled its own circle edge to edge, overflowing the 1px border. 16-in-24 is
-          the same ratio PreStart's mark uses — one assistant, one avatar, one inset. */}
+          `md` (24px absolute) in a 32px ring. Not `md` in a 24px ring — that was the original
+          bug, glyph exactly equal to its container, wand poking out of both ends. Not `sm` in a
+          24px ring either: that cleared the overflow but left a 16px mark that read as a dot.
+          PreStart's mark matches, so there is still one assistant with one avatar. */}
       <span class="dz-empty-state__avatar">
-        <Icon name="agent" size="sm" class="dz-icon--fixed" />
+        <Icon name="agent" size="md" class="dz-icon--fixed" />
       </span>
       {/* `h2` under App's `h1` — a real heading, so the intro is reachable by heading navigation
           instead of being an unlabelled block of text. */}

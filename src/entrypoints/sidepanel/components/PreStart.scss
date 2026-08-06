@@ -16,14 +16,14 @@
   padding: tokens.$dz-space-8 tokens.$dz-space-6;
   text-align: center;
 
-  // The same 24px outlined mark the empty state uses — one assistant, one avatar.
+  // The same 32px outlined mark the empty state uses — one assistant, one avatar.
   &__icon {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
-    width: tokens.$dz-icon-size-md;
-    height: tokens.$dz-icon-size-md;
+    width: tokens.$dz-icon-size-lg;
+    height: tokens.$dz-icon-size-lg;
     margin-bottom: tokens.$dz-space-2;
     background: var(--dz-elev-card);
     border: tokens.$dz-border-width solid var(--dz-border-subtle);

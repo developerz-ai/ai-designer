@@ -87,6 +87,14 @@ $dz-status-muted: $dz-muted; // gray — muted/inactive state
 // elevation — `fill` is the wash, `line` the hairline that outlines it.
 $dz-accent-fill: rgba(249, 115, 22, 0.1);
 $dz-accent-line: rgba(249, 115, 22, 0.45);
+// The edge of an accented CONTROL, as opposed to the hairline around an accented chip. At 0.45
+// the line resolves to ~2.2:1 on the base surface — legal around something that also carries a
+// label (WCAG 1.4.11 governs boundaries that are the ONLY affordance), but too faint to make a
+// primary button read as primary. 0.6 lands at ~3.1:1 and clears the bar on its own.
+$dz-accent-edge: rgba(249, 115, 22, 0.6);
+// A stronger wash for the pressed/hovered state of those controls, so a quiet button still has
+// somewhere to go under the pointer without reaching for the solid fill again.
+$dz-accent-fill-strong: rgba(249, 115, 22, 0.18);
 $dz-warn-fill: rgba(251, 191, 36, 0.1);
 $dz-warn-line: rgba(251, 191, 36, 0.5);
 $dz-error-fill: rgba(255, 107, 107, 0.1);
@@ -218,6 +226,8 @@ $dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles sof
   // Tinted fills + hairlines
   --dz-accent-fill: #{$dz-accent-fill};
   --dz-accent-line: #{$dz-accent-line};
+  --dz-accent-edge: #{$dz-accent-edge};
+  --dz-accent-fill-strong: #{$dz-accent-fill-strong};
   --dz-warn-fill: #{$dz-warn-fill};
   --dz-warn-line: #{$dz-warn-line};
   --dz-error-fill: #{$dz-error-fill};

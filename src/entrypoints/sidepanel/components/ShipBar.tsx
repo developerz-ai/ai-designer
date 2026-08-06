@@ -12,6 +12,7 @@ import {
 } from '../stores/changeset';
 import { hydrateMcp, initMcpStore, isNoRepoReason, loadOriginRepos, servers } from '../stores/mcp';
 import { setTab } from '../stores/nav';
+import { dismissOnOutsidePress } from './dismiss';
 import { Icon } from './Icon';
 import { OriginRepoSection } from './OriginRepoSection';
 import './ShipBar.scss';
@@ -23,6 +24,7 @@ import './ShipBar.scss';
 // duplicated here.
 export function ShipBar() {
   const [sendOpen, setSendOpen] = createSignal(false);
+  let sendEl: HTMLDivElement | undefined;
 
   onMount(() => {
     initChangesetStore();
@@ -30,6 +32,14 @@ export function ShipBar() {
     void hydrateMcp();
     void loadOriginRepos();
   });
+
+  // Same gap ModelPicker had: the "Send to…" menu stayed up until its own trigger was pressed
+  // again. Both now light-dismiss through the shared helper.
+  dismissOnOutsidePress(
+    () => sendEl,
+    sendOpen,
+    () => setSendOpen(false),
+  );
 
   const connected = createMemo(() => servers.filter((s) => s.status === 'connected'));
   const editCount = createMemo(() => changeset()?.edits.length ?? 0);
@@ -69,7 +79,7 @@ export function ShipBar() {
           <Icon name="download" size="sm" class="dz-icon--fixed" />
         </button>
 
-        <div class="dz-shipbar__send">
+        <div class="dz-shipbar__send" ref={sendEl}>
           <button
             type="button"
             class="dz-shipbar__ghost"

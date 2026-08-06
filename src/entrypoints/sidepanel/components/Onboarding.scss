@@ -194,16 +194,18 @@
     font-size: tokens.$dz-font-xs;
     white-space: nowrap;
 
-    // The card's one loud element — the step the user is actually on.
+    // The card's primary action — accented, not filled, matching `button-primary`. It used to be
+    // a solid slab described as "the card's one loud element"; over a scrim, on the very first
+    // screen a new user sees, that set the expectation that orange means "big block of colour".
     &.is-primary {
-      background: var(--dz-accent);
-      border-color: transparent;
-      color: var(--dz-accent-fg);
+      background: var(--dz-accent-fill);
+      border-color: var(--dz-accent-edge);
+      color: var(--dz-accent);
       font-weight: tokens.$dz-weight-semibold;
 
       &:not(:disabled):hover {
-        background: var(--dz-accent);
-        filter: brightness(1.08);
+        background: var(--dz-accent-fill-strong);
+        border-color: var(--dz-accent);
       }
     }
   }

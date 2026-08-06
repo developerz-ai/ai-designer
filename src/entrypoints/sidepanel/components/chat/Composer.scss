@@ -93,14 +93,18 @@
   &__attach {
     @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, true, 'muted');
 
-    // Pressed state (`aria-pressed`) — the picker is armed or an element is pinned.
+    // Pressed state (`aria-pressed`) — the picker is armed. Washed rather than filled: this is a
+    // 28px square inside the composer shell, and a solid accent puck there was a second loud
+    // object competing with the send disc two controls to its right.
     &.is-active {
-      background-color: var(--dz-accent);
-      color: var(--dz-accent-fg);
+      background-color: var(--dz-accent-fill-strong);
+      border: tokens.$dz-border-width solid var(--dz-accent-edge);
+      color: var(--dz-accent);
 
       &:hover {
-        background-color: var(--dz-accent);
-        color: var(--dz-accent-fg);
+        background-color: var(--dz-accent-fill-strong);
+        border-color: var(--dz-accent);
+        color: var(--dz-accent);
       }
     }
   }
@@ -116,6 +120,7 @@
     // saturated thing on the empty-chat screen. Recede instead of dimming.
     &:disabled {
       background: var(--dz-elev-hover);
+      border-color: var(--dz-border-subtle);
       color: var(--dz-fg-muted);
       opacity: 1;
     }
