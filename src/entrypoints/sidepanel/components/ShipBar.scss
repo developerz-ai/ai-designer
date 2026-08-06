@@ -1,95 +1,154 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
+// Ship / Download brief / Send to…, docked above the composer. At the 360px floor three
+// labelled buttons cannot share a row without every one of them truncating, so the split is
+// by importance: Ship keeps its words and takes the slack; the two secondary actions become
+// square ghosts carrying an aria-label and a tooltip.
 .dz-shipbar {
   display: flex;
   flex: none;
   flex-direction: column;
   gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-4 tokens.$dz-space-6;
+  padding: tokens.$dz-space-3 tokens.$dz-space-6;
   border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
 
   &__actions {
     display: flex;
     align-items: center;
-    gap: tokens.$dz-space-2;
-    flex-wrap: wrap;
+    gap: tokens.rem(6);
   }
 
   &__primary {
-    @include mixins.button-primary;
+    @include mixins.button-primary(tokens.$dz-control-md, var(--dz-radius-pill));
+    flex: 1;
+    gap: tokens.rem(6);
+    font-size: tokens.$dz-font-md;
     font-weight: tokens.$dz-weight-semibold;
   }
 
+  // `border-strong`, not subtle: with no fill and no label, the border IS the affordance here,
+  // which is exactly the case WCAG 1.4.11 governs.
   &__ghost {
-    @include mixins.button-ghost;
+    @include mixins.button-ghost(tokens.$dz-control-md, var(--dz-radius-pill), true);
+    @include mixins.hit-target;
+    flex: none;
+    gap: 0;
+    width: tokens.rem(36);
+    padding: 0;
+    border-color: var(--dz-border-strong);
+  }
+
+  // The chevron on the Send-to trigger: it must not push the glyph off-centre, so it sits at
+  // half size and takes no gap.
+  &__caret {
+    margin-left: -#{tokens.rem(1)};
+    font-size: tokens.$dz-font-xs;
+    color: var(--dz-fg-muted);
+  }
+
+  // "✓ 4 edits ›" — the one-click way into the changeset now that nav lives behind the wordmark.
+  // Borderless and muted on purpose: it is a state readout that happens to be a link, and it must
+  // not compete with Ship, the only filled control in this row. Last in the row so Ship keeps the
+  // first tab stop.
+  &__edits {
+    @include mixins.button-ghost(tokens.$dz-control-md, var(--dz-radius-pill), false);
+    @include mixins.hit-target;
+    flex: none;
+    gap: tokens.$dz-space-1;
+    padding: 0 tokens.$dz-space-2;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--dz-fg);
+    }
+
+    // The check is the "recorded" signal the thread already uses for the same fact.
+    .dz-icon:first-child {
+      color: var(--dz-status-connected);
+    }
   }
 
   &__send {
     position: relative;
   }
 
+  // Opens UPWARD and anchors right. Downward it covered the composer; left-anchored it hung
+  // off the panel, since this trigger sits at the right edge of a 360px viewport.
   &__menu {
-    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.$dz-space-1);
+    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.rem(6));
     position: absolute;
-    top: calc(100% + #{tokens.$dz-space-1});
-    left: 0;
+    right: 0;
+    bottom: calc(100% + #{tokens.$dz-space-1});
     z-index: 10;
-    min-width: tokens.rem(160);
+    width: tokens.rem(212);
+    transform-origin: bottom right;
+    animation: dz-pop var(--dz-motion-base) var(--dz-ease);
 
     button {
-      display: block;
-      width: 100%;
-      padding: tokens.$dz-space-2;
-      background: transparent;
-      border: none;
-      border-radius: tokens.$dz-radius-xs;
-      color: var(--dz-fg);
-      font: inherit;
-      font-size: tokens.$dz-font-md;
-      text-align: left;
-      cursor: pointer;
-
-      @include mixins.focus-ring(tokens.rem(-2));
-
-      &:hover {
-        background: var(--dz-wash-hover);
-      }
+      @include mixins.menu-row(tokens.$dz-radius-sm);
     }
+  }
+
+  &__menuTitle {
+    @include mixins.eyebrow-label;
+    padding: tokens.rem(2) tokens.$dz-space-2 tokens.rem(6);
+  }
+
+  &__menuLabel {
+    @include mixins.truncate;
+    flex: 1;
+  }
+
+  // Connected backends only reach this menu (ShipBar.tsx filters), so the dot is always green —
+  // it is there to say "this is a live backend", not to encode a state.
+  &__dot {
+    @include mixins.dot(tokens.rem(6));
+    color: var(--dz-status-connected);
   }
 
   &__hint {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: tokens.$dz-space-1;
     margin: 0;
     color: var(--dz-fg-muted);
-    font-size: tokens.$dz-font-sm;
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 
-  // #20: the no-repo fallback's inline mapping form — an affordance in the ship area,
-  // not a dialog, so the next Ship is one save away. Dashed = "not filled in yet".
+  // #20: the no-repo fallback's inline mapping form — an affordance in the ship area, not a
+  // dialog, so the next Ship is one save away. A solid card rather than the old dashed outline:
+  // dashed read as "disabled/placeholder" on a form the user is being asked to fill in now.
   &__map {
+    @include mixins.card('card', tokens.$dz-space-3, tokens.$dz-radius);
     display: flex;
     flex-direction: column;
     gap: tokens.$dz-space-2;
-    padding: tokens.$dz-space-3;
-    border: tokens.$dz-border-width dashed var(--dz-border-subtle);
-    border-radius: tokens.$dz-radius-lg;
+    animation: dz-rise var(--dz-motion-base) var(--dz-ease);
   }
 
   &__mapHint {
     margin: 0;
-    color: var(--dz-fg-muted);
+    color: var(--dz-fg-strong);
     font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
   }
 
   &__error {
     display: flex;
-    align-items: center;
-    gap: tokens.$dz-space-1;
+    align-items: flex-start;
+    gap: tokens.rem(6);
     margin: 0;
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
     color: var(--dz-status-error);
-    font-size: tokens.$dz-font-sm;
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 }

@@ -162,26 +162,40 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open()}
       >
-        <Icon name={pillIcon()} size="sm" />
+        <Icon name={pillIcon()} size="sm" class="dz-icon--fixed" />
         <span>{label()}</span>
-        <Icon name="chevronDown" size="sm" class="dz-readiness__chevron" />
+        <Icon
+          name="chevronDown"
+          size="sm"
+          class={`dz-readiness__chevron${open() ? ' is-open' : ''}`}
+        />
       </button>
 
+      {/* Start is accent-filled, Stop is an outlined ghost — a running session must not
+          hold the panel's loudest treatment for its whole duration. The glyph is what
+          makes the two unmistakable at 12px. */}
       <button
         type="button"
         class="dz-readiness__toggle"
+        classList={{ 'is-running': running() }}
         disabled={!running() && (!ready() || readinessLoading())}
         onClick={() => void toggleSession()}
       >
+        <Icon name={running() ? 'stop' : 'play'} size="sm" class="dz-icon--fixed" />
         {sessionButton(sessionState()).label}
       </button>
 
       <Show when={open()}>
         <div class="dz-readiness__panel">
+          <p class="dz-readiness__panelTitle">{i18n.t('readiness.panel.title')}</p>
           <For each={checks()}>
             {(check) => (
               <div class="dz-readiness__row">
-                <Icon name={check.ok ? 'check' : 'warning'} size="sm" />
+                <Icon
+                  name={check.ok ? 'check' : 'warning'}
+                  size="sm"
+                  class={`dz-readiness__status${check.ok ? ' is-ok' : ''}`}
+                />
                 {/* Label and detail STACK. Side by side they competed for the same row at the
                     360px panel width, and the detail won on intrinsic width — "Page access"
                     rendered as "P..", "MCP backend" as "MCP bac...". The label is the part that
@@ -222,17 +236,28 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
             )}
           </For>
 
-          <div class="dz-readiness__row">
-            <Icon name="eye" size="sm" />
-            <span class="dz-readiness__rowlabel">{i18n.t('readiness.overlay.label')}</span>
+          {/* Not an eighth check: this row TURNS SOMETHING ON, so it takes the switch
+              grammar and a hairline that separates it from the pass/fail list above.
+              As a look-alike row with a text link it read as "overlay: failing". */}
+          <div class="dz-readiness__switchRow">
             <button
               type="button"
-              class="dz-readiness__link"
+              class="dz-readiness__switch"
               role="switch"
               aria-checked={overlayEnabled()}
               onClick={() => void setOverlayEnabled(!overlayEnabled())}
             >
-              {overlayEnabled() ? i18n.t('readiness.overlay.on') : i18n.t('readiness.overlay.off')}
+              <span class="dz-readiness__rowtext">
+                <span class="dz-readiness__rowlabel">{i18n.t('readiness.overlay.label')}</span>
+                <small class="dz-readiness__rowdetail">{i18n.t('readiness.overlay.detail')}</small>
+              </span>
+              <span
+                class="dz-readiness__track"
+                classList={{ 'is-on': overlayEnabled() }}
+                aria-hidden="true"
+              >
+                <span class="dz-readiness__knob" />
+              </span>
             </button>
           </div>
 

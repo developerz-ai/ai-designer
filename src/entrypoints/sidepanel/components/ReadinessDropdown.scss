@@ -1,9 +1,9 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
-// The header's status cluster: a quiet capsule that reports readiness, plus the Start/Stop
-// toggle — the one loud (accent-filled) element in the whole panel. Everything else in the
-// chrome is ghost or borderless by design.
+// The header's status cluster: a tinted capsule that reports readiness, plus the
+// Start/Stop toggle — the one accent-FILLED element in the whole panel. Everything
+// else in the chrome is ghost or borderless by design.
 .dz-readiness {
   position: relative;
   display: flex;
@@ -11,96 +11,234 @@
   align-items: center;
   gap: tokens.$dz-space-2;
 
+  // Tinted, not bare text. The pill is the panel's single status readout, and a
+  // borderless label lost every argument for attention against the filled toggle
+  // beside it. The tint pair (fill + border + text, all one hue) is what makes
+  // "Setup needed" legible as a state at a glance rather than as a sentence.
   &__pill {
-    // `'none'` elevation + no border: the capsule reads as text with a hover wash, not as
-    // a bordered control competing with the toggle next to it.
-    @include mixins.pill('none', false);
+    @include mixins.tinted-chip(var(--dz-warn-fill), var(--dz-status-warning), tokens.$dz-control-sm);
     @include mixins.focus-ring;
-    height: tokens.$dz-control-sm;
-    padding: 0 tokens.$dz-space-2;
+    @include mixins.hit-target;
     color: var(--dz-status-warning);
     font: inherit;
     font-size: tokens.$dz-font-sm;
     font-weight: tokens.$dz-weight-medium;
     cursor: pointer;
-    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+    transition:
+      background-color var(--dz-motion-fast) var(--dz-ease),
+      border-color var(--dz-motion-fast) var(--dz-ease),
+      color var(--dz-motion-fast) var(--dz-ease);
 
-    // Ready and running share the green: an open session is a healthy state, not an in-progress
-    // one (see `pillIcon` — no spinner either).
+    // Ready and running share the green: an open session is a healthy state, not an
+    // in-progress one (see `pillIcon` in the .tsx — no spinner either).
     &.is-ready {
+      background: var(--dz-ok-fill);
+      border-color: var(--dz-status-connected);
       color: var(--dz-status-connected);
     }
 
     &:hover {
-      background: var(--dz-wash-hover);
+      filter: brightness(1.12);
     }
   }
 
+  // Muted rather than inheriting the pill's status hue: it is a disclosure affordance,
+  // not part of the status being reported.
   &__chevron {
+    @include mixins.chevron-toggle;
     color: var(--dz-fg-muted);
   }
 
+  // Start is accent-filled; Stop drops to an outlined ghost. Stopping is not the
+  // action we want to make loudest, and keeping Stop filled meant the header changed
+  // brightness for the entire duration of a session.
   &__toggle {
-    @include mixins.button-primary(tokens.$dz-control-sm);
+    @include mixins.button-primary(tokens.$dz-control-sm, var(--dz-radius-pill));
+    @include mixins.hit-target;
+    gap: tokens.rem(5);
+    padding: 0 tokens.$dz-space-3;
+    font-size: tokens.$dz-font-sm;
     font-weight: tokens.$dz-weight-semibold;
+
+    &.is-running {
+      background: transparent;
+      border: tokens.$dz-border-width solid var(--dz-border-strong);
+      color: var(--dz-fg);
+
+      &:not(:disabled):hover {
+        background: var(--dz-wash-hover);
+        filter: none;
+      }
+    }
   }
 
-  // Anchored to the cluster's right edge, not its left: the cluster now sits hard right in
+  // Anchored to the cluster's right edge, not its left: the cluster sits hard right in
   // the header, so a left-anchored popover would hang off the 360px panel.
   &__panel {
-    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.$dz-space-3);
+    @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.rem(6));
     position: absolute;
     top: calc(100% + #{tokens.$dz-space-2});
     right: 0;
     z-index: 10;
     display: flex;
     flex-direction: column;
-    gap: tokens.$dz-space-2;
-    min-width: tokens.rem(240);
+    width: tokens.rem(280);
     max-width: calc(100vw - #{tokens.$dz-space-8});
+    transform-origin: top right;
+    animation: dz-pop var(--dz-motion-base) var(--dz-ease);
+  }
+
+  &__panelTitle {
+    @include mixins.eyebrow-label;
+    margin: 0;
+    padding: tokens.$dz-space-1 tokens.$dz-space-2 tokens.rem(6);
   }
 
   &__row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: tokens.$dz-space-2;
+    padding: tokens.rem(7) tokens.$dz-space-2;
+    border-radius: tokens.$dz-radius-sm;
     font-size: tokens.$dz-font-md;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      background: var(--dz-wash-hover);
+    }
   }
 
-  // Label over detail, one flexible column between the status glyph and the action button —
+  // The status glyph carries the row's verdict. Nudged down a hair so it optically
+  // aligns with the label's cap height rather than its line box.
+  &__status {
+    flex: none;
+    margin-top: tokens.rem(2);
+    color: var(--dz-status-error);
+
+    &.is-ok {
+      color: var(--dz-status-connected);
+    }
+
+    &.is-warn {
+      color: var(--dz-status-warning);
+    }
+  }
+
+  // Label over detail, one flexible column between the status glyph and the action —
   // see the comment in ReadinessDropdown.tsx for why they no longer share a row.
   &__rowtext {
     display: flex;
     flex: 1;
     min-width: 0;
     flex-direction: column;
+    gap: tokens.rem(2);
   }
 
   &__rowlabel {
     @include mixins.truncate;
-    color: var(--dz-fg-body);
+    color: var(--dz-fg);
+    font-weight: tokens.$dz-weight-medium;
   }
 
+  // Wraps rather than truncating: this is the sentence that says WHY a row failed, and
+  // "nvidia.com is not in the al…" is worse than two lines.
   &__rowdetail {
-    @include mixins.truncate;
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 
+  // A text link, not a bordered button: it sits inside a row that is already a card on
+  // a card, and a third box there reads as clutter.
   &__link {
-    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm);
+    display: inline-flex;
     flex: none;
+    align-items: center;
     gap: tokens.$dz-space-1;
-    padding: 0 tokens.$dz-space-2;
-    font-size: tokens.$dz-font-xs;
+    align-self: flex-start;
+    padding: tokens.rem(3) tokens.rem(6);
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-accent);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+    cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    @include mixins.focus-ring(tokens.rem(-2));
+    @include mixins.hit-target;
+
+    &:hover {
+      background: var(--dz-wash-hover);
+    }
+  }
+
+  // The overlay row is a SWITCH, not an eighth pass/fail check — the hairline above it
+  // is what keeps it from being read as one.
+  &__switchRow {
+    margin-top: tokens.$dz-space-1;
+    padding-top: tokens.$dz-space-1;
+    border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
+  }
+
+  &__switch {
+    @include mixins.menu-row(tokens.$dz-radius-sm);
+    align-items: flex-start;
+    padding: tokens.$dz-space-2;
+    font-size: tokens.$dz-font-md;
+  }
+
+  &__track {
+    display: flex;
+    flex: none;
+    align-items: center;
+    width: tokens.rem(32);
+    height: tokens.rem(18);
+    padding: tokens.rem(2);
+    background: var(--dz-elev-inset);
+    border: tokens.$dz-border-width solid var(--dz-border-strong);
+    border-radius: var(--dz-radius-pill);
+    transition:
+      background-color var(--dz-motion-base) var(--dz-ease),
+      border-color var(--dz-motion-base) var(--dz-ease);
+
+    &.is-on {
+      background: var(--dz-accent);
+      border-color: var(--dz-accent);
+    }
+  }
+
+  // One knob that travels, rather than two positioned states — `translateX` is the only
+  // property animated, so the switch cannot land half-drawn.
+  &__knob {
+    width: tokens.rem(12);
+    height: tokens.rem(12);
+    background: var(--dz-fg-muted);
+    border-radius: var(--dz-radius-pill);
+    transition:
+      transform var(--dz-motion-base) var(--dz-ease),
+      background-color var(--dz-motion-base) var(--dz-ease);
+
+    .dz-readiness__track.is-on & {
+      background: var(--dz-accent-fg);
+      transform: translateX(#{tokens.rem(14)});
+    }
   }
 
   &__error {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: tokens.$dz-space-1;
-    margin: 0;
+    margin: tokens.$dz-space-1 0 0;
+    padding: tokens.rem(6) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
     color: var(--dz-status-error);
     font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
   }
 }

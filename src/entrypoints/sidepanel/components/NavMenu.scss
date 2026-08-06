@@ -1,0 +1,125 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+// The wordmark-as-navigation. Nothing here draws a second toolbar: the panel's chrome is now one
+// 40px header with one hairline, which is the whole point of removing the strip — Leo's reference
+// panel has exactly one band, and two stacked bands is what read as a settings dialog.
+.dz-nav {
+  // Takes the header's slack so the readiness cluster sits hard right without a foreign
+  // selector, and truncates first if a localized wordmark ever outgrows the 360px floor.
+  flex: 1;
+  min-width: 0;
+
+  &__heading {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+  }
+
+  // Quiet by default — this is a wordmark that happens to be a control, not a button. The
+  // chevron is the affordance; the hover wash confirms it.
+  &__trigger {
+    @include mixins.hit-target;
+    @include mixins.focus-ring;
+    display: inline-flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    max-width: 100%;
+    padding: tokens.rem(2) tokens.$dz-space-1;
+    background: transparent;
+    border: none;
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-strong);
+    font: inherit;
+    font-size: tokens.$dz-font-md;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-snug;
+    cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      background: var(--dz-wash-hover);
+    }
+
+    &:active {
+      background: var(--dz-wash-active);
+    }
+  }
+
+  &__wordmark {
+    @include mixins.truncate;
+  }
+
+  // Rotates to point up while the menu is open, so the trigger states which way it will move.
+  // Driven off `aria-expanded` — the attribute is already the source of truth, so a parallel
+  // `is-open` class would be a second one that can disagree with it.
+  &__chevron {
+    color: var(--dz-fg-muted);
+    transition: transform var(--dz-motion-fast) var(--dz-ease);
+
+    [aria-expanded='true'] & {
+      transform: rotate(180deg);
+    }
+  }
+
+  // The popover. `position: fixed` against a known 40px header rather than CSS anchor
+  // positioning: the header height is a hard constant (App.scss) and the trigger is
+  // left-aligned, so a fixed offset is exact — and stays exact when the panel is dragged wider,
+  // which anchor positioning would also give but with a spec this panel doesn't need yet.
+  //
+  // `:popover-open` is what makes it a flex column; the UA's own `display: none` while closed is
+  // load-bearing and must not be overridden by a bare `display` on the element.
+  &__menu {
+    @include mixins.menu-surface;
+    position: fixed;
+    top: tokens.rem(40);
+    left: tokens.$dz-space-2;
+    margin: 0;
+    width: tokens.rem(216);
+    max-width: calc(100vw - #{tokens.$dz-space-4});
+    inset-inline-end: auto;
+    inset-block-end: auto;
+
+    &:popover-open {
+      display: flex;
+      flex-direction: column;
+    }
+  }
+
+  &__row {
+    @include mixins.menu-row;
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    width: 100%;
+    color: var(--dz-fg-body);
+
+    // Styled off the ARIA attribute, not a parallel `is-active` class — one source of truth for
+    // "which surface am I on", and it cannot drift out of sync with what AT is told.
+    &[aria-current='page'] {
+      background: var(--dz-elev-hover);
+      color: var(--dz-fg-strong);
+      font-weight: tokens.$dz-weight-medium;
+    }
+  }
+
+  &__label {
+    @include mixins.truncate;
+    flex: 1;
+    text-align: left;
+  }
+
+  // The unshipped-work signal. Accent, because it is the one thing in this menu that is about
+  // the live session rather than about navigation — same reason the strip's badge was accent.
+  &__count {
+    flex: none;
+    padding: 0 tokens.$dz-space-2;
+    background: var(--dz-accent);
+    border-radius: var(--dz-radius-pill);
+    color: var(--dz-accent-fg);
+    font-size: tokens.$dz-font-xs;
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.rem(16);
+  }
+}

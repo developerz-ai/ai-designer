@@ -79,6 +79,19 @@ $dz-status-error: #ff6b6b; // red — error state (same as danger)
 $dz-status-warning: #fbbf24; // yellow — warning state
 $dz-status-muted: $dz-muted; // gray — muted/inactive state
 
+// ─── Tinted fills + hairlines ─────────────────────────────────────────────────
+// Translucent derivatives of the accent/status hues, for the surfaces that must
+// read as "this thing is accented/warned/failed" WITHOUT becoming a solid block of
+// colour: element-reference chips and their on-page rectangles, the readiness pill,
+// error strips. Alpha rather than a mixed opaque value so one pair works on every
+// elevation — `fill` is the wash, `line` the hairline that outlines it.
+$dz-accent-fill: rgba(249, 115, 22, 0.1);
+$dz-accent-line: rgba(249, 115, 22, 0.45);
+$dz-warn-fill: rgba(251, 191, 36, 0.1);
+$dz-warn-line: rgba(251, 191, 36, 0.5);
+$dz-error-fill: rgba(255, 107, 107, 0.1);
+$dz-ok-fill: rgba(34, 197, 94, 0.12);
+
 // Icon sizes (rem against the 16px root — scalable, accessible units)
 $dz-icon-size-sm: fn.rem(16);
 $dz-icon-size-md: fn.rem(24);
@@ -202,6 +215,13 @@ $dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles sof
   --dz-status-error: #{$dz-status-error};
   --dz-status-warning: #{$dz-status-warning};
   --dz-status-muted: #{$dz-status-muted};
+  // Tinted fills + hairlines
+  --dz-accent-fill: #{$dz-accent-fill};
+  --dz-accent-line: #{$dz-accent-line};
+  --dz-warn-fill: #{$dz-warn-fill};
+  --dz-warn-line: #{$dz-warn-line};
+  --dz-error-fill: #{$dz-error-fill};
+  --dz-ok-fill: #{$dz-ok-fill};
   // Icon sizes
   --dz-icon-size-sm: #{$dz-icon-size-sm};
   --dz-icon-size-md: #{$dz-icon-size-md};

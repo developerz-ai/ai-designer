@@ -17,7 +17,28 @@
   &__row {
     // Leo's "Summarize this page" row: leading glyph, left-aligned label, whole row tappable.
     // `$dz-control-lg` (40px) is the row height; the mixin owns the surface, hover and focus.
-    @include mixins.action-row(tokens.$dz-radius-lg, 'card', tokens.$dz-control-lg);
+    @include mixins.action-row(tokens.$dz-radius, 'card', tokens.$dz-control-lg);
+    font-size: tokens.$dz-font-md;
+    // Lifts a hair on hover so a whole-row target announces itself as one — at 360px a
+    // background change alone is easy to miss against three identical stacked rows.
+    transition:
+      background-color var(--dz-motion-fast) var(--dz-ease),
+      border-color var(--dz-motion-fast) var(--dz-ease),
+      transform var(--dz-motion-fast) var(--dz-ease);
+
+    &:hover {
+      border-color: var(--dz-border-strong);
+      transform: translateY(-#{tokens.rem(1)});
+    }
+
+    &:active {
+      // Cancelling the hover lift left the row with NO press feedback at all — the `action-row`
+      // mixin defines only hover and focus-visible, unlike `button-ghost`/`icon-button` which
+      // both darken on press. Three identical rows that don't acknowledge a click read as
+      // unwired, which is the worst thing an empty state can say.
+      background: var(--dz-wash-active);
+      transform: none;
+    }
   }
 
   // Two classes deliberately: `.dz-icon` already sets `color: currentColor` at the same
@@ -26,7 +47,22 @@
     color: var(--dz-fg-muted);
   }
 
+  // Wraps to two lines rather than truncating: these are whole instructions, and half a
+  // sentence is not a thing anyone can decide to tap.
   &__label {
-    @include mixins.truncate;
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  // The trailing chevron is what says "this sends something" rather than "this is a label".
+  &__row &__go {
+    flex: none;
+    color: var(--dz-fg-muted);
+    transition: transform var(--dz-motion-fast) var(--dz-ease);
+  }
+
+  &__row:hover &__go {
+    transform: translateX(#{tokens.rem(2)});
   }
 }

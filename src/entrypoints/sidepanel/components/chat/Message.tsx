@@ -76,6 +76,20 @@ export function Message(rawProps: MessageProps) {
         {(speaker) => <span class="dz-message__speaker">{speaker()}</span>}
       </Show>
 
+      {/* Says what is happening while the reply is still empty. The trailing caret alone answers
+          "is it alive?" only once tokens start landing — the gap before the first token is
+          exactly when a user is most likely to think the panel has hung. */}
+      <Show when={props.streaming && props.role === 'assistant'}>
+        <p class="dz-message__working">
+          <span class="dz-message__dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          {i18n.t('message.working')}
+        </p>
+      </Show>
+
       <Show when={showMarkdown(props.role)} fallback={<p class="dz-message__text">{props.text}</p>}>
         <MarkdownView text={props.text} />
       </Show>

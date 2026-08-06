@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: Ctrl/Alt+click to tell the agent WHICH element you mean, against a loaded extension.
 //
@@ -40,7 +40,7 @@ async function stubFixture(context: BrowserContext): Promise<void> {
 
 /** Configure + Start, so the composer (and its context chip) is mounted. */
 async function startSession(panel: Page): Promise<void> {
-  await panel.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(panel, 'Settings');
   await panel.locator('#dz-key').fill('sk-or-test-quickpick');
   await panel.getByRole('button', { name: 'Refresh' }).click();
   await expect(panel.locator('#dz-model')).toHaveValue('test/pick');

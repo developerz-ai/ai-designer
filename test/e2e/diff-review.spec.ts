@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the Diff tab (slice 10 / issue #10) driven against a loaded, real Chromium — same harness
 // as chat-streaming.spec.ts (only the model's HTTP replies are canned; the panel, the SW's
@@ -104,7 +104,7 @@ function stubProvider(context: BrowserContext, turns: Turn[]): { requests: ChatR
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-10');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -118,7 +118,7 @@ async function startSession(panel: Page): Promise<void> {
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(panel.locator('.dz-readiness__pill')).toHaveText(/Running…/);
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
 }
 
 async function sendInstruction(panel: Page, text: string): Promise<void> {
@@ -189,7 +189,7 @@ test('diff review shows a recorded edit (#22)', async ({ context, openExtensionP
   // The Diff tab (icon-only, aria-labeled "Diff") renders the durable record: one row with the
   // selector chip (`describeSelector` → "value · strategy"), the intent, the per-property
   // before/after table, and the live count.
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
 
   await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
   const item = panel.locator('.dz-diff__item');
@@ -198,11 +198,13 @@ test('diff review shows a recorded edit (#22)', async ({ context, openExtensionP
   await expect(item.locator('.dz-diff__fragile')).toContainText('Fragile selector');
   await expect(item.locator('.dz-diff__intent')).toHaveText('Recolor the CTA to the brand accent');
 
-  const change = item.locator('.dz-diff__changes:not(.dz-diff__attrs) tbody tr');
+  // One labelled delta per changed property: the name, then a stacked -/+ well. (It was a
+  // three-column table; 328px cannot hold two wrapping mono values side by side.)
+  const change = item.locator('.dz-diff__delta--style');
   await expect(change).toHaveCount(1);
   await expect(change.locator('.dz-diff__prop')).toHaveText('background-color');
-  await expect(change.locator('.dz-diff__before')).toHaveText('#e5e7eb');
-  await expect(change.locator('.dz-diff__after')).toHaveText('#22c55e');
+  await expect(change.locator('.dz-diff__row--before .dz-diff__value')).toHaveText('#e5e7eb');
+  await expect(change.locator('.dz-diff__row--after .dz-diff__value')).toHaveText('#22c55e');
 
   // The #139 structured delta renders too: class chips (+add / −remove) and the attrs table
   // (∅ marks an absent/removed attribute).
@@ -211,14 +213,16 @@ test('diff review shows a recorded edit (#22)', async ({ context, openExtensionP
   await expect(classes.nth(0)).toHaveText('+btn-primary');
   await expect(classes.nth(1)).toHaveText('−btn-ghost');
 
-  const attrs = item.locator('.dz-diff__attrs tbody tr');
+  // Attribute deltas take the same stacked -/+ shape as style ones — one grammar for
+  // "this became that", wherever it appears in the card.
+  const attrs = item.locator('.dz-diff__delta--attr');
   await expect(attrs).toHaveCount(2);
   await expect(attrs.nth(0).locator('.dz-diff__prop')).toHaveText('href');
-  await expect(attrs.nth(0).locator('.dz-diff__before')).toHaveText('∅');
-  await expect(attrs.nth(0).locator('.dz-diff__after')).toHaveText('/buy');
+  await expect(attrs.nth(0).locator('.dz-diff__row--before .dz-diff__value')).toHaveText('∅');
+  await expect(attrs.nth(0).locator('.dz-diff__row--after .dz-diff__value')).toHaveText('/buy');
   await expect(attrs.nth(1).locator('.dz-diff__prop')).toHaveText('title');
-  await expect(attrs.nth(1).locator('.dz-diff__before')).toHaveText('Buy');
-  await expect(attrs.nth(1).locator('.dz-diff__after')).toHaveText('∅');
+  await expect(attrs.nth(1).locator('.dz-diff__row--before .dz-diff__value')).toHaveText('Buy');
+  await expect(attrs.nth(1).locator('.dz-diff__row--after .dz-diff__value')).toHaveText('∅');
 });
 
 test('curation round-trip: per-edit remove forks history, then undo/redo/clear walk the durable record', async ({
@@ -248,7 +252,7 @@ test('curation round-trip: per-edit remove forks history, then undo/redo/clear w
     'Both edits recorded.',
   );
 
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
   const items = panel.locator('.dz-diff__item');
   await expect(items).toHaveCount(2);
   await expect(panel.locator('.dz-diff__count')).toHaveText('2 edits');
@@ -326,7 +330,7 @@ test('diff controls disable while a turn streams and re-enable when it lands', a
   await expect(panel.locator('.dz-message--assistant').last()).toContainText('Recolored your CTA.');
 
   // No turn in flight: the recorded edit's controls are live.
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
   const remove = panel
     .locator('.dz-diff__item')
     .first()
@@ -335,14 +339,14 @@ test('diff controls disable while a turn streams and re-enable when it lands', a
   await expect(panel.getByRole('button', { name: 'Undo last edit' })).toBeEnabled();
 
   // A second instruction starts a turn that parks on the gate (composer swaps Send→Stop).
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
   await sendInstruction(panel, 'Tweak it again');
   await expect(panel.locator('.dz-composer').getByRole('button', { name: 'Stop' })).toBeVisible();
   await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(3);
 
   // busy = streaming || curating (ChangesetPreview): every mutating control is disabled while
   // the turn owns the store — the SW would reject a mid-turn op anyway.
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
   await expect(remove).toBeDisabled();
   await expect(panel.getByRole('button', { name: 'Undo last edit' })).toBeDisabled();
   await expect(panel.getByRole('button', { name: 'Redo edit' })).toBeDisabled();
@@ -377,7 +381,7 @@ test('the diff view follows tab switches — never curates a tab the user is not
   await sendInstruction(panel, 'Recolor the CTA and record it');
   await expect.poll(() => requests.length, { timeout: 20_000 }).toBe(2);
 
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
   await expect(panel.locator('.dz-diff__count')).toHaveText('1 edit');
 
   // Switch to a second tab with no session: the view retargets to THAT tab's (empty) record —
@@ -433,7 +437,7 @@ test('a turn running on another tab never bleeds phantom rows into the diff view
   const otherPage = await context.newPage();
   await otherPage.goto(`${FIXTURE_PREFIX}other`);
   await otherPage.bringToFront();
-  await panel.getByRole('button', { name: 'Diff' }).click();
+  await openRoom(panel, 'Diff');
   await expect(panel.locator('.dz-diff__count')).toHaveText('0 edits');
 
   // The turn's edit-recorded lands — stamped for the FIRST tab, so THIS view drops it. Request 2

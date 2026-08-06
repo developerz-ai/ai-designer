@@ -1,40 +1,58 @@
 @use '../../../styles/tokens' as tokens;
 @use '../../../styles/mixins' as mixins;
 
-// Centred first-screen: glyph, one line of what-to-do, one button that does it. Replaces
-// App's old `.dz-app__empty` block, which had the copy but no action.
+// First screen: mark, one line of what-to-do, one button that does it. CENTRED on both axes —
+// it is the only thing on the surface, and top-left-anchoring it left ~350px of empty panel
+// hanging under three short lines. `flex: 1` is what makes the vertical centring real: without
+// it the block sizes to its content and `justify-content` has no free space to distribute.
 .dz-prestart {
   display: flex;
   flex: 1;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: tokens.$dz-space-3;
-  padding: tokens.$dz-space-6;
+  gap: tokens.$dz-space-2;
+  min-height: 0;
+  padding: tokens.$dz-space-8 tokens.$dz-space-6;
   text-align: center;
 
+  // The same 24px outlined mark the empty state uses — one assistant, one avatar.
   &__icon {
-    color: var(--dz-fg-muted);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: tokens.$dz-icon-size-md;
+    height: tokens.$dz-icon-size-md;
+    margin-bottom: tokens.$dz-space-2;
+    background: var(--dz-elev-card);
+    border: tokens.$dz-border-width solid var(--dz-border-subtle);
+    border-radius: var(--dz-radius-pill);
+    color: var(--dz-accent);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__title {
     margin: 0;
     color: var(--dz-fg-strong);
-    font-size: tokens.$dz-font-lg;
+    font-size: tokens.$dz-font-xl;
     font-weight: tokens.$dz-weight-semibold;
+    line-height: tokens.$dz-leading-tight;
   }
 
   &__text {
-    max-width: tokens.rem(280);
+    max-width: tokens.rem(300);
     margin: 0;
-    color: var(--dz-fg-muted);
+    color: var(--dz-fg-body);
     font-size: tokens.$dz-font-md;
-    line-height: tokens.$dz-leading-snug;
+    line-height: tokens.$dz-leading-body;
   }
 
   &__cta {
-    @include mixins.button-primary;
-    margin-top: tokens.$dz-space-1;
+    @include mixins.button-primary(tokens.$dz-control-md, var(--dz-radius-pill));
+    gap: tokens.rem(6);
+    margin-top: tokens.$dz-space-2;
+    padding: 0 tokens.$dz-space-5;
     font-weight: tokens.$dz-weight-semibold;
   }
 }

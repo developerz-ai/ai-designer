@@ -9,6 +9,9 @@
   display: flex;
   flex-direction: column;
   gap: tokens.$dz-space-2;
+  // Each turn arrives rather than appearing. 4px and 180ms — enough to read as motion in the
+  // thread, short enough that a fast exchange never feels like it is animating at you.
+  animation: dz-rise var(--dz-motion-base) var(--dz-ease);
 
   &--assistant {
     // `stretch`, not merely "no max-width": Thread is a flex column, so an assistant turn that
@@ -16,16 +19,20 @@
     align-self: stretch;
   }
 
+  // Right-aligned, on a plain card — no accent tint. The user's instruction is a short aside,
+  // and tinting it orange put a second accent surface on a screen whose only accent should be
+  // the thing you press. Position and the notched corner say "mine" without any colour at all.
   &--user {
     align-self: flex-end;
+    align-items: flex-end;
     max-width: 85%;
-    padding: tokens.$dz-space-3 tokens.$dz-space-4;
-    // Accent-tinted surface, not the solid accent slab: a filled orange block with near-black
-    // text dominates a 360px panel and out-shouts the answer it precedes. Tinted, it still reads
-    // as ours and as the user's side of the conversation, at a fraction of the visual weight.
-    background: color-mix(in srgb, var(--dz-accent) 16%, var(--dz-elev-card));
+    padding: tokens.rem(7) tokens.$dz-space-3;
+    background: var(--dz-elev-card);
     border-radius: tokens.$dz-radius-lg;
+    // The one asymmetric corner in the panel: it points at the composer the message came from.
+    border-bottom-right-radius: tokens.$dz-radius-xs;
     color: var(--dz-fg);
+    font-size: tokens.$dz-font-md;
   }
 
   &--system {
@@ -56,6 +63,40 @@
     @include mixins.visually-hidden;
   }
 
+  // "⋯ Editing the page…" — the only thing on screen between hitting send and the first token.
+  &__working {
+    display: flex;
+    align-items: center;
+    gap: tokens.rem(6);
+    margin: 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  // Three dots pulsing out of phase. A staggered opacity cycle, not a spinner: a spinner in the
+  // thread competes with the spinner already on the running tool chip below it.
+  &__dots {
+    display: inline-flex;
+    gap: tokens.rem(3);
+
+    span {
+      width: tokens.$dz-space-1;
+      height: tokens.$dz-space-1;
+      background: var(--dz-accent);
+      border-radius: var(--dz-radius-pill);
+      animation: dz-pulse 1.2s ease-in-out infinite;
+    }
+
+    span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+  }
+
   &__text {
     margin: 0;
     font-size: tokens.$dz-font-base;
@@ -64,22 +105,35 @@
     overflow-wrap: anywhere;
   }
 
-  &__edits,
-  &__error {
+  // "4 edits recorded". Muted with a green check, not green text: it is a receipt, and a whole
+  // line of status colour under every turn adds up to a very loud thread.
+  &__edits {
     display: inline-flex;
     align-items: center;
-    gap: tokens.$dz-space-2;
+    gap: tokens.rem(6);
     margin: 0;
+    color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
     line-height: tokens.$dz-leading-snug;
+
+    .dz-icon {
+      color: var(--dz-status-connected);
+    }
   }
 
-  &__edits {
-    color: var(--dz-status-connected);
-  }
-
+  // A failure IS loud, and it gets a tinted strip so it separates from the prose above it
+  // rather than reading as another sentence in the answer.
   &__error {
+    display: flex;
+    align-items: flex-start;
+    gap: tokens.rem(6);
+    margin: 0;
+    padding: tokens.rem(7) tokens.$dz-space-2;
+    background: var(--dz-error-fill);
+    border-radius: tokens.$dz-radius-sm;
     color: var(--dz-status-error);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
     overflow-wrap: anywhere;
   }
 }

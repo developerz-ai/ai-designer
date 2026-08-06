@@ -147,7 +147,7 @@ export function McpPanel() {
                   aria-label={i18n.t('mcp.server.remove.ariaLabel', { label: s.label })}
                   onClick={() => void removeServer(s.id)}
                 >
-                  <Icon name="trash" size="sm" />
+                  <Icon name="trash" size="sm" class="dz-icon--fixed" />
                 </button>
               </div>
               <label class="dz-mcp__switch" title={i18n.t('mcp.server.enabled.hint')}>

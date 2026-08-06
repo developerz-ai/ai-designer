@@ -9,6 +9,7 @@ import {
 } from '../stores/chat';
 import { initFocusStore } from '../stores/focus';
 import { initReadinessStore } from '../stores/readiness';
+import { hydrate } from '../stores/settings';
 import './ChatPanel.scss';
 import { Composer } from './chat/Composer';
 import { EmptyState } from './chat/EmptyState';
@@ -35,6 +36,13 @@ export function ChatPanel() {
     initChatStore();
     initFocusStore();
     initReadinessStore();
+    // Chat is the DEFAULT tab, and until this ran the only caller of `hydrate` was SettingsPanel
+    // — so on every fresh panel open `settings.model` was null and `settings.models` empty, and
+    // Composer's model quick-switch rendered its "Model" fallback, greyed and unclickable, while
+    // the readiness pill beside it said Ready with the model row green (readiness reads the SW's
+    // own config, not this store). The panel claimed a model was configured and showed a dead
+    // control that could not name it.
+    void hydrate();
   });
 
   const hasThread = createMemo(() => messages().length > 0);

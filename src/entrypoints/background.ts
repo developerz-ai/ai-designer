@@ -1407,12 +1407,24 @@ export default defineBackground(() => {
       // script as a PickerCmd (the overlay lives in the DOM world). Distinct from the agent's
       // DomTool calls — the picker is never agent-run. A missing/uninjectable tab is a no-op.
       case 'start-picker':
-      case 'stop-picker': {
+      case 'stop-picker':
+      // A chip's dismiss rides the same relay: the picker's committed selection lives in the
+      // content world, so forgetting a reference only in the panel let the next
+      // `multi-select-changed` echo bring it straight back (and ground the agent on it).
+      case 'deselect-element':
+      // The composer's `@` menu rides it in the other direction (#175) — attaching without a
+      // pick gesture still has to go through the picker, or the next echo wipes it.
+      case 'select-element': {
         const tab = await resolveTargetTab();
         if (tab?.id !== undefined) {
-          const cmd: PickerCmd = {
-            type: msg.type === 'start-picker' ? 'picker-start' : 'picker-stop',
-          };
+          const cmd: PickerCmd =
+            msg.type === 'start-picker'
+              ? { type: 'picker-start' }
+              : msg.type === 'stop-picker'
+                ? { type: 'picker-stop' }
+                : msg.type === 'select-element'
+                  ? { type: 'picker-select', value: msg.value }
+                  : { type: 'picker-deselect', value: msg.value };
           await chrome.tabs.sendMessage(tab.id, cmd).catch(() => {});
         }
         return { ok: true };

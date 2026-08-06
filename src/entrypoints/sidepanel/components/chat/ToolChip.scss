@@ -1,109 +1,126 @@
 @use '../../../../styles/tokens' as tokens;
 @use '../../../../styles/mixins' as mixins;
 
-// A tool call as a quiet card — the counter-grammar to the unboxed prose it sits under. Full
-// width rather than shrink-wrapped: at 360px a row of ragged inline chips is harder to scan than
-// a stack of aligned ones, and the expanded selector needs the width.
+// One tool call as a quiet card — the counter-grammar to the unboxed prose it sits
+// under, which is what lets a reader skip a whole run at a glance or drop into it.
+//
+// The row is a fixed grammar, left to right: status glyph · mono tool name · kind badge
+// · truncated summary · chevron (only when there is a selector to reveal). Everything
+// except the summary is intrinsically sized, so the summary is the single part that
+// absorbs the 360px width — nothing else can push the row wide.
 .dz-tool-chip {
-  @include mixins.surface('card', true, tokens.$dz-radius);
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  @include mixins.surface('card', true, tokens.$dz-radius-sm);
+  overflow: hidden;
   max-width: 100%;
-  font-size: tokens.$dz-font-sm;
-
-  &--act {
-    border-color: color-mix(in srgb, var(--dz-accent) 45%, var(--dz-border-subtle));
-  }
-
-  &--error {
-    border-color: var(--dz-status-error);
-  }
+  transition: border-color var(--dz-motion-fast) var(--dz-ease);
 
   &__row {
     display: flex;
     align-items: center;
-    gap: tokens.$dz-space-2;
-    max-width: 100%;
-    padding: tokens.$dz-space-2 tokens.$dz-space-3;
+    gap: tokens.rem(6);
+    width: 100%;
+    padding: tokens.rem(6) tokens.$dz-space-2;
     background: transparent;
     border: none;
-    border-radius: inherit;
     color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
+    transition: background-color var(--dz-motion-fast) var(--dz-ease);
 
     @include mixins.focus-ring(tokens.rem(-2));
 
+    &:not(:disabled):hover {
+      background: var(--dz-elev-hover);
+    }
+
+    // A chip with no selector has nothing to disclose — it is a label, and the cursor
+    // must not promise otherwise.
     &:disabled {
       cursor: default;
     }
-
-    &:not(:disabled):hover {
-      background: var(--dz-wash-hover);
-    }
-
-    &:not(:disabled):active {
-      background: var(--dz-wash-active);
-    }
   }
 
-  // Muted is the default, and it is also the honest state for a call whose outcome we have not
-  // heard back on — green is reserved for a real `ok: true` (see ToolCallList.tsx).
+  // Muted is the default, and it is also the honest state for a call whose outcome we
+  // have not heard back on — green is reserved for a real `ok: true` (ToolCallList.tsx).
   &__status {
+    flex: none;
     color: var(--dz-status-muted);
   }
 
+  // Mono and never truncated: the tool name is the identity of the row. If anything in
+  // the row has to give, it is the summary.
+  &__name {
+    @include mixins.mono(tokens.$dz-font-sm);
+    flex: none;
+    color: var(--dz-fg);
+  }
+
+  // read / act / info. An inset well rather than a coloured badge — the kind is
+  // metadata, and three more hues down a twelve-row list is noise. Lowercase, because
+  // uppercasing a three-letter word at 11px costs legibility and buys nothing.
+  &__kind {
+    flex: none;
+    padding: tokens.rem(1) tokens.$dz-space-1;
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  &__summary {
+    @include mixins.truncate;
+    flex: 1;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  // Holds the row's right edge when there is no summary, so the chevron does not slide
+  // left and give every row a different shape.
+  &__spacer {
+    flex: 1;
+  }
+
+  &__chevron {
+    @include mixins.chevron-toggle;
+    flex: none;
+    color: var(--dz-fg-muted);
+  }
+
+  // The raw selector, one disclosure away. Inset well + mono + wrap: a 120-character
+  // CSS path must be readable without ever widening the panel.
+  &__detail {
+    @include mixins.mono(tokens.$dz-font-xs);
+    display: block;
+    margin: 0 tokens.$dz-space-2 tokens.$dz-space-2;
+    padding: tokens.rem(5) tokens.rem(6);
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
+    animation: dz-rise var(--dz-motion-fast) var(--dz-ease);
+  }
+
+  // Status tints the GLYPH. The card keeps its neutral border until something actually
+  // failed — a green border on eleven successful rows is eleven rows of noise.
   &--done &__status {
     color: var(--dz-status-connected);
   }
 
-  &--error &__status {
-    color: var(--dz-status-error);
+  &--running &__status {
+    color: var(--dz-accent);
   }
 
-  &__name {
-    @include mixins.mono(tokens.$dz-font-sm);
-    @include mixins.truncate(1);
-    color: var(--dz-fg-strong);
-  }
+  // The one exception: a failure earns a border, because it is the row the reader has
+  // to find in a collapsed run.
+  &--error {
+    border-color: var(--dz-warn-line);
 
-  &__kind {
-    flex: none;
-    padding: 0 tokens.$dz-space-1;
-    border-radius: tokens.$dz-radius-xs;
-    background: var(--dz-wash-hover);
-    color: var(--dz-fg-muted);
-    font-size: tokens.$dz-font-xs;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-
-  &__summary {
-    @include mixins.truncate(1);
-    color: var(--dz-fg-muted);
-  }
-
-  &__chevron {
-    flex: none;
-    margin-left: auto;
-    color: var(--dz-fg-muted);
-    transition: transform var(--dz-motion-base) var(--dz-ease);
-
-    &.is-open {
-      transform: rotate(180deg);
+    .dz-tool-chip__status {
+      color: var(--dz-status-error);
     }
-  }
-
-  // The selector, revealed on expand — a recessed well, so it reads as data the chip is quoting
-  // rather than as another control.
-  &__detail {
-    @include mixins.mono(tokens.$dz-font-sm);
-    @include mixins.surface('inset', false, tokens.$dz-radius-xs);
-    margin: 0 tokens.$dz-space-3 tokens.$dz-space-3;
-    padding: tokens.$dz-space-1 tokens.$dz-space-2;
-    color: var(--dz-fg-body);
-    word-break: break-all;
   }
 }

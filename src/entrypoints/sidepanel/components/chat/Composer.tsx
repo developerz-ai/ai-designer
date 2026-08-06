@@ -1,10 +1,18 @@
-import { createMemo, createSignal } from 'solid-js';
+import { createMemo, createSignal, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import type { StableSelector } from '@/shared/messages';
 import { send as sendMessage, stopTurn, streaming } from '../../stores/chat';
-import { pickerActive, selector, startPicker } from '../../stores/focus';
+import {
+  mentionReference,
+  pickerActive,
+  recentReferences,
+  selector,
+  startPicker,
+} from '../../stores/focus';
 import { Icon } from '../Icon';
 import './Composer.scss';
-import { ContextChip } from './ContextChip';
+import { ElementRefs } from './ElementRefs';
+import { filterMentions, MentionMenu, mentionQuery } from './MentionMenu';
 import { ModelPicker } from './ModelPicker';
 
 // The message composer: one Leo-style shell (the container owns the border + focus treatment)
@@ -50,9 +58,48 @@ export function isSubmitKey(e: {
 
 export function Composer() {
   const [draft, setDraft] = createSignal('');
+  // An in-progress `@mention`: where it starts in the draft and what has been typed after it.
+  // Null whenever the caret is not in one — see `mentionQuery` for why that rule is narrow.
+  const [mention, setMention] = createSignal<{ start: number; query: string } | null>(null);
+  const [activeMention, setActiveMention] = createSignal(0);
+  let input: HTMLTextAreaElement | undefined;
+
+  const mentionItems = createMemo(() => filterMentions(recentReferences(), mention()?.query ?? ''));
+  const mentionOpen = createMemo(() => mention() !== null && mentionItems().length > 0);
+
+  /** Re-derive the mention state from the field's live value + caret. Called on every input and
+   *  on selection moves, because the caret can leave a mention without the text changing. */
+  function syncMention(el: HTMLTextAreaElement): void {
+    const next = mentionQuery(el.value, el.selectionStart);
+    setMention(next);
+    setActiveMention(0);
+  }
+
+  /** Replace the `@query` run with nothing and attach the element instead. The chip IS the
+   *  reference — leaving `@Hero heading` in the prose would be a second, unauthoritative copy of
+   *  the same fact, and the agent is grounded on the chip, not on the words. */
+  function takeMention(sel: StableSelector): void {
+    const at = mention();
+    if (!at) return;
+    const el = input;
+    const text = draft();
+    const caret = el ? el.selectionStart : at.start + at.query.length + 1;
+    setDraft(text.slice(0, at.start) + text.slice(caret));
+    setMention(null);
+    void mentionReference(sel.value);
+    // Focus never left the textarea (the row commits on mousedown), but the caret has to land
+    // where the mention was or the next keystroke appends at the old offset.
+    queueMicrotask(() => {
+      el?.focus();
+      el?.setSelectionRange(at.start, at.start);
+    });
+  }
 
   const canSend = createMemo(() => draft().trim().length > 0 && !streaming());
-  const attachActive = createMemo(() => pickerActive() || selector() !== null);
+  // Lit only while the picker is ARMED. It used to stay lit for as long as anything was pinned,
+  // which made an accent-filled button the resting state of the composer — and now that pinned
+  // elements are chips sitting directly above, the button was saying the same thing twice.
+  const attachActive = createMemo(() => pickerActive());
 
   function submit(): void {
     const text = draft();
@@ -66,6 +113,29 @@ export function Composer() {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
+    // The mention menu owns Up/Down/Enter/Escape while it is open — and ONLY while it is open,
+    // so a composer with no recents behaves exactly as it did before.
+    if (mentionOpen()) {
+      const items = mentionItems();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setActiveMention((i) => (i + step + items.length) % items.length);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        const pick = items[activeMention()];
+        if (pick) takeMention(pick);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // Closes the menu and LEAVES the literal `@` — the user may have meant the character.
+        setMention(null);
+        return;
+      }
+    }
     if (isSubmitKey(e)) {
       e.preventDefault();
       submit();
@@ -74,16 +144,32 @@ export function Composer() {
 
   return (
     <div class="dz-composer">
-      <ContextChip />
+      <ElementRefs />
 
-      <div class="dz-composer__shell">
+      <div class="dz-composer__shell" classList={{ 'dz-composer__shell--picking': attachActive() }}>
         {/* A placeholder is not an accessible name — it disappears the moment the field has
             content, leaving the textarea nameless mid-message. Visually hidden, so the shell
             still looks like Leo's. */}
         <label class="dz-composer__label" for={INPUT_ID}>
           {i18n.t('composer.input.ariaLabel')}
         </label>
+        {/* Gated on `mentionOpen()`, not merely on having items: MentionMenu renders whenever
+            its filtered list is non-empty, and an empty query matches everything — so once
+            anything had been pinned this session the listbox sat permanently above the composer,
+            with no combobox state on the textarea and no keys wired to it. */}
+        <Show when={mentionOpen()}>
+          <MentionMenu
+            items={recentReferences()}
+            query={mention()?.query ?? ''}
+            active={activeMention()}
+            onPick={takeMention}
+          />
+        </Show>
+        {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: the rule resolves the textarea's
+            IMPLICIT role and cannot see that `role` below becomes "combobox" under exactly the
+            same condition — `aria-expanded` is only ever present while this IS a combobox. */}
         <textarea
+          ref={input}
           id={INPUT_ID}
           class="dz-composer__input"
           placeholder={i18n.t('composer.placeholder')}
@@ -91,19 +177,27 @@ export function Composer() {
           value={draft()}
           aria-describedby={HINT_ID}
           aria-keyshortcuts="Enter"
-          onInput={(e) => setDraft(e.currentTarget.value)}
+          // Combobox semantics, announced only while the popup exists — a textarea permanently
+          // claiming `aria-expanded="false"` would tell every screen-reader user there is a
+          // widget here even when there are no recents to offer.
+          role={mentionOpen() ? 'combobox' : undefined}
+          aria-expanded={mentionOpen() ? true : undefined}
+          aria-controls={mentionOpen() ? 'dz-mention-list' : undefined}
+          aria-activedescendant={mentionOpen() ? `dz-mention-${activeMention()}` : undefined}
+          onInput={(e) => {
+            setDraft(e.currentTarget.value);
+            syncMention(e.currentTarget);
+          }}
+          // The caret can leave a mention without the text changing (click, arrow keys), and a
+          // menu that survives that is a menu that fires on the wrong run of text.
+          onSelect={(e) => syncMention(e.currentTarget)}
+          onBlur={() => setMention(null)}
           onKeyDown={onKeyDown}
         />
         {/* Deliberately NOT `disabled` while a turn streams: `disabled` drops the element from
             the tab order and blurs it, dumping focus on `<body>` mid-turn. The field stays
             editable so the next instruction can be drafted while the agent works; only the send
             affordance is gated (and it is the Stop button by then anyway). */}
-
-        {/* Announced via aria-describedby — `aria-keyshortcuts` above is metadata with no
-            behaviour and tells a user nothing on its own; this line is what does. */}
-        <p id={HINT_ID} class="dz-composer__hint">
-          {i18n.t('composer.hint.keyboard')}
-        </p>
 
         <div class="dz-composer__toolbar">
           <button
@@ -120,8 +214,10 @@ export function Composer() {
           >
             {/* `dz-icon--fixed`: absolute 16px, so a toolbar glyph doesn't scale with whatever
                 font-size its container carries. Icon.tsx does not forward the `fixed` prop yet —
-                the class is the documented way in (Icon.scss). */}
-            <Icon name="picker" size="sm" class="dz-icon--fixed" />
+                the class is the documented way in (Icon.scss).
+                A crosshair, not an arrow cursor: the same glyph the on-page rectangles are drawn
+                around, so the button and its result are recognisably the same feature. */}
+            <Icon name="target" size="sm" class="dz-icon--fixed" />
           </button>
 
           <ModelPicker />
@@ -140,10 +236,18 @@ export function Composer() {
             disabled={!streaming() && !canSend()}
             onClick={() => (streaming() ? void stopTurn() : submit())}
           >
-            <Icon name={streaming() ? 'close' : 'arrowUp'} size="sm" class="dz-icon--fixed" />
+            <Icon name={streaming() ? 'stop' : 'arrowUp'} size="sm" class="dz-icon--fixed" />
           </button>
         </div>
       </div>
+
+      {/* Below the shell, and VISIBLE. It was inside the shell and visually hidden, which made
+          it announced-only: Enter-sends is the one thing about this composer that surprises
+          people, and it cost nothing to say it. Still the `aria-describedby` target, so a
+          screen-reader user hears it exactly once, from here. */}
+      <p id={HINT_ID} class="dz-composer__hint">
+        {i18n.t('composer.hint.keyboard')}
+      </p>
     </div>
   );
 }

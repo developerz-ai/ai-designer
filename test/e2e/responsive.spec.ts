@@ -1,5 +1,5 @@
 import type { BrowserContext, Worker } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the slice-16 responsive/mobile tools driven against a loaded, real Chromium — the one
 // thing jsdom (test/unit, test/integration) can't prove: that background.ts's real
@@ -106,7 +106,7 @@ async function stubChat(context: BrowserContext, turns: string[]): Promise<ChatR
 }
 
 async function configureProvider(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-16');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/responsive');

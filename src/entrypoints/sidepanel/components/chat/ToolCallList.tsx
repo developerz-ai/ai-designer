@@ -1,5 +1,7 @@
-import { For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import { Icon } from '../Icon';
+import type { IconName } from '../icon-registry';
 import { ToolChip, type ToolChipStatus } from './ToolChip';
 import './ToolCallList.scss';
 
@@ -81,40 +83,101 @@ export function toolCallStatusLabel(outcome: ToolCallOutcome): string {
   return STATUS_LABEL[outcome];
 }
 
+/** The calls that stay on screen while the run is COLLAPSED: whatever is in flight, plus every
+ *  failure. A plain "12 actions ⌄" that hides the one call currently running (and the one that
+ *  just failed) buys tidiness by hiding the only two rows anybody wants — so the collapse keeps
+ *  them and folds away the eleven successful ones instead. Pure: unit-testable without Solid. */
+export function pinnedCalls(calls: ToolCallView[], streaming = false): ToolCallView[] {
+  return calls.filter((call) => {
+    const outcome = toolCallOutcome(call, streaming);
+    return outcome === 'running' || outcome === 'failed';
+  });
+}
+
+/** Glyph for the group header: what the run as a whole is doing. Spinner while anything is in
+ *  flight, warning if anything failed, check once it all landed. Pure for the same reason. */
+export function runGlyph(calls: ToolCallView[], streaming = false): IconName {
+  const outcomes = calls.map((call) => toolCallOutcome(call, streaming));
+  if (outcomes.includes('running')) return 'spinner';
+  if (outcomes.includes('failed')) return 'warning';
+  return 'check';
+}
+
+/** How many calls in this run failed — the "· 2 failed" the header appends. */
+export function failedCount(calls: ToolCallView[], streaming = false): number {
+  return calls.filter((call) => toolCallOutcome(call, streaming) === 'failed').length;
+}
+
 export function ToolCallList(props: ToolCallListProps) {
+  // Collapsed by default. A turn routinely fires 6–12 calls, and a dozen expanded cards
+  // pushed the assistant's actual answer off the top of the thread — the working notes
+  // outweighed the work. Expanding is one click and the state is per-turn.
+  const [open, setOpen] = createSignal(false);
+
+  const streaming = () => props.streaming ?? false;
+  const failed = createMemo(() => failedCount(props.calls, streaming()));
+  const visible = createMemo(() => (open() ? props.calls : pinnedCalls(props.calls, streaming())));
+
   return (
     <Show when={props.calls.length > 0}>
-      {/* Ordered: the sequence a turn's calls ran in is information, not incidental layout. */}
-      <ol class="dz-tool-call-list">
-        <For each={props.calls}>
-          {(call) => {
-            const outcome = () => toolCallOutcome(call, props.streaming ?? false);
-            return (
-              <li
-                class="dz-tool-call-list__item"
-                classList={{ [`dz-tool-call-list__item--${outcome()}`]: true }}
-                data-status={outcome()}
-              >
-                <ToolChip
-                  tool={call.tool}
-                  selector={call.selector}
-                  kind={call.kind}
-                  status={toolChipStatusFor(outcome())}
-                />
-                {/* Reads as "setStyle act — failed — no element matches #gone". Outside the chip's
-                    button because `ToolChip` is another component's markup; inside the same list
-                    item, so it is still part of the call it describes. */}
-                <span class="dz-tool-call-list__status">{toolCallStatusLabel(outcome())}</span>
-                {/* A failure says why, in the tool's own words — the one thing that makes a red
-                    chip actionable rather than decorative. */}
-                <Show when={outcome() === 'failed' && call.error}>
-                  {(message) => <p class="dz-tool-call-list__error">{message()}</p>}
-                </Show>
-              </li>
-            );
-          }}
-        </For>
-      </ol>
+      <div class="dz-tool-call-list">
+        <button
+          type="button"
+          class="dz-tool-call-list__header"
+          aria-expanded={open()}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <Icon
+            name={runGlyph(props.calls, streaming())}
+            size="sm"
+            spin={runGlyph(props.calls, streaming()) === 'spinner'}
+            class={`dz-tool-call-list__glyph is-${runGlyph(props.calls, streaming())}`}
+          />
+          <span class="dz-tool-call-list__count">
+            {i18n.t('toolRun.actions', props.calls.length)}
+          </span>
+          <Show when={failed() > 0}>
+            <span class="dz-tool-call-list__failed">· {i18n.t('toolRun.failed', failed())}</span>
+          </Show>
+          <Icon
+            name="chevronDown"
+            size="sm"
+            class={`dz-tool-call-list__chevron${open() ? ' is-open' : ''}`}
+          />
+        </button>
+
+        {/* Ordered: the sequence a turn's calls ran in is information, not incidental layout. */}
+        <ol class="dz-tool-call-list__items">
+          <For each={visible()}>
+            {(call) => {
+              const outcome = () => toolCallOutcome(call, streaming());
+              return (
+                <li
+                  class="dz-tool-call-list__item"
+                  classList={{ [`dz-tool-call-list__item--${outcome()}`]: true }}
+                  data-status={outcome()}
+                >
+                  <ToolChip
+                    tool={call.tool}
+                    selector={call.selector}
+                    kind={call.kind}
+                    status={toolChipStatusFor(outcome())}
+                  />
+                  {/* Reads as "setStyle act — failed — no element matches #gone". Outside the
+                      chip's button because `ToolChip` is another component's markup; inside the
+                      same list item, so it is still part of the call it describes. */}
+                  <span class="dz-tool-call-list__status">{toolCallStatusLabel(outcome())}</span>
+                  {/* A failure says why, in the tool's own words — the one thing that makes a red
+                      chip actionable rather than decorative. */}
+                  <Show when={outcome() === 'failed' && call.error}>
+                    {(message) => <p class="dz-tool-call-list__error">{message()}</p>}
+                  </Show>
+                </li>
+              );
+            }}
+          </For>
+        </ol>
+      </div>
     </Show>
   );
 }

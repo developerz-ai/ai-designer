@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the Leo-style chat UI (slice 11) driven against a loaded, real Chromium — the composer,
 // context pin, and Ship foot are all real now (PR15's ChatPanel rebuild), unlike
@@ -104,7 +104,7 @@ function stubProvider(context: BrowserContext, turns: string[]): { requests: Cha
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-11');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -148,7 +148,7 @@ test('after Start: pick an element, send an instruction, watch it stream with a 
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(panel.locator('.dz-readiness__pill')).toHaveText(/Running…/);
-  await panel.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(panel, 'Chat');
 
   // Before any turn has run, the empty state (with its suggestion chips) stands in for Thread.
   await expect(panel.getByPlaceholder('Tell the agent what to change…')).toBeVisible();
@@ -162,7 +162,10 @@ test('after Start: pick an element, send an instruction, watch it stream with a 
   await expect(panel.locator('.dz-context-chip')).toHaveText(/Picking element…/);
   await ownPage.locator('#cta').click();
 
-  await expect(panel.locator('.dz-context-chip__label')).toHaveText(/#cta · id/);
+  // The chip's PRIMARY label is now the human name for the element; the raw selector + strategy
+  // moved to its `title` (and to the inset line the label reveals on click).
+  await expect(panel.locator('.dz-context-chip__label')).toHaveText('#cta');
+  await expect(panel.locator('.dz-context-chip__label')).toHaveAttribute('title', /#cta · id/);
 
   // Send the instruction — the real Composer/chat store this time, not a raw RPC.
   await panel
@@ -198,6 +201,10 @@ test('after Start: pick an element, send an instruction, watch it stream with a 
   await expect(panel.locator('.dz-message--user .dz-message__text').last()).toHaveText(
     'Recolor the CTA and record it',
   );
+  // A turn's tool calls collapse behind a group header (a run is routinely 6-12 calls), so the
+  // successful ones are behind one click. The header itself is the always-visible summary.
+  await expect(panel.locator('.dz-tool-call-list__count')).toContainText('action');
+  await panel.locator('.dz-tool-call-list__header').click();
   const toolChip = panel.locator('.dz-tool-chip__name', { hasText: 'recordEdit' });
   await expect(toolChip).toBeVisible();
   await expect(panel.locator('.dz-tool-chip')).toHaveClass(/dz-tool-chip--done/);
@@ -206,7 +213,7 @@ test('after Start: pick an element, send an instruction, watch it stream with a 
   );
 
   // The context pin survives the turn (still shows the picked element, not cleared by send()).
-  await expect(panel.locator('.dz-context-chip__label')).toHaveText(/#cta · id/);
+  await expect(panel.locator('.dz-context-chip__label')).toHaveText('#cta');
 
   // A thread now exists -> Ship foot is mounted.
   await expect(panel.getByRole('button', { name: 'Ship' })).toBeVisible();

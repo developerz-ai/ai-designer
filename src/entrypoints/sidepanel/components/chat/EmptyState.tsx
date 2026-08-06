@@ -16,11 +16,14 @@ export interface EmptyStateProps {
 export function EmptyState(props: EmptyStateProps) {
   return (
     <div class="dz-empty-state">
-      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--md`
+      {/* The glyph is wrapped rather than styled directly: `Icon` puts its own `.dz-icon--sm`
           (width/height in `em`) on the same element, and an equal-specificity override from this
-          component would win or lose on stylesheet order alone. */}
+          component would win or lose on stylesheet order alone.
+          `sm` (16px absolute), NOT `md`: the wrapper IS 24px, so a `md` glyph resolved to 24px too
+          and the wand filled its own circle edge to edge, overflowing the 1px border. 16-in-24 is
+          the same ratio PreStart's mark uses — one assistant, one avatar, one inset. */}
       <span class="dz-empty-state__avatar">
-        <Icon name="agent" size="md" class="dz-icon--fixed" />
+        <Icon name="agent" size="sm" class="dz-icon--fixed" />
       </span>
       {/* `h2` under App's `h1` — a real heading, so the intro is reachable by heading navigation
           instead of being an unlabelled block of text. */}
@@ -31,7 +34,7 @@ export function EmptyState(props: EmptyStateProps) {
           as visually-hidden text, which needs no interactive element to be announced. */}
       <p class="dz-empty-state__meta">
         <span>{i18n.t('empty.meta')}</span>
-        <Icon name="info" size="sm" />
+        <Icon name="info" size="sm" class="dz-icon--fixed" />
         <span class="dz-empty-state__meta-hint">{i18n.t('empty.metaHint.ariaLabel')}</span>
       </p>
 

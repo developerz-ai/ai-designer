@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, openRoom, test } from './fixtures';
 
 // Stub a minimal MCP backend (JSON-RPC 2.0 over Streamable HTTP — modelcontextprotocol.io
 // "basic/transports") under `openrouter.ai`, whose origin is already granted via the
@@ -70,7 +70,7 @@ test('MCP: add a stubbed server, connect, and list its discovered tools', async 
   await stubMcpServer(context, url, ['create_task', 'get_task']);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
   await page.locator('#dz-mcp-label').fill('Mock MCP');
   await page.locator('#dz-mcp-url').fill(url);
   await page.locator('.dz-mcp__add button[type="submit"]').click();
@@ -110,7 +110,7 @@ test('MCP OAuth: builds the PKCE authorization URL, without driving the consent 
   });
 
   const page = await openExtensionPage('sidepanel.html');
-  await page.getByRole('button', { name: 'MCP' }).click();
+  await openRoom(page, 'MCP');
 
   await page.locator('#dz-mcp-label').fill('OAuth Server');
   await page.locator('#dz-mcp-url').fill('https://openrouter.ai/mcp-oauth-stub/mcp');

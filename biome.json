@@ -16,7 +16,8 @@
       "!**/dist",
       "!**/waitlist",
       "!**/*.tsbuildinfo",
-      "!**/site"
+      "!**/site",
+      "!docs/design/designer"
     ]
   },
   "formatter": {

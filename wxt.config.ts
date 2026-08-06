@@ -87,7 +87,12 @@ export default defineConfig({
     //                    extension. See background.ts `reinjectAllTabs`. SW-only; it injects
     //                    only what the manifest already declares, never remote code.
     // NOTE: keep this list comment-free — test/unit/manifest-invariant.test.ts parses the
-    // array as text, and an inline comment lands in the parsed permission set.
+    // array as text, and an inline comment lands in the parsed permission set. The trailing
+    // `.filter` is outside the brackets for the same reason: it drops `sidePanel` from the
+    // Firefox build (#174 — not a Firefox permission, and AMO review flags unknown ones) while
+    // the text parser still sees the full granted surface, which is what that test guards.
+    // Firefox needs nothing added in exchange: WXT already translates `side_panel` above into
+    // `sidebar_action`, and background.ts guards `chrome.sidePanel` on API presence.
     permissions: [
       'sidePanel',
       'storage',
@@ -97,7 +102,7 @@ export default defineConfig({
       'webNavigation',
       'debugger',
       'scripting',
-    ],
+    ].filter((p) => browser === 'chrome' || p !== 'sidePanel'),
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
     host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],

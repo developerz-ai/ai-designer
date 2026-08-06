@@ -45,7 +45,11 @@ function flag(name: string): boolean {
 
 function option(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? (process.argv[i + 1] ?? fallback) : fallback;
+  if (i < 0) return fallback;
+  // A value-optional flag (`--shots`) followed by another flag must NOT swallow it, or
+  // `--shots --say "..."` writes screenshots to a directory literally named `--say`.
+  const next = process.argv[i + 1];
+  return next && !next.startsWith('--') ? next : fallback;
 }
 
 // --- logging --------------------------------------------------------------

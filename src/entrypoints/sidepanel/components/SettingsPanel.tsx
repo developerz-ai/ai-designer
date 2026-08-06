@@ -16,6 +16,7 @@ import {
   settings,
 } from '../stores/settings';
 import { AboutSection } from './AboutSection';
+import { Icon, type IconName } from './Icon';
 import { ModelCombobox } from './ModelCombobox';
 import './SettingsPanel.scss';
 
@@ -65,13 +66,37 @@ export function SettingsPanel(props: SettingsPanelProps = {}) {
     }
   }
 
+  // The verdict reads at a glance before the sentence does. Only the three decided states get a
+  // glyph — the idle "no key set" line is a prompt, not a result, and a dot there would claim a
+  // verdict the form hasn't reached.
+  function statusIcon(): IconName | null {
+    switch (settings.saveStatus) {
+      case 'valid':
+        return 'check';
+      case 'invalid':
+        return 'warning';
+      case 'saving':
+        return 'spinner';
+      default:
+        return null;
+    }
+  }
+
   return (
     <div class="dz-settings">
-      <section class="dz-settings__section">
-        <label class="dz-settings__label" for="dz-preset">
-          {i18n.t('settings.provider.label')}
-        </label>
-        <div class="dz-settings__presetrow">
+      {/* Groups are an eyebrow over a hairline rule, not a card each. A card per setting drew
+          four boxes around four controls that are one form — the rule separates them for the
+          same cost as a border and none of the nesting. */}
+      <h2 class="dz-settings__group">{i18n.t('settings.groups.provider')}</h2>
+
+      {/* Every field is a <div> with a `for=`-bound label rather than a wrapping <label>: the
+          key and model rows hold a <div> and a <p>, which a label's phrasing-only content model
+          does not allow, and `for=` names the control just as well. */}
+      <div class="dz-settings__fields">
+        <div class="dz-settings__field">
+          <label class="dz-field__label" for="dz-preset">
+            {i18n.t('settings.provider.label')}
+          </label>
           <select
             id="dz-preset"
             value={settings.preset}
@@ -80,66 +105,76 @@ export function SettingsPanel(props: SettingsPanelProps = {}) {
             <For each={PRESETS}>{(p) => <option value={p.id}>{p.label}</option>}</For>
           </select>
         </div>
+
         <Show when={settings.preset === 'custom'}>
-          <input
-            class="dz-settings__url"
-            type="url"
-            placeholder={i18n.t('settings.provider.customUrlPlaceholder')}
-            value={settings.baseURL}
-            onInput={(e) => setCustomBaseURL(e.currentTarget.value)}
-          />
+          <div class="dz-settings__field">
+            <label class="dz-field__label" for="dz-url">
+              {i18n.t('settings.provider.urlLabel')}
+            </label>
+            <input
+              id="dz-url"
+              class="dz-settings__url"
+              type="url"
+              placeholder={i18n.t('settings.provider.customUrlPlaceholder')}
+              value={settings.baseURL}
+              onInput={(e) => setCustomBaseURL(e.currentTarget.value)}
+            />
+          </div>
         </Show>
-      </section>
 
-      <section class="dz-settings__section">
-        <label class="dz-settings__label" for="dz-key">
-          {i18n.t('settings.apiKey.label')}
-        </label>
-        <div class="dz-settings__keyrow">
-          <input
-            id="dz-key"
-            ref={keyInput}
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            placeholder={
-              settings.hasKey
-                ? i18n.t('settings.apiKey.placeholderSaved')
-                : i18n.t('settings.apiKey.placeholderEmpty')
-            }
-          />
-          <Show when={settings.hasKey}>
-            <button type="button" class="dz-settings__ghost" onClick={() => void clearProvider()}>
-              {i18n.t('settings.apiKey.clear')}
+        <div class="dz-settings__field">
+          <label class="dz-field__label" for="dz-key">
+            {i18n.t('settings.apiKey.label')}
+          </label>
+          <div class="dz-settings__row">
+            <input
+              id="dz-key"
+              ref={keyInput}
+              type="password"
+              autocomplete="off"
+              spellcheck={false}
+              placeholder={
+                settings.hasKey
+                  ? i18n.t('settings.apiKey.placeholderSaved')
+                  : i18n.t('settings.apiKey.placeholderEmpty')
+              }
+            />
+            <Show when={settings.hasKey}>
+              <button type="button" class="dz-settings__ghost" onClick={() => void clearProvider()}>
+                {i18n.t('settings.apiKey.clear')}
+              </button>
+            </Show>
+          </div>
+        </div>
+
+        <div class="dz-settings__field">
+          <label class="dz-field__label" for="dz-model">
+            {i18n.t('settings.model.label')}
+          </label>
+          <div class="dz-settings__row">
+            <ModelCombobox
+              id="dz-model"
+              value={settings.model ?? ''}
+              options={settings.models}
+              loading={settings.modelsLoading}
+              onCommit={pickModel}
+            />
+            <button
+              type="button"
+              disabled={settings.modelsLoading}
+              onClick={() => void loadModels(keyInput.value)}
+            >
+              {i18n.t('settings.model.refresh')}
             </button>
-          </Show>
+          </div>
+          <p class="dz-settings__hint">{i18n.t('settings.model.hint')}</p>
         </div>
-      </section>
+      </div>
 
-      <section class="dz-settings__section">
-        <label class="dz-settings__label" for="dz-model">
-          {i18n.t('settings.model.label')}
-        </label>
-        <div class="dz-settings__modelrow">
-          <ModelCombobox
-            id="dz-model"
-            value={settings.model ?? ''}
-            options={settings.models}
-            loading={settings.modelsLoading}
-            onCommit={pickModel}
-          />
-          <button
-            type="button"
-            disabled={settings.modelsLoading}
-            onClick={() => void loadModels(keyInput.value)}
-          >
-            {i18n.t('settings.model.refresh')}
-          </button>
-        </div>
-        <p class="dz-settings__hint">{i18n.t('settings.model.hint')}</p>
-      </section>
-
-      <section class="dz-settings__section">
+      {/* Action and verdict on one line. The row wraps, so a short "Key saved." sits beside the
+          button while a whole sentence back from the endpoint drops to its own full-width line
+          and renders as the tinted strip. */}
+      <div class="dz-settings__saverow">
         <button
           type="button"
           class="dz-settings__save"
@@ -159,30 +194,41 @@ export function SettingsPanel(props: SettingsPanelProps = {}) {
             'is-bad': settings.saveStatus === 'invalid',
           }}
         >
+          <Show when={statusIcon()}>
+            {(name) => (
+              <Icon
+                name={name()}
+                size="sm"
+                class="dz-icon--fixed"
+                spin={settings.saveStatus === 'saving'}
+              />
+            )}
+          </Show>
           {statusText()}
         </p>
-        {/* The next step, at the moment it becomes available. */}
-        <Show when={settings.saveStatus === 'valid'}>
-          <button
-            type="button"
-            class="dz-settings__start"
-            onClick={() => {
-              void startSession();
-              props.onStart?.();
-            }}
-          >
-            {i18n.t('settings.startDesigning')}
-          </button>
-        </Show>
-      </section>
+      </div>
 
-      <section class="dz-settings__section">
-        <button type="button" class="dz-settings__ghost" onClick={() => openOnboarding()}>
-          {i18n.t('settings.setupGuide.button')}
+      {/* The next step, at the moment it becomes available. */}
+      <Show when={settings.saveStatus === 'valid'}>
+        <button
+          type="button"
+          class="dz-settings__start"
+          onClick={() => {
+            void startSession();
+            props.onStart?.();
+          }}
+        >
+          {i18n.t('settings.startDesigning')}
         </button>
-      </section>
+      </Show>
+
+      <h2 class="dz-settings__group">{i18n.t('settings.groups.about')}</h2>
 
       <AboutSection />
+
+      <button type="button" class="dz-settings__ghost is-compact" onClick={() => openOnboarding()}>
+        {i18n.t('settings.setupGuide.button')}
+      </button>
     </div>
   );
 }

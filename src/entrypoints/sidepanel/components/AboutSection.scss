@@ -7,17 +7,34 @@
   border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
   padding-top: tokens.$dz-space-4;
 
+  // Full-width rows with the label taking the slack, so the trailing glyphs line up down the
+  // column instead of ragging with each link's text length.
   &__link {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: tokens.$dz-space-2;
-    color: var(--dz-fg-muted);
-    font-size: tokens.$dz-font-sm;
+    padding: tokens.$dz-space-2 tokens.rem(2);
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-body);
+    font-size: tokens.$dz-font-md;
     text-decoration: none;
+    transition:
+      background-color var(--dz-motion-fast) var(--dz-ease),
+      color var(--dz-motion-fast) var(--dz-ease);
+
+    span {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .dz-icon {
+      flex: none;
+      color: var(--dz-fg-muted);
+    }
 
     &:hover {
-      color: var(--dz-fg);
-      text-decoration: underline;
+      background: var(--dz-wash-hover);
+      color: var(--dz-fg-strong);
     }
   }
 }

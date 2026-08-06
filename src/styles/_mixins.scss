@@ -407,6 +407,11 @@ $_elevations: (
 // Scrollable region. `overscroll-behavior: contain` stops a scroll at the end of the
 // thread from chaining to the panel body; `scrollbar-gutter: stable` stops content
 // jumping sideways when the bar appears — cheap, and very visible at 360px.
+//
+// Overlay treatment: the bar is INVISIBLE until the region is hovered. A permanently
+// drawn track on every scrollable box is what made the panel read as "full of
+// scrollbars" — with several regions on screen at once the chrome outweighed the
+// content. The gutter is still reserved, so revealing the thumb never reflows.
 @mixin scroll-area($axis: 'y', $gutter: true) {
   @if $axis == 'y' {
     overflow-x: hidden;
@@ -418,10 +423,187 @@ $_elevations: (
 
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: var(--dz-border-strong) transparent;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color var(--dz-motion-base) var(--dz-ease);
 
   @if $gutter {
     scrollbar-gutter: stable;
+  }
+
+  &:hover,
+  &:focus-within {
+    scrollbar-color: var(--dz-border-strong) transparent;
+  }
+
+  // WebKit needs the explicit pseudo-elements: `scrollbar-color` alone leaves Chrome
+  // drawing its own default thumb. `background-clip: content-box` inside a transparent
+  // border is what insets the thumb so it reads as an overlay rather than a gutter fill.
+  &::-webkit-scrollbar {
+    width: t.$dz-space-2;
+    height: t.$dz-space-2;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: transparent;
+    background-clip: content-box;
+    border: t.$dz-border-width-thick solid transparent;
+    border-radius: var(--dz-radius-pill);
+  }
+
+  &:hover::-webkit-scrollbar-thumb {
+    background: var(--dz-border-subtle);
+    background-clip: content-box;
+  }
+
+  &:hover::-webkit-scrollbar-thumb:hover {
+    background: var(--dz-border-strong);
+    background-clip: content-box;
+  }
+}
+
+// ─── Chips + labels ────────────────────────────────────────────────────────────
+// Tinted capsule — an element reference, a "Picking…" indicator, a status pill. The
+// tone pair (fill + line) is what carries the meaning; the mixin only owns geometry.
+@mixin tinted-chip($fill, $line, $height: t.rem(24)) {
+  display: inline-flex;
+  align-items: center;
+  gap: t.rem(5);
+  height: $height;
+  max-width: 100%;
+  padding: 0 t.$dz-space-2;
+  background: $fill;
+  border: t.$dz-border-width solid $line;
+  border-radius: var(--dz-radius-pill);
+  font-size: t.$dz-font-sm;
+  line-height: t.$dz-leading-snug;
+  white-space: nowrap;
+}
+
+// Small uppercase section label — "READINESS", "SEND TO", "SERVERS". Leo's menus and
+// grouped lists both use it; letter-spacing is what keeps 11px uppercase legible.
+@mixin eyebrow-label {
+  color: var(--dz-fg-muted);
+  font-size: t.$dz-font-xs;
+  font-weight: t.$dz-weight-medium;
+  line-height: t.$dz-leading-snug;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+// A menu/list row: full width, left-aligned, whole row is the target. Distinct from
+// `action-row` (a bordered card); this one is flat and lives inside a menu surface.
+@mixin menu-row($radius: t.$dz-radius-sm) {
+  display: flex;
+  align-items: center;
+  gap: t.$dz-space-2;
+  width: 100%;
+  padding: t.rem(6) t.$dz-space-2;
+  background: transparent;
+  border: none;
+  border-radius: $radius;
+  color: var(--dz-fg);
+  font: inherit;
+  font-size: t.$dz-font-sm;
+  line-height: t.$dz-leading-snug;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dz-motion-fast) var(--dz-ease),
+    color var(--dz-motion-fast) var(--dz-ease);
+
+  @include focus-ring(t.rem(-2));
+
+  &:not(:disabled):hover {
+    background: var(--dz-wash-hover);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+// Labelled form field — a caption over an inset well holding a chrome-less input.
+// The well is `inset`, one step BELOW its card, so a field inside a card still reads
+// as recessed rather than as another card.
+@mixin labelled-field($height: t.$dz-control-md) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: t.$dz-space-1;
+  min-width: 0;
+
+  > span:first-child,
+  .dz-field__label {
+    color: var(--dz-fg-muted);
+    font-size: t.$dz-font-xs;
+    font-weight: t.$dz-weight-medium;
+    line-height: t.$dz-leading-snug;
+  }
+
+  input,
+  select,
+  textarea {
+    width: 100%;
+    height: $height;
+    padding: 0 t.$dz-space-2;
+    background: var(--dz-elev-inset);
+    border: t.$dz-border-width solid var(--dz-border-subtle);
+    border-radius: t.$dz-radius-sm;
+    color: var(--dz-fg);
+    font: inherit;
+    font-size: t.$dz-font-sm;
+    line-height: t.$dz-leading-snug;
+    transition: border-color var(--dz-motion-fast) var(--dz-ease);
+
+    @include focus-ring;
+
+    &::placeholder {
+      color: var(--dz-fg-muted);
+    }
+
+    &:hover:not(:disabled) {
+      border-color: var(--dz-border-strong);
+    }
+  }
+
+  textarea {
+    height: auto;
+    padding: t.$dz-space-2;
+    resize: vertical;
+  }
+}
+
+// ─── Disclosure ────────────────────────────────────────────────────────────────
+// A chevron that rotates on open instead of swapping to a second glyph — one node,
+// one animated property, and the two states can never disagree about their size.
+@mixin chevron-toggle {
+  transition: transform var(--dz-motion-base) var(--dz-ease);
+
+  &.is-open {
+    transform: rotate(180deg);
+  }
+}
+
+// Expanding disclosure body. `grid-template-rows: 0fr → 1fr` is the only pure-CSS way
+// to animate to CONTENT height (`max-height` guesses, and a wrong guess either clips
+// the content or makes short content ease slowly through empty space). The child must
+// carry `min-height: 0; overflow: hidden` for the collapse to actually clip.
+@mixin collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dz-motion-base) var(--dz-ease);
+
+  > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  &.is-open {
+    grid-template-rows: 1fr;
   }
 }
 

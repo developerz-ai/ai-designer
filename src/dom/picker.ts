@@ -20,6 +20,23 @@ export interface Picker {
   stop(): void;
   isActive(): boolean;
   /**
+   * Drop ONE committed element from the selection, matched by its unique selector value — the
+   * content-world half of a reference chip's dismiss. The panel cannot simply forget a reference
+   * locally: `multi-select-changed` is the only write path into its multi-selection, so the very
+   * next pick would echo the removed element straight back and the agent would be grounded on
+   * something the user detached. Re-renders and emits the usual `multi-select-changed`; a value
+   * that matches nothing is a no-op (and emits nothing).
+   */
+  deselect(value: string): void;
+  /**
+   * Commit ONE element to the selection by its unique selector value, with no pick gesture — the
+   * content-world half of the composer's `@` menu. The mirror of {@link Picker.deselect}, and
+   * necessary for the same reason: the panel cannot add locally, because the next
+   * `multi-select-changed` echo is authoritative and would drop it. A value that matches nothing
+   * in the document, or an element already selected, is a no-op (and emits nothing).
+   */
+  select(value: string): boolean;
+  /**
    * Arm modifier-click quick-pick: {@link QUICK_PICK_MODIFIER}+click pins the clicked element as
    * chat context WITHOUT arming the full picker first, so "make THIS bigger" needs no mode switch
    * — you point at the thing while you are already looking at it. Emits the same `element-picked`
@@ -80,33 +97,62 @@ export const PICKER_HOST_ID = 'dz-designer-picker';
 // so its palette is defined here, CSS-isolated from both sides.
 const HOST_STYLE =
   'all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;';
-const ACCENT = '#6366f1'; // indigo — hover outline
-const SELECTED_COLOR = '#10b981'; // emerald — committed multi-selection
+// Brand orange, matching --dz-accent in the panel. The picker used indigo for hover and emerald
+// for a commit — three palettes across one feature, and neither of them ours. The panel's chips
+// and these rectangles are now the same object seen twice, so they share a hue.
+const ACCENT = '#f97316';
+const ACCENT_INK = '#1a1205'; // legible on a solid accent badge
+const FRAGILE_COLOR = '#fbbf24'; // amber — fragile selector, the one hue shift that means something
+const FRAGILE_INK = '#221a05';
+const SURFACE = '#171a21'; // panel card colour, for the hover badge
+const SURFACE_INK = '#e6e8eb';
 // Slightly longer than the 620ms fade so the box is removed after it has finished animating.
 const FLASH_MS = 700;
-const FRAGILE_COLOR = '#f59e0b'; // amber — fragile-selector badge
 
+// Hover vs pinned is a difference of WEIGHT, not hue: hover is a 1px dashed hairline with no
+// fill (it follows the cursor, so a filled box would strobe across the page), pinned is a solid
+// 2px edge with a 10% wash. Fragile keeps the dash and shifts to amber, so all three read at a
+// glance without a legend.
 const CSS = `
-.dz-hover, .dz-box {
+.dz-hover, .dz-box, .dz-flash {
   position: fixed; top: 0; left: 0;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px solid ${ACCENT};
-  background: ${ACCENT}1f;
-  border-radius: 2px;
+  border-radius: 4px;
   will-change: transform, width, height;
 }
-.dz-box { border-color: ${SELECTED_COLOR}; background: ${SELECTED_COLOR}1f; }
+.dz-hover {
+  border: 1px dashed ${ACCENT}73;
+  background: transparent;
+}
+.dz-box {
+  border: 2px solid ${ACCENT};
+  background: ${ACCENT}1a;
+}
+.dz-box--fragile {
+  border-style: dashed;
+  border-color: ${FRAGILE_COLOR};
+  background: ${FRAGILE_COLOR}1a;
+}
+/* The index badge riding each pinned box — the same number its chip carries in the panel, so a
+   user can tell which outline a chip is talking about without hovering anything. */
+.dz-idx {
+  position: absolute; top: -9px; left: -1px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 5px;
+  font: 600 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: ${ACCENT_INK};
+  background: ${ACCENT};
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.dz-box--fragile .dz-idx { color: ${FRAGILE_INK}; background: ${FRAGILE_COLOR}; }
 /* Quick-pick confirmation: the committed-selection box, faded out. Without it an Alt+click gave
    no on-page feedback at all — the only sign it registered was a chip in a panel the user was
    not looking at. Animation-only, pointer-events: none, removed on finish. */
 .dz-flash {
-  position: fixed; top: 0; left: 0;
-  box-sizing: border-box;
-  pointer-events: none;
-  border: 2px solid ${SELECTED_COLOR};
-  background: ${SELECTED_COLOR}2e;
-  border-radius: 2px;
+  border: 2px solid ${ACCENT};
+  background: ${ACCENT}2e;
   animation: dz-flash 620ms ease-out forwards;
 }
 @keyframes dz-flash {
@@ -126,18 +172,18 @@ const CSS = `
   max-width: 90vw;
   padding: 3px 7px;
   font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #f9fafb;
-  background: #111827;
-  border: 1px solid #374151;
+  color: ${SURFACE_INK};
+  background: ${SURFACE};
+  border: 1px solid ${ACCENT}73;
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
   white-space: nowrap;
 }
-.dz-tag { color: #a5b4fc; font-weight: 600; }
-.dz-dims { color: #9ca3af; }
-.dz-sel { color: #e5e7eb; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.dz-tag { color: ${ACCENT}; font-weight: 600; }
+.dz-dims { color: #8b909a; }
+.dz-sel { color: #c9cdd4; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 .dz-badge {
-  color: #111827; background: ${FRAGILE_COLOR};
+  color: ${FRAGILE_INK}; background: ${FRAGILE_COLOR};
   padding: 0 5px; border-radius: 999px; font-weight: 700; font-size: 10px;
 }
 .dz-hidden { display: none !important; }
@@ -166,6 +212,10 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
   let quickPick = false;
   let hovered: Element | null = null;
   const selected = new Set<Element>();
+  // The single pinned element (a plain click in the armed picker), tracked separately from the
+  // shift-multi set because the panel treats it the same way: `orderedReferences` puts it first.
+  // It exists so the pin gets an outline and the badge numbering matches the chips.
+  let pinned: Element | null = null;
 
   function mkEl(tag: string, className: string): HTMLElement {
     const node = doc.createElement(tag);
@@ -262,19 +312,88 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     ui.pill.classList.add('dz-hidden');
   }
 
+  /** Draw one numbered outline. Split out of `renderSelected` so the pin and the multi-selection
+   *  are drawn by the same code — two renderers would drift, and this one owns the numbering
+   *  contract the panel's chips depend on. */
+  function drawBox(target: Element, index: number): void {
+    if (!ui) return;
+    const sel = pickUnique(target, docOf(target));
+    // Amber + dashed when the only selector we could find is brittle: the warning belongs on
+    // the page, next to the element, not only in a chip the user is not looking at.
+    const box = mkEl('div', `dz-box${sel.fragile ? ' dz-box--fragile' : ''}`);
+    place(box, rectOf(target));
+    // `2 · section.hero` — the index ties this outline to its panel chip, the tag says what was
+    // actually caught. textContent, never innerHTML: the tag string is page-derived.
+    const idx = mkEl('span', 'dz-idx');
+    idx.textContent = `${sel.fragile ? '⚠ ' : ''}${index} · ${describeTag(target)}`;
+    box.appendChild(idx);
+    ui.selectedLayer.appendChild(box);
+  }
+
+  /**
+   * Repaint every committed outline.
+   *
+   * The numbering here is a CONTRACT with the panel: `stores/focus.ts` `orderedReferences` puts
+   * the single pin first and the shift-multi set after it, and the chips are numbered off that
+   * list. So the pin is box 1 and the multi set starts at 2. Numbering the multi set from 1 and
+   * drawing no box at all for the pin (which is what this did) meant every badge on the page was
+   * off by one against the chips it was supposed to identify — the exact confusion the badge
+   * exists to remove.
+   */
   function renderSelected(): void {
     if (!ui) return;
     ui.selectedLayer.textContent = '';
-    for (const target of selected) {
-      const box = mkEl('div', 'dz-box');
-      place(box, rectOf(target));
-      ui.selectedLayer.appendChild(box);
-    }
+    // A pin that was later shift-toggled into the multi set must not be drawn twice.
+    const pin = pinned && !selected.has(pinned) ? pinned : null;
+    // One flat list, numbered by position — the same shape `orderedReferences` builds in the
+    // panel, so the two cannot drift apart as either side is edited later.
+    const ordered = pin ? [pin, ...selected] : [...selected];
+    ordered.forEach((target, i) => {
+      drawBox(target, i + 1);
+    });
   }
 
   function clearSelected(): void {
     selected.clear();
+    pinned = null;
     if (ui) ui.selectedLayer.textContent = '';
+  }
+
+  /** Content-world half of a chip's dismiss — see the `deselect` doc on {@link Picker}. */
+  function deselect(value: string): void {
+    if (pinned && pickUnique(pinned, docOf(pinned)).value === value) {
+      pinned = null;
+      renderSelected();
+      // The pin is not part of `selected`, so there is no multi-selection change to announce —
+      // the panel drops its own pin the moment the chip is dismissed.
+      return;
+    }
+    const hit = [...selected].find((el) => pickUnique(el, docOf(el)).value === value);
+    if (!hit) return;
+    selected.delete(hit);
+    renderSelected();
+    emitMultiSelect();
+  }
+
+  /** Content-world half of an `@` mention — see the `select` doc on {@link Picker}. Resolves the
+   *  value against the live document rather than trusting a remembered node, so a mention of an
+   *  element the page has since re-rendered away is a clean no-op instead of a stale reference. */
+  function select(value: string): boolean {
+    // `querySelector`, not a remembered node: a mention may name an element the page has since
+    // re-rendered away, and a bad selector must be a no-op rather than a throw that kills the
+    // picker. Shadow-piercing values (`>>>`) are deliberately not resolved here — those come from
+    // a real pick, which already put the element in `selected`.
+    let el: Element | null = null;
+    try {
+      el = doc.querySelector(value);
+    } catch {
+      return false;
+    }
+    if (!el || selected.has(el)) return false;
+    selected.add(el);
+    renderSelected();
+    emitMultiSelect();
+    return true;
   }
 
   /** Briefly outline `target` to confirm a quick pick landed. Mounts the shadow host if needed —
@@ -349,6 +468,13 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     const hadMulti = selected.size > 0;
     clearSelected();
     if (hadMulti) emit({ type: 'multi-select-changed', selectors: [] });
+    // Only the ARMED picker leaves a persistent outline. A quick pick (Alt+click) is a one-shot
+    // gesture on a page the user is reading, and its confirmation is the flash below — a box that
+    // stayed behind would be litter on a page nobody asked to annotate.
+    if (active) {
+      pinned = target;
+      renderSelected();
+    }
     emit({
       type: 'element-picked',
       candidates: selectorsFor(target),
@@ -550,5 +676,14 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     ui = null;
   }
 
-  return { start, stop, isActive: () => active, enableQuickPick, disableQuickPick, destroy };
+  return {
+    start,
+    stop,
+    isActive: () => active,
+    deselect,
+    select,
+    enableQuickPick,
+    disableQuickPick,
+    destroy,
+  };
 }

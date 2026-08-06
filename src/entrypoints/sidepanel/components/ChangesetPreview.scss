@@ -125,42 +125,74 @@
     color: var(--dz-fg-body);
   }
 
-  &__changes-wrap {
-    @include mixins.scroll-area('x', false);
-  }
-
-  &__changes {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: tokens.$dz-font-xs;
-
-    th {
-      text-align: left;
-      font-weight: tokens.$dz-weight-medium;
-      color: var(--dz-fg-muted);
-      padding: tokens.$dz-space-1;
-      border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
-    }
-
-    td {
-      padding: tokens.$dz-space-1;
-      vertical-align: top;
-      word-break: break-word;
-    }
+  // One property's before -> after. The property name sits above its own well, so a card with
+  // four changed properties reads as four labelled deltas rather than as a twelve-cell grid.
+  &__delta {
+    display: flex;
+    flex-direction: column;
+    gap: tokens.$dz-space-1;
   }
 
   &__prop {
+    margin: 0;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+  }
+
+  // The recessed well the two rows share — one box, one hairline between them, so the pair
+  // reads as a single before/after unit and not as two unrelated lines.
+  &__well {
+    overflow: hidden;
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-sm;
+  }
+
+  &__row {
+    display: flex;
+    gap: tokens.rem(6);
+    padding: tokens.rem(5) tokens.$dz-space-2;
+
+    &--after {
+      border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
+    }
+  }
+
+  // A fixed gutter column: it keeps both values on a common left edge, so a long wrapping
+  // value never runs under its own sign.
+  &__sign {
     @include mixins.mono(tokens.$dz-font-xs);
-    color: var(--dz-fg);
+    flex: none;
+    width: tokens.$dz-space-3;
+    line-height: 1.5;
+
+    .dz-diff__row--before & {
+      color: var(--dz-status-error);
+    }
+
+    .dz-diff__row--after & {
+      color: var(--dz-status-connected);
+    }
   }
 
-  &__before {
-    color: var(--dz-fg-muted);
-    text-decoration: line-through;
-  }
+  &__value {
+    @include mixins.mono(tokens.$dz-font-xs);
+    flex: 1;
+    min-width: 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
 
-  &__after {
-    color: var(--dz-status-connected);
+    .dz-diff__row--before & {
+      color: var(--dz-fg-muted);
+      text-decoration: line-through;
+      // The strike is what says "gone"; at full strength it also made the old value harder to
+      // read than the new one, which is backwards when you are checking what changed.
+      text-decoration-color: color-mix(in srgb, var(--dz-status-error) 50%, transparent);
+    }
+
+    .dz-diff__row--after & {
+      color: var(--dz-fg-body);
+    }
   }
 
   &__text {

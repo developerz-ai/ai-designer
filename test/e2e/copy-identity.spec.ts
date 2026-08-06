@@ -1,7 +1,7 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { renderIdentityTokens } from '@/changeset/report-md';
 import type { IdentityResult, ToolResult } from '@/shared/messages';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the slice-14 copy spine (`14-describe-identity.md`) driven against a loaded, real Chromium —
 // "copy a reference fixture → extract its identity → apply it to the user's own page → render the
@@ -107,7 +107,7 @@ async function stubChat(context: BrowserContext, turns: string[]): Promise<ChatR
 }
 
 async function configureProvider(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-14');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');

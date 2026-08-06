@@ -32,14 +32,30 @@ vi.mock('@/entrypoints/sidepanel/stores/focus', async () => {
   const { createSignal } = await import('solid-js');
   const [selector, setSelector] = createSignal<StableSelector | null>(null);
   const [pickerActive, setPickerActive] = createSignal(false);
+  // `ElementRefs` (rendered by Composer) reads the multi-select half of the store too, and
+  // derives its numbered chips through `orderedReferences`. Both are part of the store's real
+  // surface, so the fake carries them rather than letting the component throw on `undefined()`.
+  const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
+  // The `@` menu (#175) reads the session's recents and attaches through `mentionReference`.
+  // Empty by default, so every assertion below sees the composer with no menu — which is also
+  // the state a fresh panel is in.
+  const [recentReferences, setRecentReferences] = createSignal<StableSelector[]>([]);
   return {
     selector,
     pickerActive,
+    multiSelectors,
+    recentReferences,
+    mentionReference: vi.fn(async () => {}),
+    orderedReferences: (pin: StableSelector | null, multi: StableSelector[]) =>
+      pin ? [pin, ...multi] : multi,
+    removeReference: vi.fn(),
     startPicker: vi.fn(async () => {}),
     stopPicker: vi.fn(async () => {}),
     clearFocus: vi.fn(),
     __setSelector: setSelector,
     __setPickerActive: setPickerActive,
+    __setMultiSelectors: setMultiSelectors,
+    __setRecentReferences: setRecentReferences,
   };
 });
 
@@ -122,13 +138,20 @@ describe('Composer — accessible names', () => {
     expect(focus.startPicker).toHaveBeenCalledOnce();
   });
 
-  it('marks attach as pressed while an element is pinned', () => {
+  // Pressed tracks the PICKER, not the pin. It used to stay pressed for as long as anything was
+  // attached, which made an accent-filled button the composer's resting state — and now that
+  // attached elements render as chips directly above the shell, it was saying the same thing
+  // twice. Pressed now means exactly "the next click on the page will be captured".
+  it('marks attach as pressed while the picker is armed, not merely while something is pinned', () => {
     render(() => <Composer />);
-    focus.__setSelector(PICKED);
+    const attach = () =>
+      screen.getByRole('button', { name: 'Pick an element to attach as context' });
 
-    expect(
-      screen.getByRole('button', { name: 'Pick an element to attach as context' }),
-    ).toHaveAttribute('aria-pressed', 'true');
+    focus.__setSelector(PICKED);
+    expect(attach()).toHaveAttribute('aria-pressed', 'false');
+
+    focus.__setPickerActive(true);
+    expect(attach()).toHaveAttribute('aria-pressed', 'true');
   });
 });
 

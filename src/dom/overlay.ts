@@ -62,9 +62,19 @@ const IDLE_LABEL = 'ready';
 
 // Self-contained palette — the overlay lives in the page's world inside a shadow root and can't
 // reach the panel's SCSS tokens (src/styles/_tokens.scss), so its colours are defined here,
-// CSS-isolated from both sides. Mirrors the picker's hover/selected hues.
-const READ = '#6366f1'; // indigo — read/query + default outline
-const ACT = '#10b981'; // emerald — mutate/act outline + live dot
+// CSS-isolated from both sides. Mirrors the picker's hues, which are now the panel's.
+//
+// Read and act stay two different values, but both come off the brand ramp: a READ is the agent
+// looking (muted, a hairline), an ACT is the agent changing your page (accent, solid). That is a
+// distinction worth keeping — it is the difference between "it is thinking" and "it just edited
+// something" — and it is the last place in the product still using someone else's palette.
+const READ = '#8b909a'; // muted — read/query, the agent inspecting
+const ACT = '#f97316'; // brand accent — mutate/act, the agent changing something
+const CARD = '#171a21';
+const CARD_LINE = '#232733';
+const INK = '#e6e8eb';
+const INK_MUTED = '#8b909a';
+const INK_STRONG = '#edeff2';
 const HOST_STYLE =
   // One below the picker's max z-index so the user-driven picker always sits on top of the overlay.
   'all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483646;';
@@ -74,50 +84,66 @@ const CSS = `
   position: fixed; top: 0; left: 0;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px solid ${READ};
-  background: ${READ}1f;
-  border-radius: 2px;
-  transition: transform 90ms ease-out, width 90ms ease-out, height 90ms ease-out;
+  border: 1px dashed ${READ}99;
+  background: transparent;
+  border-radius: 4px;
+  transition: transform 90ms ease-out, width 90ms ease-out, height 90ms ease-out,
+    border-color 120ms ease-out, background-color 120ms ease-out;
   will-change: transform, width, height;
 }
-.dz-mark.dz-act { border-color: ${ACT}; background: ${ACT}1f; }
+/* An ACT is the agent CHANGING your page — it earns the solid accent edge and a wash. A read is
+   a hairline: the agent looks at a dozen elements a turn, and a dozen filled boxes strobing
+   across the page is the reason the overlay was worth turning off. */
+.dz-mark.dz-act { border: 2px solid ${ACT}; background: ${ACT}1a; }
 .dz-card {
-  position: fixed; left: 16px; bottom: 16px;
+  position: fixed; left: 16px; right: 16px; bottom: 16px;
   box-sizing: border-box;
   pointer-events: none;
-  width: 320px; max-width: calc(100vw - 32px);
+  margin: 0 auto;
+  max-width: 460px;
   padding: 10px 12px;
-  font: 500 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #e5e7eb;
-  background: rgba(17, 24, 39, 0.95);
-  border: 1px solid #374151;
-  border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36);
+  font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: ${INK};
+  background: ${CARD};
+  border: 1px solid ${CARD_LINE};
+  border-radius: 12px;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
 }
-.dz-head { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.dz-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .dz-dot {
   width: 8px; height: 8px; border-radius: 999px;
   background: ${ACT}; box-shadow: 0 0 0 3px ${ACT}33;
   animation: dz-pulse 1.4s ease-in-out infinite;
 }
 .dz-title {
-  color: #9ca3af; font-weight: 600; font-size: 11px;
-  letter-spacing: 0.04em; text-transform: uppercase;
+  color: ${INK_MUTED}; font-weight: 500; font-size: 11px;
+  letter-spacing: 0.06em; text-transform: uppercase;
 }
+/* The current step, in the reading face — this is the one line a user actually reads, and
+   monospacing a sentence for the sake of the selector under it made it slower to scan. */
 .dz-now {
   display: block;
-  color: #f9fafb; font-weight: 600;
+  color: ${INK_STRONG}; font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  border-left: 2px solid ${READ}; padding-left: 8px;
 }
-.dz-now.dz-act { border-left-color: ${ACT}; }
-.dz-log { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.dz-log {
+  margin: 8px 0 0; padding: 8px 0 0; list-style: none;
+  display: flex; flex-direction: column; gap: 3px;
+  border-top: 1px solid ${CARD_LINE};
+}
+/* History, in mono: these ARE selectors and tool names, and the machine face is what makes two
+   similar selectors distinguishable at 11px. */
 .dz-log-item {
-  color: #9ca3af; font-size: 11px; opacity: 0.85;
+  color: ${INK_MUTED};
+  font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dz-hidden { display: none !important; }
 @keyframes dz-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .dz-dot { animation: none; }
+  .dz-mark { transition: none; }
+}
 `;
 
 interface Ui {

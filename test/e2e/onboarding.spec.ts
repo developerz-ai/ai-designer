@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures';
+import { expect, openRoom, test } from './fixtures';
 
 // E2E — the first-run onboarding guide (slice 24). On an empty profile the guide auto-shows as a
 // modal overlay (`data-testid="first-run-onboarding"`); every other panel spec suppresses it via
@@ -71,7 +71,7 @@ test('the guide is re-entrant from Settings after being dismissed', async ({
   await expect(panel.getByTestId('first-run-onboarding')).toBeHidden();
 
   // Re-open it from Settings — the tabs are reachable now the overlay is gone.
-  await panel.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(panel, 'Settings');
   await panel.getByRole('button', { name: 'Show setup guide' }).click();
   await expect(panel.getByTestId('first-run-onboarding')).toBeVisible();
 });

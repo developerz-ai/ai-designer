@@ -83,7 +83,7 @@ export function ChangesetPreview() {
             disabled={busy() || !canUndo()}
             onClick={() => void undoEdit()}
           >
-            <Icon name="undo" size="sm" />
+            <Icon name="undo" size="sm" class="dz-icon--fixed" />
           </button>
           <button
             type="button"
@@ -92,7 +92,7 @@ export function ChangesetPreview() {
             disabled={busy() || !canRedo()}
             onClick={() => void redoEdit()}
           >
-            <Icon name="redo" size="sm" />
+            <Icon name="redo" size="sm" class="dz-icon--fixed" />
           </button>
           <button
             type="button"
@@ -101,7 +101,7 @@ export function ChangesetPreview() {
             onClick={handleClear}
             onPointerLeave={disarmClear}
           >
-            <Icon name="trash" size="sm" />{' '}
+            <Icon name="trash" size="sm" class="dz-icon--fixed" />{' '}
             {clearArmed() ? i18n.t('diff.clearArmed') : i18n.t('diff.clear')}
           </button>
         </div>
@@ -168,29 +168,35 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
 
       <p class="dz-diff__intent">{props.edit.intent}</p>
 
+      {/* A stacked −/+ well, not a three-column table. 328px cannot hold two wrapping mono
+          values side by side: `clamp(3.25rem, 6vw, 4rem)` next to `3.25rem` either forced a
+          horizontal scroller or shredded both values into one-word columns. Stacked, each value
+          gets the full width and the gutter glyph carries the direction — the same shape every
+          diff anyone has ever read uses. */}
       <Show when={props.edit.changes.length > 0}>
-        <div class="dz-diff__changes-wrap">
-          <table class="dz-diff__changes">
-            <thead>
-              <tr>
-                <th>{i18n.t('diff.changes.property')}</th>
-                <th>{i18n.t('diff.changes.before')}</th>
-                <th>{i18n.t('diff.changes.after')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={props.edit.changes}>
-                {(c) => (
-                  <tr>
-                    <td class="dz-diff__prop">{c.prop}</td>
-                    <td class="dz-diff__before">{c.before ?? '∅'}</td>
-                    <td class="dz-diff__after">{c.after}</td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
-        </div>
+        <For each={props.edit.changes}>
+          {(c) => (
+            // The modifier keeps a style delta distinguishable from an attribute one now that
+            // both take the same shape — they used to be two separate tables.
+            <div class="dz-diff__delta dz-diff__delta--style">
+              <p class="dz-diff__prop">{c.prop}</p>
+              <div class="dz-diff__well">
+                <div class="dz-diff__row dz-diff__row--before">
+                  <span class="dz-diff__sign" aria-hidden="true">
+                    −
+                  </span>
+                  <span class="dz-diff__value">{c.before ?? '∅'}</span>
+                </div>
+                <div class="dz-diff__row dz-diff__row--after">
+                  <span class="dz-diff__sign" aria-hidden="true">
+                    +
+                  </span>
+                  <span class="dz-diff__value">{c.after}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </For>
       </Show>
 
       <Show when={props.edit.classes.length > 0}>
@@ -207,29 +213,30 @@ function EditCard(props: { edit: Edit; index: number; disabled: boolean }) {
         </div>
       </Show>
 
+      {/* Attribute deltas take the identical shape — one grammar for "this became that",
+          wherever it appears in the card. */}
       <Show when={props.edit.attrs.length > 0}>
-        <div class="dz-diff__changes-wrap">
-          <table class="dz-diff__changes dz-diff__attrs">
-            <thead>
-              <tr>
-                <th>{i18n.t('diff.attrs.attribute')}</th>
-                <th>{i18n.t('diff.changes.before')}</th>
-                <th>{i18n.t('diff.changes.after')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={props.edit.attrs}>
-                {(a) => (
-                  <tr>
-                    <td class="dz-diff__prop">{a.name}</td>
-                    <td class="dz-diff__before">{a.before ?? '∅'}</td>
-                    <td class="dz-diff__after">{a.after ?? '∅'}</td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
-        </div>
+        <For each={props.edit.attrs}>
+          {(a) => (
+            <div class="dz-diff__delta dz-diff__delta--attr">
+              <p class="dz-diff__prop">{a.name}</p>
+              <div class="dz-diff__well">
+                <div class="dz-diff__row dz-diff__row--before">
+                  <span class="dz-diff__sign" aria-hidden="true">
+                    −
+                  </span>
+                  <span class="dz-diff__value">{a.before ?? '∅'}</span>
+                </div>
+                <div class="dz-diff__row dz-diff__row--after">
+                  <span class="dz-diff__sign" aria-hidden="true">
+                    +
+                  </span>
+                  <span class="dz-diff__value">{a.after ?? '∅'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </For>
       </Show>
 
       <Show when={props.edit.structural}>

@@ -1,42 +1,117 @@
 @use '../../../../styles/tokens' as tokens;
 @use '../../../../styles/mixins' as mixins;
 
-// Leo's context card: a full-width card sitting directly above the composer shell, sharing its
-// left/right edges, rather than a small pill floated to one side. Look only — the markup stays a
-// single-line label (`describeSelector` produces one string, and both an e2e assertion and its
-// unit test match it whole), so the two-line variant of Leo's card is deliberately not attempted.
-.dz-context-chip {
-  @include mixins.card('card', tokens.$dz-space-2 tokens.$dz-space-3, tokens.$dz-radius-lg);
-  display: flex;
-  align-items: center;
-  gap: tokens.$dz-space-2;
-  // Full width of the composer column — was `inline-flex` + `align-self: flex-start` + a margin,
-  // which left it visibly narrower than, and misaligned with, the shell below it.
-  width: 100%;
-  color: var(--dz-fg);
-  font-size: tokens.$dz-font-sm;
-  line-height: tokens.$dz-leading-snug;
-  // The accent edge is the "pinned" signal; it replaces the old color-mix border.
-  border-color: color-mix(in srgb, var(--dz-accent) 45%, var(--dz-border-subtle));
+// One attached element. A tinted capsule in the accent hue — the same value pair its rectangle
+// uses on the page, so the chip and the outline read as one object seen twice. Amber replaces
+// the accent when the selector is fragile: hue, not only a glyph, because a fragile reference is
+// the one that will silently stop resolving.
+//
+// A capsule, not the full-width card this used to be: the row now holds SEVERAL references, and
+// a stack of full-width cards above the composer ate the thread.
+.dz-context-chip-wrap {
+  display: inline-flex;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: tokens.$dz-space-1;
+}
 
-  &--picking {
-    border-color: var(--dz-accent);
-    color: var(--dz-fg-muted);
+.dz-context-chip {
+  @include mixins.tinted-chip(var(--dz-accent-fill), var(--dz-accent-line));
+  padding-right: tokens.rem(3);
+  padding-left: tokens.rem(6);
+  animation: dz-chip-in var(--dz-motion-base) var(--dz-ease);
+  transition:
+    background-color var(--dz-motion-fast) var(--dz-ease),
+    border-color var(--dz-motion-fast) var(--dz-ease);
+
+  &--fragile {
+    background: var(--dz-warn-fill);
+    border-color: var(--dz-warn-line);
   }
 
-  &__label {
-    @include mixins.mono(tokens.$dz-font-sm);
-    @include mixins.truncate;
-    // Takes the slack so the dismiss button stays pinned right and the selector truncates
-    // instead of pushing it out of the card at 360px.
-    flex: 1;
+  // The picker's own status, not a reference: no index, and the spinning crosshair is what
+  // says "still going" rather than sitting still like something already attached.
+  &--picking {
+    padding-left: tokens.$dz-space-2;
+    border-color: var(--dz-accent);
+    color: var(--dz-accent);
+  }
 
-    &--fragile {
+  // Mono so a two-digit index is the same width as a one-digit one and the chips in a row keep
+  // a common left edge.
+  &__index {
+    @include mixins.mono(tokens.$dz-font-xs);
+    flex: none;
+    color: var(--dz-accent);
+    font-weight: tokens.$dz-weight-semibold;
+    line-height: 1;
+
+    .dz-context-chip--fragile & {
       color: var(--dz-status-warning);
     }
   }
 
+  &__fragile {
+    display: inline-flex;
+    flex: none;
+    color: var(--dz-status-warning);
+  }
+
+  // The human name, and the disclosure for the raw selector under it. A button rather than a
+  // span: revealing what a reference resolves to is an action, and it must be reachable without
+  // a pointer.
+  &__label {
+    @include mixins.truncate;
+    max-width: tokens.rem(136);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--dz-fg);
+    font: inherit;
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+    line-height: tokens.$dz-leading-snug;
+    text-align: left;
+    cursor: pointer;
+
+    @include mixins.focus-ring(tokens.rem(1));
+
+    .dz-context-chip--picking & {
+      color: inherit;
+      cursor: default;
+    }
+  }
+
+  // `$hit: false` + an explicit 28px target, NOT the default 44px. `hit-target` centres an
+  // absolutely-positioned box on the control, so a 44px pointer area on an 18px button reaches
+  // 13px past it on every side — far enough to cover the last ~9px of the label beside it (which
+  // is itself a button, and statically positioned, so it hit-tests underneath). Clicking the end
+  // of a truncated element name DELETED the reference instead of revealing its selector. 28px
+  // overhangs 5px, exactly the chip's inner gap, so it reaches the label's edge and stops; the
+  // 6px row gap keeps it off the neighbouring chip too. 28px still clears WCAG 2.5.8 AA (24px).
   &__dismiss {
-    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm, true, 'muted');
+    @include mixins.icon-button(tokens.rem(18), var(--dz-radius-pill), false, 'muted');
+    @include mixins.hit-target(tokens.$dz-control-sm);
+    font-size: tokens.$dz-font-xs;
+
+    &:hover {
+      background-color: var(--dz-wash-active);
+      color: var(--dz-fg);
+    }
+  }
+
+  // The selector the chip actually stands for. An inset well UNDER the chip rather than inside
+  // it — a 120-character CSS path cannot live in a capsule at 360px.
+  &__detail {
+    @include mixins.mono(tokens.$dz-font-xs);
+    max-width: 100%;
+    padding: tokens.$dz-space-1 tokens.rem(6);
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+    line-height: tokens.$dz-leading-snug;
+    overflow-wrap: anywhere;
+    animation: dz-rise var(--dz-motion-fast) var(--dz-ease);
   }
 }

@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // Stub the openai-compatible /models endpoint the extension's service worker calls
 // directly for BYOK validate + list-models (src/agent/provider.ts: raw SW-side fetch, no
@@ -29,7 +29,7 @@ test('OpenRouter preset: BYOK key validates, lists models, and persists (decrypt
   ]);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await expect(page.locator('#dz-preset')).toHaveValue('openrouter'); // default preset
 
   await page.locator('#dz-key').fill('sk-or-test-123');
@@ -43,7 +43,7 @@ test('OpenRouter preset: BYOK key validates, lists models, and persists (decrypt
   // Reload resets the ephemeral save-status; hasKey (loaded from the SW) drives the
   // idle-state status text instead — see stores/settings.ts statusText().
   await page.reload();
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await expect(page.locator('#dz-key')).toHaveAttribute('placeholder', /saved/);
   await expect(page.locator('.dz-settings__status')).toHaveText('Key saved.');
   await expect(page.locator('#dz-model')).toHaveValue('test/vision');
@@ -72,7 +72,7 @@ test('Custom base URL: validate -> list models -> persist across reload', async 
   await stubModels(context, base, [{ id: 'custom/vision', name: 'Custom Vision' }]);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-preset').selectOption('custom');
   await page.locator('.dz-settings__url').fill(base);
   await page.locator('#dz-key').fill('sk-custom-test-456');
@@ -82,7 +82,7 @@ test('Custom base URL: validate -> list models -> persist across reload', async 
   await expect(page.locator('.dz-settings__status')).toHaveText('Provider saved and reachable.');
 
   await page.reload();
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await expect(page.locator('#dz-preset')).toHaveValue('custom');
   await expect(page.locator('.dz-settings__url')).toHaveValue(base);
   await expect(page.locator('#dz-key')).toHaveAttribute('placeholder', /saved/);

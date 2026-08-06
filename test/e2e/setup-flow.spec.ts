@@ -1,5 +1,5 @@
 import type { BrowserContext } from '@playwright/test';
-import { expect, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the whole first-run path a new user walks — install → the panel tells you setup is needed
 // → configure a provider → start → the conversation. Every step used to name its next action
@@ -62,7 +62,7 @@ test('a configured-but-not-started panel offers Start from the chat surface itse
   await stubProvider(context);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-flow2');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/flow');
@@ -71,7 +71,7 @@ test('a configured-but-not-started panel offers Start from the chat surface itse
 
   // Back to Chat WITHOUT using the post-save CTA: the pre-Start screen has itself re-read
   // readiness and now offers Start rather than repeating the setup instruction.
-  await page.getByRole('button', { name: 'Chat' }).click();
+  await openRoom(page, 'Chat');
   await expect(
     page.getByText('Start a session and tell the agent what to change on this page.'),
   ).toBeVisible();
@@ -86,7 +86,7 @@ test('the readiness pill reads green without a spinner while a session is open',
   await stubProvider(context);
   const page = await openExtensionPage('sidepanel.html');
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await openRoom(page, 'Settings');
   await page.locator('#dz-key').fill('sk-or-test-flow3');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('#dz-model')).toHaveValue('test/flow');

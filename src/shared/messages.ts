@@ -152,6 +152,24 @@ export const ClearKey = z.object({ type: z.literal('clear-openrouter-key') });
 // content). Distinct from the agent's DomTool calls; the picker is never agent-run.
 export const StartPicker = z.object({ type: z.literal('start-picker') });
 export const StopPicker = z.object({ type: z.literal('stop-picker') });
+// Detach ONE already-selected element (a reference chip's dismiss). `multi-select-changed` is
+// the only write path into the panel's multi-selection, so a panel-local removal was reverted by
+// the picker's next echo — the user's detach undone, and the agent grounded on an element they
+// explicitly removed. The removal therefore has to reach the content world and come back through
+// the same relay. Identified by the selector VALUE, which is what the panel holds.
+export const DeselectElement = z.object({
+  type: z.literal('deselect-element'),
+  value: z.string(),
+});
+// Attach an element by selector, with no pick gesture — the composer's `@` menu (#175). Exactly
+// the mirror of `deselect-element`, and for the same reason: the picker owns the committed
+// selection, so a panel-local ADD would be wiped by the next `multi-select-changed` echo. Routing
+// it through the content world means a mention and a shift-click are indistinguishable downstream
+// — one write path into the reference set, not two.
+export const SelectElement = z.object({
+  type: z.literal('select-element'),
+  value: z.string(),
+});
 
 // --- MCP servers (panel <-> service worker) -------------------------------
 // Server management + auth: docs/idea/mcp.md. Mirrors the non-secret shape persisted by
@@ -445,6 +463,8 @@ export const PanelToSw = z.discriminatedUnion('type', [
   ClearKey,
   StartPicker,
   StopPicker,
+  DeselectElement,
+  SelectElement,
   McpAdd,
   McpRemove,
   McpList,
@@ -794,6 +814,55 @@ export const A11ySnapshotInput = z.object({
   selector: z.string(),
   ...Target.shape,
 });
+// One tool call, many mutations (#173). A restyle turn fires `setStyle` six to ten times, and
+// every one of them was its own model step AND its own `chrome.tabs.sendMessage` round-trip.
+// `parallelToolCalls` does not fix that — it is already the OpenRouter default (verified in
+// ai-task-master, `editor-fanout.ts:368`), and the model still has to decide to use it. A
+// batch-shaped TOOL is what aitm actually leans on (`MultiEdit`/`MultiBash`, `worker.ts:12`).
+//
+// Deliberately restricted to the property-level mutations. Structural ops (`insertNode`,
+// `moveNode`, `removeNode`) are excluded because each one moves the anchors the later ops in the
+// same array were written against — batching those is a footgun, not an optimization. Nesting is
+// excluded for the same reason a batch is not a transaction: there is nothing to gain and a
+// recursion depth to bound.
+export const BatchOp = z.discriminatedUnion('type', [
+  SetStyleInput,
+  SetTextInput,
+  SetAttrInput,
+  AddClassInput,
+  RemoveClassInput,
+]);
+export type BatchOp = z.infer<typeof BatchOp>;
+// 20: past that the failure report stops being readable and one bad selector costs a lot of
+// re-work. It is a guard rail, not a tuned number.
+export const BATCH_MAX_OPS = 20;
+export const BatchInput = z.object({
+  type: z.literal('batch'),
+  ops: z.array(BatchOp).min(1).max(BATCH_MAX_OPS),
+  ...Target.shape,
+});
+export type BatchInput = z.infer<typeof BatchInput>;
+
+/** Per-op outcome of a `batch`, positionally indexed so a failure names WHICH op failed —
+ *  a bare list of results would leave the model guessing which selector was wrong. */
+export const BatchResult = z.object({
+  applied: z.number(),
+  failed: z.number(),
+  results: z.array(
+    z.object({
+      index: z.number(),
+      type: z.string(),
+      ok: z.boolean(),
+      // The op's OWN error, verbatim. Without it every failure collapses to "op #1 failed" and
+      // the model cannot tell a selector that matched nothing (retry with a different one) from
+      // a refusal by the `setAttr` deny-list or the own-chrome guard (never retry) — two
+      // outcomes that call for opposite next moves.
+      error: z.string().optional(),
+    }),
+  ),
+});
+export type BatchResult = z.infer<typeof BatchResult>;
+
 export const UndoInput = z.object({ type: z.literal('undo'), ...Target.shape });
 // `discardUndo` drops the top undo entry WITHOUT reverting it — the deliberate escape when a
 // permanently churned anchor wedges the LIFO top (every `undo` retries the same failing entry).
@@ -820,6 +889,7 @@ export const DomTool = z.discriminatedUnion('type', [
   SetAttrInput,
   AddClassInput,
   RemoveClassInput,
+  BatchInput,
   InsertNodeInput,
   MoveNodeInput,
   RemoveNodeInput,
@@ -841,6 +911,12 @@ export type DiagnosticsToolResult = z.infer<typeof DiagnosticsToolResult>;
 export const PickerCmd = z.discriminatedUnion('type', [
   z.object({ type: z.literal('picker-start') }),
   z.object({ type: z.literal('picker-stop') }),
+  // Drop one element from the picker's committed selection. The picker answers with the usual
+  // `multi-select-changed`, so the panel heals through the reducer it already has rather than
+  // through a second, divergent write path.
+  z.object({ type: z.literal('picker-deselect'), value: z.string() }),
+  // …and add one, for the composer's `@` menu. Same echo, same reducer, same single write path.
+  z.object({ type: z.literal('picker-select'), value: z.string() }),
 ]);
 export type PickerCmd = z.infer<typeof PickerCmd>;
 

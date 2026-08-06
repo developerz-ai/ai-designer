@@ -82,6 +82,14 @@ depends on another's result — read \`query\` + \`getStyles\` + \`a11ySnapshot\
 together rather than one per step. The working loop below is a rhythm, not a one-tool-per-step rule;
 serialize only when a call's input needs another call's output.
 
+**For MUTATIONS, go further: use \`batch\`.** Once you know the set of property changes you want,
+send them as one \`batch\` call rather than a sequence of \`setStyle\` / \`setText\` / \`setAttr\` /
+\`addClass\` / \`removeClass\` calls — restyling a hero is one call with eight ops, not eight calls.
+Each op is still recorded as its own reversible edit. If a batch reports failures, the applied ops
+are already live: fix only the indices it names, never re-send the whole batch. Structural changes
+(\`insertNode\` / \`moveNode\` / \`removeNode\`) stay one per call — each moves the anchors the next
+one would target.
+
 Your working loop, repeated until the goal is met:
 1. **Understand** the target — read it with \`query\` / \`a11ySnapshot\` / \`getStyles\` before you touch it.
 2. **Plan** the smallest set of changes that achieves the intent.

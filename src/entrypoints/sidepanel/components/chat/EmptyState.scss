@@ -1,37 +1,40 @@
 @use '../../../../styles/tokens' as tokens;
 @use '../../../../styles/mixins' as mixins;
 
-// Left-aligned, top-anchored — Leo's intro, not a centred hero. Centring made every line a
-// different length with a ragged edge on both sides, and it put the suggestions in the middle of
-// the panel instead of directly above the composer where the next tap happens.
+// Left-aligned, TOP-anchored — Leo's intro, not a centred hero and not a block pushed down to
+// meet the composer. Centring made every line a different length with a ragged edge on both
+// sides; bottom-anchoring made the intro jump up the panel as the window resized. The intro
+// starts where every other surface starts: at the top, under the tab strip.
 .dz-empty-state {
-  flex: 1;
   display: flex;
+  // Takes the Thread's slot in the column, so it must claim the column's free space the way
+  // `.dz-thread` does. Without it the block sized to its three suggestion rows and the composer
+  // rode up to meet them — docked to the intro, mid-panel, with dead space beneath. The content
+  // stays top-anchored (no `justify-content`); it is the BOX that fills.
+  flex: 1;
   flex-direction: column;
   align-items: flex-start;
-  // Bottom-anchored via `margin-top: auto` on the first child (below), NOT
-  // `justify-content: flex-end`: an over-full flex column with flex-end overflows its START
-  // edge, and since nothing in this column scrolls (see ChatPanel.scss) the title would be
-  // clipped with no way to reach it. An auto margin collapses to 0 under pressure instead.
-  justify-content: flex-start;
   gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-6;
+  padding: tokens.$dz-space-6 tokens.$dz-space-6 tokens.$dz-space-2;
   text-align: left;
+  animation: dz-rise var(--dz-motion-slow) var(--dz-ease);
 
-  // A wrapper span, not the Icon element itself — see EmptyState.tsx.
+  // A wrapper span, not the Icon element itself — see EmptyState.tsx. 24px and outlined: it is
+  // the assistant's mark, not a hero graphic, and at 40px it was the loudest thing on a screen
+  // whose job is to get you typing.
   &__avatar {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
-    width: tokens.$dz-control-lg;
-    height: tokens.$dz-control-lg;
-    // Takes the column's slack, pushing the intro down to sit against the composer.
-    margin-top: auto;
+    width: tokens.$dz-icon-size-md;
+    height: tokens.$dz-icon-size-md;
     margin-bottom: tokens.$dz-space-2;
-    border-radius: var(--dz-radius-pill);
     background: var(--dz-elev-card);
+    border: tokens.$dz-border-width solid var(--dz-border-subtle);
+    border-radius: var(--dz-radius-pill);
     color: var(--dz-accent);
+    font-size: tokens.$dz-font-sm;
   }
 
   &__title {
@@ -58,9 +61,9 @@
   }
 
   &__subtitle {
-    margin: 0 0 tokens.$dz-space-2;
+    margin: tokens.$dz-space-1 0 tokens.$dz-space-2;
     color: var(--dz-fg-body);
-    font-size: tokens.$dz-font-base;
+    font-size: tokens.$dz-font-md;
     line-height: tokens.$dz-leading-body;
   }
 }
