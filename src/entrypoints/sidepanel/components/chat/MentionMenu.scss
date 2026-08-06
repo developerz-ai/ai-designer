@@ -16,6 +16,12 @@
   // contract (it is not a page region) — the same exception ModelPicker's list takes.
   max-height: tokens.rem(216);
   margin: 0;
+  animation: dz-pop var(--dz-motion-fast) var(--dz-ease);
+
+  &.is-leaving {
+    animation: dz-pop-out var(--dz-motion-fast) var(--dz-ease-out) forwards;
+    pointer-events: none;
+  }
 }
 
 .dz-mention__row {

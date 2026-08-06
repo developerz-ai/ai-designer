@@ -10,7 +10,7 @@
   flex: none;
   flex-direction: column;
   gap: tokens.$dz-space-2;
-  padding: tokens.$dz-space-3 tokens.$dz-space-6;
+  padding: tokens.$dz-space-4 tokens.$dz-space-6 tokens.$dz-space-5;
   border-top: tokens.$dz-border-width solid var(--dz-border-subtle);
 
   &__actions {
@@ -78,6 +78,11 @@
   // Opens UPWARD and anchors right. Downward it covered the composer; left-anchored it hung
   // off the panel, since this trigger sits at the right edge of a 360px viewport.
   &__menu {
+    &.is-leaving {
+      animation: dz-pop-out var(--dz-motion-fast) var(--dz-ease-out) forwards;
+      pointer-events: none;
+    }
+
     @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.rem(6));
     position: absolute;
     right: 0;

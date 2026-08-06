@@ -20,32 +20,45 @@
 // Brand palette — developerz.ai primary identity
 $dz-primary: #f97316;
 $dz-accent: #f97316; // same as primary
-$dz-surface: #0f1115; // dark background
-$dz-on-surface: #e6e8eb; // light foreground
+// The panel background. Neutral, not blue-black: #0f1115 carried a cool cast that read as
+// "someone's dark theme", and next to a real page it looked tinted rather than dark.
+$dz-surface: #161618; // dark background
+$dz-on-surface: #e8e8ea; // light foreground
 
 // Semantic color aliases (legacy, mapped to brand palette)
 $dz-bg: $dz-surface;
 $dz-fg: $dz-on-surface;
 $dz-accent-fg: #1a1205; // text on the accent surface (matches ChatPanel)
-$dz-muted: #8b909a;
-$dz-border: #232733;
+// The primary button is a near-white slab with dark text — the one high-contrast object per
+// screen. Not pure #fff: at 16.5:1 on our text colour it is already far past AA, and pure white
+// on a dark panel blooms. The accent is NOT a button fill any more; it survives only in the
+// small semantic marks (streaming caret, reference indices and their page rectangles, the
+// unshipped-work count, on/off switches) — which is what keeps it a signal.
+$dz-solid: #f2f2f4;
+$dz-solid-fg: #161618;
+$dz-solid-hover: #ffffff;
+$dz-muted: #8e8e96;
+$dz-border: #2a2a2e;
 $dz-danger: #ff6b6b;
 
 // ─── Elevation ────────────────────────────────────────────────────────────────
 // Opaque surfaces, not alpha layers — stacking translucent washes drifts as soon as
 // two of them overlap. Steps mirror Nala's page → container → highlight deltas
 // (+8, +8 in 0–255) so density reads the same as Leo at our (bluer) base hue.
+// Re-derived off the neutral #161618 base. The old ramp was blue-tinted (#171a21, #1f232c) and
+// sat only +2 above the new base, which would have collapsed card-against-page into a step you
+// cannot see. Same +8/+8 deltas as before, neutral hue, so density reads identically.
 $dz-elev-base: $dz-surface; // page / panel background
-$dz-elev-card: #171a21; // cards, menus, composer body, message bubbles
-$dz-elev-hover: #1f232c; // hovered/selected row on top of a card
-$dz-elev-inset: #0b0d11; // recessed wells — code blocks, tracks, empty slots
+$dz-elev-card: #1e1e21; // cards, menus, composer body, message bubbles
+$dz-elev-hover: #26262a; // hovered/selected row on top of a card
+$dz-elev-inset: #101012; // recessed wells — code blocks, tracks, empty slots
 
 // ─── Foreground ramp ──────────────────────────────────────────────────────────
 // Long-form prose is NOT the brightest value — Leo caps its brightest text at
 // #e4e4e5 and sets running prose a step below. `$dz-fg` stays the default UI text
 // so nothing existing shifts.
-$dz-fg-strong: #edeff2; // titles, bold runs inside prose
-$dz-fg-body: #c9cdd4; // long-form prose / message bodies
+$dz-fg-strong: #f0f0f2; // titles, bold runs inside prose
+$dz-fg-body: #cbcbd0; // long-form prose / message bodies
 $dz-fg-muted: $dz-muted; // captions, meta, placeholders (5.9:1 on the page bg)
 
 // ─── Borders ──────────────────────────────────────────────────────────────────
@@ -55,7 +68,7 @@ $dz-fg-muted: $dz-muted; // captions, meta, placeholders (5.9:1 on the page bg)
 // actually governs — a boundary that is a control's ONLY visual affordance — and
 // clears 3:1 against base, card AND hover (4.03 / 3.70 / 3.32).
 $dz-border-subtle: $dz-border;
-$dz-border-strong: #6b7285;
+$dz-border-strong: #6e6e75;
 // Hairline width as a token so the "no raw px" rule holds for the ~20 `1px solid`
 // literals too, and so there is one place to revisit if a fractional rem border ever
 // renders unevenly at non-integer device pixel ratios.
@@ -181,6 +194,9 @@ $dz-motion-fast: 120ms; // hover/press feedback
 $dz-motion-base: 180ms; // menus, disclosure
 $dz-motion-slow: 240ms; // panel-level transitions
 $dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles soft
+// Accelerate — starts soft, leaves fast. The mirror of `$dz-ease`, for exits: a decelerating
+// leave animation reads as the element hesitating on its way out.
+$dz-ease-out: cubic-bezier(0.4, 0, 1, 1);
 
 // Runtime CSS custom properties consumed via var(--dz-*). Emitted for values a
 // component may need at runtime (colors, geometry a calc() reads, motion). Purely
@@ -196,6 +212,9 @@ $dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles sof
   --dz-bg: #{$dz-bg};
   --dz-fg: #{$dz-fg};
   --dz-accent-fg: #{$dz-accent-fg};
+  --dz-solid: #{$dz-solid};
+  --dz-solid-fg: #{$dz-solid-fg};
+  --dz-solid-hover: #{$dz-solid-hover};
   --dz-muted: #{$dz-muted};
   --dz-border: #{$dz-border};
   --dz-danger: #{$dz-danger};
@@ -260,6 +279,7 @@ $dz-ease: cubic-bezier(0.2, 0, 0, 1); // decelerate — enters fast, settles sof
   --dz-motion-base: #{$dz-motion-base};
   --dz-motion-slow: #{$dz-motion-slow};
   --dz-ease: #{$dz-ease};
+  --dz-ease-out: #{$dz-ease-out};
   // Type
   --dz-font: #{$dz-font};
   --dz-font-mono: #{$dz-font-mono};
