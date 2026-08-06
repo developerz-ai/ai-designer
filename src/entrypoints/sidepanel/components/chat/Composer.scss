@@ -98,7 +98,7 @@
     // object competing with the send disc two controls to its right.
     &.is-active {
       background-color: var(--dz-accent-fill-strong);
-      border-color: var(--dz-accent-edge);
+      border: tokens.$dz-border-width solid var(--dz-accent-edge);
       color: var(--dz-accent);
 
       &:hover {
