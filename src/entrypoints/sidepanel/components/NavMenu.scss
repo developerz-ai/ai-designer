@@ -81,9 +81,34 @@
     inset-inline-end: auto;
     inset-block-end: auto;
 
+    // Enter AND exit, with no JS at all. `display` is a discrete property, so a popover normally
+    // snaps between `none` and `flex` and any transition on it is skipped — which is why this
+    // menu opened and closed with a hard cut. `transition-behavior: allow-discrete` makes the
+    // browser hold `display` until the rest of the transition finishes, and `@starting-style`
+    // supplies the frame-zero values the element has never had. Chrome 117+; this surface is
+    // Chrome-only, and the `presence.ts` dance exists precisely for the menus that are NOT
+    // popovers and therefore cannot do this.
+    opacity: 0;
+    transform: scale(0.97);
+    transition:
+      opacity var(--dz-motion-fast) var(--dz-ease-out),
+      transform var(--dz-motion-fast) var(--dz-ease-out),
+      display var(--dz-motion-fast) allow-discrete;
+
     &:popover-open {
       display: flex;
       flex-direction: column;
+      opacity: 1;
+      transform: none;
+      transition:
+        opacity var(--dz-motion-base) var(--dz-ease),
+        transform var(--dz-motion-base) var(--dz-ease),
+        display var(--dz-motion-base) allow-discrete;
+
+      @starting-style {
+        opacity: 0;
+        transform: scale(0.97);
+      }
     }
   }
 

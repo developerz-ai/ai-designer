@@ -2,6 +2,17 @@
 @use '../../../styles/mixins' as mixins;
 
 .dz-onboarding {
+  // Exit: App holds this for 200ms after dismissal (presence.ts) so the scrim can fade and the
+  // card can drop away, rather than the whole first-run guide blinking out of existence.
+  &.is-leaving {
+    animation: dz-fade-out var(--dz-motion-base) var(--dz-ease-out) forwards;
+    pointer-events: none;
+
+    .dz-onboarding__card {
+      animation: dz-pop-out var(--dz-motion-base) var(--dz-ease-out) forwards;
+    }
+  }
+
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -197,15 +208,16 @@
     // The card's primary action — accented, not filled, matching `button-primary`. It used to be
     // a solid slab described as "the card's one loud element"; over a scrim, on the very first
     // screen a new user sees, that set the expectation that orange means "big block of colour".
+    // The card's primary action, in the same near-white language as every other primary in the
+    // panel — one shape for "press this", whatever screen it is on.
     &.is-primary {
-      background: var(--dz-accent-fill);
-      border-color: var(--dz-accent-edge);
-      color: var(--dz-accent);
+      background: var(--dz-solid);
+      border-color: transparent;
+      color: var(--dz-solid-fg);
       font-weight: tokens.$dz-weight-semibold;
 
       &:not(:disabled):hover {
-        background: var(--dz-accent-fill-strong);
-        border-color: var(--dz-accent);
+        background: var(--dz-solid-hover);
       }
     }
   }
