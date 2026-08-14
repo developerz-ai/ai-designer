@@ -1,0 +1,15 @@
+# LF in the repo AND in the working tree, on every platform.
+# Biome enforces `lineEnding: "lf"` (biome.json), so a Windows checkout with the default
+# `core.autocrlf=true` fails `bun run lint` on all 331 files at once — every line reads as
+# changed. Pinning `eol=lf` overrides the user's autocrlf for this repo, no per-clone config.
+* text=auto eol=lf
+
+# Binary — never touch, never diff as text.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.crx binary
+*.zip binary
+*.pem binary

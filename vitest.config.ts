@@ -18,7 +18,12 @@ export default defineConfig({
   // Solid compiles JSX to fine-grained reactive calls, not to createElement — without
   // this plugin a mounted component renders nothing and the failure looks like a bug
   // in the component. `ssr: false` keeps the client (DOM) output, which is what jsdom runs.
-  plugins: [solid({ ssr: false })],
+  // `hot: false` because Vitest runs Vite in `serve` mode, so the plugin would inject the
+  // solid-refresh HMR runtime into every `.tsx` spec. Its virtual id `/@solid-refresh` then
+  // reaches `fileURLToPath('file:///@solid-refresh')`, which is a valid POSIX path but NOT a
+  // valid Windows one — so all 24 component specs die on Windows with "argument 'filename'
+  // must be … an absolute path string". Tests never hot-reload; the runtime is pure overhead.
+  plugins: [solid({ ssr: false, hot: false })],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
