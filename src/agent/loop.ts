@@ -40,6 +40,7 @@ import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
 import { createIdentityTool, type IdentityDispatch } from './tools/identity';
 import { createInteractTools, type InteractDeps } from './tools/interact';
+import { providerSafeToolSet } from './tools/provider-schema';
 import { createResourceTools, type NamedTools } from './tools/resources';
 import { createResponsiveTools, type ResponsiveToolDeps } from './tools/responsive';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
@@ -448,7 +449,15 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
   // does not claim passes through as its own tool, which is what keeps `handoff` (the Ship approval
   // gate keys on that exact NAME — see `toolApproval` above), `invalidTool` (the repair channel)
   // and every MCP backend tool reachable and unchanged.
-  return createResourceTools(perVerb as unknown as NamedTools) as ToolSet;
+  //
+  // THEN MAKE EVERY SCHEMA PORTABLE. `providerSafeToolSet` is applied to the whole set, not just the
+  // resources, because "OpenAI-compatible" is a wire format and not a JSON Schema dialect: each
+  // provider validates `function.parameters` its own way and rejects the ENTIRE REQUEST — every tool
+  // with it — when one schema offends. MCP backend tools are the case that makes this set-wide: their
+  // schemas come from third-party servers, so they are exactly where `$ref`, untyped fields and
+  // nullable-as-`anyOf` appear, and BYOK means the endpoint policing them is the user's choice.
+  // Validators are preserved per tool, so this changes only what providers are TOLD.
+  return providerSafeToolSet(createResourceTools(perVerb as unknown as NamedTools)) as ToolSet;
 }
 
 // The ToolResult a guarded call returns once its per-tool budget is exhausted — the model reacts
@@ -602,13 +611,60 @@ export function errorText(err: unknown): string {
   if (isAuthError(err)) {
     return `${AUTH_ERROR_HINT} (provider said: ${err.message})`;
   }
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  // Two classes get re-worded because their raw text sends the reader to the wrong place. Both are
+  // about the TOOL surface, which is the one thing a user has no way to reason about: the provider is
+  // describing our request, in its own vocabulary, about a payload the user never wrote.
+  if (raw && isToolSchemaError(raw)) return `${SCHEMA_ERROR_HINT} (provider said: ${raw})`;
+  if (raw && isNoToolSupportError(raw)) return `${NO_TOOLS_HINT} (provider said: ${raw})`;
+  if (raw) return raw;
   return 'The agent hit an unexpected error.';
 }
 
 const AUTH_ERROR_HINT =
   'Your provider rejected the request as unauthenticated — check the API key in Settings.';
+
+// A schema rejection is OUR bug, and saying so is the useful thing. Nothing in Settings fixes
+// "tools.function.parameters is not a valid moonshot flavored json schema", so a message that only
+// forwards it leaves the user auditing a config that was never wrong. Providers police
+// `function.parameters` with their own validators and disagree (see src/agent/tools/provider-schema.
+// ts); when one rejects us the report has to reach us, so this names the log that carries the detail.
+const SCHEMA_ERROR_HINT =
+  'This build sent tool definitions your provider will not accept — a bug in Designer, not in your ' +
+  'setup. Copy the debug log (Settings → About) and report it.';
+
+// Distinct from the above and NOT our bug: plenty of models cannot call tools at all, which the whole
+// design loop depends on. The fix is a different model, so the message says that rather than
+// implying something is broken.
+const NO_TOOLS_HINT =
+  'This model does not support tool calling, which the design loop needs — pick a different model ' +
+  'in Settings.';
+
+/** A provider refusing our TOOL SCHEMA. Matched on the message because there is nothing structural
+ *  to match: every provider spells it differently ("tools.function.parameters.type is required",
+ *  "not a valid moonshot flavored json schema", "invalid schema for function"). Deliberately narrow —
+ *  it must name the tool payload, not merely contain the word "schema", or a model's own complaint
+ *  about a tool ARGUMENT would be mislabelled as an extension bug. */
+function isToolSchemaError(message: string): boolean {
+  const m = message.toLowerCase();
+  // BOTH signals are required, and that conjunction is the narrowness. `function` earns its place
+  // because providers name the offending tool that way ("Invalid schema for function inspect") with
+  // no mention of "tool" at all; it stays safe only because the schema half must hold too —
+  // "invalid function call arguments" names a function but no schema, and is left alone.
+  const aboutTools = m.includes('tool') || m.includes('function');
+  const aboutSchema =
+    m.includes('parameters') || m.includes('json schema') || m.includes('invalid schema');
+  return aboutTools && aboutSchema;
+}
+
+/** A model that cannot do function calling at all. */
+function isNoToolSupportError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    (m.includes('tool') || m.includes('function call')) &&
+    (m.includes('not support') || m.includes("doesn't support") || m.includes('unsupported'))
+  );
+}
 
 /** A 401/403 from the model call. Read structurally (`statusCode`) rather than via
  *  `APICallError.isInstance`, so a provider that surfaces the same thing through a plain Error

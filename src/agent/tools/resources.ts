@@ -34,7 +34,7 @@ import { type Tool, tool } from 'ai';
 import { z } from 'zod';
 import { Target } from '@/shared/messages';
 import { PageOp } from '@/shared/page-ops';
-import { discriminatedUnionInputSchema } from './provider-schema';
+import { providerSafeInputSchema } from './provider-schema';
 
 /** The structural view of a built tool this module needs. Deliberately not the SDK's `Tool` — the
  *  per-verb builders return precisely-typed tools and we only ever read these four members. */
@@ -157,7 +157,7 @@ const PAGE_OP_NAMES: ReadonlySet<string> = new Set(
 /** One line per operation, so the model can route without a second round-trip. The catalogue is
  *  INLINE deliberately: a `describe_resource` step would buy a step on a surface this small, and a
  *  capability the model cannot discover reads to it as impossible. */
-function opCatalogue(ops: ReadonlyMap<string, BuiltTool>): string {
+function opCatalogue(ops: ReadonlyMap<string, BuiltTool>, resource: ResourceName): string {
   const lines: string[] = [];
   for (const [op, built] of ops) {
     const description = (built.description ?? '').replace(/\s+/g, ' ').trim();
@@ -167,9 +167,25 @@ function opCatalogue(ops: ReadonlyMap<string, BuiltTool>): string {
       lines.push(`- ${[...PAGE_OP_NAMES].map((n) => `\`${n}\``).join(', ')} — ${description}`);
       continue;
     }
-    lines.push(`- \`${op}\` — ${description}`);
+    // The parameter list is NOT decoration. The input schema is flattened to one object for
+    // cross-provider validity (./provider-schema.ts), which means it can no longer say "`prop` is
+    // required when `op` is `setStyle`" — only Zod still enforces that, at call time. So the
+    // per-op contract is stated HERE, where the model reads it, instead of being something it has
+    // to infer from a property bag and get told off for by the repair channel.
+    const params = requiredParamNames(opMember(op, built, resource));
+    const signature = params.length > 0 ? `(${params.join(', ')})` : '()';
+    lines.push(`- \`${op}\`${signature} — ${description}`);
   }
   return lines.join('\n');
+}
+
+/** The parameters an op REQUIRES, discriminator excluded. Read by probing the schema with
+ *  `undefined` rather than by inspecting Zod internals, so an optional field expressed any of the
+ *  ways Zod allows (`.optional()`, `.default()`, a nullable union) is classified by BEHAVIOUR. */
+function requiredParamNames(member: z.ZodObject<z.ZodRawShape>): string[] {
+  return Object.entries(member.shape)
+    .filter(([name, field]) => name !== 'op' && !(field as z.ZodType).safeParse(undefined).success)
+    .map(([name]) => name);
 }
 
 /** `intent`, required — the model-facing half of the bus's optional field. An intentless changeset
@@ -260,7 +276,7 @@ function buildResource(resource: ResourceName, ops: Map<string, BuiltTool>): Too
     .map(([op, built]) => opMember(op, built, resource));
   const all = [...members, ...(ops.has('pageOp') ? pageOpMembers() : [])];
 
-  const catalogue = opCatalogue(ops);
+  const catalogue = opCatalogue(ops, resource);
   const description = `${RESOURCE_BLURB[resource]}\n\nOperations:\n${catalogue}`;
 
   return tool({
@@ -268,12 +284,12 @@ function buildResource(resource: ResourceName, ops: Map<string, BuiltTool>): Too
     // `as never` only because Zod's discriminated-union overload cannot see that a runtime-built
     // array is non-empty; every member is a ZodObject with an `op` literal by construction.
     //
-    // NOT the bare union. A union converts to a root `oneOf` with no `type`, and the OpenAI-compatible
-    // contract requires `function.parameters.type === "object"` — OpenRouter rejects the whole request
-    // with `tools.function.parameters.type is required and must be "object"`, so one union-rooted tool
-    // killed every turn. `discriminatedUnionInputSchema` repairs the root and keeps Zod's validation
-    // verbatim; see ./provider-schema.ts.
-    inputSchema: discriminatedUnionInputSchema(z.discriminatedUnion('op', all as never), 'op'),
+    // NOT the bare union. Providers police `function.parameters` with their own JSON Schema
+    // validators and disagree irreconcilably about unions at the root — OpenRouter demands
+    // `type: "object"` there, Moonshot forbids `type` beside `anyOf` anywhere — so the union is
+    // flattened into one object schema in the portable subset. Zod's validation is kept verbatim, so
+    // per-op requirements are still enforced on every call; see ./provider-schema.ts.
+    inputSchema: providerSafeInputSchema(z.discriminatedUnion('op', all as never), 'op'),
     execute: async (input: unknown, options: unknown) => {
       const record = (input ?? {}) as Record<string, unknown>;
       const op = String(record.op ?? '');

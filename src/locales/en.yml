@@ -394,7 +394,10 @@ contextChip:
   picking: Picking element…
   # Sits beside the Picking… chip. The picker runs on the PAGE, so the panel has to say
   # where to look and how to get out — neither is discoverable from the panel alone.
-  pickingHint: Click an element on the page · Esc to cancel
+  # It says elementS, plural, and that clicking again removes: an armed picker accumulates
+  # (src/dom/picker.ts), and while this line read "Click an element" users reported that
+  # attaching several was impossible. The capability existed; only this sentence was hiding it.
+  pickingHint: Click elements on the page to attach · click again to remove · Esc to finish
   stopPicking:
     ariaLabel: Stop picking
   remove:
