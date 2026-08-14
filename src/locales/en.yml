@@ -64,6 +64,13 @@ about:
     ariaLabel: About
   repoLink: GitHub repository
   issueLink: Report an issue
+  # Copy this conversation's agent trace (tool calls, failures, provider errors) as Markdown, to
+  # paste straight into the issue the link above opens. The label carries its own confirmation.
+  debugLog:
+    copy: Copy debug log
+    copying: Copying…
+    copied: Copied — paste it into your report
+    failed: Could not copy the log
 
 # ─── First-run onboarding (Onboarding.tsx) ────────────────────────────────────────
 onboarding:

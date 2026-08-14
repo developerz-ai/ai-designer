@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { Changeset, emptyChangeset } from '@/shared/changeset';
 import { Mode } from '@/shared/messages';
 import { compactSessionThread } from './thread-compact';
+import { appendBounded, LogEntry } from './turn-log';
 
 // A single conversation message in AI SDK shape. `ModelMessage` isn't exported from `ai`, so
 // derive it from the exported schema — the same schema we validate persisted threads against.
@@ -47,6 +48,11 @@ export const TurnSession = z.object({
   // follow-up message with no mode keyword keeps the running activity instead of silently
   // dropping the copy/debug addendum. Additive + optional: pre-#168 stored sessions parse fine.
   lastMode: Mode.optional(),
+  // This conversation's debug log (`./turn-log.ts`) — the turn's spine (tool calls, failures,
+  // errors) kept per SESSION so a QA report can be pasted without digging the minified service
+  // worker console out of chrome://extensions. Bounded by `LOG_CAP` on append. Additive + defaulted
+  // for the same reason `lastMode` is optional: a session persisted before this field parses fine.
+  log: z.array(LogEntry).default([]),
   updatedAt: z.number(),
 });
 export type TurnSession = z.infer<typeof TurnSession>;
@@ -116,6 +122,7 @@ export class SessionStore {
       messages: [],
       usage: { steps: 0, tokens: 0 },
       status: 'idle',
+      log: [],
       updatedAt: this.now(),
     };
     await this.persist(created);
@@ -145,6 +152,17 @@ export class SessionStore {
   /** Replace a tab's changeset (recorder output — slice 07). */
   async setChangeset(tabId: number, changeset: Changeset): Promise<TurnSession> {
     return this.patch(tabId, { changeset });
+  }
+
+  /** Append one debug-log entry for a tab, ring-buffered at `LOG_CAP`.
+   *
+   *  A NO-OP for a tab with no session yet, rather than a throw: this is called from the turn's
+   *  event fan-out, where a log write must never be the thing that fails a turn. Logging is
+   *  diagnostic — it observes the session, it does not get to break it. */
+  async appendLog(tabId: number, entry: LogEntry): Promise<void> {
+    const current = this.cache.get(tabId);
+    if (!current) return;
+    await this.patch(tabId, { log: appendBounded(current.log, entry) });
   }
 
   /** Forget a tab's session (turn ended / tab closed). No-op for an unknown tab. */

@@ -417,6 +417,14 @@ export type ReadinessState = z.infer<typeof ReadinessState>;
 
 export const Readiness = z.object({ type: z.literal('readiness') });
 
+// Fetch THIS conversation's debug log, already rendered as pasteable Markdown by the service worker
+// (`src/agent/turn-log.ts` `renderTurnLog`). Rendered SW-side rather than shipping raw entries the
+// panel would have to format: the environment header (extension version, model, provider origin)
+// is only knowable in the service worker, and rendering there keeps one format for every consumer.
+export const DebugLogGet = z.object({ type: z.literal('debug-log-get') });
+export const DebugLogResult = z.object({ ok: z.boolean(), markdown: z.string() });
+export type DebugLogResult = z.infer<typeof DebugLogResult>;
+
 // The panel-visible session tri-state: `idle` (pre-Start) -> `running` (session-start) ->
 // `stopped` (session-stop aborted the in-flight turn; the session stays open for the next
 // message). Named + shared so the `session-state` push, the `session-get` reply, and the SW's
@@ -519,6 +527,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   McpAuthStart,
   McpStatusRequest,
   Readiness,
+  DebugLogGet,
   SessionStart,
   SessionStop,
   SessionGet,

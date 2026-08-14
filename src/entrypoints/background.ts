@@ -51,6 +51,7 @@ import { mutationBlockedReason } from '@/agent/tab-guard';
 import { compactForThread } from '@/agent/thread-compact';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
+import { errorLogEntry, logEntryFor, renderTurnLog } from '@/agent/turn-log';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { AUTO_RECORDED_INTENT } from '@/changeset/fold-mutations';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
@@ -266,6 +267,30 @@ export default defineBackground(() => {
   // Per-tab design sessions: in-flight turn thread + accumulated changeset, mirrored to
   // chrome.storage.session so an SW eviction mid-turn resumes with context (src/agent/session).
   const sessions = new SessionStore();
+
+  // The tab whose turn ran most recently — the conversation a service-worker-level error belongs to.
+  // The global handlers below have no tab of their own, and deliberately NOT cleared when a turn
+  // ends: an error that surfaces in the turn's tail (a rejection from an abandoned stream settles
+  // after `turn-done`) still belongs to that conversation's log.
+  let lastTurnTabId: number | null = null;
+
+  // ERRORS THAT ESCAPE THE LOOP. `emitTurn` logs everything the agent loop catches and streams;
+  // an uncaught exception or an unhandled rejection never travels that path and used to reach only
+  // the service-worker console — minified, and behind chrome://extensions. Both are now recorded
+  // into the conversation's log so a pasted report includes the failure the user actually saw.
+  // Listeners only, never handlers: nothing is prevented or swallowed here, so Sentry and the
+  // console still see exactly what they saw before.
+  const logEscapedError = (prefix: string, err: unknown): void => {
+    if (lastTurnTabId === null) return;
+    void sessions.appendLog(lastTurnTabId, errorLogEntry(prefix, err, Date.now())).catch(() => {});
+  };
+  self.addEventListener('unhandledrejection', (event) => {
+    logEscapedError('UNHANDLED', (event as PromiseRejectionEvent).reason);
+  });
+  self.addEventListener('error', (event) => {
+    const e = event as ErrorEvent;
+    logEscapedError('UNCAUGHT', e.error ?? e.message);
+  });
 
   // #9 recorder buffer: content-side MutationEvents per tab. The user-message turn wires it into
   // `recordEdit` (ground-truth fold per selector group) and the turn-done path auto-finalizes
@@ -1039,11 +1064,19 @@ export default defineBackground(() => {
             // Top frame only — same reason as `set-overlay-enabled` below.
             void chrome.tabs.sendMessage(tabId, cmd, { frameId: 0 }).catch(() => {});
           }
+          // Attribute service-worker-level errors to this conversation from here on.
+          lastTurnTabId = tabId;
           const emitTurn = (update: SwToPanel): void => {
             // #168 A: every per-turn stream event carries this turn's id, so the panel folds ONLY
             // same-turn events into its in-flight bubble (a second window's turn can't bleed in).
             postToPanel(stampTurnId(update, turnId));
             forwardOverlayStep(update);
+            // This conversation's debug log. Fire-and-forget with the rejection swallowed: a log
+            // write is diagnostic and must never be what fails a turn (`SessionStore.appendLog` is
+            // itself a no-op for a tab with no session). `logEntryFor` drops everything that isn't
+            // the turn's spine, so `token` deltas never reach storage.
+            const entry = logEntryFor(update, Date.now());
+            if (entry) void sessions.appendLog(tabId, entry).catch(() => {});
           };
 
           // The session/recorder tools (slice 07): `recordEdit`/`undo`/`redo` mutate this tab's
@@ -1708,6 +1741,26 @@ export default defineBackground(() => {
       // --- readiness + session (slice 03) ---------------------------------
       case 'readiness':
         return { ok: true, state: await computeReadiness(mcpManager) };
+
+      // This conversation's debug log, rendered for pasting. Reads the ORIGIN of the provider URL
+      // and never the key — `getProviderConfig` returns the whole config (key included), so the
+      // fields are picked explicitly rather than spread, and `renderTurnLog` redacts on top of that.
+      case 'debug-log-get': {
+        const tab = await resolveTargetTab();
+        const tabId = tab?.id ?? null;
+        const config = await getProviderConfig();
+        const markdown = renderTurnLog(
+          {
+            version: manifestVersion(),
+            model: config?.model ?? '',
+            providerHost: providerOrigin(config?.baseURL),
+            pageUrl: tab?.url ?? '(no tab)',
+            tabId: tabId ?? -1,
+          },
+          (tabId === null ? undefined : sessions.get(tabId)?.log) ?? [],
+        );
+        return { ok: true, markdown };
+      }
       // Marks the session active (primes the agent — see 04) and flips the panel from
       // the readiness/empty state to chat. A stale in-flight turn from a prior session
       // is aborted first so it can never leak tokens into the new one.
@@ -2206,6 +2259,25 @@ function annotatePriorThreadTail(messages: readonly ChatMessage[]): ChatMessage[
 
 /** Stamp `turnId` onto the five per-turn stream events (`token`/`tool-call`/`tool-result`/
  *  `error`/`turn-done`); every other push passes through untouched. */
+/** The build's user-visible version. `version_name` carries a pre-release suffix (`1.2.0-beta.1`)
+ *  that `version` cannot hold, so prefer it — a debug paste should name the exact build. */
+function manifestVersion(): string {
+  const manifest = chrome.runtime.getManifest();
+  return manifest.version_name ?? manifest.version;
+}
+
+/** The provider's ORIGIN, for the debug log's header. Deliberately not the configured URL: a
+ *  base URL can carry a path or query, and a gateway that accepts the key as a query parameter
+ *  would put it in a paste. Origin answers "which endpoint" and can hold nothing secret. */
+function providerOrigin(baseURL: string | undefined): string {
+  if (!baseURL) return '';
+  try {
+    return new URL(baseURL).origin;
+  } catch {
+    return '(unparseable)';
+  }
+}
+
 function stampTurnId(update: SwToPanel, turnId: string): SwToPanel {
   switch (update.type) {
     case 'token':

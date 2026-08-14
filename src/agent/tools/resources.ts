@@ -34,6 +34,7 @@ import { type Tool, tool } from 'ai';
 import { z } from 'zod';
 import { Target } from '@/shared/messages';
 import { PageOp } from '@/shared/page-ops';
+import { discriminatedUnionInputSchema } from './provider-schema';
 
 /** The structural view of a built tool this module needs. Deliberately not the SDK's `Tool` — the
  *  per-verb builders return precisely-typed tools and we only ever read these four members. */
@@ -266,7 +267,13 @@ function buildResource(resource: ResourceName, ops: Map<string, BuiltTool>): Too
     description,
     // `as never` only because Zod's discriminated-union overload cannot see that a runtime-built
     // array is non-empty; every member is a ZodObject with an `op` literal by construction.
-    inputSchema: z.discriminatedUnion('op', all as never),
+    //
+    // NOT the bare union. A union converts to a root `oneOf` with no `type`, and the OpenAI-compatible
+    // contract requires `function.parameters.type === "object"` — OpenRouter rejects the whole request
+    // with `tools.function.parameters.type is required and must be "object"`, so one union-rooted tool
+    // killed every turn. `discriminatedUnionInputSchema` repairs the root and keeps Zod's validation
+    // verbatim; see ./provider-schema.ts.
+    inputSchema: discriminatedUnionInputSchema(z.discriminatedUnion('op', all as never), 'op'),
     execute: async (input: unknown, options: unknown) => {
       const record = (input ?? {}) as Record<string, unknown>;
       const op = String(record.op ?? '');

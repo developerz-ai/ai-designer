@@ -1,5 +1,6 @@
 import { i18n } from '#i18n';
 import { NEW_ISSUE_URL, REPO_URL } from '../../../shared/links';
+import { DebugLogCopy } from './DebugLogCopy';
 import { Icon } from './Icon';
 import './AboutSection.scss';
 
@@ -23,6 +24,8 @@ export function AboutSection() {
         <span>{i18n.t('about.issueLink')}</span>
         <Icon name="externalLink" size="sm" class="dz-icon--fixed" />
       </a>
+      {/* Directly under the issue link, because the useful order is copy → open → paste. */}
+      <DebugLogCopy />
     </section>
   );
 }
