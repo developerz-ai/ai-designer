@@ -2,15 +2,21 @@ import { modelMessageSchema } from 'ai';
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@/agent/session';
 import {
+  approxPromptTokens,
+  COMPACT_AT_WINDOW_FRACTION,
+  capInFlightResults,
   compactForThread,
   compactSessionThread,
+  compactToWindow,
   HIGH_WATER_APPROX_TOKENS,
   IMAGE_OMITTED_PLACEHOLDER,
   IMAGE_PRUNED_PLACEHOLDER,
+  IN_FLIGHT_TEXT_CAP,
   KEEP_NEWEST_IMAGE_SETS,
   pruneInFlightImages,
   SESSION_MEMORY_MARKER,
   TOOL_TEXT_CAP,
+  USER_MEDIA_OMITTED_PLACEHOLDER,
 } from '@/agent/thread-compact';
 
 // thread-compact.ts unit: the pure conversation-memory policies (#168). compactForThread keeps
@@ -112,11 +118,24 @@ describe('compactForThread', () => {
         role: 'user',
         content: [
           { type: 'text', text: 'match this mock' },
-          { type: 'text', text: IMAGE_OMITTED_PLACEHOLDER },
+          { type: 'text', text: USER_MEDIA_OMITTED_PLACEHOLDER },
         ],
       },
     ]);
     roundTrips(compacted);
+  });
+
+  it('never tells the model to "re-capture" a mockup it cannot re-capture', () => {
+    // A user's reference lives on their desktop. `IMAGE_OMITTED_PLACEHOLDER`'s advice ("re-capture
+    // if you need current visuals") points the agent at the LIVE PAGE — the thing it was asked to
+    // change — so a stripped mockup would be replaced by a screenshot of the wrong image.
+    const [compacted] = compactForThread([
+      { role: 'user', content: [{ type: 'image', image: PNG, mediaType: 'image/png' }] },
+    ]);
+    const rendered = JSON.stringify(compacted);
+    expect(rendered).toContain(USER_MEDIA_OMITTED_PLACEHOLDER);
+    expect(rendered).not.toContain(IMAGE_OMITTED_PLACEHOLDER);
+    expect(USER_MEDIA_OMITTED_PLACEHOLDER).toContain('ask the user to re-attach');
   });
 
   it('does not mutate its input', () => {
@@ -143,6 +162,51 @@ describe('pruneInFlightImages', () => {
   it('returns the input array unchanged (same reference) when within the keep window', () => {
     const messages = transcript(KEEP_NEWEST_IMAGE_SETS);
     expect(pruneInFlightImages(messages)).toBe(messages);
+  });
+
+  // The defect this pins: `imageUnits` counted a user message's media as a prunable set, so on any
+  // iterating turn (screenshot → edit → screenshot) two of the AGENT's own captures evicted the
+  // mockup the user attached — and `IMAGE_PRUNED_PLACEHOLDER` then told the model to "re-capture
+  // this view", pointing it at the live page it was asked to change. Agent media is re-capturable
+  // output; user media is irreplaceable input, and the two must not share a budget.
+  describe('user-attached media is never prunable', () => {
+    // A payload that shares no substring with PNG, so `imageCount` counts only agent screenshots.
+    const MOCKUP = 'bW9ja3VwLXBheWxvYWQtbm90LWEtc2NyZWVuc2hvdA'.repeat(40);
+    const withMockup = (shots: number): ChatMessage[] => [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'redesign the hero to match this' },
+          { type: 'image', image: MOCKUP, mediaType: 'image/png' },
+        ],
+      },
+      ...transcript(shots).slice(1),
+    ];
+
+    it('survives verbatim while the agent’s own screenshots age out around it', () => {
+      const messages = withMockup(4);
+      const pruned = pruneInFlightImages(messages);
+      // The user's message is untouched — same reference, so the prompt-cache prefix is stable too.
+      expect(pruned[0]).toBe(messages[0]);
+      expect(JSON.stringify(pruned[0])).toContain(MOCKUP);
+      // …while the agent's screenshots pruned down to the keep window as usual.
+      expect(imageCount(pruned)).toBe(KEEP_NEWEST_IMAGE_SETS);
+      roundTrips(pruned);
+    });
+
+    it('does not consume a slot in the keep window', () => {
+      // One mockup + exactly KEEP_NEWEST_IMAGE_SETS screenshots: if the user's image counted as a
+      // set, the oldest screenshot would be evicted to make room. Nothing may be pruned at all.
+      const messages = withMockup(KEEP_NEWEST_IMAGE_SETS);
+      expect(pruneInFlightImages(messages)).toBe(messages);
+    });
+
+    it('is never rewritten to the "re-capture" placeholder', () => {
+      const pruned = pruneInFlightImages(withMockup(6));
+      const userMessage = JSON.stringify(pruned[0]);
+      expect(userMessage).not.toContain(IMAGE_PRUNED_PLACEHOLDER);
+      expect(userMessage).not.toContain('re-capture');
+    });
   });
 
   it('replaces only the aged-out screenshots, keeping the newest sets intact', () => {
@@ -273,3 +337,204 @@ describe('compactSessionThread', () => {
     expect(tail).toEqual(thread.slice(4)); // the huge (latest) turn is verbatim
   });
 });
+
+// --- capInFlightResults (the in-flight text ceiling) ------------------------------------------
+//
+// THE DEFECT: `TOOL_TEXT_CAP` bounded a tool result only when the turn was PERSISTED — exactly one
+// moment too late. Nothing bounded a result while the turn was still running, and every step
+// re-sends the whole transcript, so one oversized read was re-billed once per remaining step: cost
+// quadratic in result size. Measured on a Hacker-News-shaped DOM, `a11ySnapshot` returns ~22.4k
+// chars (~5.6k tokens) and has NO aggregate ceiling of its own (src/dom/read.ts: depth 12 × 60
+// children per node), which is how a 3-step turn reached 316k tokens and made zero edits.
+
+describe('capInFlightResults', () => {
+  const bigText = 'x'.repeat(IN_FLIGHT_TEXT_CAP + 5_000);
+
+  const textResultOf = (value: string): ChatMessage => textResult('t1', 'a11ySnapshot', value);
+
+  it('returns the input array unchanged (same reference) when nothing is over the cap', () => {
+    const messages: ChatMessage[] = [
+      { role: 'user', content: 'polish the hero' },
+      textResult('t1', 'query', 'small enough'),
+    ];
+    expect(capInFlightResults(messages)).toBe(messages);
+  });
+
+  it('clips an oversized text result and says how to get the rest', () => {
+    const capped = capInFlightResults([textResultOf(bigText)]);
+    const json = JSON.stringify(capped);
+    expect(json).toContain('TRUNCATED');
+    // ACTIONABLE, not merely honest — a bare "truncated" invites the model to reason about what it
+    // cannot see, the confabulation failure `query`'s own marker exists for.
+    expect(json).toContain('NARROWER');
+    expect(json).toContain('You received a PREFIX');
+    expect(json.length).toBeLessThan(JSON.stringify([textResultOf(bigText)]).length);
+    roundTrips(capped);
+  });
+
+  it('is idempotent — a clipped result is not re-clipped on the next step', () => {
+    const once = capInFlightResults([textResultOf(bigText)]);
+    const twice = capInFlightResults(once);
+    // Same reference: the second pass found nothing over the cap, so the prompt prefix is stable
+    // from here. This is the property that keeps prompt caching alive across the turn.
+    expect(twice).toBe(once);
+  });
+
+  it('leaves the honestly-bounded reads completely alone', () => {
+    // `query` (25 matches ≈ 5.5k chars), `describe` (2k), `getStyles` (~440) must pass untouched —
+    // the cap exists for the UNBOUNDED read, not to second-guess the ones that already bound
+    // themselves.
+    const messages = [textResult('t1', 'query', 'q'.repeat(5_500))];
+    expect(capInFlightResults(messages)).toBe(messages);
+  });
+
+  it('clips oversized JSON by downgrading it to text, never to invalid JSON', () => {
+    const message: ChatMessage = {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'j1',
+          toolName: 'diagnostics',
+          output: { type: 'json', value: { blob: bigText } },
+        },
+      ],
+    };
+    const [capped] = capInFlightResults([message]);
+    const part = (capped as { content: Array<{ output: { type: string; value: unknown } }> })
+      .content[0];
+    expect(part?.output.type).toBe('text');
+    expect(String(part?.output.value)).toContain('TRUNCATED');
+    roundTrips([capped as ChatMessage]);
+  });
+
+  it('clips text items inside a multimodal content output but never the image parts', () => {
+    const message: ChatMessage = {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 's1',
+          toolName: 'screenshot',
+          output: {
+            type: 'content',
+            value: [
+              { type: 'text', text: bigText },
+              { type: 'file', data: { type: 'data', data: PNG }, mediaType: 'image/png' },
+            ],
+          },
+        },
+      ],
+    };
+    const capped = capInFlightResults([message]);
+    const json = JSON.stringify(capped);
+    expect(json).toContain('TRUNCATED');
+    expect(json).toContain(PNG); // the image is `pruneInFlightImages`'s business, not this one
+    roundTrips(capped);
+  });
+
+  it('never touches a user message — attachments and instructions are not tool output', () => {
+    const messages: ChatMessage[] = [{ role: 'user', content: bigText }];
+    expect(capInFlightResults(messages)).toBe(messages);
+  });
+});
+
+// --- compactToWindow (proportional, context-window aware) -------------------------------------
+//
+// THE GAP: nothing watched how full the model's REAL context was. `compactSessionThread` fired on a
+// fixed character high-water and only on the PERSISTED thread, so a 32k model and a 1M model were
+// held to the same number — over the wall on one, a fifth of capacity on the other. A full-page
+// overhaul exceeds one turn by nature, so lossless stop-and-resume is load-bearing, not polish.
+
+describe('compactToWindow', () => {
+  /** A turn's worth of messages, each roughly `perMessageChars` long. */
+  const thread = (turns: number, perMessageChars = 4_000): ChatMessage[] => {
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < turns; i++) {
+      messages.push({ role: 'user', content: `ask ${i}: ${'q'.repeat(perMessageChars)}` });
+      messages.push(toolCall(`t${i}`, 'getStyles', {}));
+      messages.push(textResult(`t${i}`, 'getStyles', 'r'.repeat(perMessageChars)));
+    }
+    return messages;
+  };
+
+  it('returns the input array unchanged (same reference) below the threshold', () => {
+    const messages = thread(2);
+    expect(compactToWindow(messages, 1_000_000)).toBe(messages);
+  });
+
+  it('is proportional — the SAME thread compacts on a small window and not on a large one', () => {
+    // This is the whole point: one number cannot serve both.
+    const messages = thread(12);
+    expect(compactToWindow(messages, 1_000_000)).toBe(messages);
+    expect(compactToWindow(messages, 32_000)).not.toBe(messages);
+  });
+
+  it('folds the oldest turns into ONE digest and keeps the recent tail verbatim', () => {
+    const messages = thread(12);
+    const compacted = compactToWindow(messages, 32_000);
+    const digests = compacted.filter(
+      (m) => typeof m.content === 'string' && m.content.startsWith(SESSION_MEMORY_MARKER),
+    );
+    expect(digests).toHaveLength(1);
+    // The most recent turn is never digested — it is the working set.
+    expect(compacted.at(-1)).toBe(messages.at(-1));
+    expect(compacted.length).toBeLessThan(messages.length);
+    roundTrips(compacted);
+  });
+
+  it('actually gets under the threshold it fired on', () => {
+    const compacted = compactToWindow(thread(12), 32_000);
+    expect(approxPromptTokens(compacted)).toBeLessThanOrEqual(
+      Math.floor(32_000 * COMPACT_AT_WINDOW_FRACTION),
+    );
+  });
+
+  it('is idempotent — a second pass returns the same array', () => {
+    const once = compactToWindow(thread(12), 32_000);
+    expect(compactToWindow(once, 32_000)).toBe(once);
+  });
+
+  it('is deterministic — same input, same output', () => {
+    expect(JSON.stringify(compactToWindow(thread(12), 32_000))).toBe(
+      JSON.stringify(compactToWindow(thread(12), 32_000)),
+    );
+  });
+
+  it('PRESERVES user-attached reference material verbatim through a compaction', () => {
+    // The asymmetry `pruneInFlightImages` already honours: a screenshot is re-capturable output, a
+    // mockup off the user's desktop is not. Compaction has to honour it too, or the long overhaul
+    // that most needs compacting is the one that silently loses the design it works towards.
+    const MOCKUP = 'bW9ja3VwLXJlZmVyZW5jZS1wYXlsb2Fk'.repeat(20);
+    const messages: ChatMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'match this mockup' },
+          { type: 'image', image: MOCKUP, mediaType: 'image/png' },
+        ],
+      },
+      ...thread(12),
+    ];
+    const compacted = compactToWindow(messages, 32_000);
+    expect(compacted).not.toBe(messages);
+    // The pixels survive.
+    expect(JSON.stringify(compacted)).toContain(MOCKUP);
+    // …and they are still a real image part, not prose about one.
+    const kept = compacted.find(
+      (m) => m.role === 'user' && typeof m.content !== 'string' && m.content.some(isImagePart),
+    );
+    expect(kept).toBeDefined();
+    roundTrips(compacted);
+  });
+
+  it('degrades safely on a nonsense window rather than compacting forever', () => {
+    const messages = thread(4);
+    expect(compactToWindow(messages, 0)).toBe(messages);
+    expect(compactToWindow(messages, -1)).toBe(messages);
+  });
+});
+
+function isImagePart(part: { type: string }): boolean {
+  return part.type === 'image' || part.type === 'file';
+}

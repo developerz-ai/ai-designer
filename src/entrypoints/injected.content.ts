@@ -1,7 +1,11 @@
+// FIRST import, deliberately: it must run before any `src/shared` schema module is
+// evaluated. See src/dom/zod-jitless.ts.
+import '@/dom/zod-jitless';
 import { defineContentScript } from '#imports';
 import { serveBridge } from '@/dom/bridge';
 import { extractCharts } from '@/dom/charts';
 import { detectFacts } from '@/dom/page-facts';
+import { isMainOp, runMainOp } from '@/dom/page-main-ops';
 
 // MAIN-world bridge server (slice 15F) — the ONLY world that can read the page's own JS (framework
 // internals, chart-lib instances). It answers a NARROW, READ-ONLY RPC from the isolated content world
@@ -32,6 +36,16 @@ export default defineContentScript({
     serveBridge({
       'page-facts': () => detectFacts(window, document),
       'chart-data': () => ({ charts: extractCharts(window, document) }),
+      // The MAIN-world half of the page-operations library (src/dom/page-main-ops.ts): framework
+      // internals, page globals, and calling a function the page already shipped. NO agent-authored
+      // JS runs here — the model picks an op name and supplies JSON, and every line executed is
+      // code we bundled and reviewed. `isMainOp` is a STRUCTURAL guard only; the authoritative
+      // validation is on the isolated side, before the call and again on the reply, because a
+      // validator living in the page's own realm is a validator the page can replace.
+      'page-op': (params) =>
+        isMainOp(params)
+          ? runMainOp(params, window)
+          : { ok: false, error: 'Malformed page operation.' },
     });
   },
 });

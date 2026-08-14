@@ -363,6 +363,13 @@ composer:
     keyboard: Press Enter to send, Shift+Enter for a new line
   attach:
     title: Pick an element to attach as context
+  # A SECOND attach affordance, distinct from the picker above: that one points at the page,
+  # this one brings a file to it. Named for what it takes, not for the verb they share.
+  attachFile:
+    title: Attach an image
+  # Only shown while a file is being dragged over the composer.
+  drop:
+    hint: Drop images to attach them
   send:
     ariaLabel: Send
   stop: Stop
@@ -394,6 +401,42 @@ contextChip:
     n: $1 elements
   clear: Clear
   collapse: Collapse
+
+# ─── Composer attachments (chat/AttachmentTray.tsx, chat/AttachmentChip.tsx) ──────
+# Reference material the user hands the agent: mockups to match, and big pastes promoted out of
+# the field into a named file. Every cap and every size below interpolates as DATA (a number from
+# src/shared/attachments.ts), so the numbers stay in code and only the sentence is translatable.
+attachments:
+  list:
+    ariaLabel: Attached reference material
+  # $1 is a per-draft counter, so two pastes in one message are tellable apart — by the user in
+  # the tray, and by the model, which is told these names.
+  pastedText:
+    name: Pasted text $1
+  pastedImage:
+    name: Pasted image $1
+  detail:
+    # Post-downscale pixels. "Match this at 1536 wide" is a real thing to ask.
+    dimensions: $1 × $2
+    size: $1 KB
+    truncated: $1 · truncated
+  encoding:
+    1: Adding $1 image…
+    n: Adding $1 images…
+  # $1 is the character ceiling. Said once for the whole tray; each cut chip also says "truncated".
+  truncatedNotice: Long pastes are cut to the first $1 characters.
+  # $1 is the attachment's own name — six identical "Remove" buttons is a row nobody can navigate.
+  remove:
+    ariaLabel: Remove $1
+  error:
+    unsupported: $1 is not an image the agent can read — attach a PNG, JPEG, WebP or GIF.
+    imageCap: Up to $1 images per message.
+    textCap: Up to $1 pasted texts per message.
+    totalCap: Up to $1 attachments per message.
+    encode: Could not read $1.
+    tooLarge: $1 is too large to attach, even after resizing.
+    dismiss:
+      ariaLabel: Dismiss this attachment message
 
 # ─── Empty state (chat/EmptyState.tsx) ────────────────────────────────────────────
 empty:

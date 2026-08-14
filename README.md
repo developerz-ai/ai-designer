@@ -34,7 +34,7 @@ The gap: **what you see** (the rendered page) and **what you change** (the sourc
 
 | Step | Where | What happens |
 |------|-------|--------------|
-| Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." |
+| Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." Attach mockups (button, paste or drop) and the agent redesigns the live page towards them. |
 | See | Live page | Agent mutates real DOM/CSS. Instant. You react, refine. |
 | Accept | Side-panel chat | Each change recorded as a structured changeset entry (edit chips + undo). |
 | Ship | MCP handoff | Changeset → dev-agent → finds source → edits code → PR. |

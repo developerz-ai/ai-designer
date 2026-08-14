@@ -1186,9 +1186,23 @@ describe('Conversation / history schemas (slice 08)', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects a message that fails modelMessageSchema (unknown role)', () => {
-    const r = Conversation.safeParse({ ...base, messages: [{ role: 'narrator', content: 'x' }] });
-    expect(r.success).toBe(false);
+  it('bounds messages STRUCTURALLY here — deep validation moved to the service worker', () => {
+    // `Conversation.messages` used to be `z.array(modelMessageSchema)`, which forced this module —
+    // imported at RUNTIME by `src/dom/bridge.ts`, and through it by the MAIN-world injected script —
+    // to pull the entire `ai` SDK into every frame of every page (and with it Zod's `new Function`
+    // JIT probe, which strict-CSP sites report as TrustedScript violations). The bus now carries the
+    // ModelMessage TYPE with a cheap structural guard, and `agent/history-store.ts` runs the real
+    // `modelMessageSchema` over each entry on rehydrate — see `shared-import-graph.test.ts`, which
+    // fails if the value import ever comes back.
+    expect(
+      Conversation.safeParse({ ...base, messages: [{ role: 'narrator', content: 'x' }] }).success,
+    ).toBe(true);
+    // Non-objects are still refused, and the COUNT is still bounded.
+    expect(Conversation.safeParse({ ...base, messages: ['nope'] }).success).toBe(false);
+    expect(
+      Conversation.safeParse({ ...base, messages: new Array(HISTORY_MAX_MESSAGES + 1).fill({}) })
+        .success,
+    ).toBe(false);
   });
 
   it('ConversationSummary drops messages/report in favor of counts', () => {

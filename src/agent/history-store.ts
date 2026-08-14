@@ -34,6 +34,31 @@ const CAP = 10;
 const MAX_STRING_CHARS = 4_000;
 const IMAGE_PLACEHOLDER = '[image omitted from history]';
 
+/**
+ * Re-validate a rehydrated conversation's thread against the REAL `modelMessageSchema`, dropping
+ * any message that no longer parses.
+ *
+ * This is the service-worker half of a deliberate split. `Conversation.messages` used to be
+ * `z.array(modelMessageSchema)` in `@/shared/messages`, which forced that module — imported at
+ * runtime by `src/dom/bridge.ts`, and through it by the MAIN-world injected script — to pull the
+ * entire `ai` SDK into every frame of every page (and with it Zod's `new Function` JIT probe, which
+ * strict-CSP sites report as `TrustedScript` violations). The shared schema now bounds the COUNT
+ * with a type-carrying structural guard, and the SHAPE is enforced here, where the SDK legitimately
+ * lives. Same guarantee as before — a corrupt or stale-schema message never reaches the model — with
+ * none of the weight on the page.
+ *
+ * Per-MESSAGE salvage, mirroring `hydrate`'s per-conversation salvage: one unparseable message
+ * drops itself, not the whole conversation, so a single stale entry can't erase a session's record.
+ */
+function validateThread(conversation: Conversation): Conversation {
+  const messages = conversation.messages.filter(
+    (message) => modelMessageSchema.safeParse(message).success,
+  );
+  return messages.length === conversation.messages.length
+    ? conversation
+    : { ...conversation, messages };
+}
+
 export interface HistoryStoreOptions {
   /** Injectable clock for a new conversation's `createdAt` (tests pin it — no `Date.now()` here). */
   readonly now?: () => number;
@@ -74,7 +99,7 @@ export class HistoryStore {
     const salvaged: Conversation[] = [];
     for (const entry of raw as unknown[]) {
       const parsed = Conversation.safeParse(entry);
-      if (parsed.success) salvaged.push(parsed.data);
+      if (parsed.success) salvaged.push(validateThread(parsed.data));
     }
     this.cache = salvaged.slice(0, CAP);
     if (salvaged.length === raw.length) return;

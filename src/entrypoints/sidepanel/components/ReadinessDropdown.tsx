@@ -21,6 +21,7 @@ import {
   startSession,
   stopSession,
 } from '../stores/session';
+import { dismissOnOutsidePress } from './dismiss';
 import { Icon } from './Icon';
 import type { IconName } from './icon-registry';
 import './ReadinessDropdown.scss';
@@ -67,6 +68,21 @@ interface CheckRow {
 // other value here is a store read (CLAUDE.md "no business logic in components").
 export function ReadinessDropdown(props: ReadinessDropdownProps) {
   const [open, setOpen] = createSignal(false);
+  let rootEl: HTMLDivElement | undefined;
+
+  // The panel stayed up until its own pill was pressed again — the same defect ModelPicker and
+  // ShipBar's "Send to…" had, so it takes the same primitive rather than a third hand-rolled
+  // document listener (`components/dismiss.ts`; the two would drift).
+  //
+  // `rootEl` is the wrapper that CONTAINS the pill, so a press on the trigger counts as inside
+  // and never reaches `close()`. That matters: `pointerdown` fires before `click`, so a root that
+  // excluded the trigger would close on the press and the trigger's own click would reopen it
+  // immediately — a button that looks dead while doing twice the work.
+  dismissOnOutsidePress(
+    () => rootEl,
+    open,
+    () => setOpen(false),
+  );
 
   onMount(() => {
     initReadinessStore();
@@ -154,7 +170,7 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
   }
 
   return (
-    <div class="dz-readiness">
+    <div class="dz-readiness" ref={rootEl}>
       <button
         type="button"
         class="dz-readiness__pill"

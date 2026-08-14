@@ -80,11 +80,12 @@ describe('createDomTools: derivation is 1:1 with the DomTool schemas', () => {
 // reassemble and dispatch to the content script.
 const CASES = [
   { tool: 'query', input: { selector: '#hero' }, msg: { type: 'query', selector: '#hero' } },
-  {
-    tool: 'getStyles',
-    input: { selector: '#hero' },
-    msg: { type: 'getStyles', selector: '#hero' },
-  },
+  // `getStyles` is deliberately NOT in this table any more. Every other tool here is a pure
+  // pass-through — reassemble the DomTool, dispatch, return the ToolResult verbatim — and that is
+  // exactly what this table asserts. `getStyles` now takes `selectors[]` and fans out to one bus
+  // message per selector, merging the results into a keyed map, so it cannot return a dispatch
+  // result verbatim by construction. Its reassembly, fan-out, tab/frame threading and abort-signal
+  // threading are covered in `test/unit/getstyles-multi.test.ts`.
   {
     tool: 'screenshot',
     input: { selector: '.card' },

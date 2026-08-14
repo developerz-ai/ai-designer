@@ -86,8 +86,13 @@ describe('TurnOutcome.responseMessages — the thread keeps tool activity', () =
           {
             type: 'tool-call',
             toolCallId: 't1',
-            toolName: 'setStyle',
-            input: JSON.stringify({ selector: '#cta', props: { color: 'orange' } }),
+            toolName: 'edit',
+            input: JSON.stringify({
+              op: 'setStyle',
+              intent: 'Test intent',
+              selector: '#cta',
+              props: { color: 'orange' },
+            }),
           },
           finish(usage(500, 100), 'tool-calls'),
         ]),
@@ -107,7 +112,11 @@ describe('TurnOutcome.responseMessages — the thread keeps tool activity', () =
 
     // responseMessages has the full structure: assistant tool-call + tool result + final prose.
     const flat = JSON.stringify(outcome.responseMessages);
-    expect(flat).toContain('"toolName":"setStyle"');
+    // The persisted name is the RESOURCE — that is genuinely what the model called — while the
+    // operation lives in the input. Both must be there: the panel's rehydrated chips read the
+    // operation out of the input (`background.ts` `toThreadView`).
+    expect(flat).toContain('"toolName":"edit"');
+    expect(flat).toContain('"op":"setStyle"');
     expect(flat).toContain('"toolCallId":"t1"');
     const roles = outcome.responseMessages.map((m) => m.role);
     expect(roles).toContain('assistant');
@@ -138,8 +147,8 @@ describe('TurnOutcome.responseMessages — the thread keeps tool activity', () =
             {
               type: 'tool-call',
               toolCallId: 't1',
-              toolName: 'query',
-              input: JSON.stringify({ selector: '#cta' }),
+              toolName: 'inspect',
+              input: JSON.stringify({ op: 'query', selector: '#cta' }),
             },
             finish(usage(300, 30), 'tool-calls'),
           ]);
@@ -155,7 +164,8 @@ describe('TurnOutcome.responseMessages — the thread keeps tool activity', () =
     // Step 1 completed, so its messages survive for the session thread — the turn's work is
     // not lost with the error.
     const flat = JSON.stringify(outcome.responseMessages);
-    expect(flat).toContain('"toolName":"query"');
+    expect(flat).toContain('"toolName":"inspect"');
+    expect(flat).toContain('"op":"query"');
     expect(outcome.responseMessages.some((m) => m.role === 'tool')).toBe(true);
     expect(events.some((e) => e.type === 'error')).toBe(true);
   });
@@ -188,7 +198,7 @@ describe('broken tool calls are recoverable (#168 empty-name live failure)', () 
     );
     expect(settle?.ok).toBe(false);
     expect(settle?.error).toContain('unavailable tool');
-    expect(settle?.error).toContain('query'); // names at least one valid tool
+    expect(settle?.error).toContain('inspect'); // names at least one valid tool
 
     // And the thread records it as a well-formed call/result pair (provider-valid transcript).
     const flat = JSON.stringify(outcome.responseMessages);
@@ -204,8 +214,8 @@ describe('broken tool calls are recoverable (#168 empty-name live failure)', () 
           {
             type: 'tool-call',
             toolCallId: 'bad2',
-            toolName: 'setStyle',
-            input: JSON.stringify({ wrong: true }),
+            toolName: 'edit',
+            input: JSON.stringify({ op: 'setStyle', intent: 'Test intent', wrong: true }),
           },
           finish(usage(300, 30), 'tool-calls'),
         ]),
@@ -225,7 +235,9 @@ describe('broken tool calls are recoverable (#168 empty-name live failure)', () 
         e.type === 'tool-result' && e.tool === INVALID_TOOL_NAME,
     );
     expect(settle?.ok).toBe(false);
-    expect(settle?.error).toContain("'setStyle'");
+    // The surface is grouped, so a schema failure names the RESOURCE it failed against; the
+    // operation the model was attempting is in the input it sent.
+    expect(settle?.error).toContain("'edit'");
     expect(settle?.error).toMatch(/schema/i);
   });
 });
@@ -235,8 +247,8 @@ describe('within-turn image pruning (prepareStep wiring)', () => {
     const shot = (id: string): LanguageModelV4StreamPart => ({
       type: 'tool-call',
       toolCallId: id,
-      toolName: 'screenshot',
-      input: '{}',
+      toolName: 'inspect',
+      input: JSON.stringify({ op: 'screenshot' }),
     });
     const model = new MockLanguageModelV4({
       doStream: [

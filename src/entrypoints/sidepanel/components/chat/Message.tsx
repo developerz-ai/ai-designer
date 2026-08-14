@@ -1,8 +1,10 @@
-import { mergeProps, Show } from 'solid-js';
+import { For, mergeProps, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import type { Attachment } from '@/shared/attachments';
 import type { Edit } from '@/shared/changeset';
 import type { ToolCallEntry } from '../../stores/chat';
 import { Icon } from '../Icon';
+import { AttachmentChip } from './AttachmentChip';
 import './Message.scss';
 import { MarkdownView } from './MarkdownView';
 import { ToolCallList } from './ToolCallList';
@@ -24,6 +26,11 @@ export interface MessageProps {
   error?: string;
   toolCalls?: ToolCallEntry[];
   edits?: Edit[];
+  /** Reference material this turn was SENT with. Read-only here — a turn already sent cannot
+   *  un-attach what it carried. Absent on every rehydrated turn (`threadToMessages` rebuilds from
+   *  the SW's thread view, which carries no attachment bytes) and that is correct, not a gap to
+   *  paper over. */
+  attachments?: Attachment[];
 }
 
 /** Assistant text renders through markdown; user/system text renders as plain text (it's an
@@ -56,7 +63,12 @@ export function editsSummary(count: number): string {
 
 export function Message(rawProps: MessageProps) {
   const props = mergeProps(
-    { streaming: false, toolCalls: [] as ToolCallEntry[], edits: [] as Edit[] },
+    {
+      streaming: false,
+      toolCalls: [] as ToolCallEntry[],
+      edits: [] as Edit[],
+      attachments: [] as Attachment[],
+    },
     rawProps,
   );
 
@@ -88,6 +100,20 @@ export function Message(rawProps: MessageProps) {
           </span>
           {i18n.t('message.working')}
         </p>
+      </Show>
+
+      {/* What the user handed over, above their words — the order a chat client uses, and the
+          order they were composed in. Read-only: no remove button on a turn already sent. */}
+      <Show when={props.attachments.length > 0}>
+        <ul class="dz-message__attachments">
+          <For each={props.attachments}>
+            {(attachment) => (
+              <li class="dz-message__attachment">
+                <AttachmentChip attachment={attachment} />
+              </li>
+            )}
+          </For>
+        </ul>
       </Show>
 
       <Show when={showMarkdown(props.role)} fallback={<p class="dz-message__text">{props.text}</p>}>

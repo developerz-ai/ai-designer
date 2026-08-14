@@ -141,10 +141,19 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
 
   if (multiTask && report.problems.length > 0) {
     return report.problems.map((problem) =>
-      reportSpec(focusReport(report, problem), repo, url, edits, problem, undefined, target.branch),
+      reportSpec(
+        focusReport(report, problem),
+        repo,
+        url,
+        edits,
+        changeset,
+        problem,
+        undefined,
+        target.branch,
+      ),
     );
   }
-  return [reportSpec(report, repo, url, edits, undefined, source.title, target.branch)];
+  return [reportSpec(report, repo, url, edits, changeset, undefined, source.title, target.branch)];
 }
 
 function changesetSpec(
@@ -171,6 +180,12 @@ function reportSpec(
   repo: string,
   url: string,
   edits: readonly Edit[],
+  // The session's changeset, so the rendered brief CARRIES THE EDITS. `Report` has no changeset
+  // field (src/shared/report.ts), so a brief rendered from the report alone is model prose with no
+  // selector, property or CSS in it — the dispatched task said what to achieve and never what was
+  // actually changed. `spec.edits` already carried the structured deltas; the human/agent-readable
+  // half did not.
+  changeset: Changeset | undefined,
   problem?: string,
   title?: string,
   branch?: string,
@@ -183,7 +198,7 @@ function reportSpec(
       source: HANDOFF_SOURCE,
       url,
       edits,
-      brief: toMarkdown(report),
+      brief: toMarkdown(report, changeset),
       images: report.images,
       ...(problem ? { problem } : {}),
       ...(branch ? { branch } : {}),

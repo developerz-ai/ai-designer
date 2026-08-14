@@ -23,7 +23,7 @@ import type {
   SwToPanel,
   ToolResult,
 } from '@/shared/messages';
-import { classifyTool } from '@/shared/overlay-step';
+import { classifyTool, operationOf } from '@/shared/overlay-step';
 import {
   type BudgetLimits,
   type BudgetReason,
@@ -32,7 +32,7 @@ import {
   usageOf,
 } from './budget';
 import type { ChatMessage } from './session';
-import { pruneInFlightImages } from './thread-compact';
+import { capInFlightResults, compactToWindow, pruneInFlightImages } from './thread-compact';
 import { createInvalidToolFallback, createRepairToolCall } from './tool-repair';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
 import { type ComplexSiteDispatch, createComplexSiteTools } from './tools/complex-site';
@@ -40,6 +40,7 @@ import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
 import { createIdentityTool, type IdentityDispatch } from './tools/identity';
 import { createInteractTools, type InteractDeps } from './tools/interact';
+import { createResourceTools, type NamedTools } from './tools/resources';
 import { createResponsiveTools, type ResponsiveToolDeps } from './tools/responsive';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
 import { createVisionTools, type VisionToolDeps } from './tools/vision';
@@ -158,7 +159,33 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     // `pruneInFlightImages` rewrites each aged-out image exactly ONCE and is otherwise
     // identity-stable — so the prompt prefix (what OpenAI-compatible caching keys on) changes
     // only at a real aging event, not on every step.
-    prepareStep: ({ messages }) => ({ messages: pruneInFlightImages(messages) }),
+    // …and the TEXT half, which is the one that actually killed the HN turn. `TOOL_TEXT_CAP`
+    // bounded a result only when the turn was PERSISTED — one moment too late. An `a11ySnapshot`
+    // has no aggregate ceiling of its own (`src/dom/read.ts`: depth 12 × 60 children per node,
+    // measured at ~22k chars on a Hacker-News-shaped page), and every step re-sends the whole
+    // transcript, so one such read is re-billed on every remaining step: cost quadratic in result
+    // size. `capInFlightResults` clips each oversized result ONCE, with a marker that names how to
+    // get the rest, and is identity-stable otherwise — same prefix-cache property as the image
+    // pruning it composes with.
+    // …and the one-shot budget warning. The observed failure was not that the model lacked good
+    // judgement — it announced an audit-first plan and executed it faithfully — but that nothing
+    // ever told it the plan had become unaffordable, so "stop and summarize" arrived only as a
+    // fait accompli with zero edits made. `TurnBudget.warning()` returns the nudge exactly once,
+    // when spend crosses `BUDGET_WARN_FRACTION`, leaving room to still act.
+    // …and, as a LAST resort, proportional compaction against the model's real context window.
+    // Order here is cheapest-and-least-lossy first, deliberately: pruning old screenshots and
+    // clipping oversized results both keep every turn intact and preserve the cached prefix, so
+    // they run first and usually suffice. `compactToWindow` fires only if the transcript is still
+    // approaching the window, and it costs a prefix invalidation (see its own doc comment) — the
+    // right trade against a hard context-overflow error, but not one to pay a step early.
+    prepareStep: ({ messages }) => {
+      const trimmed = capInFlightResults(pruneInFlightImages(messages));
+      const fitted = compactToWindow(trimmed, budget.limits.contextWindow);
+      const warning = budget.warning();
+      return {
+        messages: warning ? [...fitted, { role: 'user', content: warning }] : fitted,
+      };
+    },
     // Broken tool calls (empty/unknown name, schema-invalid input) are rewritten to the
     // `invalidTool` fallback instead of failing the step — the model reads the error result and
     // retries (see `tool-repair.ts`; live failure: `AI_NoSuchToolError` on an empty name).
@@ -234,10 +261,19 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           }
           break;
         case 'tool-call': {
-          // `selector`/`kind` (slice 09): feeds the future panel tool chip and, when the on-page
-          // overlay is opted in, background.ts's `forwardOverlayStep` mirror to content.
+          // `selector`/`kind` (slice 09): feeds the panel tool chip and, when the on-page overlay
+          // is opted in, background.ts's `forwardOverlayStep` mirror to content.
+          //
+          // REPORT THE OPERATION, NOT THE RESOURCE. Since the surface was grouped
+          // (`tools/resources.ts`), `part.toolName` is `edit`/`inspect`/`interact` — a fact about
+          // how we packaged the tools, not about what the agent is doing. Emitting it would have
+          // turned every chip in the panel, every overlay card and every history record into a
+          // uniform "edit", losing the one thing they exist to show. The operation is the name the
+          // user has always seen, and it stays stable regardless of future regrouping — same
+          // reasoning as `overlay-step.ts` classifying on `op` rather than a tool-name list.
+          const operation = operationOf(part.input) ?? part.toolName;
           const { selector, kind } = classifyTool(part.toolName, part.input);
-          emit({ type: 'tool-call', tool: part.toolName, selector, kind, id: part.toolCallId });
+          emit({ type: 'tool-call', tool: operation, selector, kind, id: part.toolCallId });
           break;
         }
         // The OUTCOME half of the chip (#165 S8). `tool-call` above fires when the model REQUESTS
@@ -252,7 +288,10 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           if (part.preliminary) break;
           emit({
             type: 'tool-result',
-            tool: part.toolName,
+            // The OPERATION, matching the `tool-call` above — the panel correlates the two halves
+            // of a chip by `toolCallId`, but a mismatched name would still read wrong anywhere the
+            // id is missing (an older thread, a rehydrated view).
+            tool: operationOf(part.input) ?? part.toolName,
             id: part.toolCallId,
             ...toolOutcome(part.output),
           });
@@ -261,7 +300,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
         case 'tool-error':
           emit({
             type: 'tool-result',
-            tool: part.toolName,
+            tool: operationOf(part.input) ?? part.toolName,
             id: part.toolCallId,
             ok: false,
             error: boundedError(errorText(part.error)),
@@ -396,12 +435,20 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     ? { ...captureBase, toModelOutput: responsiveCaptureToModelOutput }
     : undefined;
 
-  return {
+  const perVerb: ToolSet = {
     ...merged,
     ...(screenshot ? { screenshot } : {}),
     ...(responsiveCapture ? { responsiveCapture } : {}),
     ...(deps.tools ?? {}),
   };
+
+  // GROUP THE MODEL-FACING SURFACE. Everything above is built exactly as it always was — the
+  // per-verb tools are now the ROUTING LAYER, and `createResourceTools` presents them to the model
+  // as four resources (`inspect`/`edit`/`interact`/`session`) discriminated on `op`. Anything it
+  // does not claim passes through as its own tool, which is what keeps `handoff` (the Ship approval
+  // gate keys on that exact NAME — see `toolApproval` above), `invalidTool` (the repair channel)
+  // and every MCP backend tool reachable and unchanged.
+  return createResourceTools(perVerb as unknown as NamedTools) as ToolSet;
 }
 
 // The ToolResult a guarded call returns once its per-tool budget is exhausted — the model reacts

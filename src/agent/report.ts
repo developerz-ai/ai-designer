@@ -45,6 +45,11 @@ export interface ReportInput {
   /** Reference links surfaced during the turn (e.g. `browse` targets) — merged after the page URL. */
   readonly links?: readonly ReportLink[];
   readonly mode?: ReportMode;
+  /** What the user actually ASKED for, in their own words — the session's originating instruction.
+   *  The changeset records what was done; only this records what it was for, and a brief that
+   *  cannot say which parts of the ask are still outstanding is not a handoff, it is a diff with
+   *  prose. Optional and bounded by the caller. */
+  readonly ask?: string;
 }
 
 /** The structured-generation call — a structural subset of the AI SDK's `generateObject` so a fake
@@ -73,6 +78,9 @@ const MAX_LINKS = 40;
 // so a screenshot-heavy session doesn't blow the summarization call's token budget.
 const MAX_VISION_IMAGES = 6;
 // How much of a long session to describe in the prompt (defense-in-depth above the schema bounds).
+// The originating ask is one instruction, not a transcript — a screenful is plenty, and it is user
+// text so it is bounded rather than trusted.
+const MAX_ASK_CHARS = 500;
 const MAX_PROMPT_EDITS = 40;
 const MAX_PROMPT_FINDINGS = 40;
 
@@ -127,11 +135,27 @@ export function reportSystemPrompt(mode?: ReportMode): string {
         : 'Lead with what changed and why it matters.';
   return (
     'You are a senior web developer writing a concise design review and handoff brief for another ' +
-    'developer (or a coding agent) to act on. Speak in tokens — name the actual colors, fonts, and ' +
+    'developer (or a coding agent) to act on. THE BRIEF IS THE DELIVERABLE — the live page was a ' +
+    'preview that disappears when the tab closes; this document is what actually gets implemented, ' +
+    'so it has to stand on its own for a reader who never saw the session. ' +
+    'Speak in tokens — name the actual colors, fonts, and ' +
     'spacing — never vague adjectives. Be specific and concrete: cite real problems, honest ' +
     'pros/cons, and actionable recommendations. Ground EVERY claim in the provided changeset, ' +
     'diagnostics, identity, and screenshots — do not invent findings or values not present in the ' +
-    `session. Write bullets, not paragraphs; keep it paste-ready. ${focus} Fill only the requested ` +
+    'session. ' +
+    // The three additions, in order of how often the old brief failed without them:
+    'For each change give the INTENT alongside the mechanics: a reader who sees only ' +
+    '`padding: 24px` learns what was typed, not what it was for — say what problem it solved and ' +
+    'why that value, so they can reach the same outcome in their own code rather than transcribing ' +
+    'a diff. ' +
+    'Write the changes as CSS a developer can PASTE: real selectors and rules grouped by concern, ' +
+    'the intent-expressing form (`margin: 0 auto`, tokens, `rem`, `clamp()`, media queries) rather ' +
+    'than the computed pixel values a measurement produced — a value copied off one viewport is ' +
+    'wrong at every other. ' +
+    'When the session had an originating request, say plainly which parts of it are DONE and which ' +
+    'remain — a broad ask ("modernize this page") rarely finishes inside one session, and the ' +
+    'reader needs to know where it stopped, not to infer it from what is missing. ' +
+    `Write bullets, not paragraphs; keep it paste-ready. ${focus} Fill only the requested ` +
     'structured fields (identity tokens, links, and images are added for you — do not restate them).'
   );
 }
@@ -157,6 +181,12 @@ export function buildReportContext(input: ReportInput): string {
     `Page: ${changeset.url}`,
     `Edits recorded: ${changeset.edits.length}`,
   ];
+
+  // The user's own words, first — everything below is what was DONE, and only this says what it was
+  // FOR. Bounded here rather than trusted: it is user text arriving from the session thread.
+  if (input.ask) {
+    sections.unshift(`The user asked for: "${input.ask.slice(0, MAX_ASK_CHARS)}"`);
+  }
 
   if (changeset.edits.length > 0) {
     const rows = changeset.edits.slice(0, MAX_PROMPT_EDITS).map(summarizeEdit);

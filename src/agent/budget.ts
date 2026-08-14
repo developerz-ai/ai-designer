@@ -32,7 +32,36 @@ export interface BudgetLimits {
   /** Max `navigate` / `navigateBack` / `reload` calls — caps a confused agent bouncing between
    *  pages instead of making progress. */
   readonly maxNavCalls: number;
+  /**
+   * The model's context window in tokens — a DIFFERENT QUESTION from {@link maxTokens}, which is
+   * why both exist rather than one replacing the other:
+   *
+   *   • `maxTokens` is COST-shaped. It sums input+output across every step, so it grows without
+   *     bound as a turn works and answers "how much is this turn allowed to spend".
+   *   • `contextWindow` is CAPACITY-shaped. It bounds ONE request's prompt, never accumulates, and
+   *     answers "will the next request fit". Exceeding it is not an expensive turn, it is a hard
+   *     provider error mid-turn.
+   *
+   * Collapsing them would break in both directions: a 1M-context model would be held to a fifth of
+   * its capacity by a cost cap, and a 32k model would sail past the wall because its cost cap was
+   * nowhere near spent. Captured per model at save time (`provider.ts` `resolveContextWindow`,
+   * persisted on `ProviderConfig`), falling back to {@link DEFAULT_CONTEXT_WINDOW}.
+   */
+  readonly contextWindow: number;
 }
+
+/**
+ * Context window assumed when the provider doesn't report one.
+ *
+ * DERIVATION: this is a FALLBACK, so it is sized to be safe on the small end rather than accurate
+ * on the large end — under-estimating costs some avoidable compaction, over-estimating costs a hard
+ * mid-turn provider error that loses the turn. 128k is the floor of what current mainstream
+ * chat models ship (GPT-4o/4.1, Claude 3.5+, Llama 3.1+, Qwen 2.5+ are all at or above it), so a
+ * gateway that reports nothing is very unlikely to be below it, while a genuinely small local model
+ * (an 8k llama.cpp build) reports `n_ctx` and is detected properly. NOT a target and not tuning —
+ * the real value is detected; this only covers endpoints with no model catalogue.
+ */
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
 
 // Generous enough for a real design turn (several read→mutate→screenshot→correct→record
 // cycles), low enough to cap a runaway. Per-model tuning can override at call time.
@@ -42,6 +71,7 @@ export const DEFAULT_BUDGET: BudgetLimits = {
   maxVisionCalls: 6,
   maxWaitCalls: 10,
   maxNavCalls: 8,
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
 };
 
 /** Why a turn stopped against its budget (`null` = still within budget). */
@@ -86,6 +116,32 @@ export function budgetReason(usage: BudgetUsage, limits: BudgetLimits): BudgetRe
   if (usage.steps >= limits.maxSteps) return 'steps';
   if (usage.tokens >= limits.maxTokens) return 'tokens';
   return null;
+}
+
+/** Fraction of the token ceiling at which the model is told, ONCE, that it is running out.
+ *
+ *  DERIVATION (2026-08-14): the HN "make the page more modern" turn spent its entire 200k ceiling
+ *  on 21 read calls across 3 steps and was force-stopped having changed nothing. It had no way to
+ *  know — nothing in the loop ever told the model what it had spent, so "stop and summarize" only
+ *  ever arrived as a fait accompli. 0.6 is chosen to leave ~40% of the ceiling (≈80k tokens, in
+ *  practice several steps) for the model to actually ACT after the warning: warning at 0.8 or 0.9
+ *  would arrive too late to change the outcome, which is the whole point of warning at all.
+ *  Re-measure against real turns before moving it. */
+export const BUDGET_WARN_FRACTION = 0.6;
+
+/** The one-shot mid-turn nudge. Phrased as a fact plus a directive, because the observed failure
+ *  was not ignorance of good practice — the model announced an audit-first plan and followed it —
+ *  but never learning that the plan had become unaffordable. Deliberately short: it is injected
+ *  into the live transcript and then re-sent on every remaining step. */
+export function budgetWarning(usage: BudgetUsage, limits: BudgetLimits): string {
+  const pct = Math.round((usage.tokens / limits.maxTokens) * 100);
+  return (
+    `[Budget: you have used ~${pct}% of this turn's token budget on ${usage.steps} steps, and ` +
+    'reading is what spends it — every result you have collected is re-sent on every step from ' +
+    'here. Stop surveying now. Make the highest-impact change you can already justify, verify it, ' +
+    'and record it. If you run out, what you have CHANGED survives; what you have merely read ' +
+    'does not.]'
+  );
 }
 
 /** The concise notice streamed to the panel when a turn is force-stopped on budget — the
@@ -178,5 +234,24 @@ export class TurnBudget {
   notice(): string | null {
     const reason = this.reason;
     return reason ? budgetNotice(reason, this.usage) : null;
+  }
+
+  private warned = false;
+
+  /**
+   * The one-shot mid-turn budget warning once spend crosses {@link BUDGET_WARN_FRACTION}, or `null`
+   * — every call after the first returns `null`, whatever the spend.
+   *
+   * ONE-SHOT IS THE POINT, not an optimisation. The warning is injected into the live transcript,
+   * so re-emitting it every step would rewrite the prompt prefix on every step and invalidate the
+   * whole prompt cache each time (`thread-compact.ts`'s prefix-cache policy). Firing once is a
+   * single invalidation, after which the prefix is stable again — and a warning repeated every step
+   * reads as noise the model learns to skip anyway.
+   */
+  warning(): string | null {
+    if (this.warned) return null;
+    if (this.tokens < this.limits.maxTokens * BUDGET_WARN_FRACTION) return null;
+    this.warned = true;
+    return budgetWarning(this.usage, this.limits);
   }
 }

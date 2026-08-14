@@ -17,6 +17,7 @@ import type { VisionToolDeps } from '@/agent/tools/vision';
 import { ChangesetStore } from '@/changeset/store';
 import { emptyChangeset } from '@/shared/changeset';
 import type { ControlTool, DescribeInput, DomTool, NavIntent, SwToPanel } from '@/shared/messages';
+import { resourceCall } from '../fakes/resource-call';
 
 // Integration: the slice-04 spine — a `user-message` turn runs the ToolLoopAgent in the SW
 // against a MOCKED model (no network), streams tokens + a tool-call to the panel sink, and
@@ -59,8 +60,13 @@ function twoStepModel(): LanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 't1',
-          toolName: 'setStyle',
-          input: JSON.stringify({ selector: '#cta', props: { 'background-color': '#f97316' } }),
+          toolName: 'edit',
+          input: JSON.stringify({
+            op: 'setStyle',
+            intent: 'Test intent',
+            selector: '#cta',
+            props: { 'background-color': '#f97316' },
+          }),
         },
         finish(usage(500, 100), 'tool-calls'),
       ]),
@@ -112,7 +118,12 @@ describe('integration: agent turn streams tokens + tool-calls and drives the DOM
 
     // The tool call was reassembled into a valid DomTool and routed to the content script.
     expect(calls).toEqual([
-      { type: 'setStyle', selector: '#cta', props: { 'background-color': '#f97316' } },
+      {
+        type: 'setStyle',
+        intent: 'Test intent',
+        selector: '#cta',
+        props: { 'background-color': '#f97316' },
+      },
     ]);
 
     // A tool-call chip surfaced on the panel stream, named by the tool.
@@ -394,12 +405,15 @@ function fakeVision() {
 
 // A model that calls the same `toolName`/`input` on each of `n` steps, then wraps up on step
 // `n + 1` — models a (possibly budget-refused) tool being retried across several turns of the loop.
-function repeatedToolCallModel(toolName: string, input: unknown, n: number): MockLanguageModelV4 {
+function repeatedToolCallModel(verb: string, input: unknown, n: number): MockLanguageModelV4 {
+  // The verb is routed through its RESOURCE — the model-facing surface is grouped, so a raw
+  // `toolName: 'waitFor'` is no longer a call the loop can receive.
+  const { toolName, input: encoded } = resourceCall(verb, input as Record<string, unknown>);
   const steps: LanguageModelV4StreamPart[][] = [];
   for (let i = 0; i < n; i += 1) {
     steps.push([
       { type: 'stream-start', warnings: [] },
-      { type: 'tool-call', toolCallId: `t${i}`, toolName, input: JSON.stringify(input) },
+      { type: 'tool-call', toolCallId: `t${i}`, toolName, input: encoded },
       finish(usage(50, 10), 'tool-calls'),
     ]);
   }
@@ -609,8 +623,8 @@ describe('integration: identity/describe tools (slice 14) wire in and route scen
           {
             type: 'tool-call',
             toolCallId: 't1',
-            toolName: 'describe',
-            input: JSON.stringify({ mode: 'layout' }),
+            toolName: 'inspect',
+            input: JSON.stringify({ op: 'describe', mode: 'layout' }),
           },
           finish(usage(50, 10), 'tool-calls'),
         ]),
@@ -619,8 +633,8 @@ describe('integration: identity/describe tools (slice 14) wire in and route scen
           {
             type: 'tool-call',
             toolCallId: 't2',
-            toolName: 'describe',
-            input: JSON.stringify({ mode: 'scene' }),
+            toolName: 'inspect',
+            input: JSON.stringify({ op: 'describe', mode: 'scene' }),
           },
           finish(usage(50, 10), 'tool-calls'),
         ]),

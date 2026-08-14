@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { type BrowserContext, test as base, chromium, type Page } from '@playwright/test';
+import { RESOURCE_OF } from '@/agent/tools/resources';
 
 // Loaded-extension Playwright harness. Chromium only loads an unpacked extension
 // through a *persistent context*, and only the `chromium` channel (Chrome-for-Testing)
@@ -107,4 +108,34 @@ export type Room = 'Chat' | 'MCP' | 'Settings' | 'Diff' | 'History';
 export async function openRoom(p: Page, name: Room): Promise<void> {
   await p.getByRole('button', { name: 'Designer' }).click();
   await p.locator('#dz-nav-menu').getByRole('button', { name }).click();
+}
+
+// --- driving the CONSOLIDATED tool surface ------------------------------------------------------
+//
+// The model-facing surface is four resources (`inspect`/`edit`/`interact`/`session`) discriminated
+// on `op`, not one tool per verb (`src/agent/tools/resources.ts`). A stubbed model that streams
+// `function: { name: 'setStyle' }` is therefore no longer emitting a call the extension can route:
+// the loop matches nothing, no mutation reaches the page, and the symptom is a silently empty
+// changeset ("0 edits") rather than an error.
+//
+// These specs stay written in the verb vocabulary a reader recognises — `setStyle`, `waitFor`,
+// `recordEdit` — and this maps each one onto the resource that owns it. The mapping is READ FROM
+// THE SHIPPED `RESOURCE_OF`, never re-declared here, so re-homing a verb moves the e2e drive with
+// it instead of leaving these specs exercising a grouping that no longer exists.
+
+/** `intent` is REQUIRED on every `edit` op (an intentless changeset must be impossible to produce
+ *  through the agent), so a stubbed mutation supplies one rather than failing schema validation. */
+export const E2E_INTENT = 'E2E: apply the change';
+
+/** The `{ name, arguments }` an OpenAI-style stubbed tool call must carry to reach `verb`. A verb no
+ *  resource claims (`handoff`, an MCP tool) passes through unchanged — those are still top-level. */
+export function toolCallFunction(verb: string, args: unknown): { name: string; arguments: string } {
+  const resource = RESOURCE_OF[verb];
+  if (!resource) return { name: verb, arguments: JSON.stringify(args) };
+  const params = (args ?? {}) as Record<string, unknown>;
+  const intent = resource === 'edit' && params.intent === undefined ? { intent: E2E_INTENT } : {};
+  return {
+    name: resource,
+    arguments: JSON.stringify({ op: verb, ...intent, ...params }),
+  };
 }

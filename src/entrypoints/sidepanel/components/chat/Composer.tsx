@@ -1,8 +1,17 @@
 import { createMemo, createSignal, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import { ATTACHMENT_IMAGE_TYPES, isSupportedImageType } from '@/shared/attachments';
 import type { StableSelector } from '@/shared/messages';
+import {
+  addBigPaste,
+  addFiles,
+  attachments,
+  clearAttachments,
+  isBigPaste,
+} from '../../stores/attachments';
 import { send as sendMessage, stopTurn, streaming } from '../../stores/chat';
 import {
+  disarmPicker,
   mentionReference,
   pickerActive,
   recentReferences,
@@ -10,6 +19,7 @@ import {
   startPicker,
 } from '../../stores/focus';
 import { Icon } from '../Icon';
+import { AttachmentTray } from './AttachmentTray';
 import './Composer.scss';
 import { ElementRefs } from './ElementRefs';
 import { filterMentions, MentionMenu, mentionQuery } from './MentionMenu';
@@ -23,6 +33,49 @@ import { ModelPicker } from './ModelPicker';
 
 const INPUT_ID = 'dz-composer-input';
 const HINT_ID = 'dz-composer-hint';
+
+/**
+ * What a send carries when the user attached reference material and typed nothing. "Here, match
+ * this" with a mockup and no words is a real message, so the send button unlocks on an attachment
+ * alone — but the service worker would then receive an empty instruction and the model would be
+ * asked to act on nothing, so the composer supplies the obvious one instead.
+ *
+ * Deliberately NOT in `en.yml`: this is not UI copy, it is the instruction handed to the model,
+ * and model-facing prompt text lives in code throughout this repo (`agent/vision.ts`,
+ * `agent/system-prompt.ts`).
+ */
+export const ATTACHMENT_ONLY_TEXT = 'Use the attached reference material.';
+
+/** Clipboard/DataTransfer surface this component reads. Structural, so a unit test can hand it a
+ *  plain object — jsdom has no real `DataTransfer`. */
+export interface TransferLike {
+  files?: ArrayLike<File> | null;
+  types?: ArrayLike<string> | null;
+  getData?(type: string): string;
+}
+
+/** Image files on a clipboard, and only images. Filtered rather than reported: a paste normally
+ *  carries several flavours of the SAME thing (text/plain + text/html + an image), so complaining
+ *  about the non-image members would fire on every ordinary paste. */
+export function clipboardImages(data: TransferLike | null | undefined): File[] {
+  return transferFiles(data).filter((f) => isSupportedImageType(f.type));
+}
+
+/** Everything a drop or the file picker handed over — UNFILTERED on purpose, the opposite choice
+ *  to `clipboardImages`. Dropping a PDF is a deliberate act, so the store gets to say "that is not
+ *  an image" out loud rather than swallowing it. */
+export function transferFiles(data: TransferLike | null | undefined): File[] {
+  const files = data?.files;
+  return files ? Array.from(files) : [];
+}
+
+/** Whether a drag carries files at all. `dataTransfer.files` is EMPTY during `dragover` (the
+ *  browser withholds the bytes until the drop), so the only thing to test at that point is the
+ *  advertised type list — checking `files` there means the drop target never lights up. */
+export function isFileDrag(data: TransferLike | null | undefined): boolean {
+  const types = data?.types;
+  return types ? Array.from(types).includes('Files') : false;
+}
 
 /** Enter submits; Shift+Enter inserts a newline, and so does every other modifier combo.
  *
@@ -62,7 +115,11 @@ export function Composer() {
   // Null whenever the caret is not in one — see `mentionQuery` for why that rule is narrow.
   const [mention, setMention] = createSignal<{ start: number; query: string } | null>(null);
   const [activeMention, setActiveMention] = createSignal(0);
+  // A file is being dragged over the composer. Local view state — nothing outside this shell has
+  // any use for it.
+  const [dropping, setDropping] = createSignal(false);
   let input: HTMLTextAreaElement | undefined;
+  let fileInput: HTMLInputElement | undefined;
 
   const mentionItems = createMemo(() => filterMentions(recentReferences(), mention()?.query ?? ''));
   const mentionOpen = createMemo(() => mention() !== null && mentionItems().length > 0);
@@ -95,21 +152,67 @@ export function Composer() {
     });
   }
 
-  const canSend = createMemo(() => draft().trim().length > 0 && !streaming());
+  // An attachment ALONE is enough to send: a mockup with no words is a complete instruction in
+  // this product ("match this"), and requiring a sentence would make the feature feel like a
+  // second-class add-on to the text field. The empty instruction that would otherwise reach the
+  // SW is filled in by `ATTACHMENT_ONLY_TEXT` in `submit()`.
+  const canSend = createMemo(
+    () => (draft().trim().length > 0 || attachments().length > 0) && !streaming(),
+  );
   // Lit only while the picker is ARMED. It used to stay lit for as long as anything was pinned,
   // which made an accent-filled button the resting state of the composer — and now that pinned
   // elements are chips sitting directly above, the button was saying the same thing twice.
   const attachActive = createMemo(() => pickerActive());
 
-  function submit(): void {
-    const text = draft();
-    if (!text.trim() || streaming()) return;
+  async function submit(): Promise<void> {
+    const trimmed = draft().trim();
+    const attached = attachments();
+    if ((!trimmed && attached.length === 0) || streaming()) return;
     setDraft('');
     // The picked element is the whole point of the picker: without this third argument
     // "make this bigger" reaches the agent with no target and it guesses. `selector()` is the
     // focus store's live pin (ContextChip renders the same value); `undefined` when nothing is
     // pinned. Mode stays `undefined` — `agent/modes.ts` infers it from the text.
-    void sendMessage(text, undefined, selector() ?? undefined);
+    const accepted = await sendMessage(
+      trimmed || ATTACHMENT_ONLY_TEXT,
+      undefined,
+      selector() ?? undefined,
+      attached.length > 0 ? attached : undefined,
+    );
+    // ONLY on success. A rejected send (a restarting worker, a turn already in flight) used to
+    // cost nothing; now it would cost the user six re-picked files, so the tray outlives it and
+    // the same Send press works again.
+    if (accepted) clearAttachments();
+  }
+
+  /** Three ways in, one of them destructive if it is got wrong: pasting a stylesheet into a
+   *  one-row textarea destroys the composer. Images become attachments, a big paste becomes a
+   *  named text attachment, and everything shorter is left ALONE — an ordinary paste must behave
+   *  exactly as it did before this feature existed. */
+  function onPaste(e: ClipboardEvent): void {
+    const data = e.clipboardData as TransferLike | null;
+    if (!data) return;
+    const images = clipboardImages(data);
+    if (images.length > 0) {
+      e.preventDefault();
+      void addFiles(images);
+      return;
+    }
+    const text = data.getData?.('text/plain') ?? '';
+    if (isBigPaste(text)) {
+      e.preventDefault();
+      addBigPaste(text);
+    }
+  }
+
+  function onDrop(e: DragEvent): void {
+    if (!isFileDrag(e.dataTransfer as TransferLike | null)) return;
+    // Both halves matter: without `preventDefault` here (and on `dragover`) the panel NAVIGATES
+    // to the dropped file and the whole side panel is gone.
+    e.preventDefault();
+    setDropping(false);
+    const files = transferFiles(e.dataTransfer as TransferLike | null);
+    if (files.length > 0) void addFiles(files);
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -138,15 +241,44 @@ export function Composer() {
     }
     if (isSubmitKey(e)) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   }
 
   return (
-    <div class="dz-composer">
+    // Drag handling sits on the whole composer, not on the textarea: the target a user aims at is
+    // the box, and a drop that lands 4px outside the field would otherwise navigate the panel away.
+    // A drop target is not a widget and there is no ARIA role that fits one: `role="button"` here
+    // would announce a control that does nothing on Enter. Drag-and-drop is pointer-only by
+    // nature, so the KEYBOARD-reachable equivalent is the "Attach an image" button in the toolbar
+    // below — a real control with a real name. Nothing is reachable only by dragging.
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target, see above
+    <div
+      class="dz-composer"
+      onDragOver={(e) => {
+        if (!isFileDrag(e.dataTransfer as TransferLike | null)) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        setDropping(true);
+      }}
+      // `dragleave` fires when the pointer crosses into a CHILD, so an unguarded handler makes the
+      // drop state flicker off the moment the cursor reaches the textarea.
+      onDragLeave={(e) => {
+        const next = e.relatedTarget;
+        if (!(next instanceof Node) || !e.currentTarget.contains(next)) setDropping(false);
+      }}
+      onDrop={onDrop}
+    >
       <ElementRefs />
+      <AttachmentTray />
 
-      <div class="dz-composer__shell" classList={{ 'dz-composer__shell--picking': attachActive() }}>
+      <div
+        class="dz-composer__shell"
+        classList={{
+          'dz-composer__shell--picking': attachActive(),
+          'dz-composer__shell--dropping': dropping(),
+        }}
+      >
         {/* A placeholder is not an accessible name — it disappears the moment the field has
             content, leaving the textarea nameless mid-message. Visually hidden, so the shell
             still looks like Leo's. */}
@@ -193,6 +325,7 @@ export function Composer() {
           onSelect={(e) => syncMention(e.currentTarget)}
           onBlur={() => setMention(null)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
         />
         {/* Deliberately NOT `disabled` while a turn streams: `disabled` drops the element from
             the tab order and blurs it, dumping focus on `<body>` mid-turn. The field stays
@@ -202,7 +335,7 @@ export function Composer() {
         <div class="dz-composer__toolbar">
           <button
             type="button"
-            class="dz-composer__attach"
+            class="dz-composer__attach dz-composer__attach--element"
             classList={{ 'is-active': attachActive() }}
             aria-pressed={attachActive()}
             // `title` alone yields a low-quality accessible name (WAI-ARIA APG) and is
@@ -210,7 +343,12 @@ export function Composer() {
             // actual name.
             aria-label={i18n.t('composer.attach.title')}
             title={i18n.t('composer.attach.title')}
-            onClick={() => void startPicker()}
+            // A real toggle, in both directions. It has always RENDERED as one — `aria-pressed`
+            // and `.is-active` both track `pickerActive()` — while only ever arming, so a user
+            // (and a screen reader) was told "pressed" about a control that could not be
+            // un-pressed. Disarm keeps the references: pressing the crosshair off is not "clear
+            // what I attached" (that is ElementRefs' Clear, which is `stopPicker`).
+            onClick={() => void (attachActive() ? disarmPicker() : startPicker())}
           >
             {/* `dz-icon--fixed`: absolute 16px, so a toolbar glyph doesn't scale with whatever
                 font-size its container carries. Icon.tsx does not forward the `fixed` prop yet —
@@ -219,6 +357,38 @@ export function Composer() {
                 around, so the button and its result are recognisably the same feature. */}
             <Icon name="target" size="sm" class="dz-icon--fixed" />
           </button>
+
+          {/* The SECOND attach affordance, and deliberately not a repurposing of the first: that
+              one points at the page, this one brings a file to it. The BUTTON is the accessible
+              control — a bare file input cannot be named, styled or reached the way the rest of
+              this toolbar is. Reaching for the input's own `.click()` is the conventional (and
+              only) way to drive it; it is dispatch, not rendering logic. */}
+          {/* Shares `__attach`'s look, but carries its OWN modifier: two toolbar buttons
+              distinguishable only by their accessible name made `.dz-composer__attach` ambiguous
+              and broke an e2e pick (strict-mode violation, two matches). A shared base for the
+              styling, a modifier for the identity. */}
+          <button
+            type="button"
+            class="dz-composer__attach dz-composer__attach--file"
+            aria-label={i18n.t('composer.attachFile.title')}
+            title={i18n.t('composer.attachFile.title')}
+            onClick={() => fileInput?.click()}
+          >
+            <Icon name="image" size="sm" class="dz-icon--fixed" />
+          </button>
+          <input
+            ref={fileInput}
+            class="dz-composer__file"
+            type="file"
+            multiple
+            accept={ATTACHMENT_IMAGE_TYPES.join(',')}
+            onChange={(e) => {
+              const picked = e.currentTarget.files;
+              if (picked) void addFiles(Array.from(picked));
+              // Reset, or picking the SAME file twice in a row fires no second change event.
+              e.currentTarget.value = '';
+            }}
+          />
 
           <ModelPicker />
 
@@ -245,8 +415,10 @@ export function Composer() {
           it announced-only: Enter-sends is the one thing about this composer that surprises
           people, and it cost nothing to say it. Still the `aria-describedby` target, so a
           screen-reader user hears it exactly once, from here. */}
+      {/* Doubles as the drop hint while a file is over the composer: one line that swaps its
+          text, rather than a second element appearing and shoving the composer up mid-drag. */}
       <p id={HINT_ID} class="dz-composer__hint">
-        {i18n.t('composer.hint.keyboard')}
+        {dropping() ? i18n.t('composer.drop.hint') : i18n.t('composer.hint.keyboard')}
       </p>
     </div>
   );

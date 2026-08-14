@@ -1,5 +1,6 @@
 import { generateObject, generateText, type Tool } from 'ai';
 import { defineBackground } from '#imports';
+import { toStoredUserContent, toUserContent } from '@/agent/attachments';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
 import { withCaptureLock } from '@/agent/capture-lock';
@@ -34,6 +35,7 @@ import {
   keyMissing,
   listModels,
   MISSING_KEY_ERROR,
+  resolveContextWindow,
   validateProvider,
 } from '@/agent/provider';
 import { computeReadiness } from '@/agent/readiness';
@@ -45,10 +47,12 @@ import {
   writeSessionLifecycle,
 } from '@/agent/session-lifecycle';
 import { buildSystemPrompt } from '@/agent/system-prompt';
+import { mutationBlockedReason } from '@/agent/tab-guard';
 import { compactForThread } from '@/agent/thread-compact';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
+import { AUTO_RECORDED_INTENT } from '@/changeset/fold-mutations';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { toMarkdown } from '@/changeset/report-md';
@@ -122,7 +126,7 @@ import {
 } from '@/shared/messages';
 import { readOnboardingDismissed, writeOnboardingDismissed } from '@/shared/onboarding-prefs';
 import { readOverlayEnabled, writeOverlayEnabled } from '@/shared/overlay-prefs';
-import { overlayLabel } from '@/shared/overlay-step';
+import { operationOf, overlayLabel } from '@/shared/overlay-step';
 import { PORT_NAME } from '@/shared/port';
 import { relayToPanel } from '@/shared/relay';
 import type { Report } from '@/shared/report';
@@ -542,6 +546,14 @@ export default defineBackground(() => {
 
   // The page the user is designing = the active tab of the last-focused normal window. The
   // side panel isn't a tab, so a panel RPC's `sender.tab` is undefined — resolve the target here.
+  //
+  // RESOLVED ONCE PER TURN, DELIBERATELY — do not "fix" this to re-resolve mid-turn. A turn is a
+  // unit of work against ONE page: it reads that page, edits it, screenshots it to verify, and
+  // records a changeset that ships as a diff against it. If the user switches tabs while a long
+  // turn runs, following their attention would mean finishing the edits on an unrelated page and
+  // producing a changeset spanning two origins. The turn finishes where it started; the NEXT turn
+  // resolves again and lands on whatever is active then. `tabId` is captured into a closure-stable
+  // local for exactly this reason, and `tab-guard.ts` pins the turn's mutations to it.
   async function resolveTargetTab(): Promise<chrome.tabs.Tab | undefined> {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     return tab;
@@ -610,6 +622,18 @@ export default defineBackground(() => {
   function contentDispatchFor(defaultTabId: number): ContentDispatch {
     return async (message, signal) => {
       if (signal?.aborted) return { type: 'tool-result', ok: false, error: 'aborted' };
+      // "The work happens on the page the user is looking at" — enforced here, the ONE choke point
+      // every content-routed message passes through. `Target.tabId` is on every DomTool input, and
+      // copy mode legitimately holds two tabs at once (the user's page + a reference site opened in
+      // the background to copy FROM), so a second tab id looks perfectly ordinary at this layer.
+      // Without this guard a model that passed the reference tab's id to `setStyle`/`batch`/
+      // `insertNode` restyled the site it was supposed to be LEARNING from, while the user watched
+      // their own page not change — and the changeset, which ships as a diff against the user's
+      // page, recorded edits against a different origin. Reads and page DRIVERS still address any
+      // tab (that is how copy mode reaches content); only design mutations are pinned. The line is
+      // per-TAB, never per-frame: every frame of this tab stays writable.
+      const blockedTab = mutationBlockedReason(message.type, message.tabId, defaultTabId);
+      if (blockedTab) return { type: 'tool-result', ok: false, error: blockedTab };
       const tabId = message.tabId ?? defaultTabId;
       const frameId = message.frameId ?? 0;
       const send = (): Promise<ToolResult> => sendContentRaw(tabId, frameId, message, signal);
@@ -719,13 +743,22 @@ export default defineBackground(() => {
     const identity = await reportIdentity(contentDispatchFor(tab.id));
 
     const model = createProvider(cfg);
+    // The session's ORIGINATING ask, in the user's own words. The history entry's `title` is
+    // `msg.text` from the session's first turn (`appendTurn`), which is exactly that — and already
+    // bounded by `HISTORY_MAX_TITLE_CHARS`. Without it the brief can describe what was done but
+    // never what it was FOR, nor which parts of a broad request are still outstanding; a full-page
+    // overhaul rarely finishes inside one session, so "what remains" is load-bearing for the reader.
+    const ask = historyStore.get(changeset.sessionId)?.title;
     const makeReport = (): Promise<Report> =>
-      authorReport({ model, generate: reportGenerate }, { changeset, identity, mode: opts.mode });
+      authorReport(
+        { model, generate: reportGenerate },
+        { changeset, identity, mode: opts.mode, ...(ask ? { ask } : {}) },
+      );
 
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
     if (opts.downloadOnly) {
       const report = await makeReport();
-      const markdown = toMarkdown(report);
+      const markdown = toMarkdown(report, changeset);
       // Update-on-report (slice 08): attach the brief to this session's history entry, if it has
       // one — best-effort (`setReport` throws for an id `appendTurn` never created, e.g. a report
       // requested before any turn ran; that's not this RPC's failure to surface).
@@ -761,7 +794,7 @@ export default defineBackground(() => {
         return { ok: false, error: 'Nothing to ship yet — make some edits first.' };
       }
       const report = await makeReport();
-      const markdown = toMarkdown(report);
+      const markdown = toMarkdown(report, changeset);
       await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
       return {
         ok: true,
@@ -918,14 +951,55 @@ export default defineBackground(() => {
           // PERSISTED thread too, deliberately: the next turn rebuilds the model input from the
           // thread, and a persisted message differing from what the model actually saw would
           // break the cached prefix.
+          // The composer's attachments (mockups to design towards, big pastes) wrap that FINAL
+          // string last (`agent/attachments.ts`): with none the content stays the very same plain
+          // string it has always been — the prefix-cache property above depends on that — and with
+          // some it becomes `[text part, ...image parts]`, the text part carrying the grounding
+          // line + this instruction + any inlined text attachments.
+          // An ATTACHING turn is the one deliberate exception to "persisted == what the model saw":
+          // its images are one-shot (below), so the thread keeps markers instead. The cost is a
+          // single prefix invalidation at that message on the NEXT turn — the same "invalidate once,
+          // then stable" trade `pruneInFlightImages` already makes, and the price of not re-billing
+          // the mockup on every turn for the rest of the session.
           const groundedText = groundUserText(msg.text, msg.selector, msg.selectors, msg.xpath);
           const turnText = guidance.turnAddendum
             ? `${groundedText}\n\n${guidance.turnAddendum}`
             : groundedText;
+          // ONE-SHOT IMAGES. An attachment is consumed by the turn it was sent on and then dropped:
+          // the model input below carries the real image parts, the THREAD gets a marker string
+          // (`toStoredUserContent`) that cannot contain a byte of image data, and nothing is ever
+          // written to `chrome.storage.*`. Rationale in `agent/attachments.ts`'s header — a chat
+          // resends the whole conversation every turn, so an image kept in the thread is re-billed
+          // on every later turn rather than paid for once.
+          //
+          // NO MAP, NO REGISTRY: the bytes are reachable only from `liveUserMessage`, a local of
+          // this handler, captured by `threadForModel` -> the `runTurn` call. Nothing that outlives
+          // the turn refers to them, so they cannot be stranded by an abort, a supersede or an early
+          // return — there is no entry to forget to delete. That is why this is threaded rather than
+          // parked in a module-level map keyed by turn id.
+          const liveUserMessage: ChatMessage = {
+            role: 'user',
+            content: toUserContent(turnText, msg.attachments),
+          };
+          // With no attachments both renderers return the SAME string value, so `===` holds, the
+          // persisted message and the model input are byte-identical to what they were before
+          // attachments existed, and the prompt-cache prefix is untouched.
+          const storedContent = toStoredUserContent(turnText, msg.attachments);
           const session = await sessions.appendMessages(tabId, {
             role: 'user',
-            content: turnText,
+            content: storedContent,
           });
+          // `appendMessages` may fold older turns into a digest, but never drops the message it
+          // just appended (`compactSessionThread`'s verbatim tail always starts at or before the
+          // LAST user message), so the live copy goes back exactly where the stored one sits: last.
+          // `annotatePriorThreadTail` puts its cache breakpoint at `length - 2`, so swapping the
+          // final element leaves the breakpoint on the same message it lands on today.
+          const threadForModel =
+            storedContent === liveUserMessage.content
+              ? session.messages
+              : session.messages.map((m, i) =>
+                  i === session.messages.length - 1 ? liveUserMessage : m,
+                );
 
           // The turn is live: persist it per-tab so a panel reconnecting to a WOKEN worker can tell
           // an orphaned turn from a live one (#165 S5, `session-get`), along with the resolved mode.
@@ -1061,7 +1135,7 @@ export default defineBackground(() => {
           let sessionUsage = session.usage;
           const turnDone = runTurn({
             tabId,
-            messages: cacheable ? annotatePriorThreadTail(session.messages) : session.messages,
+            messages: cacheable ? annotatePriorThreadTail(threadForModel) : threadForModel,
             signal: controller.signal,
             model,
             instructions: cacheable ? cachedSystemPrompt(systemPrompt) : systemPrompt,
@@ -1221,6 +1295,14 @@ export default defineBackground(() => {
             // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
             // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
             approveHandoff: () => false,
+            // The model's REAL context window, captured at save-provider time. Only the
+            // context-shaped ceiling is overridden here: the cost-shaped `maxTokens` is a spend
+            // decision that has nothing to do with how much the model can hold, and the two must
+            // not be collapsed (see `BudgetLimits.contextWindow`). Absent ⇒ `DEFAULT_BUDGET`'s
+            // visible fallback.
+            ...(cfg.contextWindow !== undefined
+              ? { limits: { contextWindow: cfg.contextWindow } }
+              : {}),
           })
             .then(async (outcome) => {
               // #168 B: persist the REAL turn — `compactForThread` over the SDK's response
@@ -1296,7 +1378,12 @@ export default defineBackground(() => {
                 for (const group of pendingMutations.peekGroups(tabId)) {
                   const { folded, spillover } = foldMutationEvents(
                     {
-                      intent: 'Auto-recorded agent edit (no recordEdit call)',
+                      // The group's own intent when its events carried one (every mutation input
+                      // now does), else the shared placeholder — which `foldMutationEvents`
+                      // RECOGNISES as "the model narrated nothing" and fills from the events.
+                      // Imported, never re-typed: the two sides match by string equality, and a
+                      // silent drift would quietly restore the "Auto-recorded agent edit" defect.
+                      intent: group.intent ?? AUTO_RECORDED_INTENT,
                       selector: group.selector,
                       changes: [],
                       attrs: [],
@@ -1440,6 +1527,18 @@ export default defineBackground(() => {
         await saveProviderConfig(msg.config);
         const saved = await getProviderConfig(); // includes the decrypted key (new or kept)
         const result = saved ? await validateProvider(saved) : { ok: false, error: undefined };
+        // Capture the selected model's context window ONCE, here, rather than per turn: it is
+        // static per model, and a `/models` round-trip on every turn would add latency to the one
+        // path the user is waiting on. Best-effort in every direction — a gateway with no model
+        // catalogue, a listing that omits the field, or a network failure all leave it unset, and
+        // the turn falls back visibly (`budget.ts` DEFAULT_CONTEXT_WINDOW). Only written when we
+        // actually learned something, so a failed probe never erases a previously-known window.
+        if (saved) {
+          const contextWindow = await resolveContextWindow(saved, saved.model);
+          if (contextWindow !== undefined && contextWindow !== saved.contextWindow) {
+            await saveProviderConfig({ ...saved, contextWindow }).catch(() => {});
+          }
+        }
         void pushReadiness().catch(() => {});
         return { ok: true, valid: result.ok, error: result.error };
       }
@@ -1630,6 +1729,22 @@ export default defineBackground(() => {
         turnAbort = null;
         runningTurnId = null;
         turnChangeset = null;
+        // Disarm the element picker with the session. The picker lives in the DOM world and, once
+        // armed, swallows every click on the page to resolve a selector — so a session ended while
+        // it was armed left the user's page eating their clicks with no UI left that could turn it
+        // off. Ending the session is the last moment we can reach the content script about it.
+        // Best-effort by design: a tab that navigated away or has no content script is already
+        // disarmed, and a failure here must never keep the session from stopping.
+        void resolveTargetTab()
+          .then((tab) => {
+            if (tab?.id === undefined) return;
+            const cmd: PickerCmd = { type: 'picker-stop' };
+            return chrome.tabs.sendMessage(tab.id, cmd).then(
+              () => {},
+              () => {},
+            );
+          })
+          .catch(() => {});
         setSessionState('stopped');
         return { ok: true };
       // The panel ASKS for the current state (#165 S5) — the recovery path for a panel that
@@ -2208,7 +2323,16 @@ function toThreadView(messages: readonly ChatMessage[]): ThreadViewMessage[] {
         if (part.type === 'text') {
           if (part.text.length > 0) turn.texts.push(part.text);
         } else if (part.type === 'tool-call') {
-          turn.tools.push({ name: part.toolName, ok: true, id: part.toolCallId });
+          // The OPERATION, not the resource. Since the tool surface was grouped
+          // (`agent/tools/resources.ts`), the persisted `toolName` is `edit`/`inspect`/`interact`
+          // while the real action lives in the input's `op`. The live stream already reports the
+          // operation (`loop.ts`), so a rehydrated transcript must too — otherwise reconnecting to
+          // a woken worker silently turns every chip in the user's scrollback into "edit".
+          turn.tools.push({
+            name: operationOf(part.input) ?? part.toolName,
+            ok: true,
+            id: part.toolCallId,
+          });
         } else if (part.type === 'tool-result') {
           // Provider-executed tools settle inline in the assistant message.
           settleThreadTool(turn.tools, part);

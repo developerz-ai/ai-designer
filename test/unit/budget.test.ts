@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUDGET_WARN_FRACTION,
   type BudgetLimits,
   budgetNotice,
   budgetReason,
@@ -19,6 +20,7 @@ const LIMITS: BudgetLimits = {
   maxVisionCalls: 2,
   maxWaitCalls: 2,
   maxNavCalls: 2,
+  contextWindow: 128_000,
 };
 const step = (input?: number, output?: number): StepUsageLike => ({
   usage: { inputTokens: input, outputTokens: output },
@@ -200,5 +202,55 @@ describe('TurnBudget', () => {
       });
       expect(budget.exhausted).toBe(false); // guard spend never trips the turn-level stop
     });
+  });
+});
+
+// --- the one-shot mid-turn warning ------------------------------------------------------------
+//
+// THE DEFECT: the HN "make the page more modern" turn spent its entire 200k ceiling on 21 read
+// calls across 3 steps and was force-stopped having changed NOTHING. The model was not exercising
+// bad judgement — it announced an audit-first plan and executed it faithfully — it simply never
+// learned that the plan had become unaffordable, because nothing in the loop ever told it what it
+// had spent. "Stop and summarize" only ever arrived as a fait accompli.
+
+describe('TurnBudget.warning', () => {
+  const limits: BudgetLimits = { ...DEFAULT_BUDGET, maxTokens: 1000 };
+
+  it('stays silent below the warn threshold', () => {
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 500, outputTokens: 0 }); // 50% — still plenty of room
+    expect(budget.warning()).toBeNull();
+  });
+
+  it('fires once spend crosses the threshold, and names the spend', () => {
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 700, outputTokens: 0 });
+    const warning = budget.warning();
+    expect(warning).not.toBeNull();
+    expect(warning).toContain('70%');
+    // It must tell the model what to DO, not merely that it is spending.
+    expect(warning).toContain('Stop surveying');
+    // And why acting beats reading: only changes survive a stop.
+    expect(warning).toContain('what you have CHANGED survives');
+  });
+
+  it('fires EXACTLY once, however far the spend goes afterwards', () => {
+    // One-shot is load-bearing, not an optimisation: the warning is injected into the live
+    // transcript, so re-emitting it every step would rewrite the prompt prefix every step and
+    // invalidate the whole prompt cache each time. Firing once is a single invalidation.
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 700, outputTokens: 0 });
+    expect(budget.warning()).not.toBeNull();
+    budget.record({ inputTokens: 200, outputTokens: 0 });
+    expect(budget.warning()).toBeNull();
+    budget.record({ inputTokens: 500, outputTokens: 0 });
+    expect(budget.warning()).toBeNull();
+  });
+
+  it('leaves real room to act — it is not a death notice', () => {
+    // Warning at 0.8 or 0.9 would arrive too late to change the outcome, which is the entire point
+    // of warning at all. At 0.6 roughly 40% of the ceiling remains.
+    expect(BUDGET_WARN_FRACTION).toBeLessThanOrEqual(0.7);
+    expect(BUDGET_WARN_FRACTION).toBeGreaterThan(0.4);
   });
 });

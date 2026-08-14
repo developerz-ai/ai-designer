@@ -45,8 +45,13 @@ function setStyleModel(): MockLanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 't1',
-          toolName: 'setStyle',
-          input: JSON.stringify({ selector: '#cta', props: { 'background-color': '#f97316' } }),
+          toolName: 'edit',
+          input: JSON.stringify({
+            op: 'setStyle',
+            intent: 'Test intent',
+            selector: '#cta',
+            props: { 'background-color': '#f97316' },
+          }),
         },
         finish(usage(50, 10)),
       ]),

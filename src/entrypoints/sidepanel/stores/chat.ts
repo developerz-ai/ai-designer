@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import type { Attachment, Attachments } from '@/shared/attachments';
 import type { Edit } from '@/shared/changeset';
 import type {
   Mode,
@@ -53,6 +54,13 @@ export interface ChatMessage {
   /** True while this assistant turn is still receiving stream events (cleared by `turn-done`,
    *  an attributed `error`, or a confirmed-dead turn). Always `false` for a `role: 'user'` entry. */
   streaming: boolean;
+  /** Reference material this USER turn was sent with (`src/shared/attachments.ts`) — kept so the
+   *  thread can render what was handed over instead of the mockups vanishing on send. Local to
+   *  this replica: `threadToMessages` rebuilds from the SW's thread view, which carries no
+   *  attachment data, so a rehydrated old turn simply has none. That is correct — the SW is the
+   *  source of truth for what was SAID, and the bytes are not worth re-shipping to redraw a
+   *  thumbnail. */
+  attachments?: Attachment[];
 }
 
 /** What the attribution gate knows when it classifies one stream event. */
@@ -239,7 +247,7 @@ function newAssistantMessage(): ChatMessage {
   };
 }
 
-function newUserMessage(text: string): ChatMessage {
+function newUserMessage(text: string, attachments?: Attachments): ChatMessage {
   return {
     id: crypto.randomUUID(),
     role: 'user',
@@ -247,6 +255,8 @@ function newUserMessage(text: string): ChatMessage {
     toolCalls: [],
     edits: [],
     streaming: false,
+    // Omitted rather than empty, so a turn with nothing attached is the object it always was.
+    ...(attachments && attachments.length > 0 ? { attachments: [...attachments] } : {}),
   };
 }
 
@@ -419,10 +429,20 @@ export async function hydrateThread(): Promise<void> {
  *
  *  `selector` is the PICKED ELEMENT the composer's context chip is showing — the referent of
  *  "this" (#165 S6). The shift-multi-select set rides along the same way, read straight off the
- *  focus store (the composer passes one pin, not the set). */
-export async function send(text: string, mode?: Mode, selector?: StableSelector): Promise<void> {
+ *  focus store (the composer passes one pin, not the set).
+ *
+ *  `attachments` is the draft's reference material (`stores/attachments.ts`). RETURNS whether the
+ *  SW accepted the send: the composer clears its tray only on `true`, so a rejected send does not
+ *  cost the user the six mockups they just picked. Existing callers that ignore the result are
+ *  unaffected. */
+export async function send(
+  text: string,
+  mode?: Mode,
+  selector?: StableSelector,
+  attachments?: Attachments,
+): Promise<boolean> {
   const trimmed = text.trim();
-  if (!trimmed || streaming()) return;
+  if (!trimmed || streaming()) return false;
   setError(null);
   setStreaming(true);
   ackPending = true;
@@ -439,19 +459,22 @@ export async function send(text: string, mode?: Mode, selector?: StableSelector)
         // Omitted when empty: an empty array is the "user cleared it" signal on the way IN, and
         // grounding a turn on nothing is not the same message as not grounding it at all.
         selectors: multi.length > 0 ? multi : undefined,
+        // Same rule, one step further: the KEY is absent when nothing is attached, so a send with
+        // no reference material is byte-identical to a pre-attachment `user-message`.
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       },
       UserMessageResult,
     );
     if (!r.ok) {
       setStreaming(false);
       setError(r.error ?? 'The agent did not accept the message. Try again.');
-      return;
+      return false;
     }
     // An accepted send supersedes any hydrate still in flight (its replies predate this message —
     // applying them would wipe the bubble just appended). Same last-writer-wins rule as the
     // changeset store's viewSeq.
     hydrateSeq++;
-    setMessages((prev) => [...prev, newUserMessage(trimmed)]);
+    setMessages((prev) => [...prev, newUserMessage(trimmed, attachments)]);
     // Key the panel to this turn (`null` = a pre-#168 SW that acks without a turnId — unstamped
     // events keep folding), then replay any stamped events that beat the ack.
     setActiveTurnId(r.turnId ?? null);
@@ -459,9 +482,11 @@ export async function send(text: string, mode?: Mode, selector?: StableSelector)
     heldTurnEvents = [];
     ackPending = false;
     for (const m of held) onStream(m);
+    return true;
   } catch (e) {
     setStreaming(false);
     setError(errMsg(e));
+    return false;
   } finally {
     ackPending = false;
     heldTurnEvents = [];

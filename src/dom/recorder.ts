@@ -29,6 +29,11 @@ export type RecorderEmit = (msg: ContentToSw) => void;
 export interface RecordExtras {
   structural?: StructuralChange;
   frameworkHints?: string[];
+  /** The WHY, taken from the mutation tool input that caused this change. Rides the event to the
+   *  SW, which folds it into the durable `Edit.intent` — so an edit the model never separately
+   *  `recordEdit`-ed still says what it was for, instead of "Auto-recorded agent edit". Absent
+   *  when the caller supplied none (the bus keeps it optional for back-compat). */
+  intent?: string;
 }
 
 export interface Recorder {
@@ -82,6 +87,7 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
       ...(mutation.attrChange ? { attrChange: mutation.attrChange } : {}),
       ...(mutation.classChange ? { classChange: mutation.classChange } : {}),
       ...(mutation.textChange ? { textChange: mutation.textChange } : {}),
+      ...(extras?.intent ? { intent: extras.intent } : {}),
       ...(extras?.structural ? { structural: extras.structural } : {}),
       ...(extras?.frameworkHints ? { frameworkHints: extras.frameworkHints } : {}),
     };
