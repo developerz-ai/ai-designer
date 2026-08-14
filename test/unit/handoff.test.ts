@@ -33,6 +33,7 @@ const changeset = (over: Partial<Changeset> = {}): Changeset => ({
   createdAt: '2026-07-14T00:00:00.000Z',
   sessionId: '00000000-0000-0000-0000-000000000000',
   edits: [edit()],
+  stylesheets: [],
   ...over,
 });
 
@@ -302,5 +303,63 @@ describe('ship', () => {
     const source: ShipSource = { kind: 'changeset', changeset: changeset({ edits: [] }) };
     await expect(ship(source, target, { backend })).rejects.toThrow(/no edits/);
     expect(backend.create).not.toHaveBeenCalled();
+  });
+});
+
+// --- the brief carries the EDITS (regression guard for a bug that shipped silently) ------------
+//
+// `Report` (src/shared/report.ts) has no changeset field, so a brief rendered from the report alone
+// is model prose — no selector, no property, no CSS. Every "export my work to hand to a coding
+// agent" was shipping the work missing: `spec.edits` carried the structured deltas, but the
+// human/agent-READABLE half of the handoff had none of them. `toMarkdown` takes the changeset as an
+// optional second argument; these pin that every dispatch path actually passes it.
+
+describe('the dispatched brief carries the changeset', () => {
+  const source = (over: Partial<Extract<ShipSource, { kind: 'report' }>> = {}): ShipSource => ({
+    kind: 'report',
+    report: report(),
+    changeset: changeset({ edits: [edit()] }),
+    ...over,
+  });
+
+  it('renders the edits into the single-task brief', () => {
+    const [spec] = planTasks(source(), { repo: 'acme/site' });
+    const brief = String(spec?.spec.brief ?? '');
+    expect(brief).toContain('.cta'); // the selector
+    expect(brief).toContain('#f97316'); // the value that was applied
+    expect(brief).toContain('Make the CTA orange'); // the intent
+  });
+
+  it('renders paste-ready CSS, not just a prose list', () => {
+    const [spec] = planTasks(source(), { repo: 'acme/site' });
+    const brief = String(spec?.spec.brief ?? '');
+    expect(brief).toContain('## Proposed CSS');
+    expect(brief).toContain('background: #f97316;');
+  });
+
+  it('renders them into EVERY task of a multi-task fan-out', () => {
+    // Each per-problem task is dispatched on its own; a brief missing the edits in task 2 is just
+    // as broken as one missing them in task 1.
+    const specs = planTasks(
+      source({
+        report: report({ problems: ['Contrast too low', 'CTA is buried'] }),
+        multiTask: true,
+      }),
+      { repo: 'acme/site' },
+    );
+    expect(specs).toHaveLength(2);
+    for (const spec of specs) {
+      expect(String(spec.spec.brief)).toContain('.cta');
+    }
+  });
+
+  it('still renders a prose-only brief when there is no changeset', () => {
+    // The parameter is optional and back-compatible: no changeset ⇒ no edits section, no bare
+    // heading, no throw.
+    const [spec] = planTasks(source({ changeset: undefined }), { repo: 'acme/site' });
+    const brief = String(spec?.spec.brief ?? '');
+    expect(brief).toContain('# Design review');
+    expect(brief).not.toContain('## Edits');
+    expect(brief).not.toContain('## Proposed CSS');
   });
 });

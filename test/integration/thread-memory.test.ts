@@ -15,6 +15,7 @@ import { buildSystemPrompt } from '@/agent/system-prompt';
 import { compactForThread } from '@/agent/thread-compact';
 import type { DomDispatch } from '@/agent/tools/dom';
 import type { SwToPanel, ThreadViewMessage } from '@/shared/messages';
+import { operationOf } from '@/shared/overlay-step';
 
 // Integration (#168 cross-turn amnesia): the conversation-memory wiring background.ts's
 // `user-message` handler drives — persist the REAL turn (`compactForThread(outcome.
@@ -96,8 +97,13 @@ function toolTurnModel(): MockLanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 't1',
-          toolName: 'setStyle',
-          input: JSON.stringify({ selector: '#cta', props: { 'background-color': '#f97316' } }),
+          toolName: 'edit',
+          input: JSON.stringify({
+            op: 'setStyle',
+            intent: 'Test intent',
+            selector: '#cta',
+            props: { 'background-color': '#f97316' },
+          }),
         },
         finish(usage(500, 100), 'tool-calls'),
       ]),
@@ -140,8 +146,13 @@ function gatedSecondStepModel(): { model: MockLanguageModelV4; release: () => vo
           {
             type: 'tool-call',
             toolCallId: 't1',
-            toolName: 'setStyle',
-            input: JSON.stringify({ selector: '#cta', props: { color: 'red' } }),
+            toolName: 'edit',
+            input: JSON.stringify({
+              op: 'setStyle',
+              intent: 'Test intent',
+              selector: '#cta',
+              props: { color: 'red' },
+            }),
           },
           finish(usage(100, 20), 'tool-calls'),
         ]);
@@ -385,7 +396,13 @@ function toThreadView(messages: readonly ChatMessage[]): ThreadViewMessage[] {
         if (part.type === 'text') {
           if (part.text.length > 0) turn.texts.push(part.text);
         } else if (part.type === 'tool-call') {
-          turn.tools.push({ name: part.toolName, ok: true, id: part.toolCallId });
+          // Mirrors background.ts: the chip carries the OPERATION, not the resource the tool
+          // surface groups it under, so a rehydrated transcript reads the same as the live one.
+          turn.tools.push({
+            name: operationOf(part.input) ?? part.toolName,
+            ok: true,
+            id: part.toolCallId,
+          });
         } else if (part.type === 'tool-result') {
           settleThreadTool(turn.tools, part);
         }
@@ -440,7 +457,10 @@ describe('two-turn memory: the second turn is grounded in the first turn REAL me
       .filter((m) => m.role === 'assistant')
       .flatMap((m) => (typeof m.content === 'string' ? [] : m.content))
       .filter((p) => p.type === 'tool-call');
-    expect(assistantToolCalls.map((p) => p.toolName)).toContain('setStyle');
+    // The persisted call names the RESOURCE (that is what the model invoked); the operation
+    // rides its input, which is what the panel's chips and the overlay both read.
+    expect(assistantToolCalls.map((p) => p.toolName)).toContain('edit');
+    expect(JSON.stringify(assistantToolCalls)).toContain('"op":"setStyle"');
 
     // Turn 2: what the MODEL actually receives must include turn 1's tool-call AND its result —
     // this is the assertion that fails pre-fix (the model saw only prose, re-ran every tool, and
@@ -455,11 +475,12 @@ describe('two-turn memory: the second turn is grounded in the first turn REAL me
     const promptToolCalls = prompt
       .flatMap((m) => (m.role === 'assistant' && Array.isArray(m.content) ? m.content : []))
       .filter((p) => p.type === 'tool-call');
-    expect(promptToolCalls.map((p) => p.toolName)).toContain('setStyle');
+    expect(promptToolCalls.map((p) => p.toolName)).toContain('edit');
+    expect(JSON.stringify(promptToolCalls)).toContain('"op":"setStyle"');
     const promptToolResults = prompt
       .flatMap((m) => (m.role === 'tool' ? m.content : []))
       .filter((p) => p.type === 'tool-result');
-    expect(promptToolResults.map((p) => p.toolName)).toContain('setStyle');
+    expect(promptToolResults.map((p) => p.toolName)).toContain('edit');
   });
 
   it('history receives the same tool-bearing messages, so replay keeps the tool activity', async () => {

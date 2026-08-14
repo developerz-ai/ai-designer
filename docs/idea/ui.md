@@ -37,7 +37,8 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `ReadinessDropdown.tsx` | Status pill, checklist, Start/Stop, overlay toggle |
 | `ChatPanel.tsx` / `chat/Thread.tsx` | Message list + streaming render |
 | `chat/ToolChip.tsx` | One tool call, status, expandable args |
-| `chat/Composer.tsx` | Input, send/stop, model quick-switch, attach-element picker trigger |
+| `chat/Composer.tsx` | Input, send/stop, model quick-switch, attach-element picker trigger, reference-image attach (button / paste / drop) |
+| `chat/AttachmentTray.tsx` | Attached mockups + promoted big pastes, above the composer shell |
 | `ShipBar.tsx` | Ship / Download report actions |
 | `TaskTimeline.tsx` | Handoff status → PR link |
 | `McpPanel.tsx` | Connected backends + add/remove (origin→repo mapping is storage-only, no UI — #20) |

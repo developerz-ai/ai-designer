@@ -64,8 +64,8 @@ function copyModel(accentHex: string): MockLanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 'i1',
-          toolName: 'extractIdentity',
-          input: JSON.stringify({ tabId: 2 }),
+          toolName: 'inspect',
+          input: JSON.stringify({ op: 'extractIdentity', tabId: 2 }),
         },
         finish(usage(300, 40), 'tool-calls'),
       ]),
@@ -77,8 +77,13 @@ function copyModel(accentHex: string): MockLanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 's1',
-          toolName: 'setStyle',
-          input: JSON.stringify({ selector: '#cta', props: { 'background-color': accentHex } }),
+          toolName: 'edit',
+          input: JSON.stringify({
+            op: 'setStyle',
+            intent: 'Test intent',
+            selector: '#cta',
+            props: { 'background-color': accentHex },
+          }),
         },
         finish(usage(350, 30), 'tool-calls'),
       ]),
@@ -122,7 +127,9 @@ function ownDomDispatch(): DomDispatch {
     doc: document,
   });
   return async (msg) => {
-    if (msg.type === 'screenshot' || msg.type === 'diagnostics') {
+    // The three DomTool members the synchronous executor does not serve: `screenshot` (SW capture),
+    // `diagnostics` (collector/scan) and `pageOp` (async, MAIN-world bridge round-trip).
+    if (msg.type === 'screenshot' || msg.type === 'diagnostics' || msg.type === 'pageOp') {
       return { type: 'tool-result', ok: false, error: 'not supported in this fixture' };
     }
     return executor.exec(msg);

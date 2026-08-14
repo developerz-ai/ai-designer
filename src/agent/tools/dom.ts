@@ -12,6 +12,7 @@
 // the content script is real (slice 05) these calls drive its stubs.
 
 import { tool } from 'ai';
+import { z } from 'zod';
 import {
   A11ySnapshotInput,
   AddClassInput,
@@ -19,19 +20,135 @@ import {
   DiagnosticsInput,
   DiscardUndoInput,
   type DomTool,
-  GetStylesInput,
+  InjectCssInput,
   InsertNodeInput,
   MoveNodeInput,
+  PageOpInput,
   QueryInput,
+  RemoveAttrInput,
   RemoveClassInput,
   RemoveNodeInput,
+  ReplaceNodeInput,
   ScreenshotInput,
   SetAttrInput,
   SetStyleInput,
   SetTextInput,
+  Target,
   ToolResult,
   UndoInput,
+  UnwrapNodeInput,
+  WrapNodeInput,
 } from '@/shared/messages';
+
+// --- multi-target `getStyles` -----------------------------------------------------------------
+//
+// THE DEFECT THIS CLOSES (measured, HN session 2026-08-14): a "make the page more modern" turn
+// spent its entire 200k token budget on 21 read calls and made zero edits. Eleven of those were
+// `getStyles`, one per element, because `getStyles` took exactly ONE `selector` — there was no
+// multi-target read anywhere in the system. `batch` (below) is mutations only (`BatchOp` in
+// src/shared/messages.ts), so the model was not ignoring a batching path; it was following the
+// system prompt's "batch independent calls in one step" the only way the API allowed, by firing a
+// wide fan-out of single-target calls. Each returned all 22 properties whether or not they were
+// wanted.
+//
+// Both halves are fixed HERE, in the tool layer, with NO bus change:
+//   • `selectors[]` fans out to N existing `{type:'getStyles'}` messages in parallel and merges.
+//   • `props[]` projects the returned map down to what was asked for. `src/dom/read.ts` has
+//     supported a `props` argument since it was written, but `GetStylesInput` never exposed it —
+//     so the projection happens SW-side instead. The content payload is unchanged; what reaches
+//     the MODEL (and therefore the transcript, re-sent every step) is not.
+//
+// Deliberately additive: `selector` still works, so nothing that already calls this breaks.
+
+/** What the MODEL sees — deliberately NOT `GetStylesInput`, which the rest of this file derives
+ *  1:1 from the bus. The bus stays single-target; only the model-facing surface batches. */
+const GetStylesMultiInput = z.object({
+  /** One element. Kept for back-compat and for the genuinely single-target case. */
+  selector: z.string().optional(),
+  /** Many elements in one round-trip — the form to reach for. Bounded because every result rides
+   *  the transcript on every later step; 20 covers a whole page section's worth of elements. */
+  selectors: z.array(z.string()).min(1).max(20).optional(),
+  /** Project the result to these CSS properties. Omitted ⇒ all 22 design-relevant ones. */
+  props: z.array(z.string()).min(1).max(40).optional(),
+  ...Target.shape,
+});
+type GetStylesMultiInput = z.infer<typeof GetStylesMultiInput>;
+
+/** Read the `styles` map off one `getStyles` ToolResult, defensively — `ToolResult.data` is
+ *  `unknown` on the bus, so its shape is narrowed rather than trusted. */
+function stylesOf(result: ToolResult): Record<string, string> | null {
+  if (!result.ok || typeof result.data !== 'object' || result.data === null) return null;
+  const { styles } = result.data as { styles?: unknown };
+  if (typeof styles !== 'object' || styles === null) return null;
+  const out: Record<string, string> = {};
+  for (const [prop, value] of Object.entries(styles)) {
+    if (typeof value === 'string') out[prop] = value;
+  }
+  return out;
+}
+
+/** Keep only `props`, in the order the caller asked for them. An unknown property is simply
+ *  absent — never an error, and never a silent substitution of something else. */
+function project(
+  styles: Record<string, string>,
+  props?: readonly string[],
+): Record<string, string> {
+  if (!props || props.length === 0) return styles;
+  const out: Record<string, string> = {};
+  for (const prop of props) {
+    const value = styles[prop];
+    if (value !== undefined) out[prop] = value;
+  }
+  return out;
+}
+
+/**
+ * Fan one model-facing `getStyles` call out to one bus message per selector, in parallel, and merge
+ * the results into a single map keyed by the selector the model passed (so it can correlate without
+ * counting positions). Per-element failures land in `failed` rather than failing the whole call —
+ * one bad selector out of eleven must not cost the other ten.
+ *
+ * Total: a call naming neither `selector` nor `selectors` returns a named error rather than
+ * throwing, so a malformed call costs one result, not the turn.
+ */
+async function getStylesMulti(
+  dispatch: DomDispatch,
+  input: GetStylesMultiInput,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
+  const { selector, selectors, props, ...target } = input;
+  const targets = [...new Set([...(selectors ?? []), ...(selector ? [selector] : [])])];
+  if (targets.length === 0) {
+    return {
+      type: 'tool-result',
+      ok: false,
+      error: 'getStyles needs `selectors` (an array, preferred) or a single `selector`.',
+    };
+  }
+
+  const results = await Promise.all(
+    targets.map((one) => dispatch({ type: 'getStyles', selector: one, ...target }, signal)),
+  );
+
+  const styles: Record<string, Record<string, string>> = {};
+  const failed: Record<string, string> = {};
+  targets.forEach((one, index) => {
+    const result = results[index];
+    const read = result ? stylesOf(result) : null;
+    if (read) styles[one] = project(read, props);
+    else failed[one] = result?.error ?? 'no element matched this selector';
+  });
+
+  return {
+    type: 'tool-result',
+    // Any element read is a useful result; only a total miss is a failure.
+    ok: Object.keys(styles).length > 0,
+    data: { styles, ...(Object.keys(failed).length > 0 ? { failed } : {}) },
+    ...(Object.keys(styles).length === 0
+      ? { error: 'None of the selectors matched an element.' }
+      : {}),
+  };
+}
 
 /** Round-trips one `DomTool` call to the content script and resolves its `ToolResult`.
  *  Turn-scoped (the caller binds it to the active tab). Implemented in the agent loop with
@@ -57,12 +174,17 @@ export function createDomTools(dispatch: DomDispatch) {
     }),
     getStyles: tool({
       description:
-        'Read the relevant computed styles of the element matching `selector`. ' +
-        'ToolResult.data = { styles: Record<prop, value> }. Cheaper than a screenshot for ' +
-        'checking current color, spacing, or typography.',
-      inputSchema: GetStylesInput.omit({ type: true }),
+        'Read computed styles for ONE OR MANY elements in a single call. Pass `selectors` (an ' +
+        'array) whenever you want more than one element — reading eleven elements is ONE call ' +
+        'with eleven selectors, never eleven calls. Pass `props` to get only the properties you ' +
+        'actually need (e.g. ["color","background-color"]); omit it and you get all 22 ' +
+        'design-relevant properties for every element, which is the single easiest way to fill ' +
+        'your context with values you will not read. ToolResult.data = ' +
+        '{ styles: Record<selector, Record<prop, value>>, failed?: Record<selector, error> }. ' +
+        'Far cheaper than a screenshot for checking current color, spacing, or typography.',
+      inputSchema: GetStylesMultiInput,
       outputSchema: ToolResult,
-      execute: (input, { abortSignal }) => dispatch({ type: 'getStyles', ...input }, abortSignal),
+      execute: (input, { abortSignal }) => getStylesMulti(dispatch, input, abortSignal),
     }),
     screenshot: tool({
       description:
@@ -77,7 +199,10 @@ export function createDomTools(dispatch: DomDispatch) {
       description:
         'Return the accessibility role/name tree rooted at `selector`. ' +
         'ToolResult.data = { tree: A11yNode }. Cheaper than a screenshot for understanding ' +
-        'structure, labels, and hierarchy.',
+        'structure, labels, and hierarchy — but it is the LARGEST read available and it grows ' +
+        'with the subtree, so scope `selector` to the region you are working on. Rooting it at ' +
+        'the whole document on a content-heavy page can return tens of thousands of characters, ' +
+        'which then ride your context for the rest of the turn and get clipped.',
       inputSchema: A11ySnapshotInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) =>
@@ -86,7 +211,11 @@ export function createDomTools(dispatch: DomDispatch) {
     setStyle: tool({
       description:
         'Apply CSS properties (prop -> value) to the element(s) matching `selector`. ' +
-        'Reversible and recorded as an edit. ToolResult.data = the resulting computed subset.',
+        'Reversible and recorded as an edit. ToolResult.data = the resulting computed subset. ' +
+        'Write the RULE, not a measurement: `margin: 0 auto` to centre, never a pixel margin ' +
+        'computed from the current window width; prefer tokens, `rem`, `%`, flex/grid/`gap`, ' +
+        '`clamp()` and `auto` over a number you read off `getStyles`. A transcribed computed ' +
+        'value is correct at exactly one viewport and breaks at every other.',
       inputSchema: SetStyleInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'setStyle', ...input }, abortSignal),
@@ -167,6 +296,72 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: RemoveNodeInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'removeNode', ...input }, abortSignal),
+    }),
+    removeAttr: tool({
+      description:
+        'Remove attribute `name` from the element matching `selector`. Distinct from setting it ' +
+        'empty: `href=""` is a live link to the current page and `alt=""` means "decorative ' +
+        'image" — neither is the same as the attribute being absent. Reversible and recorded.',
+      inputSchema: RemoveAttrInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'removeAttr', ...input }, abortSignal),
+    }),
+    wrapNode: tool({
+      description:
+        'Wrap the element matching `selector` — or the RANGE from `selector` to `endSelector`, ' +
+        "which must be siblings — in `html`. The wrapper markup's deepest single element " +
+        'receives the wrapped nodes. This is the restructuring primitive for an overhaul: it is ' +
+        'how a loose run of siblings becomes something you can centre, grid, or turn into a card. ' +
+        'Do NOT compose it from insertNode + moveNode — that produces two undo entries whose ' +
+        "second anchor is the first one's output. Reversible and recorded as one edit.",
+      inputSchema: WrapNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'wrapNode', ...input }, abortSignal),
+    }),
+    unwrapNode: tool({
+      description:
+        'Replace the element matching `selector` with its own children — the inverse of ' +
+        'wrapNode, and how a redundant layout wrapper is removed WITHOUT deleting the content ' +
+        'inside it. Reversible and recorded as one edit.',
+      inputSchema: UnwrapNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'unwrapNode', ...input }, abortSignal),
+    }),
+    replaceNode: tool({
+      description:
+        'Swap the element matching `selector` for `html`, keeping its position. Prefer this over ' +
+        'removeNode + insertNode: one undo entry, and the anchor cannot drift between the two ' +
+        'halves. Reversible and recorded as one edit.',
+      inputSchema: ReplaceNodeInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'replaceNode', ...input }, abortSignal),
+    }),
+    injectCss: tool({
+      description:
+        'Inject a page-level STYLESHEET. This is the right primitive for a broad redesign, and ' +
+        'usually a better one than many setStyle calls: write real selectors, custom properties, ' +
+        'a type scale, and MEDIA QUERIES — which a per-element style cannot express at all, so ' +
+        'this is the only way to make a design actually responsive. Re-injecting with the same ' +
+        '`id` REPLACES that sheet, so refine by re-sending a corrected sheet rather than layering ' +
+        'overrides on your own earlier mistakes. Write rules a developer would recognise ' +
+        '(`margin: 0 auto`, tokens, `rem`, `clamp()`), never computed pixel values read back off ' +
+        'the page. Reversible and recorded in the changeset as a stylesheet.',
+      inputSchema: InjectCssInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'injectCss', ...input }, abortSignal),
+    }),
+    pageOp: tool({
+      description:
+        'Run one bundled page operation the DOM cannot answer on its own — derived layout ' +
+        '(`box`, `overflow`, `scrollContainer`, `stacking`, `visibility`), motion control ' +
+        '(`animations`, `freezeMotion`, `media` — freeze motion before a screenshot to make it ' +
+        'deterministic), and form state. Pick an `op` and pass its parameters; this never ' +
+        'executes code you wrote. `overflow` with no selector audits the WHOLE document for ' +
+        'horizontal overflow — the most common responsive defect, and one no per-element read ' +
+        'can find.',
+      inputSchema: PageOpInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) => dispatch({ type: 'pageOp', ...input }, abortSignal),
     }),
     undo: tool({
       description: 'Revert the most recent recorded page mutation. Takes no arguments.',

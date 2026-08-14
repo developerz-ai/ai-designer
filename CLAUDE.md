@@ -35,7 +35,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 | `src/entrypoints/sidepanel/` | Panel | Solid SPA (chat, MCP, history, settings) + stores (chat, mcp, readiness, settings) |
 | `src/entrypoints/background.ts` | SW | Loop bootstrap, message-bus host, overlay-step relay, session restore |
 | `src/entrypoints/content.ts` | Content | DOM bridge (isolated), picker mount, overlay mount, recorder relay |
-| `src/entrypoints/injected.content.ts` | MAIN | Page-facts + chart-lib bridge (read-only, no secrets) |
+| `src/entrypoints/injected.content.ts` | MAIN | Page-facts + chart-lib bridge + page-ops (framework state, `window` path reads, `pageCall`). **No secrets, ever** — but no longer read-only: `pageCall` invokes page-owned functions by path, never by code string. No `eval`/`new Function`/`<script>`; path guard + identity check against aliased `eval`/`Function`; hostile-page-safe result marshalling |
 | `src/shared/` | all | Zod schemas (messages, changeset, report, overlay), port/relay plumbing |
 | `src/entrypoints/sidepanel/components/Icon.tsx` | Panel | FontAwesome SVG-core inline, tree-shaken (no remote fetch, CSP-clean) |
 

@@ -50,8 +50,8 @@ function browseModel(url: string): MockLanguageModelV4 {
         {
           type: 'tool-call',
           toolCallId: 'b1',
-          toolName: 'browse',
-          input: JSON.stringify({ url }),
+          toolName: 'inspect',
+          input: JSON.stringify({ op: 'browse', url }),
         },
         finish(usage(400, 60), 'tool-calls'),
       ]),
@@ -132,6 +132,18 @@ function offeredToolNames(model: MockLanguageModelV4): string[] {
   return tools.map((t) => t.name ?? '').filter((n) => n !== '');
 }
 
+/** Every OPERATION the model was actually offered. The surface is grouped into resources
+ *  (`agent/tools/resources.ts`), so "is `browse` available" is a question about a resource's ops,
+ *  not about a top-level tool name — and each resource lists its operations in its description. */
+function offeredOps(model: MockLanguageModelV4): string[] {
+  const tools = (model.doStreamCalls[0]?.tools ?? []) as Array<{ description?: string }>;
+  const ops: string[] = [];
+  for (const t of tools) {
+    for (const m of (t.description ?? '').matchAll(/^- `(\w+)`/gm)) ops.push(m[1] ?? '');
+  }
+  return ops;
+}
+
 describe('integration: the browse tool opens a reference site and feeds its design read back', () => {
   it('routes browse(url) to the injected dispatch and returns the design read to the model', async () => {
     const url = 'https://nvidia.com';
@@ -203,7 +215,7 @@ describe('integration: the browse tool opens a reference site and feeds its desi
       browse: fakeBrowse({ type: 'tool-result', ok: true, data: REF_READ }).browse,
       emit: collectEmit().emit,
     });
-    expect(offeredToolNames(withBrowse)).toContain('browse');
+    expect(offeredOps(withBrowse)).toContain('browse');
 
     const noBrowse = textModel();
     await runTurn({
@@ -214,8 +226,10 @@ describe('integration: the browse tool opens a reference site and feeds its desi
       dispatch: noopDispatch,
       emit: collectEmit().emit,
     });
-    const names = offeredToolNames(noBrowse);
-    expect(names).toContain('query'); // DOM tools still offered
-    expect(names).not.toContain('browse'); // …but browse isn't, with no dispatch
+    const ops = offeredOps(noBrowse);
+    expect(ops).toContain('query'); // DOM reads still offered
+    expect(ops).not.toContain('browse'); // …but browse isn't, with no dispatch
+    // And the grouping itself is intact — the resources are what the model sees.
+    expect(offeredToolNames(noBrowse)).toContain('inspect');
   });
 });

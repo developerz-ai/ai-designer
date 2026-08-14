@@ -1,0 +1,70 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// The draft's attachments, stacked above the composer shell and directly under the element-
+// reference row. Wraps rather than scrolls: at the 360px floor two chips fit per line, so the cap
+// of six is three lines — tall, but the composer only grows while something is actually attached,
+// and a horizontally scrolling tray hides exactly the attachment you are trying to remove.
+.dz-attachment-tray {
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-1;
+  padding-bottom: tokens.$dz-space-2;
+
+  &__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: tokens.rem(6);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__item {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  // Work in flight. Deliberately the same height as a chip so the row does not jump when the
+  // encode finishes and a real chip takes its place.
+  &__pending {
+    @include mixins.tinted-chip(var(--dz-elev-hover), var(--dz-border-subtle), tokens.rem(34));
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+  }
+
+  &__notice {
+    margin: 0;
+    padding: 0 tokens.rem(2);
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: tokens.rem(6);
+    margin: 0;
+    padding: tokens.$dz-space-1 tokens.rem(6);
+    background: var(--dz-warn-fill);
+    border: tokens.$dz-border-width solid var(--dz-warn-line);
+    border-radius: tokens.$dz-radius-sm;
+    color: var(--dz-status-warning);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  &__error-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__dismiss {
+    @include mixins.icon-button(tokens.rem(18), var(--dz-radius-pill), false, 'muted');
+    @include mixins.hit-target(tokens.$dz-control-sm);
+    color: inherit;
+  }
+}

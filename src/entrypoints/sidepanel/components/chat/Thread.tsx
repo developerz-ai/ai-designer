@@ -125,6 +125,7 @@ export function Thread(props: ThreadProps) {
               error={m().error}
               toolCalls={m().toolCalls}
               edits={m().edits}
+              attachments={m().attachments}
             />
           )}
         </Index>

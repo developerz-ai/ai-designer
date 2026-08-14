@@ -9,6 +9,7 @@ import {
   generateReport,
   identityTokens,
   type ReportInput,
+  reportSystemPrompt,
 } from '@/agent/report';
 import { type Changeset, type Edit, emptyChangeset } from '@/shared/changeset';
 import type { DiagnosticsReport } from '@/shared/diagnostics';
@@ -258,5 +259,63 @@ describe('buildReportContext', () => {
     expect(text).toContain('recolor cta');
     expect(text).toContain('Hero image overflows on mobile');
     expect(text).toContain('Colors: #0a0a0a (background), #00aaff (accent)');
+  });
+});
+
+// --- the brief IS the deliverable (item 4) ----------------------------------------------------
+//
+// The live page is a preview that dies with the tab; this document is what the user's coding agent
+// actually implements. Three things it could not previously say, in the order they mattered:
+// the INTENT behind each change, the change as CSS a developer can paste, and — for a broad ask
+// that does not finish in one session — which parts remain.
+
+describe('reportSystemPrompt: handoff quality', () => {
+  const prompt = reportSystemPrompt();
+
+  it('states that the brief, not the live page, is the deliverable', () => {
+    expect(prompt).toContain('THE BRIEF IS THE DELIVERABLE');
+    expect(prompt).toContain('stand on its own');
+  });
+
+  it('asks for intent alongside mechanics', () => {
+    // `padding: 24px` tells a reader what was typed, not what it was for.
+    expect(prompt).toContain('INTENT alongside the mechanics');
+  });
+
+  it('asks for paste-ready CSS in the intent-expressing form, not computed values', () => {
+    expect(prompt).toContain('PASTE');
+    expect(prompt).toContain('margin: 0 auto');
+    expect(prompt).toContain('wrong at every other');
+  });
+
+  it('asks it to say what is DONE and what REMAINS', () => {
+    expect(prompt).toContain('DONE');
+    expect(prompt).toContain('remain');
+  });
+
+  it('keeps its mode framing and its no-invention rule', () => {
+    expect(reportSystemPrompt('debug')).toContain('DEBUG session');
+    expect(reportSystemPrompt('copy')).toContain('COPY session');
+    expect(prompt).toContain('do not invent findings');
+  });
+});
+
+describe('buildReportContext: the originating ask', () => {
+  const changeset = changesetWith();
+
+  it('leads with the user’s own words when the session has them', () => {
+    const text = buildReportContext({ changeset, ask: 'make the page more modern' });
+    expect(text).toContain('The user asked for: "make the page more modern"');
+    // First, because everything below it is what was DONE — only this says what it was FOR.
+    expect(text.indexOf('The user asked for')).toBe(0);
+  });
+
+  it('omits the line entirely when there is no ask — no empty scaffolding', () => {
+    expect(buildReportContext({ changeset })).not.toContain('The user asked for');
+  });
+
+  it('bounds the ask — it is user text arriving from the session thread', () => {
+    const text = buildReportContext({ changeset, ask: 'x'.repeat(5_000) });
+    expect(text.length).toBeLessThan(2_000);
   });
 });

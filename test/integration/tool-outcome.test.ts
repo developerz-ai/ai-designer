@@ -44,8 +44,13 @@ function retryingModel(): LanguageModelV4 {
   const call = (id: string, selector: string): LanguageModelV4StreamPart => ({
     type: 'tool-call',
     toolCallId: id,
-    toolName: 'setStyle',
-    input: JSON.stringify({ selector, props: { 'font-size': '24px' } }),
+    toolName: 'edit',
+    input: JSON.stringify({
+      op: 'setStyle',
+      intent: 'Test intent',
+      selector,
+      props: { 'font-size': '24px' },
+    }),
   });
   return new MockLanguageModelV4({
     doStream: [

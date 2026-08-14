@@ -16,6 +16,46 @@ import type { AttrChange, Edit, StyleChange } from '@/shared/changeset';
 import type { MutationEvent } from '@/shared/messages';
 
 /**
+ * The intent the SW's turn-end auto-finalize seeds an unrecorded mutation group with
+ * (`background.ts`). Exported so the fold can RECOGNISE it as "the model supplied no intent" rather
+ * than as a real one — and so the two sides share one string instead of two literals that must
+ * agree.
+ *
+ * This is the line a real Hacker News session printed fifteen times. It should now be rare: every
+ * mutation input carries `intent`, so the fold below fills it from the events themselves and the
+ * placeholder survives only when the model narrated nothing anywhere.
+ */
+export const AUTO_RECORDED_INTENT = 'Auto-recorded agent edit (no recordEdit call)';
+
+/** Cap on a joined intent — a selector group holding several distinct reasons. */
+const MAX_INTENT_CHARS = 300;
+
+/**
+ * The intent the folded Edit should carry.
+ *
+ * The model's own `recordEdit` intent WINS when it gave one: it is a deliberate summary of the
+ * whole group, where an event's intent describes one mutation. The events fill in when the model
+ * narrated nothing — which is exactly the auto-finalize case, recognised by its placeholder seed.
+ *
+ * Several distinct event intents in one group means several goals landed on one element, so they
+ * are joined rather than silently reduced to the first: dropping one would hide work from the brief.
+ */
+function pickIntent(modelIntent: string, events: readonly MutationEvent[]): string {
+  const authored = modelIntent.trim();
+  if (authored !== '' && authored !== AUTO_RECORDED_INTENT) return modelIntent;
+
+  const distinct: string[] = [];
+  for (const event of events) {
+    const intent = event.intent?.trim();
+    if (!intent || distinct.includes(intent)) continue;
+    distinct.push(intent);
+  }
+  if (distinct.length === 0) return modelIntent;
+  const joined = distinct.join('; ');
+  return joined.length <= MAX_INTENT_CHARS ? joined : `${joined.slice(0, MAX_INTENT_CHARS - 1)}…`;
+}
+
+/**
  * Fold drained recorder events into a model-authored Edit (see the module header for the
  * ground-truth-wins rule).
  *
@@ -49,6 +89,9 @@ export function foldMutationEvents(
 
   const folded: Edit = {
     ...edit,
+    // The WHY, taken from the mutations themselves when the model narrated none — the fix for a
+    // changeset of intentless computed-value diffs (see `pickIntent`).
+    intent: pickIntent(edit.intent, events),
     selector: groupSelector,
     changes: changes ? changes.merged : edit.changes,
     attrs: attrs ? attrs.merged : edit.attrs,
@@ -66,7 +109,9 @@ export function foldMutationEvents(
   for (const event of structuralEvents.slice(1)) {
     if (!event.structural) continue;
     spillover.push({
-      intent: 'Auto-recorded structural edit (additional op on same selector)',
+      // The op's own reason when it has one; the generic label only when it does not.
+      intent:
+        event.intent?.trim() || 'Auto-recorded structural edit (additional op on same selector)',
       selector: groupSelector,
       changes: [],
       attrs: [],

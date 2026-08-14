@@ -204,9 +204,32 @@ export async function startPicker(): Promise<void> {
   }
 }
 
-/** Cancel an in-flight pick (ContextChip's dismiss while `pickerActive`). Clears local
- *  state immediately rather than waiting on the `picker-state` push, so the chip closes
- *  without a round-trip flicker. */
+/**
+ * Disarm the picker WITHOUT dropping what is already attached — the composer's crosshair button
+ * pressed a second time.
+ *
+ * Deliberately not {@link stopPicker}: that one is "Clear", and clearing on a toggle-off would
+ * delete the chips the user just spent four clicks making. This is the panel-side equivalent of
+ * pressing Escape on the page — `picker.stop()` runs either way, the references stay, and the
+ * state it lands in is byte-for-byte the state Escape already produces (`src/dom/picker.ts`
+ * `stop()` emits only `picker-state:false`).
+ *
+ * Flips the local flag first rather than waiting on that push, so the button un-presses on the
+ * press instead of a round-trip later.
+ */
+export async function disarmPicker(): Promise<void> {
+  setPickerActive(false);
+  setError(null);
+  try {
+    await request({ type: 'stop-picker' }, OkResult);
+  } catch (e) {
+    setError(errMsg(e));
+  }
+}
+
+/** Cancel an in-flight pick AND drop every reference (ElementRefs' "Clear", and the chip dismiss
+ *  while `pickerActive`). Clears local state immediately rather than waiting on the
+ *  `picker-state` push, so the chip closes without a round-trip flicker. */
 export async function stopPicker(): Promise<void> {
   clearFocus();
   setError(null);

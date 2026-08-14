@@ -29,6 +29,10 @@ export { foldMutationEvents } from '@/changeset/fold-mutations';
 export interface PendingGroup {
   readonly selector: StableSelector;
   readonly events: readonly MutationEvent[];
+  /** The shared intent of this group's events, when they all carry the same one. Absent when the
+   *  events narrated nothing — the auto-finalize then falls back to the placeholder that
+   *  `foldMutationEvents` recognises as "the model said nothing". */
+  readonly intent?: string;
 }
 
 /** The result of one {@link PendingMutations.drain} call. */
@@ -191,18 +195,36 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
     peekGroups(tabId) {
       const buf = buffers.get(tabId);
       if (!buf || buf.length === 0) return [];
-      // Group by selector value; Map insertion order preserves first-seen group order.
-      const byValue = new Map<string, MutationEvent[]>();
+      // Group by (SELECTOR, INTENT), not selector alone. Grouping by selector alone meant two
+      // separate goals that happened to land on the same element ("tighten the hero spacing" and
+      // "raise the CTA contrast") collapsed into ONE auto-finalized edit, and the brief then had to
+      // describe both with a single run-on intent. Splitting on intent gives the reviewer one edit
+      // per goal, which is what the changeset is for.
+      //
+      // Events with no intent group together under the same selector, exactly as before — the
+      // pre-intent behaviour is the `undefined` key.
+      // (`drain` still matches by selector alone: `recordEdit` names one element and the model's
+      // own intent is the summary of everything that happened to it. `foldMutationEvents` joins
+      // distinct intents on THAT path, which is why the join and this split are not in conflict.)
+      const key = (event: MutationEvent): string =>
+        `${event.selector.value}\u0000${event.intent?.trim() ?? ''}`;
+      // Map insertion order preserves first-seen group order.
+      const byKey = new Map<string, MutationEvent[]>();
       for (const event of buf) {
-        const group = byValue.get(event.selector.value);
+        const group = byKey.get(key(event));
         if (group) group.push(event);
-        else byValue.set(event.selector.value, [event]);
+        else byKey.set(key(event), [event]);
       }
       const groups: PendingGroup[] = [];
-      for (const events of byValue.values()) {
+      for (const events of byKey.values()) {
         const first = events[0];
         if (!first) continue;
-        groups.push({ selector: first.selector, events: [...events] });
+        const intent = first.intent?.trim();
+        groups.push({
+          selector: first.selector,
+          events: [...events],
+          ...(intent ? { intent } : {}),
+        });
       }
       return groups;
     },

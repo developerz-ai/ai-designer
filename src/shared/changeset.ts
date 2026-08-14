@@ -82,6 +82,36 @@ export const StructuralChange = z.discriminatedUnion('op', [
     })
     .strict(),
   z.object({ op: z.literal('remove') }).strict(),
+  // Real restructuring. Each carries its own inverse: `wrap` undoes by unwrapping (never by
+  // deleting the wrapper, which would orphan the wrapped content), `unwrap` by re-wrapping in the
+  // recorded markup, `replace` by restoring the recorded original.
+  z
+    .object({
+      op: z.literal('wrap'),
+      /** The wrapper markup that was inserted around the target(s). */
+      html: z.string(),
+      /** Last element of the wrapped RANGE, when more than one sibling was wrapped. Absent = the
+       *  edit's own selector was the only element. */
+      endSelector: StableSelector.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('unwrap'),
+      /** The removed wrapper's markup (its own tag + attributes, children excluded), so the change
+       *  can be described and inverted. */
+      html: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('replace'),
+      /** What the element became… */
+      html: z.string(),
+      /** …and what it was, so the replacement is a delta rather than a one-way write. */
+      replacedHtml: z.string().optional(),
+    })
+    .strict(),
 ]);
 export type StructuralChange = z.infer<typeof StructuralChange>;
 
@@ -131,6 +161,27 @@ export const Edit = z
   );
 export type Edit = z.infer<typeof Edit>;
 
+/** One injected stylesheet, as the durable record carries it.
+ *
+ *  A page-level sibling of {@link Edit}, deliberately NOT an Edit: an `Edit` is anchored to a
+ *  `StableSelector`, and a stylesheet has no single element target. Forcing one would mean
+ *  inventing a selector that undo, the recorder fold and the report renderer would each have to
+ *  special-case.
+ *
+ *  This is the shape a full-page overhaul actually ships. A design system expressed as per-element
+ *  marker rules is hundreds of entries a reviewer cannot read and a coding agent cannot map to
+ *  source; the same system as ONE stylesheet is CSS a developer recognises, with real selectors and
+ *  media queries, that can be lifted into the codebase nearly as-is. */
+export const StylesheetEdit = z.object({
+  /** Stable label. A re-injection with the same id REPLACES rather than stacks, so this array holds
+   *  at most one entry per id and always the latest version of each sheet. */
+  id: z.string().max(64),
+  css: z.string(),
+  /** Why this sheet exists — the same WHY every Edit carries. */
+  intent: z.string().max(300).optional(),
+});
+export type StylesheetEdit = z.infer<typeof StylesheetEdit>;
+
 export const Changeset = z.object({
   url: z.url(),
   createdAt: z.string(),
@@ -139,6 +190,9 @@ export const Changeset = z.object({
   // The SW session owns it (crypto.randomUUID); nothing else in the schema fits.
   sessionId: z.uuid(),
   edits: z.array(Edit).default([]),
+  // Page-level stylesheets injected this session. Defaults to empty so every changeset persisted
+  // before this field existed still rehydrates — the same forward-compat rule as `Edit.attrs`.
+  stylesheets: z.array(StylesheetEdit).default([]),
 });
 export type Changeset = z.infer<typeof Changeset>;
 
@@ -158,7 +212,7 @@ export type ChangesetState = z.infer<typeof ChangesetState>;
 // sessionId is passed in, never minted here: the caller already knows its session,
 // and an internally-generated uuid would be non-deterministic (untestable).
 export function emptyChangeset(url: string, createdAt: string, sessionId: string): Changeset {
-  return { url, createdAt, sessionId, edits: [] };
+  return { url, createdAt, sessionId, edits: [], stylesheets: [] };
 }
 
 export function addEdit(changeset: Changeset, edit: Edit): Changeset {

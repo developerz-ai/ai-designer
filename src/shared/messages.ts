@@ -1,5 +1,22 @@
-import { modelMessageSchema } from 'ai';
+// TYPE-ONLY, and that is load-bearing — never make this a value import.
+//
+// `messages.ts` is the shared message hub: `src/dom/bridge.ts` imports `BridgeRequest`/
+// `BridgeResponse` from here at RUNTIME (it `.safeParse`s them), and `injected.content.ts` imports
+// that bridge — so this module is evaluated in the MAIN world of EVERY FRAME OF EVERY PAGE. A value
+// `import { modelMessageSchema } from 'ai'` used to sit here, consumed at module scope by
+// `Conversation` below, which made it un-tree-shakeable: the entire `ai` SDK shipped into every
+// page's world to serve a bridge with two read-only methods. On a Google SERP (~7 frames) that also
+// produced 7 `TrustedScript` CSP violations from Zod's `new Function` JIT probe — violations that
+// land in the very console `src/dom/diagnostics-collector.ts` drains, so the agent could report our
+// own extension's noise back to the user as page bugs.
+//
+// A type import is erased at compile time, so `ModelMessage` costs nothing at runtime while
+// `Conversation['messages']` keeps its exact shape for every consumer. The DEEP validation moved to
+// where the SDK legitimately lives: `src/agent/history-store.ts` (service-worker-only) parses
+// persisted threads with the real `modelMessageSchema`.
+import type { ModelMessage } from 'ai';
 import { z } from 'zod';
+import { Attachment, Attachments } from './attachments';
 import {
   AttrChange,
   Changeset,
@@ -8,14 +25,18 @@ import {
   StableSelector,
   StructuralChange,
   StyleChange,
+  StylesheetEdit,
 } from './changeset';
 import { CollectorSignal } from './diagnostics';
+import { PageOp } from './page-ops';
 
 // StableSelector lives in changeset.ts but is part of the message vocabulary; re-export
 // it so panel/content consumers import the selector type from the message-schema hub.
 // Likewise for CollectorSignal (src/shared/diagnostics.ts): the debug engine's domain shapes
 // live there, but DomTool/ContentToSw below need it as part of the bus transport.
-export { CollectorSignal, StableSelector };
+// Same rule for the composer's attachments (src/shared/attachments.ts): the domain shapes live in
+// their own module, but `UserMessage` below carries them, so the message-schema hub re-exports them.
+export { Attachment, Attachments, CollectorSignal, StableSelector };
 
 // The two headline agent activities (plan 06 `agent/modes.ts`). Optional on `UserMessage`: an
 // explicit choice (e.g. a composer affordance) wins; when absent, `agent/modes.ts` `resolveMode`
@@ -60,6 +81,12 @@ export const UserMessage = z.object({
   xpath: z.string().optional(),
   // Bounded: a multi-select is a handful of elements, and the grounding line is prompt text.
   selectors: z.array(StableSelector).max(20).optional(),
+  // Reference material the user attached to THIS instruction — mockups to redesign towards, and
+  // big pastes promoted out of the composer (src/shared/attachments.ts). Optional and
+  // back-compatible: a send with none is byte-identical to the pre-attachment message. The SW folds
+  // them into the turn's user message as image/text parts (`agent/attachments.ts`); it never
+  // fetches anything, because an attachment is always an inline `data:` URL.
+  attachments: Attachments.optional(),
 });
 export type UserMessage = z.infer<typeof UserMessage>;
 
@@ -120,6 +147,13 @@ export const ProviderConfig = z.object({
   apiKey: z.string().optional(),
   model: z.string().min(1),
   label: z.string().optional(),
+  // The selected model's context window in tokens, captured from the provider's `/models` when the
+  // config is saved (`background.ts` `save-provider` -> `provider.ts` `resolveContextWindow`) and
+  // read back by the turn to size compaction. OPTIONAL and back-compatible: a config saved before
+  // this existed, or against a gateway that reports no window, simply has none and the turn falls
+  // back visibly (`budget.ts` `DEFAULT_CONTEXT_WINDOW`). Not a secret — it is public model
+  // metadata, so it rides the stored config beside `model` rather than the key store.
+  contextWindow: z.number().int().positive().max(100_000_000).optional(),
 });
 export type ProviderConfig = z.infer<typeof ProviderConfig>;
 
@@ -317,7 +351,15 @@ export const Conversation = z.object({
   url: z.string(),
   mode: Mode.optional(),
   createdAt: z.number(),
-  messages: z.array(modelMessageSchema).max(HISTORY_MAX_MESSAGES).default([]),
+  // Bounded in COUNT here, validated in SHAPE by the service worker. `z.custom` carries the
+  // `ModelMessage` type through with no runtime dependency on the `ai` package (see the type-only
+  // import at the top of this file and why it must stay type-only); the structural predicate is the
+  // cheap guard that belongs at a bus boundary, and `history-store.ts` runs the real
+  // `modelMessageSchema` over each entry on rehydrate before anything trusts it.
+  messages: z
+    .array(z.custom<ModelMessage>((v) => typeof v === 'object' && v !== null))
+    .max(HISTORY_MAX_MESSAGES)
+    .default([]),
   // The handoff brief (07), already rendered to Markdown — never the raw `Report` object or any
   // embedded images; keeps a history entry cheap to list and safe to store.
   report: z.string().max(HISTORY_MAX_REPORT_CHARS).optional(),
@@ -748,16 +790,37 @@ export const ScreenshotInput = z.object({
   ...Target.shape,
 });
 export type ScreenshotInput = z.infer<typeof ScreenshotInput>;
+// --- intent: the WHY, carried from the tool call to the durable Edit -------------------------
+//
+// THE GAP THIS CLOSES: the changeset's `Edit.intent` is the one field that makes a brief a handoff
+// rather than a diff — and nothing could fill it. `recordEdit` is not called by the mutation tools
+// (it never was meant to be; the SW auto-recorder is working as designed), so an agent that mutates
+// and never records leaves entries reading "Auto-recorded agent edit (no recordEdit call)". Worse,
+// the recorder groups by SELECTOR, so one user goal spanning two elements becomes two intentless
+// entries that cannot be recognised as the same piece of work.
+//
+// Carrying `intent` on the mutation itself fixes both: the reason arrives with the change that
+// caused it, and two mutations sharing an intent string are recognisably one goal.
+//
+// OPTIONAL ON THE BUS, REQUIRED AT THE MODEL-FACING LAYER. Optional here is back-compat only — a
+// content script or a caller predating this must still validate. The agent's own edit tool requires
+// it (`src/agent/tools/`), so an intentless changeset is impossible to produce through the agent
+// even though the bus would accept one.
+export const MAX_INTENT_CHARS = 300;
+const Intent = { intent: z.string().max(MAX_INTENT_CHARS).optional() };
+
 export const SetStyleInput = z.object({
   type: z.literal('setStyle'),
   selector: z.string(),
   props: z.record(z.string(), z.string()),
+  ...Intent,
   ...Target.shape,
 });
 export const SetTextInput = z.object({
   type: z.literal('setText'),
   selector: z.string(),
   value: z.string(),
+  ...Intent,
   ...Target.shape,
 });
 // setAttr carries a security deny-list in the executor (on* / src / javascript:, see
@@ -767,18 +830,21 @@ export const SetAttrInput = z.object({
   selector: z.string(),
   name: z.string(),
   value: z.string(),
+  ...Intent,
   ...Target.shape,
 });
 export const AddClassInput = z.object({
   type: z.literal('addClass'),
   selector: z.string(),
   name: z.string(),
+  ...Intent,
   ...Target.shape,
 });
 export const RemoveClassInput = z.object({
   type: z.literal('removeClass'),
   selector: z.string(),
   name: z.string(),
+  ...Intent,
   ...Target.shape,
 });
 // Structural mutations (#58): insert agent-authored markup, move an element, or remove one.
@@ -793,6 +859,7 @@ export const InsertNodeInput = z.object({
   selector: z.string(),
   html: z.string(),
   position: InsertPositionEnum.default('beforeend'),
+  ...Intent,
   ...Target.shape,
 });
 export const MoveNodeInput = z.object({
@@ -802,13 +869,70 @@ export const MoveNodeInput = z.object({
   // …and the reference element to move it relative to (per `position`).
   refSelector: z.string(),
   position: InsertPositionEnum.default('beforeend'),
+  ...Intent,
   ...Target.shape,
 });
 export const RemoveNodeInput = z.object({
   type: z.literal('removeNode'),
   selector: z.string(),
+  ...Intent,
   ...Target.shape,
 });
+// Attribute REMOVAL. Not a `setAttr` with an empty value — `href=""` is a live link to the current
+// page, `alt=""` is a deliberate "decorative image" signal. The recorder reuses `kind: 'setAttr'`
+// with `attrChange.after = null`, a branch `AttrChange` documented from the start and that nothing
+// had ever produced.
+export const RemoveAttrInput = z.object({
+  type: z.literal('removeAttr'),
+  selector: z.string(),
+  name: z.string(),
+  ...Intent,
+  ...Target.shape,
+});
+// THE overhaul primitive: wrap an element — or a RANGE of siblings — in new markup, so a loose run
+// of nodes can be centred, gridded or carded. Composing this from insertNode + moveNode produces
+// two undo entries whose second anchor is the first's output, which is why it is its own op rather
+// than a recipe.
+export const WrapNodeInput = z.object({
+  type: z.literal('wrapNode'),
+  /** First element of the range (the only element, when `endSelector` is omitted). */
+  selector: z.string(),
+  /** Last element of the range — must share a parent with `selector`. Omit to wrap one element. */
+  endSelector: z.string().optional(),
+  /** The wrapper markup. Its deepest single element receives the wrapped nodes. */
+  html: z.string(),
+  ...Intent,
+  ...Target.shape,
+});
+/** Replace an element with its own children — the inverse of {@link WrapNodeInput}, and how a
+ *  redundant layout div is removed without deleting the content inside it. */
+export const UnwrapNodeInput = z.object({
+  type: z.literal('unwrapNode'),
+  selector: z.string(),
+  ...Intent,
+  ...Target.shape,
+});
+/** Swap an element for new markup, keeping its position. Distinct from remove+insert: one undo
+ *  entry, and the anchor cannot drift between the two halves. */
+export const ReplaceNodeInput = z.object({
+  type: z.literal('replaceNode'),
+  selector: z.string(),
+  html: z.string(),
+  ...Intent,
+  ...Target.shape,
+});
+/** The `pageOp` dispatcher message: ONE union of bundled operations behind ONE bus message, rather
+ *  than a tool per operation — the whole tool surface is re-sent on every step, so composition
+ *  belongs in parameters. The `op` vocabulary lives in `./page-ops.ts` (zod-only, safe in every
+ *  world including MAIN). Nothing here executes agent-authored JS: the model picks an `op` name and
+ *  supplies parameters, and the code that runs is code we bundled. */
+export const PageOpInput = z.object({
+  type: z.literal('pageOp'),
+  op: PageOp,
+  ...Target.shape,
+});
+export type PageOpInput = z.infer<typeof PageOpInput>;
+
 export const A11ySnapshotInput = z.object({
   type: z.literal('a11ySnapshot'),
   selector: z.string(),
@@ -833,9 +957,99 @@ export const BatchOp = z.discriminatedUnion('type', [
   RemoveClassInput,
 ]);
 export type BatchOp = z.infer<typeof BatchOp>;
-// 20: past that the failure report stops being readable and one bad selector costs a lot of
-// re-work. It is a guard rail, not a tuned number.
-export const BATCH_MAX_OPS = 20;
+// RAISED 20 -> 80 (2026-08-14), sized against real payloads rather than doubled arbitrarily.
+//
+// 20 was sized for tweaks ("a restyle turn fires setStyle six to ten times") and explicitly called
+// "a guard rail, not a tuned number". The product target moved: a full-page overhaul restyles
+// hundreds of elements, and at 20 ops that is 10+ model round-trips whose every step re-sends the
+// whole accumulated transcript — the exact quadratic that killed the HN turn.
+//
+// Sizing (observed maximum × a comfortable multiple, per context-budget.md): a `SetStyleInput` op
+// with a realistic selector and 3-4 declarations serializes to ~180-250 chars, so 80 ops is
+// ~16-20k chars ≈ 4-5k tokens for the tool call. That is affordable ONCE per round-trip and is
+// bounded well under `IN_FLIGHT_TEXT_CAP` (8k chars) for the RESULT, which is what actually rides
+// every later step. Past ~80 the failure report stops being readable and one bad selector costs a
+// lot of re-work — the original objection, which still holds, just not at 20.
+//
+// NOTE: for a broad redesign the right primitive is a stylesheet, not a long batch of per-element
+// marker rules — see `InjectCssInput` below. This raise is for the cases that genuinely need
+// element-scoped overrides.
+export const BATCH_MAX_OPS = 80;
+
+// --- injectCss: the page-level stylesheet primitive (PROPOSED SEAM) --------------------------
+//
+// WHY THIS EXISTS. `src/dom/mutate.ts:75,601` has implemented `injectCss(css)` — real page-wide
+// stylesheet injection — for some time, and NOTHING can reach it: no bus message, no content
+// handler, no agent tool. The only primitive the agent actually has is `setStyle`, which writes one
+// rule per element keyed to a generated marker attribute (`[dz-marker="a1b2"] { … }`). That single
+// mechanism is behind most of what a full-page overhaul gets wrong today:
+//   • `margin: 0px 464.5px` instead of `margin: 0 auto` — a per-element marker rule invites
+//     transcribing a computed value, because there is no stylesheet in which the intent-expressing
+//     form would be the natural thing to write.
+//   • Nothing responsive — a media query CANNOT be expressed as a per-element marker rule, so an
+//     agent promising to "verify across breakpoints" held no primitive capable of one.
+//   • Fragile `nth-of-type` chains — with a real stylesheet the agent writes
+//     `.athing .titleline > a { … }`, a selector a developer recognises and that maps to source.
+//     Much of the fragility problem dissolves rather than being solved.
+// One `injectCss` call carries a whole design system — custom properties, a type scale, spacing
+// tokens, component rules, media queries — as CSS a human would actually write, in orders of
+// magnitude fewer tokens than the equivalent marker rules, and produces a changeset that maps to
+// source because it IS source.
+//
+// NOT YET IN THE `DomTool` UNION — deliberately, and this is the seam, not an oversight. Adding a
+// member here would break `src/dom/execute.ts`'s exhaustive `switch (tool.type)` and
+// `src/changeset/revert-match.ts`'s `MutationKind` switch, both of which belong to the DOM agent
+// and are being worked concurrently. The schema lands first so both sides build to one contract;
+// the union entry, the content handler, the recorder/undo integration and the `MutationKind`
+// variant land together on their side. Undo reuses the existing machinery: a style edit already
+// maps "back to its rule in the injected stylesheet so undo can drop it".
+
+/** Cap on one injected stylesheet, in characters.
+ *
+ *  DERIVATION — reconciled 2026-08-14 from two proposals, 32k (mine) and 100k (the content side).
+ *  We were each right about a different thing and 100k wins, for a reason worth writing down.
+ *
+ *  The COST case for 32k: this text is the model's OUTPUT. It is echoed in the assistant's
+ *  tool-call part and re-sent on every later step of the turn, and `capInFlightResults` does not
+ *  clip it (that clips tool RESULTS, not calls). 100k chars is ~25k tokens riding every subsequent
+ *  step — a fifth of the 128k fallback window.
+ *
+ *  The CAPABILITY case for 100k, which is the stronger one: a real design system with custom
+ *  properties, a type scale, component rules and several media queries is not small, and a BUS
+ *  schema refusing a legitimate payload is a capability regression wearing a cost-saving costume
+ *  (context-budget.md). The bus is the wrong layer to ration tokens. Cost is now handled where cost
+ *  belongs — `compactToWindow` compacts against the model's real context window, and the sheet is
+ *  REPLACED by `id` rather than accumulating, so there is at most one live per id.
+ *
+ *  In practice a hand-written system runs 3-8k chars; 100k is ~12x the observed maximum, so it can
+ *  only ever fire on something pathological. Re-measure before changing. */
+export const MAX_INJECTED_CSS_CHARS = 100_000;
+
+/** A page-level stylesheet injection: no element target (see the page-level op shape in
+ *  `src/dom/mutate.ts`), addressed only at a tab + frame. */
+export const InjectCssInput = z.object({
+  type: z.literal('injectCss'),
+  /** The stylesheet text. Author it as a developer would: custom properties, real selectors,
+   *  media queries. */
+  css: z.string().max(MAX_INJECTED_CSS_CHARS),
+  /** Stable label for this sheet. A second injection with the SAME id REPLACES the first rather
+   *  than stacking — which is what makes iterate-and-refine affordable: the agent re-sends a
+   *  corrected design system instead of layering overrides on top of its own mistakes, and undo has
+   *  exactly one sheet to drop. Defaulted, so the common single-sheet case needs no id at all. */
+  id: z.string().max(64).default('default'),
+  ...Intent,
+  ...Target.shape,
+});
+export type InjectCssInput = z.infer<typeof InjectCssInput>;
+
+/** `injectCss` payload (`ToolResult.data`) — mirrors `mutate.ts`'s `PageMutation<{ bytes }>`,
+ *  plus whether this call replaced an earlier sheet of the same id (so the model can tell
+ *  "refined my design system" from "added a second one"). */
+export const InjectCssResult = z.object({
+  bytes: z.number().int().nonnegative(),
+  replaced: z.boolean().default(false),
+});
+export type InjectCssResult = z.infer<typeof InjectCssResult>;
 export const BatchInput = z.object({
   type: z.literal('batch'),
   ops: z.array(BatchOp).min(1).max(BATCH_MAX_OPS),
@@ -887,12 +1101,19 @@ export const DomTool = z.discriminatedUnion('type', [
   SetStyleInput,
   SetTextInput,
   SetAttrInput,
+  RemoveAttrInput,
   AddClassInput,
   RemoveClassInput,
   BatchInput,
   InsertNodeInput,
   MoveNodeInput,
   RemoveNodeInput,
+  WrapNodeInput,
+  UnwrapNodeInput,
+  ReplaceNodeInput,
+  // Page-level, no element target: a stylesheet, and the MAIN-world/derived-layout op dispatcher.
+  InjectCssInput,
+  PageOpInput,
   A11ySnapshotInput,
   UndoInput,
   DiscardUndoInput,
@@ -945,11 +1166,59 @@ export type OverlayCmd = z.infer<typeof OverlayCmd>;
 export const OverlayAck = z.object({ type: z.literal('overlay-ack') });
 export type OverlayAck = z.infer<typeof OverlayAck>;
 
+// `ToolResult.data` is bounded by SIZE, never by SHAPE — a deliberate choice, and the reasoning
+// belongs here because the obvious alternative looks better than it is. A discriminated union of
+// per-tool result schemas would reject two whole classes of legitimate payload: an MCP backend's
+// free-form JSON (the backends are third-party by definition — we cannot enumerate their shapes)
+// and every `src/dom/**` result shape, which would then have to be re-declared here and kept in
+// lockstep with the content world forever. Size is the property we actually care about — an
+// unbounded result pollutes the transcript and is re-sent on every later step — and it costs no
+// coupling at all.
+//
+// TWO BOUNDS, because `data` carries two very different things:
+//   • STRUCTURED payloads (objects/arrays) — a query's matches, an a11y tree, diagnostics signals.
+//     Past a few hundred KB one of these is always a bug, so the bound is tight.
+//   • STRING payloads — `screenshot` returns a base64 PNG here, and a full-page scroll-stitch of a
+//     tall page is legitimately megabytes. Bounding those tightly would reject the vision loop.
+// This is defense-in-depth at the bus boundary, NOT the mechanism that keeps the model's context
+// affordable — that is `thread-compact.ts` `capInFlightResults` (8k chars per result, in flight).
+// This layer catches a runaway or hostile content script; that layer manages cost.
+
+/** Max serialized chars for a STRUCTURED (non-string) `ToolResult.data`. ~256KB: two orders of
+ *  magnitude above the largest honest structured read measured (`a11ySnapshot` at ~22k chars on a
+ *  content-heavy page), so it can only ever fire on a genuine runaway. */
+export const MAX_TOOL_RESULT_DATA_CHARS = 262_144;
+
+/** Max chars for a STRING `ToolResult.data` — the screenshot path. ~16MB of base64 ≈ 12MB of PNG,
+ *  comfortably above a full-page stitch of a very tall page at devicePixelRatio 2, and far under
+ *  the ~64MB `chrome.runtime` message ceiling that would otherwise fail opaquely. */
+export const MAX_TOOL_RESULT_STRING_CHARS = 16_777_216;
+
+/** True when `data` is within its bound. Total: an unserializable value (a cycle) is REJECTED
+ *  rather than throwing — it could not have crossed `chrome.runtime` anyway. */
+function toolResultDataWithinBounds(data: unknown): boolean {
+  if (data === undefined || data === null) return true;
+  if (typeof data === 'string') return data.length <= MAX_TOOL_RESULT_STRING_CHARS;
+  if (typeof data !== 'object') return true; // numbers/booleans are self-bounding
+  try {
+    const serialized = JSON.stringify(data);
+    return serialized === undefined || serialized.length <= MAX_TOOL_RESULT_DATA_CHARS;
+  } catch {
+    return false;
+  }
+}
+
 export const ToolResult = z.object({
   type: z.literal('tool-result'),
   ok: z.boolean(),
   selector: StableSelector.optional(),
-  data: z.unknown().optional(),
+  data: z
+    .unknown()
+    .refine(toolResultDataWithinBounds, {
+      message:
+        'tool result data exceeds its size bound — return a narrower read, or page through it',
+    })
+    .optional(),
   error: z.string().optional(),
   // The frame the result came from (slice 13 iframes): query/screenshot/readImages tag their frame
   // so the SW can compose coordinates and re-address the same frame. Absent = the top document.
@@ -1399,6 +1668,9 @@ export type DescribeCmd = z.infer<typeof DescribeCmd>;
 // The reversible, element-targeting mutation primitives that emit a recorder
 // event (docs/idea/live-edit.md). Page-level ops (injectCss, setViewport) have no
 // single element target and so are not MutationEvents (which require a selector).
+// `removeAttr` is deliberately ABSENT: an attribute removal records as `setAttr` with
+// `attrChange.after = null`, a branch `AttrChange` has documented from the start and that nothing
+// had ever produced. A separate kind would fork the fold logic for no gain.
 export const MutationKind = z.enum([
   'setStyle',
   'setText',
@@ -1408,6 +1680,12 @@ export const MutationKind = z.enum([
   'insertNode',
   'moveNode',
   'removeNode',
+  // Real restructuring (#overhaul). Each is its own kind because each is its own INVERSE — a
+  // `wrapNode` recorded as an `insertNode` would undo by deleting the wrapper and orphaning the
+  // content it wrapped.
+  'wrapNode',
+  'unwrapNode',
+  'replaceNode',
 ]);
 export type MutationKind = z.infer<typeof MutationKind>;
 
@@ -1423,6 +1701,10 @@ export type MutationKind = z.infer<typeof MutationKind>;
 export const MutationEvent = z.object({
   kind: MutationKind,
   selector: StableSelector,
+  // The WHY, carried from the mutation input that caused this event (see `Intent` above). The SW
+  // folds it into the durable `Edit.intent`, so a recorded edit says what it was for instead of
+  // "Auto-recorded agent edit". Optional: pre-existing producers emit none.
+  ...Intent,
   before: z.string(),
   after: z.string(),
   ruleId: z.string().optional(),
@@ -1469,6 +1751,10 @@ export const ContentToSw = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multi-select-changed'), selectors: z.array(StableSelector) }),
   z.object({ type: z.literal('picker-state'), active: z.boolean() }),
   z.object({ type: z.literal('recorder-event'), event: MutationEvent }),
+  // A page-level stylesheet landed. NOT a `recorder-event`: `MutationEvent` requires a `selector`
+  // and an injected sheet has no single element target, so it gets its own push rather than a
+  // fabricated selector that undo and the changeset would both have to special-case.
+  z.object({ type: z.literal('stylesheet-recorded'), sheet: StylesheetEdit }),
   // The recorder's `undo()` succeeded: the page mutation was REVERTED, so its buffered event
   // must leave the SW's pending-mutations buffer (else the revert would still fold into the
   // durable changeset — a phantom edit). Emitted ONLY on a successful revert: a failed undo
@@ -1570,7 +1856,10 @@ export type PageFacts = z.infer<typeof PageFacts>;
 // The read-only methods the MAIN-world bridge answers: framework/lib detection (`page-facts`) + a
 // chart-data probe (`chart-data`, extracts series from the page's own chart-lib instances — slice
 // 15E). Both are non-secret page reads; anything not in this enum is rejected by the server.
-export const BridgeMethod = z.enum(['page-facts', 'chart-data']);
+// `page-op` is the MAIN-world half of the `pageOp` dispatcher: framework internals and page APIs
+// the isolated content world cannot see. Read-only in the same sense as its siblings — the method
+// name plus bundled-op parameters, never a secret and never agent-authored code.
+export const BridgeMethod = z.enum(['page-facts', 'chart-data', 'page-op']);
 export type BridgeMethod = z.infer<typeof BridgeMethod>;
 
 // Namespaces our postMessage traffic off the page's own chatter (many sites postMessage heavily).
@@ -1585,6 +1874,11 @@ export const BridgeRequest = z.object({
   dir: z.literal('req'),
   nonce: z.string(),
   method: BridgeMethod,
+  // Operation parameters for a `page-op` request. `unknown` deliberately: the MAIN-world server
+  // re-validates against `PageOp` (./page-ops.ts) on arrival, and re-declaring that union here
+  // would put the whole op vocabulary in the request schema for no added safety. Absent for the
+  // parameterless methods, so an older client still validates.
+  params: z.unknown().optional(),
 });
 export type BridgeRequest = z.infer<typeof BridgeRequest>;
 

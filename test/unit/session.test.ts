@@ -57,6 +57,9 @@ describe('SessionStore.ensure', () => {
       sessionId: SESSION_ID,
       createdAt: new Date(1000).toISOString(),
       edits: [],
+      // Page-level stylesheets (`injectCss`) live alongside the element-scoped edits — a stylesheet
+      // has no single selector to anchor an `Edit` to.
+      stylesheets: [],
     });
     expect(store.get(7)).toBe(session);
     expect(backing.has('session:7')).toBe(true);
