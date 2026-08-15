@@ -32,6 +32,7 @@ import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
+import { wirePanelOpen } from '@/agent/panel-open';
 import { cachedSystemPrompt, withCacheBreakpoint } from '@/agent/prompt-cache';
 import {
   createProvider,
@@ -249,17 +250,11 @@ export default defineBackground(() => {
     );
   }
 
-  // Clicking the toolbar action opens (and toggles closed) the side panel — the panel's primary
-  // entry point. `openPanelOnActionClick` is a persisted setting, but re-asserting it on every SW
-  // startup keeps it correct across a fresh install or a reset; there is deliberately NO
-  // `chrome.action.onClicked` handler (registering one would suppress this native toggle). Guarded
-  // on API presence (mirrors the `chrome.debugger` guard below): `chrome.sidePanel` is absent on
-  // Firefox (`dev:firefox`) and Chrome <114, where the property access would throw SYNCHRONOUSLY —
-  // before the `.catch` — and abort the rest of this service worker. On a runtime without the API
-  // the panel is simply unavailable; the rest of the SW still boots.
-  if (typeof chrome.sidePanel !== 'undefined') {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-  }
+  // Clicking the toolbar action opens the panel — the panel's primary entry point. The per-browser
+  // mechanism (Chrome's native openPanelOnActionClick toggle vs Firefox's browserAction →
+  // sidebarAction handler, #180) lives in `src/agent/panel-open.ts`; a runtime with neither
+  // surface still boots the rest of this SW.
+  wirePanelOpen();
 
   // Port a pre-ProviderConfig OpenRouter install into the named-secret scheme before any
   // settings RPC reads state. `handle` awaits this so a save/read can't race the migration.

@@ -50,6 +50,12 @@ export default defineConfig({
     ...(browser === 'chrome' && CRX_PUBLIC_KEY && !process.env.CWS_UPLOAD
       ? { key: CRX_PUBLIC_KEY }
       : {}),
+    // Firefox: a stable add-on ID (#180) — without it AMO cannot pin the listing and every
+    // signed upload would mint a new identity. Chrome ignores the block; gate it anyway so
+    // the CWS upload carries nothing AMO-shaped.
+    ...(browser === 'firefox'
+      ? { browser_specific_settings: { gecko: { id: 'designer@developerz.ai' } } }
+      : {}),
     // Localized via src/locales/en.yml (top-level flat keys → generated _locales messages).
     default_locale: 'en',
     name: '__MSG_extName__',
@@ -102,7 +108,7 @@ export default defineConfig({
       'webNavigation',
       'debugger',
       'scripting',
-    ].filter((p) => browser === 'chrome' || p !== 'sidePanel'),
+    ].filter((p) => browser === 'chrome' || (p !== 'sidePanel' && p !== 'debugger')),
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
     host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],
