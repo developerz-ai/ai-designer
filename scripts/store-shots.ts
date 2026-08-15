@@ -139,35 +139,9 @@ const TURNS = [
       props: { 'font-size': '58px', color: '#0f172a', 'letter-spacing': '-0.035em' },
     }).arguments,
   ),
-  toolCallStream(
-    'c3',
-    'edit',
-    edit('recordEdit', {
-      intent: 'Brand the primary CTA with the indigo gradient',
-      selector: { value: '#cta', strategy: 'id' },
-      changes: [
-        { prop: 'background', before: '#e2e8f0', after: 'linear-gradient(135deg,#6366f1,#8b5cf6)' },
-        { prop: 'color', before: '#334155', after: '#ffffff' },
-        { prop: 'box-shadow', before: 'none', after: '0 10px 28px rgba(99,102,241,.32)' },
-        { prop: 'border-radius', before: '8px', after: '10px' },
-      ],
-      frameworkHints: [],
-    }).arguments,
-  ),
-  toolCallStream(
-    'c4',
-    'edit',
-    edit('recordEdit', {
-      intent: 'Give the headline more presence',
-      selector: { value: '#headline', strategy: 'id' },
-      changes: [
-        { prop: 'font-size', before: '52px', after: '58px' },
-        { prop: 'color', before: '#1e293b', after: '#0f172a' },
-        { prop: 'letter-spacing', before: '-0.03em', after: '-0.035em' },
-      ],
-      frameworkHints: [],
-    }).arguments,
-  ),
+  // No explicit recordEdit turns: setStyle mutations auto-record into the changeset (the
+  // "2 edits" chip in the shot is real), and a canned recordEdit drifting from the live schema
+  // renders as a red invalidTool chip — exactly what a store screenshot must not show.
   textStream(
     'Done — the CTA now carries the indigo brand gradient with a soft elevation shadow, ' +
       'and the headline steps up to 58px in the darkest ink for real presence. ' +
@@ -389,6 +363,13 @@ async function main(): Promise<void> {
     await panel.waitForTimeout(800); // stream settle + usage row
 
     const chatShot = await panel.screenshot();
+
+    // Unpin the element before shooting the page — the pin keeps the picker badge + outline
+    // painted over the freshly-branded CTA, and a hover tooltip can linger where the pick
+    // happened. Mouse to a corner so no hover state survives into the capture.
+    await panel.getByRole('button', { name: 'Remove this element' }).click();
+    await demo.mouse.move(4, 4);
+    await demo.waitForTimeout(500);
     const demoShot = await demo.screenshot();
 
     console.log('capturing Diff…');
@@ -397,8 +378,17 @@ async function main(): Promise<void> {
     const diffShot = await panel.screenshot();
 
     console.log('capturing History…');
+    // End the session first — History lists archived conversations, and mid-session the room
+    // rendered empty (run 7). The header toggle reads Stop while running.
+    await panel.locator('.dz-readiness__toggle').click();
+    await panel.waitForTimeout(1_000);
     await openRoom(panel, 'History');
-    await panel.waitForTimeout(700);
+    await panel.waitForTimeout(1_500);
+    const historyText = await panel
+      .locator('body')
+      .innerText()
+      .catch(() => '');
+    console.log(`  history room text: ${historyText.replace(/\n/g, ' | ').slice(0, 300)}`);
     const historyShot = await panel.screenshot();
 
     console.log('capturing onboarding…');
