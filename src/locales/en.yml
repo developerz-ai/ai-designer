@@ -74,6 +74,29 @@ about:
     # empty, and saying "Copied" alone would let the user believe they pasted a log.
     empty: Copied, but this tab has logged nothing yet
     failed: Could not copy the log
+    # The viewer (DebugLogView.tsx) — read the trace in the panel instead of pasting it blind.
+    view:
+      open: View log
+      title: Debug log
+      entries:
+        1: $1 entry
+        n: $1 entries
+      loading: Loading the log…
+      failed: Could not load the log — try Refresh.
+      # Honest empty state: the rendered header alone LOOKS like a trace, so the box says outright
+      # that nothing has been logged rather than showing a near-blank document.
+      empty: Nothing logged for this conversation yet.
+      refresh: Refresh
+      copy: Copy
+      copying: Copying…
+      copied: Copied
+      copyFailed: Copy failed
+      # Distinct names for the two dismissals (the AuthDialog convention): identical labels on the
+      # backdrop and the header button make every role-based selector resolve to two elements.
+      backdrop:
+        ariaLabel: Close log viewer
+      close:
+        ariaLabel: Close
 
 # ─── First-run onboarding (Onboarding.tsx) ────────────────────────────────────────
 onboarding:
@@ -531,6 +554,18 @@ suggestion:
     prompt: >-
       Audit this page for accessibility problems — colour contrast, focus states, text size and
       missing labels — then fix the ones you safely can and tell me the rest.
+
+# ─── Chat toolbar (ChatPanel.tsx + chat/NewConversation.tsx) ──────────────────────
+chat:
+  newConversation:
+    label: New conversation
+    # Two-press confirm, the Diff tab's "Clear session? Sure" pattern: the armed label carries the
+    # consequence. The current thread is ARCHIVED to History (not lost) and the page's live edits +
+    # changeset stay — only the conversation resets.
+    confirm: Archive this chat? Sure
+    # The armed label while a turn is streaming — the reset also stops the in-flight turn, and
+    # that must be said before the second press, not discovered after it.
+    confirmStreaming: Stop the turn & start new? Sure
 
 # ─── Thread (chat/Thread.tsx) ─────────────────────────────────────────────────────
 thread:

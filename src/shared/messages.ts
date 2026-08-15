@@ -496,6 +496,19 @@ export const ThreadGet = z.object({
   type: z.literal('thread-get'),
   tabId: z.number().int().optional(),
 });
+// Start a FRESH conversation on the current tab. The SW aborts any in-flight turn exactly the way
+// `session-stop` does; the aborted turn's finalization still persists its partial messages to the
+// session thread AND appends them to history (the same path every finished turn takes), so waiting
+// for it IS the archive step — nothing is lost. Then the tab's session thread, debug log and usage
+// reset, and the changeset is RE-KEYED to a fresh sessionId so the next turn opens a NEW history
+// conversation instead of extending the archived one. The changeset's EDITS survive deliberately:
+// the live page still carries them, and Ship must stay truthful about what it hands off.
+// `tabId` (optional, additive): the tab whose conversation the panel is displaying — same
+// resolution rule as `thread-get` when absent. Replies `OkResult`.
+export const ConversationNew = z.object({
+  type: z.literal('conversation-new'),
+  tabId: z.number().int().optional(),
+});
 
 // --- on-page agent-decision overlay, opt-in (slice 09) --------------------
 // Cursor-style "watch the agent work" surface (`src/dom/overlay.ts`). Opt-in + persisted to
@@ -575,6 +588,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   SessionStop,
   SessionGet,
   ThreadGet,
+  ConversationNew,
   HistoryList,
   HistoryGet,
   HistoryDelete,

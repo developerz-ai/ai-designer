@@ -16,6 +16,17 @@
   flex: 1;
   min-height: 0;
 
+  // The thread's slim header strip — the "New conversation" affordance's home. Right-aligned so
+  // it reads as chrome, not content; fixed-size (never scrolls) per the column's scroll contract
+  // above.
+  &__toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    flex: none;
+    padding: tokens.$dz-space-1 tokens.$dz-space-4 0;
+  }
+
   &__error {
     // Flex row: the message shares the line with the debug-log copy button that rides with it,
     // wrapping under it when the notice runs long instead of squeezing the control.

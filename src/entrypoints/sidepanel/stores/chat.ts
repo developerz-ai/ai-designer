@@ -648,6 +648,43 @@ export async function send(
   }
 }
 
+/** Start a FRESH conversation on the current tab (the chat toolbar's "New conversation").
+ *
+ *  The SW does the real work (`conversation-new`): aborts any in-flight turn the way Stop does,
+ *  waits for its finalization to ARCHIVE the partial to history, then resets its per-tab thread +
+ *  debug log and re-keys the changeset — the recorded edits survive, because the live page still
+ *  carries them. Only after the SW acks does this replica reset: transcript cleared, turn key
+ *  dropped, streaming off, usage zeroed — then a hydrate confirms against the SW's (now empty)
+ *  thread, exactly the "empty chat is the truth for this tab" path `hydrateThread` already owns.
+ *  Pinned to the conversation this panel is SHOWING (`viewTabId`), same rule as `copyDebugLog`.
+ *  Returns whether the SW accepted; a refusal surfaces as a composer-level notice and leaves the
+ *  transcript untouched. Never throws. */
+export async function newConversation(): Promise<boolean> {
+  try {
+    const r = await request(
+      { type: 'conversation-new', tabId: viewTabId() ?? undefined },
+      OkResult,
+    );
+    if (!r.ok) {
+      setError(r.error ?? 'Could not start a new conversation.');
+      return false;
+    }
+  } catch (e) {
+    setError(errMsg(e));
+    return false;
+  }
+  // The reset supersedes any hydrate still in flight — its replies predate the reset and would
+  // resurrect the archived transcript (same last-writer-wins rule as `send`).
+  hydrateSeq++;
+  setMessages([]);
+  setStreaming(false);
+  setActiveTurnId(null);
+  setUsage(ZERO_USAGE);
+  setError(null);
+  void hydrateThread();
+  return true;
+}
+
 /** Abort the in-flight turn (Stop button in the composer) without ending the session — mirrors
  *  `stores/session.ts`'s `stopSession`, kept local to this store so the composer doesn't need a
  *  second store import for one button. */
