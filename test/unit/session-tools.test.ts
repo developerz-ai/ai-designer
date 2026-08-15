@@ -237,3 +237,90 @@ describe('createSessionTools: StructuralChange coherence (#58 review)', () => {
     expect(schema().safeParse({ ...anEdit('x'), structural: { op: 'remove' } }).success).toBe(true);
   });
 });
+
+describe('createSessionTools: recordEdit screenshot auto-capture (#148 item 1)', () => {
+  const drainedEvent = {
+    kind: 'setStyle' as const,
+    selector: { value: '#cta', strategy: 'id' as const, fragile: false },
+    before: '',
+    after: '',
+    ts: 1,
+  };
+
+  function captureHarness(opts: {
+    events?: (typeof drainedEvent)[];
+    capture?: () => Promise<{ before?: string; after?: string } | undefined>;
+  }) {
+    const store = new ChangesetStore(seed());
+    const persisted: Changeset[] = [];
+    const events: SwToPanel[] = [];
+    let captures = 0;
+    const deps: SessionToolDeps = {
+      store,
+      persist: (cs) => {
+        persisted.push(cs);
+      },
+      emit: (e) => {
+        events.push(e);
+      },
+      drainRecorderEvents: () => ({
+        events: opts.events ?? [drainedEvent],
+        dropped: 0,
+        rescued: false,
+      }),
+      captureEditScreenshots: () => {
+        captures += 1;
+        return (opts.capture ?? (() => Promise.resolve({ before: 'b64:b', after: 'b64:a' })))();
+      },
+    };
+    return {
+      store,
+      persisted,
+      events,
+      captureCount: () => captures,
+      tools: createSessionTools(deps),
+    };
+  }
+
+  it('attaches the captured pair to the recorded edit', async () => {
+    const h = captureHarness({});
+    await run(h.tools.recordEdit.execute, anEdit('pop the CTA'));
+    expect(h.store.current.edits[0]?.screenshots).toEqual({ before: 'b64:b', after: 'b64:a' });
+    expect(h.persisted.at(-1)?.edits[0]?.screenshots).toEqual({ before: 'b64:b', after: 'b64:a' });
+  });
+
+  it('a failed capture never fails the edit (undefined AND rejection)', async () => {
+    for (const capture of [
+      () => Promise.resolve(undefined),
+      () => Promise.reject(new Error('no page access')),
+    ]) {
+      const h = captureHarness({ capture });
+      const res = await run(h.tools.recordEdit.execute, anEdit('pop the CTA'));
+      expect(res).toMatchObject({ ok: true, data: { edits: 1 } });
+      expect(h.store.current.edits[0]?.screenshots).toBeUndefined();
+    }
+  });
+
+  it('an empty pair attaches nothing (no empty screenshots object)', async () => {
+    const h = captureHarness({ capture: () => Promise.resolve({}) });
+    await run(h.tools.recordEdit.execute, anEdit('pop the CTA'));
+    expect(h.store.current.edits[0]?.screenshots).toBeUndefined();
+  });
+
+  it('never captures when the drain returned no ground truth', async () => {
+    const h = captureHarness({ events: [] });
+    await run(h.tools.recordEdit.execute, anEdit('prose-only record'));
+    expect(h.captureCount()).toBe(0);
+    expect(h.store.current.edits[0]?.screenshots).toBeUndefined();
+  });
+
+  it('a model-supplied pair wins — auto-capture stands down', async () => {
+    const h = captureHarness({});
+    await run(h.tools.recordEdit.execute, {
+      ...anEdit('model shot this itself'),
+      screenshots: { before: 'model:b', after: 'model:a' },
+    });
+    expect(h.captureCount()).toBe(0);
+    expect(h.store.current.edits[0]?.screenshots).toEqual({ before: 'model:b', after: 'model:a' });
+  });
+});

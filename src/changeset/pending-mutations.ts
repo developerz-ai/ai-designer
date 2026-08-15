@@ -8,11 +8,13 @@
 // auto-finalizes whatever is left into explicit "Auto-recorded" edits, and a page
 // navigation wipes the tab's buffer (the live edits died with the old document).
 //
-// The buffer is IN-MEMORY ONLY: an SW eviction mid-turn loses the pending ground truth (the
-// durable changeset survives in chrome.storage.session — this buffer does not). A resumed
-// turn's `recordEdit` then drains nothing and falls back to the model-supplied values — the
-// pre-#9 behavior — until new mutations arrive and re-seed the buffer. The fold is an
-// accuracy upgrade, never a correctness gate, so the loss degrades gracefully.
+// The buffer itself is in-memory, but no longer ONLY that (#148 item 3): every mutation reports
+// through the injected `onChange` port, which background.ts binds to a `chrome.storage.session`
+// persister (src/changeset/pending-persist.ts), and a woken SW re-seeds via {@link
+// PendingMutations.seed}. An eviction mid-turn therefore no longer loses the pending ground
+// truth to the pre-#9 fallback (recordEdit draining nothing, model-supplied values standing).
+// The mirror stays best-effort: the fold is an accuracy upgrade, never a correctness gate, so a
+// lost debounced write still degrades gracefully.
 //
 // Pure by construction: no `chrome.*`, no clock (arrival order is mutation order — the bus
 // delivers a tab's events in the order the mutations ran). Instantiated once in
@@ -34,6 +36,19 @@ export interface PendingGroup {
    *  `foldMutationEvents` recognises as "the model said nothing". */
   readonly intent?: string;
 }
+
+/** One tab's full buffered state — the unit the persistence port mirrors and {@link
+ *  PendingMutations.seed} restores. `dropped` rides along so a cap loss survives an eviction
+ *  (the drain/auto-finalize that surfaces it may run in a later worker). */
+export interface PendingSnapshot {
+  readonly events: readonly MutationEvent[];
+  readonly dropped: number;
+}
+
+/** Which mutation produced an `onChange` report — the persistence binding debounces the churny
+ *  `append` and writes the rest through (a drain/clear must not lose a race with eviction and
+ *  resurrect already-folded events). */
+export type PendingChangeKind = 'append' | 'drain' | 'remove' | 'clear';
 
 /** The result of one {@link PendingMutations.drain} call. */
 export interface DrainResult {
@@ -78,12 +93,28 @@ export interface PendingMutations {
   /** How many of the tab's events were dropped at the cap since the last `clear` or `drain`
    *  (0 when none) — the turn-end auto-finalize surfaces the loss in the edit intent. */
   droppedCount(tabId: number): number;
+  /** Restore a persisted snapshot (#148 item 3) — SW-wake hydration only. Installs ONLY into an
+   *  untouched tab slot (no buffered events, no drop count): live events that arrived before
+   *  hydration finished are newer news than the mirror, and interleaving orders across an
+   *  eviction would be a lie. Trimmed to the cap. Does NOT report through `onChange` (it mirrors
+   *  what the persister already holds). */
+  seed(tabId: number, snapshot: PendingSnapshot): void;
 }
 
 export interface PendingMutationsOptions {
   /** Max buffered events per tab; oldest are dropped past the cap. Default 200 — a runaway
    *  mutation loop can't grow the buffer without bound. */
   readonly cap?: number;
+  /** Reports each state-changing call with the tab's NEW snapshot (`null` = the tab is now
+   *  untracked) so the SW can mirror the buffer to `chrome.storage.session` (#148 item 3).
+   *  Called synchronously after the mutation; must not throw (the binding is fire-and-forget
+   *  persistence, never part of the buffer's own contract). Pure no-ops (a drain of an empty
+   *  tab, a clear of an untracked one) do not report. */
+  readonly onChange?: (
+    tabId: number,
+    snapshot: PendingSnapshot | null,
+    kind: PendingChangeKind,
+  ) => void;
 }
 
 const DEFAULT_CAP = 200;
@@ -96,6 +127,19 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
   // reads whatever is left via droppedCount.
   const dropped = new Map<number, number>();
 
+  // Report a state change to the persistence port with the tab's NEW state; `null` when the tab
+  // fell back to untracked (nothing buffered, no drop count) so the mirror can delete its key.
+  const report = (tabId: number, kind: PendingChangeKind): void => {
+    if (!options.onChange) return;
+    const buf = buffers.get(tabId);
+    const drops = dropped.get(tabId) ?? 0;
+    const snapshot: PendingSnapshot | null =
+      (buf === undefined || buf.length === 0) && drops === 0
+        ? null
+        : { events: [...(buf ?? [])], dropped: drops };
+    options.onChange(tabId, snapshot, kind);
+  };
+
   return {
     append(tabId, event) {
       const buf = buffers.get(tabId) ?? [];
@@ -106,6 +150,7 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
         dropped.set(tabId, (dropped.get(tabId) ?? 0) + excess);
       }
       buffers.set(tabId, buf);
+      report(tabId, 'append');
     },
 
     drain(tabId, selectorValue) {
@@ -113,8 +158,16 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
       // the outcome, so the recordEdit that consumes the group also consumes its loss marker.
       const droppedSoFar = dropped.get(tabId) ?? 0;
       dropped.delete(tabId);
+      // A no-match drain still changed state when it reset a nonzero counter — the mirror must
+      // not resurrect a loss marker a recordEdit already surfaced (#148 item 3).
+      const counterReset = (): void => {
+        if (droppedSoFar > 0) report(tabId, 'drain');
+      };
       const buf = buffers.get(tabId);
-      if (!buf || buf.length === 0) return { events: [], dropped: droppedSoFar, rescued: false };
+      if (!buf || buf.length === 0) {
+        counterReset();
+        return { events: [], dropped: droppedSoFar, rescued: false };
+      }
       const distinct = new Set(buf.map((e) => e.selector.value));
       const distinctValues = [...distinct];
       let target = selectorValue;
@@ -122,6 +175,7 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
         // Exactly one distinct selector value — the group is unambiguous.
         const only = distinctValues[0];
         if (distinctValues.length !== 1 || only === undefined) {
+          counterReset();
           return { events: [], dropped: droppedSoFar, rescued: false };
         }
         target = only;
@@ -140,13 +194,16 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
           groupValue === undefined ||
           !(target.includes(groupValue) || groupValue.includes(target))
         ) {
+          counterReset();
           return { events: [], dropped: droppedSoFar, rescued: false };
         }
         buffers.delete(tabId);
+        report(tabId, 'drain');
         return { events: [...buf], dropped: droppedSoFar, rescued: true };
       }
       if (rest.length === 0) buffers.delete(tabId);
       else buffers.set(tabId, rest);
+      report(tabId, 'drain');
       return { events: matched, dropped: droppedSoFar, rescued: false };
     },
 
@@ -184,12 +241,15 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
       if (index === -1) return false;
       buf.splice(index, 1);
       if (buf.length === 0) buffers.delete(tabId);
+      report(tabId, 'remove');
       return true;
     },
 
     clear(tabId) {
+      const tracked = buffers.has(tabId) || dropped.has(tabId);
       buffers.delete(tabId);
       dropped.delete(tabId);
+      if (tracked) report(tabId, 'clear');
     },
 
     peekGroups(tabId) {
@@ -231,6 +291,13 @@ export function createPendingMutations(options: PendingMutationsOptions = {}): P
 
     droppedCount(tabId) {
       return dropped.get(tabId) ?? 0;
+    },
+
+    seed(tabId, snapshot) {
+      // Only an untouched slot (see the interface doc) — live events beat the mirror.
+      if (buffers.has(tabId) || dropped.has(tabId)) return;
+      if (snapshot.events.length > 0) buffers.set(tabId, [...snapshot.events].slice(-cap));
+      if (snapshot.dropped > 0) dropped.set(tabId, snapshot.dropped);
     },
   };
 }

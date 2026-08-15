@@ -191,8 +191,9 @@ export interface SessionStorageArea {
 }
 
 // Default binding to the real `chrome.storage.session`, read lazily (per call, not at import) so a
-// non-extension context that never persists doesn't dereference `chrome`.
-function sessionArea(): SessionStorageArea {
+// non-extension context that never persists doesn't dereference `chrome`. Exported for the
+// pending-mutations persister (src/changeset/pending-persist.ts), which shares the area + shape.
+export function sessionArea(): SessionStorageArea {
   return chrome.storage.session as unknown as SessionStorageArea;
 }
 
