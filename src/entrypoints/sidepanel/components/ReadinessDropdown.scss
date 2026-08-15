@@ -2,8 +2,9 @@
 @use '../../../styles/mixins' as mixins;
 
 // The header's status cluster: a tinted capsule that reports readiness, plus the
-// Start/Stop toggle — the one accent-FILLED element in the whole panel. Everything
-// else in the chrome is ghost or borderless by design.
+// Start/Stop toggle. The pill is the ONLY coloured element up here — the toggle is
+// a neutral ghost like every other header control, per the monochrome reference
+// (#179): three warm elements in one header meant none of them read as the status.
 .dz-readiness {
   position: relative;
   display: flex;
@@ -49,27 +50,20 @@
     color: var(--dz-fg-muted);
   }
 
-  // Start is accent-filled; Stop drops to an outlined ghost. Stopping is not the
-  // action we want to make loudest, and keeping Stop filled meant the header changed
-  // brightness for the entire duration of a session.
+  // One neutral treatment for BOTH states — the outlined ghost that Stop already
+  // wore. Start used to take the accent fill, which put a third warm element in the
+  // header and left the pill fighting its own action button for attention. The
+  // border steps up to `strong`: at this size the outline is what gives the control
+  // its shape against the header, and the play/stop glyph plus label carry the
+  // state, not colour.
   &__toggle {
-    @include mixins.button-primary(tokens.$dz-control-sm, var(--dz-radius-pill));
+    @include mixins.button-ghost(tokens.$dz-control-sm, var(--dz-radius-pill));
     @include mixins.hit-target;
     gap: tokens.rem(5);
     padding: 0 tokens.$dz-space-3;
+    border-color: var(--dz-border-strong);
     font-size: tokens.$dz-font-sm;
     font-weight: tokens.$dz-weight-semibold;
-
-    &.is-running {
-      background: transparent;
-      border: tokens.$dz-border-width solid var(--dz-border-strong);
-      color: var(--dz-fg);
-
-      &:not(:disabled):hover {
-        background: var(--dz-wash-hover);
-        filter: none;
-      }
-    }
   }
 
   // Anchored to the cluster's right edge, not its left: the cluster sits hard right in

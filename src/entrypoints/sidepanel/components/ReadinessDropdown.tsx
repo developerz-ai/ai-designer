@@ -187,13 +187,12 @@ export function ReadinessDropdown(props: ReadinessDropdownProps) {
         />
       </button>
 
-      {/* Start is accent-filled, Stop is an outlined ghost — a running session must not
-          hold the panel's loudest treatment for its whole duration. The glyph is what
-          makes the two unmistakable at 12px. */}
+      {/* Neutral ghost in both states — the pill beside it is the header's only
+          colour (#179). The play/stop glyph is what makes the two states
+          unmistakable at 12px. */}
       <button
         type="button"
         class="dz-readiness__toggle"
-        classList={{ 'is-running': running() }}
         disabled={!running() && (!ready() || readinessLoading())}
         onClick={() => void toggleSession()}
       >
