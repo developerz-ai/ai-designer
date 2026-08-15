@@ -226,7 +226,9 @@ async function openRoom(panel: Page, name: string): Promise<void> {
 
 async function configureProvider(panel: Page): Promise<void> {
   await openRoom(panel, 'Settings');
-  await panel.locator('#dz-key').fill('sk-or-v1-…your-own-key…');
+  // ASCII only — the key rides an Authorization header, and a typographic ellipsis in it
+  // fails the SW's fetch outright ("String contains non ISO-8859-1 code point").
+  await panel.locator('#dz-key').fill('sk-or-v1-your-own-key-here');
   await panel.getByRole('button', { name: 'Refresh' }).click();
   // #dz-model is a text combobox (ModelCombobox), disabled while the catalogue loads and NOT
   // auto-filled when more than one model comes back — type the pick, then Save (whose click
