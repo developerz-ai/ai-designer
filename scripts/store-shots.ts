@@ -367,18 +367,25 @@ async function main(): Promise<void> {
 
     const chatShot = await panel.screenshot();
 
-    // Unpin the element before shooting the page — the pin keeps the picker badge + outline
-    // painted over the freshly-branded CTA, and a hover tooltip can linger where the pick
-    // happened. Mouse to a corner so no hover state survives into the capture.
-    await panel.getByRole('button', { name: 'Remove this element' }).click();
-    await demo.mouse.move(200, 650); // plain whitespace — nothing hoverable to repaint
-    await demo.waitForTimeout(500);
-    const demoShot = await demo.screenshot();
-
+    // Diff BEFORE unpinning — with the pin removed first, the Diff room rendered empty
+    // (runs 8–9); with it still present (run 7) the per-edit before/after diffs show.
     console.log('capturing Diff…');
     await openRoom(panel, 'Diff');
     await panel.waitForTimeout(700);
+    const diffText = await panel
+      .locator('body')
+      .innerText()
+      .catch(() => '');
+    console.log(`  diff room text: ${diffText.replace(/\n/g, ' | ').slice(0, 200)}`);
     const diffShot = await panel.screenshot();
+    await openRoom(panel, 'Chat');
+
+    // Unpin the element before shooting the page — the pin keeps the picker badge + outline
+    // painted over the freshly-branded CTA. Mouse to plain whitespace so no hover survives.
+    await panel.getByRole('button', { name: 'Remove this element' }).click();
+    await demo.mouse.move(200, 650);
+    await demo.waitForTimeout(500);
+    const demoShot = await demo.screenshot();
 
     console.log('capturing History…');
     // End the session first — History lists archived conversations, and mid-session the room
