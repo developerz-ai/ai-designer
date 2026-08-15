@@ -40,12 +40,12 @@
 //     (see the prefix-cache note at `background.ts` around the `user-message` append, and
 //     `thread-compact.ts`'s module header).
 //
-//  2. TEXT ATTACHMENTS ARE INLINED INTO THE TEXT PART, NEVER EMITTED AS `{type:'file'}`.
-//     OpenAI-compatible gateways vary wildly on `file` parts for `text/plain` and several answer
-//     400, which would fail the WHOLE turn because the user pasted something long. A named, fenced
-//     block inside the text part is understood by every model and can never be rejected. (Images
-//     have no such problem: `{type:'image'}` is the universally supported multimodal part, and the
-//     agent already sends its own screenshots that way.)
+//  2. TEXT ATTACHMENTS ARE INLINED INTO THE TEXT PART, NEVER EMITTED AS `{type:'file'}` WITH
+//     `text/plain`. OpenAI-compatible gateways vary wildly on non-image `file` parts and several
+//     answer 400, which would fail the WHOLE turn because the user pasted something long. A named,
+//     fenced block inside the text part is understood by every model and can never be rejected.
+//     (Images have no such problem: a `file` part with an `image/*` mediaType lowers to the
+//     universally supported image part — the agent sends its own screenshots the same way, #182.)
 
 import type { modelMessageSchema } from 'ai';
 import type { z } from 'zod';
@@ -59,8 +59,8 @@ import type { Attachment, ImageAttachment, TextAttachment } from '@/shared/attac
 type ModelMessage = z.infer<typeof modelMessageSchema>;
 type UserModelMessage = Extract<ModelMessage, { role: 'user' }>;
 
-/** One part of a multipart user message: `text`, `image`, or `file`. We only ever emit the first
- *  two — see decision 2 in the header. */
+/** One part of a multipart user message: `text`, `image`, or `file`. We only ever emit `text` and
+ *  image-typed `file` parts — see decision 2 in the header. */
 export type UserContentPart = Exclude<UserModelMessage['content'], string>[number];
 
 // --- grounding line ---------------------------------------------------------------------------
@@ -142,7 +142,8 @@ function renderTextAttachment(attachment: TextAttachment): string {
  *  straight through means no network, no decode, no failure mode. `mediaType` is stated explicitly
  *  rather than left for the provider to sniff. */
 function toImagePart(attachment: ImageAttachment): UserContentPart {
-  return { type: 'image', image: attachment.dataUrl, mediaType: attachment.mediaType };
+  // `file` rather than the deprecated `image` part (#182) — same provider lowering, no warning.
+  return { type: 'file', data: attachment.dataUrl, mediaType: attachment.mediaType };
 }
 
 /**
