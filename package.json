@@ -42,6 +42,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "debug:live": "bun scripts/debug-live.ts",
+    "store:shots": "bun scripts/store-shots.ts",
     "verify": "bash scripts/verify.sh",
     "check": "bash scripts/verify.sh --check",
     "gate": "bash scripts/verify.sh --gate",

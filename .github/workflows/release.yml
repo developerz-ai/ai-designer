@@ -48,20 +48,30 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-      # --- Chrome Web Store publish (deliberately off until manual QA passes) ----
-      # Setup, account by account: docs/STORE-SETUP.md. Needs repo secrets
-      #   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
-      # `zip:store` rebuilds with CWS_UPLOAD=1, which drops the manifest `key` — the store
-      # assigns its own, and an upload carrying ours is rejected.
-      # - name: Build store zip
-      #   run: bun run zip:store
-      # - name: Publish to Chrome Web Store
-      #   run: bunx chrome-webstore-upload-cli@3 upload --auto-publish \
-      #     --source build/*-chrome.zip \
-      #     --extension-id "${{ secrets.CWS_EXTENSION_ID }}" \
-      #     --client-id "${{ secrets.CWS_CLIENT_ID }}" \
-      #     --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
-      #     --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"
+      # --- Chrome Web Store publish (secret-guarded, #28) -------------------------
+      # Runs only when the CWS secrets exist (docs/STORE-SETUP.md §2): until they are set —
+      # or on a fork — a tag still builds, signs, and attaches artifacts to the GitHub
+      # Release and skips the store cleanly. Ordering is load-bearing: `zip:store` rebuilds
+      # with CWS_UPLOAD=1, which drops the manifest `key` (the store assigns its own, and an
+      # upload carrying ours is rejected) — it OVERWRITES the zip under the same name, so it
+      # must run after the GitHub Release step has already attached the self-hosted zip.
+      - name: Build store zip
+        if: ${{ secrets.CWS_EXTENSION_ID != '' }}
+        run: bun run zip:store
+      - name: Publish to Chrome Web Store
+        if: ${{ secrets.CWS_EXTENSION_ID != '' }}
+        run: >
+          bunx chrome-webstore-upload-cli@3 upload --auto-publish
+          --source build/*-chrome.zip
+          --extension-id "$CWS_EXTENSION_ID"
+          --client-id "$CWS_CLIENT_ID"
+          --client-secret "$CWS_CLIENT_SECRET"
+          --refresh-token "$CWS_REFRESH_TOKEN"
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
 
       # --- Firefox AMO publish (blocked on code, not credentials) ---------------
       # The firefox target builds but uses chrome.sidePanel / chrome.debugger, which

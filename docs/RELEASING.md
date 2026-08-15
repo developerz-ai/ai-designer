@@ -30,8 +30,12 @@ The `Release` workflow (`.github/workflows/release.yml`) then:
 2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
+5. **Publishes to the Chrome Web Store** — only when the `CWS_*` repo secrets are set ([STORE-SETUP.md](STORE-SETUP.md)); without them the step skips and the tag is a GitHub-Release-only build. The store zip is rebuilt with `CWS_UPLOAD=1` (drops the manifest `key`) and uploaded with `--auto-publish`, so a green tag goes straight into store review.
 
 `workflow_dispatch` is also enabled for manual runs.
+
+Store listing content (description, screenshots, permission justifications) lives in
+[store/LISTING.md](store/LISTING.md); regenerate the screenshots with `bun run store:shots`.
 
 ## The optimized build
 
