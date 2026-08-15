@@ -17,6 +17,10 @@ env:
 
 jobs:
   release:
+    # Step-`if` cannot read the secrets context (actionlint availability matrix) — the
+    # gate rides job env instead: HAS_CWS is "true" iff CWS_EXTENSION_ID is set.
+    env:
+      HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
     name: Build + publish release
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -56,10 +60,10 @@ jobs:
       # upload carrying ours is rejected) — it OVERWRITES the zip under the same name, so it
       # must run after the GitHub Release step has already attached the self-hosted zip.
       - name: Build store zip
-        if: ${{ secrets.CWS_EXTENSION_ID != '' }}
+        if: env.HAS_CWS == 'true'
         run: bun run zip:store
       - name: Publish to Chrome Web Store
-        if: ${{ secrets.CWS_EXTENSION_ID != '' }}
+        if: env.HAS_CWS == 'true'
         run: >
           bunx chrome-webstore-upload-cli@3 upload --auto-publish
           --source build/*-chrome.zip
