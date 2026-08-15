@@ -9,6 +9,10 @@ name: Store assets
 
 on:
   workflow_dispatch: {}
+  # TEMP (this branch only, stripped before merge): dispatch requires the workflow on the
+  # default branch; a push trigger lets the asset render iterate pre-merge.
+  push:
+    branches: [feat/store-launch]
 
 permissions:
   contents: read
