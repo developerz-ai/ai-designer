@@ -13,7 +13,7 @@
 // mock around the demo page, panel beside it, headline for panel-only scenes) so the store
 // listing reads as a product, not a bare window dump.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { type BrowserContext, chromium, type Page } from '@playwright/test';
 
