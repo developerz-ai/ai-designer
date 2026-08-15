@@ -973,6 +973,54 @@ export const ReplaceNodeInput = z.object({
   ...Intent,
   ...Target.shape,
 });
+// One structural operation, MANY targets (#184): "remove these 12 spacer rows" is ONE call, not
+// 12 round-trips. Distinct from `batch` (many ops, each with its OWN selector, property-level
+// only): a bulk call applies one op to a SET, so there are no later ops written against anchors
+// the earlier ones moved — the exact footgun that keeps structural ops out of `BatchOp`. The
+// content side is src/dom/structural-bulk.ts: the selector resolves ONCE (`resolveTargets`,
+// capped at MAX_BULK_TARGETS = 50; over the cap NOTHING is applied and the error says why), a
+// target detached by an earlier target in the same call is reported skipped rather than mutated
+// into an invisible tree, and every applied element records as its OWN edit — per-element undo,
+// because a bulk call is a transport + resolution optimization, never a transaction.
+//
+// The op field is `action`, not `op`, deliberately (same as `DiagnosticsInput`): the resource
+// facade (src/agent/tools/resources.ts) extends every edit tool's schema with an `op` LITERAL as
+// its own discriminant, which would clobber a bus field of that name.
+export const BulkStructuralAction = z.enum(['remove', 'unwrap', 'wrap', 'replace', 'removeAttr']);
+export type BulkStructuralAction = z.infer<typeof BulkStructuralAction>;
+export const BulkStructuralInput = z.object({
+  type: z.literal('bulkStructural'),
+  /** Resolved once, up front, to EVERY matching element. */
+  selector: z.string(),
+  action: BulkStructuralAction,
+  /** `wrap`/`replace` only: the markup applied to each target. Optional at the schema level (a
+   *  discriminatedUnion member must stay a plain object); the executor refuses a `wrap`/`replace`
+   *  without it — a per-call error the model can fix, not a parse failure. */
+  html: z.string().optional(),
+  /** `removeAttr` only: the attribute stripped from each target. Same optionality rule. */
+  name: z.string().optional(),
+  ...Intent,
+  ...Target.shape,
+});
+export type BulkStructuralInput = z.infer<typeof BulkStructuralInput>;
+
+/** Per-target outcome of a `bulkStructural` (`ToolResult.data`) — positionally indexed AND named
+ *  by each target's own stable selector, so a failed or skipped target is addressable without
+ *  re-querying. Mirrors `BatchResult` for the same reason: a bare count leaves the model
+ *  guessing which element went wrong. */
+export const BulkStructuralResult = z.object({
+  applied: z.number(),
+  failed: z.number(),
+  results: z.array(
+    z.object({
+      index: z.number(),
+      selector: z.string(),
+      ok: z.boolean(),
+      error: z.string().optional(),
+    }),
+  ),
+});
+export type BulkStructuralResult = z.infer<typeof BulkStructuralResult>;
 /** The `pageOp` dispatcher message: ONE union of bundled operations behind ONE bus message, rather
  *  than a tool per operation — the whole tool surface is re-sent on every step, so composition
  *  belongs in parameters. The `op` vocabulary lives in `./page-ops.ts` (zod-only, safe in every
@@ -1000,7 +1048,8 @@ export const A11ySnapshotInput = z.object({
 // `moveNode`, `removeNode`) are excluded because each one moves the anchors the later ops in the
 // same array were written against — batching those is a footgun, not an optimization. Nesting is
 // excluded for the same reason a batch is not a transaction: there is nothing to gain and a
-// recursion depth to bound.
+// recursion depth to bound. The one-op-many-targets structural case, where that anchor-motion
+// reasoning does not apply, is `BulkStructuralInput` (above).
 export const BatchOp = z.discriminatedUnion('type', [
   SetStyleInput,
   SetTextInput,
@@ -1163,6 +1212,7 @@ export const DomTool = z.discriminatedUnion('type', [
   WrapNodeInput,
   UnwrapNodeInput,
   ReplaceNodeInput,
+  BulkStructuralInput,
   // Page-level, no element target: a stylesheet, and the MAIN-world/derived-layout op dispatcher.
   InjectCssInput,
   PageOpInput,

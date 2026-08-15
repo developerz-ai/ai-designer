@@ -9,9 +9,12 @@ import {
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
 import type { RecordExtras, Recorder, RecorderEmit } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
+import { applyStructuralBulk, bulkError, resolveTargets } from '@/dom/structural-bulk';
 import type { StructuralChange } from '@/shared/changeset';
 import type {
   BatchResult,
+  BulkStructuralInput,
+  BulkStructuralResult,
   DomTool,
   InjectCssResult,
   StableSelector,
@@ -131,6 +134,39 @@ function contentGuard(extra?: (el: Element) => string | null) {
   return (el: Element): string | null => ownChromeReason(el) ?? extra?.(el) ?? null;
 }
 
+// A malformed bulk call — `wrap`/`replace` without markup, `removeAttr` without a name — is a
+// refusal the model fixes in one step. The schema keeps `html`/`name` optional (a
+// discriminatedUnion member must stay a plain object), so the executor owns the check.
+function bulkParamReason(tool: BulkStructuralInput): string | null {
+  if ((tool.action === 'wrap' || tool.action === 'replace') && !tool.html)
+    return `bulkStructural \`${tool.action}\` needs \`html\`: the markup to apply to every target.`;
+  if (tool.action === 'removeAttr' && !tool.name)
+    return 'bulkStructural `removeAttr` needs `name`: the attribute to strip from every target.';
+  return null;
+}
+
+// The recorded structural delta per bulk action — the SAME shapes the single-target cases record,
+// so the changeset cannot tell a bulk-applied edit from N single calls. That sameness is the
+// point: bulk is transport, the durable record stays per-element. `removeAttr` records none — its
+// attribute delta (`attrChange`, `after: null`) already describes it, exactly as the single case.
+function bulkStructuralChange(
+  action: BulkStructuralInput['action'],
+  mutation: ElementMutation,
+): StructuralChange | undefined {
+  switch (action) {
+    case 'remove':
+      return { op: 'remove' };
+    case 'unwrap':
+      return { op: 'unwrap', html: wrapperMarkup(mutation.before) };
+    case 'wrap':
+      return { op: 'wrap', html: wrapperMarkup(mutation.after) };
+    case 'replace':
+      return { op: 'replace', html: mutation.after, replacedHtml: mutation.before };
+    case 'removeAttr':
+      return undefined;
+  }
+}
+
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
   const doc = deps.doc ?? document;
   const { mutator, recorder } = deps;
@@ -188,6 +224,29 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       .map((r) => `#${r.index} (${r.type})`)
       .join(', ');
     return `${data.applied} of ${data.results.length} applied; failed: ${bad}. Re-check those selectors — the applied ops are already live and must not be re-sent.`;
+  }
+
+  // The one mutator call a bulk action fans out to each target. Bound AFTER `bulkParamReason`
+  // has run, so the op-specific fields are real locals rather than per-element assertions.
+  function bulkApply(tool: BulkStructuralInput): (el: Element) => ElementMutation {
+    switch (tool.action) {
+      case 'remove':
+        return (el) => mutator.removeNode(el);
+      case 'unwrap':
+        return (el) => mutator.unwrapNode(el);
+      case 'wrap': {
+        const html = tool.html ?? '';
+        return (el) => mutator.wrapNode(el, html);
+      }
+      case 'replace': {
+        const html = tool.html ?? '';
+        return (el) => mutator.replaceSubtree(el, html);
+      }
+      case 'removeAttr': {
+        const name = tool.name ?? '';
+        return (el) => mutator.removeAttr(el, name);
+      }
+    }
   }
 
   // Resolve `selector` to a single element and project it through a pure reader.
@@ -440,6 +499,58 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         } catch (err) {
           return refused(err instanceof Error ? err.message : String(err));
         }
+      }
+      // One structural operation, many targets (#184). The safety properties live in
+      // src/dom/structural-bulk.ts and are preserved by construction here: resolution happens
+      // exactly ONCE (`resolveTargets` — over MAX_BULK_TARGETS it resolves nothing and the
+      // refusal says why), the applier takes the resolved array and cannot re-query, and each
+      // target is re-checked for connectedness at its own turn so a target an earlier target
+      // contained reads as SKIPPED, never as applied. Every applied mutation is recorded as its
+      // OWN edit: undo granularity stays per-element — a bulk call is a transport + resolution
+      // optimization, never a transaction.
+      case 'bulkStructural': {
+        const missing = bulkParamReason(tool);
+        if (missing) return refused(missing);
+        const { targets, note } = resolveTargets(doc, tool.selector);
+        if (note) return refused(note);
+        if (targets.length === 0) return notFound(tool.selector);
+        // `removeAttr` is the family's one property-level member — own-chrome guard only,
+        // exactly like its single-target case. The rest carry structural blast radius.
+        const guard =
+          tool.action === 'removeAttr'
+            ? contentGuard()
+            : (el: Element) => structuralTargetReason(el, 'target');
+        // Stable selectors come out of `describe`, which the applier calls at each target's own
+        // turn BEFORE mutating it — the same pre-mutation rule removeNode/unwrapNode follow, and
+        // the only moment a to-be-removed node's selector can be computed at all.
+        const stables = new Map<Element, StableSelector>();
+        const outcome = applyStructuralBulk(targets, bulkApply(tool), {
+          describe: (el) => {
+            const stable = pickUnique(el, doc);
+            stables.set(el, stable);
+            return stable.value;
+          },
+          guard,
+        });
+        for (const { element, mutation } of outcome.mutations) {
+          const stable = stables.get(element);
+          if (!stable) continue; // unreachable: describe runs before apply for every target
+          recorder.record(
+            stable,
+            mutation,
+            extras(element, bulkStructuralChange(tool.action, mutation), tool.intent),
+          );
+        }
+        const data: BulkStructuralResult = {
+          applied: outcome.applied,
+          failed: outcome.failed,
+          results: outcome.results.map((r) => ({ ...r })),
+        };
+        // Same all-or-nothing `ok` as `batch`: a partially-applied bulk must never read as
+        // success, but the per-target detail rides along either way.
+        return outcome.failed === 0
+          ? ok(data)
+          : { type: 'tool-result', ok: false, data, error: bulkError(outcome) };
       }
       case 'injectCss': {
         // Page-level: no element target, so this does NOT go through the recorder (a

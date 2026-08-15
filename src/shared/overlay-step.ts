@@ -53,6 +53,7 @@ export const EDIT_OPS: ReadonlySet<string> = new Set([
   'wrapNode',
   'unwrapNode',
   'replaceNode',
+  'bulkStructural',
   'injectCss',
   'batch',
 ]);

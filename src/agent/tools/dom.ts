@@ -17,6 +17,7 @@ import {
   A11ySnapshotInput,
   AddClassInput,
   BatchInput,
+  BulkStructuralInput,
   DiagnosticsInput,
   DiscardUndoInput,
   type DomTool,
@@ -229,7 +230,8 @@ export function createDomTools(dispatch: DomDispatch) {
         'reversible edit. ToolResult.data = { applied, failed, results: [{ index, type, ok }] }; ' +
         'on failure the applied ops are ALREADY LIVE — fix only the named indices, do not re-send ' +
         'the whole batch. Structural changes (insertNode/moveNode/removeNode) are not batchable: ' +
-        'each one moves the anchors the later ops were written against.',
+        'each one moves the anchors the later ops were written against. To apply ONE structural ' +
+        'operation to MANY targets, use `bulkStructural` instead.',
       inputSchema: BatchInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'batch', ...input }, abortSignal),
@@ -335,6 +337,23 @@ export function createDomTools(dispatch: DomDispatch) {
       inputSchema: ReplaceNodeInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => dispatch({ type: 'replaceNode', ...input }, abortSignal),
+    }),
+    bulkStructural: tool({
+      description:
+        'Apply ONE structural operation to EVERY element matching `selector`, in a single call — ' +
+        '"remove these 12 spacer rows" is one bulkStructural, never 12 removeNode calls. ' +
+        '`action`: `remove`, `unwrap`, `wrap` (needs `html`), `replace` (needs `html`), or ' +
+        '`removeAttr` (needs `name`). Targets are resolved ONCE, before anything is touched, and ' +
+        'the call is capped at 50 matches — over the cap NOTHING is applied and the error says ' +
+        'so. A target that left the document earlier in the same call (an earlier target ' +
+        'contained it) is skipped and named. Every applied element is recorded as its OWN ' +
+        'reversible edit, so undo steps back one element at a time. ToolResult.data = ' +
+        '{ applied, failed, results: [{ index, selector, ok }] }; on partial failure the applied ' +
+        'ops are ALREADY LIVE — fix only the named targets, never re-send the call.',
+      inputSchema: BulkStructuralInput.omit({ type: true }),
+      outputSchema: ToolResult,
+      execute: (input, { abortSignal }) =>
+        dispatch({ type: 'bulkStructural', ...input }, abortSignal),
     }),
     injectCss: tool({
       description:

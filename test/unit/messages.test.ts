@@ -97,6 +97,21 @@ describe('message schemas', () => {
     const r = DomTool.safeParse({ type: 'setStyle', selector: '#x' });
     expect(r.success).toBe(false);
   });
+
+  it('parses a bulkStructural DOM tool (#184) — the union member and the executor land together', () => {
+    const r = DomTool.safeParse({
+      type: 'bulkStructural',
+      selector: 'tr.spacer',
+      action: 'remove',
+      intent: 'Strip the 12 spacer rows in one call',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects bulkStructural with an action outside the vocabulary', () => {
+    const r = DomTool.safeParse({ type: 'bulkStructural', selector: '.x', action: 'explode' });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe('responsive / device-emulation schemas (slice 16)', () => {

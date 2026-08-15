@@ -4,10 +4,19 @@ import { createMutator, MARKER_ATTR } from '@/dom/mutate';
 import { createRecorder } from '@/dom/recorder';
 import {
   type ContentToSw,
+  DomTool,
   InsertNodeInput,
   type QueryResult,
   type ToolResult,
 } from '@/shared/messages';
+
+/** Parse through the REAL bus union, then narrow to the sync-executor member — proves the
+ *  member validates and routes without a cast. */
+function parseBulk(msg: unknown) {
+  const parsed = DomTool.parse(msg);
+  if (parsed.type !== 'bulkStructural') throw new Error('expected a bulkStructural message');
+  return parsed;
+}
 
 // The overrides sheet is built through CSSOM (mutate.ts `renderSheet`) so a model-supplied
 // value can never escape its rule, which means the <style> element's textContent is empty
@@ -276,6 +285,53 @@ describe('DomTool execute — structural mutations (#58)', () => {
     expect(document.getElementById('t')?.textContent).toBe('x');
 
     expect(exec({ type: 'undo' })).toMatchObject({ ok: true, data: { undone: false } });
+  });
+});
+
+describe('DomTool execute — bulkStructural round-trip (#184)', () => {
+  it('one validated bus message removes N elements and records N separate reversible edits', () => {
+    const { exec, emitted } = setup(
+      '<table><tbody><tr id="r1"><td>a</td></tr><tr class="spacer" id="s1"><td></td></tr>' +
+        '<tr id="r2"><td>b</td></tr><tr class="spacer" id="s2"><td></td></tr>' +
+        '<tr class="spacer" id="s3"><td></td></tr></tbody></table>',
+    );
+    // The content listener safe-parses inbound DomTool messages; drive exec through the same
+    // parse so the union member is proven to validate AND route, together (#184's one rule).
+    const parsed = parseBulk({
+      type: 'bulkStructural',
+      selector: 'tr.spacer',
+      action: 'remove',
+      intent: 'Strip the spacer rows',
+    });
+    const result = exec(parsed);
+
+    expect(result.ok).toBe(true);
+    expect(data<{ applied: number; failed: number }>(result)).toMatchObject({
+      applied: 3,
+      failed: 0,
+    });
+    expect(document.querySelectorAll('tr.spacer')).toHaveLength(0);
+    expect(document.querySelectorAll('tr')).toHaveLength(2);
+    // Three recorder events — the changeset the SW folds these into is per-element.
+    expect(emitted).toHaveLength(3);
+    for (const msg of emitted) {
+      expect(msg).toMatchObject({ type: 'recorder-event', event: { kind: 'removeNode' } });
+    }
+
+    // Per-element undo: one undo returns ONE row, not three.
+    exec({ type: 'undo' });
+    expect(document.querySelectorAll('tr.spacer')).toHaveLength(1);
+  });
+
+  it('refuses over the cap through the real parse, applying nothing', () => {
+    const { exec, emitted } = setup(`<main>${'<i class="z"></i>'.repeat(51)}</main>`);
+    const parsed = parseBulk({ type: 'bulkStructural', selector: '.z', action: 'remove' });
+    const result = exec(parsed);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('capped at 50');
+    expect(document.querySelectorAll('.z')).toHaveLength(51);
+    expect(emitted).toHaveLength(0);
   });
 });
 
