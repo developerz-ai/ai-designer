@@ -2017,15 +2017,37 @@ export default defineBackground(() => {
         // curation op's save→mirror tail or a starting turn's rehydration — and so both mirrors
         // adopt the SAME re-keyed object.
         await enqueueChangesetMutation(tabId, async () => {
+          // A `user-message` that slipped in after the abort above owns this tab again by the
+          // time this callback's chain slot comes up — its rehydration (same chain) and thread
+          // append may already have landed. That turn is NEWER news than this reset: wiping now
+          // would clear its persisted user message from under it, so the reset stands down
+          // instead. Checked again before the writes below — the loads await.
+          const newerTurnOwnsTab = (): boolean => runningTurnTabId === tabId && turnAbort !== null;
+          if (newerTurnOwnsTab()) return;
           const persister = createSessionChangesetPersister(tabId);
           const priorState = await persister.load();
           const current = sessions.get(tabId);
           if (!current) return; // tab closed under us — nothing left to reset
-          const rekeyed = {
-            ...(priorState?.changeset ?? current.changeset),
-            sessionId: crypto.randomUUID(),
-          };
-          await persister.save({ changeset: rekeyed, redoStack: priorState?.redoStack ?? [] });
+          // Same committed-URL guard as turn start (above): the persister record can hold a
+          // changeset for a URL this tab has since left — nav-clear is async, and a reset issued
+          // right after a navigation can beat it. Re-keying that record would carry another
+          // document's edits into the fresh conversation, and Ship would hand off edits the live
+          // page no longer carries. On mismatch BOTH mirrors restart EMPTY for the current
+          // committed URL (redo stack dropped too — it only references the stale record's edits).
+          const prior = priorState?.changeset ?? current.changeset;
+          const committedUrl =
+            (await readCommittedUrl(tabId)) ??
+            lastCommittedUrl.get(tabId) ??
+            (await chrome.tabs.get(tabId).catch(() => undefined))?.url;
+          const stale = committedUrl !== undefined && prior.url !== committedUrl;
+          const rekeyed = stale
+            ? emptyChangeset(committedUrl, new Date().toISOString(), crypto.randomUUID())
+            : { ...prior, sessionId: crypto.randomUUID() };
+          if (newerTurnOwnsTab()) return;
+          await persister.save({
+            changeset: rekeyed,
+            redoStack: stale ? [] : (priorState?.redoStack ?? []),
+          });
           await sessions.resetConversation(tabId, rekeyed);
         });
         // Tell every open panel the turn (if one ran) is over — this panel resets its transcript

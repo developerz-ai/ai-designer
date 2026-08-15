@@ -60,6 +60,7 @@
 
 .dz-debug-view {
   @include mixins.card('card', tokens.$dz-space-4, tokens.$dz-radius-xl);
+
   position: relative;
   display: flex;
   flex-direction: column;
@@ -94,6 +95,7 @@
 
   &__action {
     @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+
     padding: 0 tokens.$dz-space-2;
     color: var(--dz-fg-muted);
     font-size: tokens.$dz-font-sm;
@@ -117,6 +119,7 @@
     @include mixins.mono(tokens.$dz-font-sm);
     @include mixins.scroll-area('y');
     @include mixins.surface('inset', 'strong', tokens.$dz-radius);
+
     flex: 1;
     min-height: 0;
     margin: 0;

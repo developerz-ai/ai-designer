@@ -1,4 +1,4 @@
-import { createSignal, onCleanup } from 'solid-js';
+import { createMemo, createSignal, onCleanup } from 'solid-js';
 import { i18n } from '#i18n';
 import { newConversation, streaming } from '../../stores/chat';
 import { Icon } from '../Icon';
@@ -44,12 +44,13 @@ export function NewConversation() {
     setBusy(false);
   }
 
-  const label = () =>
+  const label = createMemo(() =>
     armed()
       ? streaming()
         ? i18n.t('chat.newConversation.confirmStreaming')
         : i18n.t('chat.newConversation.confirm')
-      : i18n.t('chat.newConversation.label');
+      : i18n.t('chat.newConversation.label'),
+  );
 
   return (
     <button

@@ -7,6 +7,7 @@
 // not destructive.
 .dz-newconv {
   @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+
   padding: 0 tokens.$dz-space-2;
   color: var(--dz-fg-muted);
   font-size: tokens.$dz-font-sm;

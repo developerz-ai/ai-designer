@@ -150,6 +150,35 @@ describe('chat store: newConversation resets the local transcript', () => {
     expect(store.activeTurnId()).toBe('t2');
   });
 
+  it('a send whose ack the reset beat cannot resurrect its bubble in the fresh transcript', async () => {
+    vi.resetModules();
+    // The user-message ack is HELD until after the reset resolves — the sendMessage reply and the
+    // reset are unordered, and the delayed ack used to append its bubble to the empty transcript
+    // and re-key the panel to a turn the SW already aborted.
+    let releaseAck: (v: unknown) => void = () => {};
+    installChromeFake((msg) => {
+      if (msg.type === 'user-message')
+        return new Promise((resolve) => {
+          releaseAck = resolve;
+        });
+      return ackHandler()(msg);
+    });
+    installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+
+    store.initChatStore();
+    const pendingSend = store.send('beaten by the reset');
+    await expect(store.newConversation()).resolves.toBe(true);
+    expect(store.messages()).toEqual([]);
+
+    releaseAck({ ok: true, turnId: 't-late' });
+    await expect(pendingSend).resolves.toBe(false);
+
+    expect(store.messages()).toEqual([]); // the reset-away bubble stays gone
+    expect(store.activeTurnId()).toBeNull();
+    expect(store.streaming()).toBe(false);
+  });
+
   it('a refused reset leaves the transcript untouched and surfaces the reason', async () => {
     vi.resetModules();
     installChromeFake(ackHandler({ 'conversation-new': () => ({ ok: false, error: 'no tab' }) }));

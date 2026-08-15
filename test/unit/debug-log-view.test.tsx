@@ -18,8 +18,17 @@ const HEADER_ONLY = '## Designer debug log\n\n- model: test\n- entries: 0\n';
 const sendMessage = vi.fn();
 const writeText = vi.fn();
 
+// The chat store's `viewTabId` is what pins `debug-log-get` to the conversation the panel is
+// SHOWING (the store docblock's whole point for the additive `tabId`) — controllable here so the
+// pinned case can assert the id actually rides the message, not just match `undefined` loosely.
+let mockViewTabId: number | null = null;
+vi.mock('@/entrypoints/sidepanel/stores/chat', () => ({
+  viewTabId: () => mockViewTabId,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockViewTabId = null;
   sendMessage.mockResolvedValue({ ok: true, markdown: MARKDOWN, entries: 12 });
   writeText.mockResolvedValue(undefined);
   vi.stubGlobal('chrome', { runtime: { sendMessage } });
@@ -39,6 +48,13 @@ describe('fetchDebugLog', () => {
       empty: false,
     });
     expect(sendMessage).toHaveBeenCalledWith({ type: 'debug-log-get' });
+  });
+
+  it('pins the ask to the conversation the panel is showing (`viewTabId` rides as `tabId`)', async () => {
+    mockViewTabId = 42;
+    await expect(fetchDebugLog()).resolves.toMatchObject({ ok: true });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'debug-log-get', tabId: 42 });
+    expect(sendMessage.mock.calls[0]?.[0]).toHaveProperty('tabId', 42);
   });
 
   it('reports `empty` from the schema count, and from the header regex for a pre-count SW', async () => {
@@ -149,5 +165,40 @@ describe('DebugLogView', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' });
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('dismisses from the backdrop press, like AuthDialog', async () => {
+    render(() => <DebugLogView />);
+    fireEvent.click(screen.getByRole('button', { name: /view log/i }));
+    await screen.findByRole('dialog');
+
+    fireEvent.click(screen.getByRole('button', { name: /close log viewer/i }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('returns focus to the trigger on close', async () => {
+    render(() => <DebugLogView />);
+    const trigger = screen.getByRole('button', { name: /view log/i });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole('dialog');
+
+    fireEvent.click(screen.getByRole('button', { name: /^close$/i }));
+
+    expect(trigger).toHaveFocus();
+  });
+
+  it('a refused clipboard write says so on the copy control instead of claiming success', async () => {
+    writeText.mockRejectedValue(new Error('denied'));
+    render(() => <DebugLogView />);
+    fireEvent.click(screen.getByRole('button', { name: /view log/i }));
+    await screen.findByRole('dialog');
+
+    fireEvent.click(screen.getByRole('button', { name: /^copy$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /copy failed/i })).toBeInTheDocument(),
+    );
   });
 });

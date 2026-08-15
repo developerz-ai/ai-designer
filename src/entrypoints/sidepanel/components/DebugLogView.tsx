@@ -1,4 +1,4 @@
-import { createSignal, Match, onCleanup, Show, Switch } from 'solid-js';
+import { createMemo, createSignal, Match, onCleanup, Show, Switch } from 'solid-js';
 import { i18n } from '#i18n';
 import {
   type CopyOutcome,
@@ -73,7 +73,7 @@ export function DebugLogView() {
     copyTimer = setTimeout(() => setCopyState('idle'), COPY_RESET_MS);
   }
 
-  const copyLabel = () => {
+  const copyLabel = createMemo(() => {
     switch (copyState()) {
       case 'copying':
         return i18n.t('about.debugLog.view.copying');
@@ -85,12 +85,12 @@ export function DebugLogView() {
       default:
         return i18n.t('about.debugLog.view.copy');
     }
-  };
+  });
 
-  const ready = () => {
+  const ready = createMemo(() => {
     const v = view();
     return v.status === 'ready' ? v : undefined;
-  };
+  });
 
   return (
     <>
