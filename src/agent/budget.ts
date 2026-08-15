@@ -8,6 +8,14 @@
 // minimal structural shape, so it scores both a live `StepResult` (loop) and a plain fixture
 // (test) without importing SDK types. `loop.ts` turns these numbers into the agent's
 // `stopWhen` conditions and, on exhaustion, the stop notice streamed to the panel.
+//
+// The import below is TYPE-ONLY and erased at compile time — this module stays runtime-free of
+// zod/chrome/SDK. The `BudgetPreset` vocabulary lives in the shared message hub because it
+// crosses the bus (persisted on `ProviderConfig`, chosen in Settings); the preset → ceilings
+// MAPPING lives here (`budgetForPreset`) because it is agent policy, mirroring `Mode` (schema
+// in messages.ts, interpretation in modes.ts).
+
+import type { BudgetPreset } from '@/shared/messages';
 
 /** The ceilings a turn runs under. `maxSteps`/`maxTokens` stop the whole turn (checked by the
  *  loop's `stopWhen`, via `usageOf`/`budgetReason`). `maxVisionCalls`/`maxWaitCalls`/`maxNavCalls`
@@ -63,8 +71,11 @@ export interface BudgetLimits {
  */
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 
-// Generous enough for a real design turn (several read→mutate→screenshot→correct→record
-// cycles), low enough to cap a runaway. Per-model tuning can override at call time.
+// The `standard` tier's ceilings, and the merge base `TurnBudget` falls back to for any field a
+// caller's partial limits omit. NOTE: this is NOT the shipped product default any more — the
+// shipped default preset is `unlimited` (`DEFAULT_BUDGET_PRESET`, resolved where the persisted
+// config is read); these numbers remain the opt-in `standard` cost control and the deterministic
+// fallback for callers/tests that pass partial limits.
 export const DEFAULT_BUDGET: BudgetLimits = {
   maxSteps: 24,
   maxTokens: 200_000,
@@ -73,6 +84,65 @@ export const DEFAULT_BUDGET: BudgetLimits = {
   maxNavCalls: 8,
   contextWindow: DEFAULT_CONTEXT_WINDOW,
 };
+
+/** The ceilings one preset buys — everything in {@link BudgetLimits} EXCEPT `contextWindow`.
+ *  Deliberately `Omit`, not a full `BudgetLimits`: the context window is DETECTED per model at
+ *  save time (capacity-shaped) and a preset (cost-shaped) must never override it — returning a
+ *  full object here would smuggle a default window over the detected one at the merge site. */
+export type PresetLimits = Omit<BudgetLimits, 'contextWindow'>;
+
+// `standard` derives from DEFAULT_BUDGET (they are the same tier — one source, no drift).
+const { contextWindow: _defaultWindow, ...STANDARD_LIMITS } = DEFAULT_BUDGET;
+
+/** The user-facing budget tiers (chosen in Settings, persisted on `ProviderConfig`).
+ *
+ *  `standard`/`high`/`max` are opt-in COST CONTROLS at ~1×/3×/10×: hard ceilings for users who
+ *  want a runaway turn capped at a known spend. `unlimited` — the SHIPPED DEFAULT — has no
+ *  ceilings at all: every field is `Infinity`, so `budgetReason` never fires, the one-shot
+ *  budget warning never injects, and the per-tool guards always admit the call. THE STOP BUTTON
+ *  IS THE ONLY GUARD on an unlimited turn: a stuck loop runs — and bills the user's own key,
+ *  re-sending the whole transcript every step — until the user presses Stop. That trade is
+ *  deliberate product policy: this product optimizes for output quality, not token savings; a
+ *  ceiling that stops a design turn mid-thought, or a warning that nudges the model to wrap up
+ *  early, buys cost savings with worse output — the wrong default here. Infinity (not a huge
+ *  finite number) so the arithmetic stays exact: `finite >= Infinity` is false, `Infinity *
+ *  BUDGET_WARN_FRACTION` is Infinity — no ceiling is ever "almost" reached. */
+const PRESET_LIMITS: Record<BudgetPreset, PresetLimits> = {
+  standard: STANDARD_LIMITS,
+  // ~3× tokens; steps and the per-tool guards scale to keep long turns from tripping a narrow
+  // guard long before the token ceiling is a concern.
+  high: {
+    maxSteps: 48,
+    maxTokens: 600_000,
+    maxVisionCalls: 12,
+    maxWaitCalls: 20,
+    maxNavCalls: 16,
+  },
+  // ~10× tokens — sized for 1M+-context models on vision-heavy turns. Still a CAP, for users
+  // who opt into cost control but want it far away.
+  max: {
+    maxSteps: 96,
+    maxTokens: 2_000_000,
+    maxVisionCalls: 24,
+    maxWaitCalls: 40,
+    maxNavCalls: 24,
+  },
+  unlimited: {
+    maxSteps: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
+    maxVisionCalls: Number.POSITIVE_INFINITY,
+    maxWaitCalls: Number.POSITIVE_INFINITY,
+    maxNavCalls: Number.POSITIVE_INFINITY,
+  },
+};
+
+/** Map a persisted preset to the ceilings a turn runs under. Pure; never returns (or touches)
+ *  `contextWindow` — the caller merges the detected window in beside these (background.ts's
+ *  `limits` construction). Returns a fresh object so a caller mutating its limits (tests do)
+ *  can't corrupt the table. */
+export function budgetForPreset(preset: BudgetPreset): PresetLimits {
+  return { ...PRESET_LIMITS[preset] };
+}
 
 /** Why a turn stopped against its budget (`null` = still within budget). */
 export type BudgetReason = 'steps' | 'tokens';
@@ -111,7 +181,9 @@ export function usageOf(steps: readonly StepUsageLike[]): BudgetUsage {
 }
 
 /** Which ceiling `usage` has reached under `limits`, or `null` if still within budget. Steps
- *  win ties: a step-capped turn reports `'steps'` even if it also crossed the token cap. */
+ *  win ties: a step-capped turn reports `'steps'` even if it also crossed the token cap.
+ *  Infinity-clean by construction: on the `unlimited` preset both ceilings are `Infinity`, and
+ *  `finite >= Infinity` is exactly `false` — always `null`, no special case, no NaN. */
 export function budgetReason(usage: BudgetUsage, limits: BudgetLimits): BudgetReason | null {
   if (usage.steps >= limits.maxSteps) return 'steps';
   if (usage.tokens >= limits.maxTokens) return 'tokens';
@@ -247,6 +319,12 @@ export class TurnBudget {
    * whole prompt cache each time (`thread-compact.ts`'s prefix-cache policy). Firing once is a
    * single invalidation, after which the prefix is stable again — and a warning repeated every step
    * reads as noise the model learns to skip anyway.
+   *
+   * NEVER FIRES on the `unlimited` preset, arithmetically: `Infinity * BUDGET_WARN_FRACTION` is
+   * `Infinity`, and any finite spend is `<` it — so the threshold check below returns `null`
+   * forever, and no "[Budget: …% used]" line (whose percentage would be a meaningless 0 against
+   * an infinite ceiling) ever nudges an unlimited turn to wrap up early. That silence is the
+   * unlimited tier's whole point (see PRESET_LIMITS): quality over cost, Stop as the only guard.
    */
   warning(): string | null {
     if (this.warned) return null;

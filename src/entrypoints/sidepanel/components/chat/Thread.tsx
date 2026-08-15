@@ -128,6 +128,7 @@ export function Thread(props: ThreadProps) {
             <Message
               role={m().role}
               text={m().text}
+              segments={m().segments}
               streaming={m().streaming}
               error={m().error}
               toolCalls={m().toolCalls}

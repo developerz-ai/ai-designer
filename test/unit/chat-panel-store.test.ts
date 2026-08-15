@@ -159,12 +159,120 @@ describe('reduceChat: streaming assembly', () => {
     // reduceChat itself only ever produces assistant bubbles; user bubbles are appended by
     // send() directly. Verify the fold leaves an externally-appended user entry alone.
     const withUser: ChatMessage[] = [
-      { id: 'u1', role: 'user', text: 'hi', toolCalls: [], edits: [], streaming: false },
+      {
+        id: 'u1',
+        role: 'user',
+        segments: [{ kind: 'text', text: 'hi' }],
+        text: 'hi',
+        toolCalls: [],
+        edits: [],
+        streaming: false,
+      },
     ];
     const next = reduceChat(withUser, { type: 'token', text: 'hello' });
     expect(next).toHaveLength(2);
     expect(next[0]).toEqual(withUser[0]);
     expect(next[1]).toMatchObject({ role: 'assistant', text: 'hello' });
+  });
+});
+
+describe('reduceChat: ordered segments (prose ↔ tool bursts)', () => {
+  // The model alternates text → tool calls → text → tool calls…; the bubble's `segments` record
+  // that true order. `text`/`toolCalls` stay as DERIVED flat views of the same content.
+
+  it('token → tool-call → token produces [text, tools, text]', () => {
+    let messages = reduceChat([], { type: 'token', text: 'Let me look. ' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'pageFacts', kind: 'read' });
+    messages = reduceChat(messages, { type: 'token', text: 'Found it.' });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.segments).toEqual([
+      { kind: 'text', text: 'Let me look. ' },
+      { kind: 'tools', calls: [{ tool: 'pageFacts', kind: 'read' }] },
+      { kind: 'text', text: 'Found it.' },
+    ]);
+    // The flat views stay a faithful flattening of the ordered truth.
+    expect(messages[0]?.text).toBe('Let me look. Found it.');
+    expect(messages[0]?.toolCalls).toEqual([{ tool: 'pageFacts', kind: 'read' }]);
+  });
+
+  it('a second tool-call right after the first joins the SAME tools segment', () => {
+    let messages = reduceChat([], { type: 'token', text: 'Two edits: ' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'setStyle', kind: 'act' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'setAttr', kind: 'act' });
+
+    expect(messages[0]?.segments).toEqual([
+      { kind: 'text', text: 'Two edits: ' },
+      {
+        kind: 'tools',
+        calls: [
+          { tool: 'setStyle', kind: 'act' },
+          { tool: 'setAttr', kind: 'act' },
+        ],
+      },
+    ]);
+  });
+
+  it('further tokens grow the trailing text segment instead of opening a new one per token', () => {
+    let messages = reduceChat([], { type: 'tool-call', tool: 'pageFacts' });
+    messages = reduceChat(messages, { type: 'token', text: 'Fou' });
+    messages = reduceChat(messages, { type: 'token', text: 'nd it.' });
+
+    expect(messages[0]?.segments).toEqual([
+      { kind: 'tools', calls: [{ tool: 'pageFacts' }] },
+      { kind: 'text', text: 'Found it.' },
+    ]);
+  });
+
+  it('a tool-result settles its call by id inside an EARLIER segment', () => {
+    let messages = reduceChat([], { type: 'tool-call', tool: 'setStyle', id: 'a' });
+    messages = reduceChat(messages, { type: 'token', text: 'That failed — retrying. ' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'setStyle', id: 'b' });
+    messages = reduceChat(messages, {
+      type: 'tool-result',
+      tool: 'setStyle',
+      ok: false,
+      error: 'stale selector',
+      id: 'a',
+    });
+
+    const segments = messages[0]?.segments;
+    expect(segments?.[0]).toEqual({
+      kind: 'tools',
+      calls: [{ tool: 'setStyle', id: 'a', ok: false, error: 'stale selector' }],
+    });
+    // The later burst's call is untouched — still awaiting its own result.
+    expect(segments?.[2]).toEqual({ kind: 'tools', calls: [{ tool: 'setStyle', id: 'b' }] });
+    // And the flat view carries the settled outcome in the same order.
+    expect(messages[0]?.toolCalls).toEqual([
+      { tool: 'setStyle', id: 'a', ok: false, error: 'stale selector' },
+      { tool: 'setStyle', id: 'b' },
+    ]);
+  });
+
+  it('an id-less tool-result settles the NEWEST unsettled same-name call across segments', () => {
+    let messages = reduceChat([], { type: 'tool-call', tool: 'setStyle' });
+    messages = reduceChat(messages, { type: 'token', text: 'again ' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'setStyle' });
+    messages = reduceChat(messages, { type: 'tool-result', tool: 'setStyle', ok: true });
+
+    const segments = messages[0]?.segments;
+    expect(segments?.[0]).toEqual({ kind: 'tools', calls: [{ tool: 'setStyle' }] });
+    expect(segments?.[2]).toEqual({ kind: 'tools', calls: [{ tool: 'setStyle', ok: true }] });
+  });
+
+  it('segment folding is pure — earlier segments keep their identity while the tail grows', () => {
+    let messages = reduceChat([], { type: 'token', text: 'first ' });
+    messages = reduceChat(messages, { type: 'tool-call', tool: 'query' });
+    const firstText = messages[0]?.segments[0];
+    const before = JSON.parse(JSON.stringify(messages));
+
+    const next = reduceChat(messages, { type: 'token', text: 'second' });
+
+    expect(messages).toEqual(before); // input untouched
+    // Position-keyed rendering (Message.tsx uses Index) relies on untouched positions keeping
+    // their object identity so streaming never remounts an earlier segment's subtree.
+    expect(next[0]?.segments[0]).toBe(firstText);
   });
 });
 
@@ -271,6 +379,22 @@ describe('threadToMessages: thread-get rebuild mapping (#168)', () => {
   it('an empty thread maps to an empty chat', () => {
     expect(threadToMessages([])).toEqual([]);
   });
+
+  it('maps a rehydrated turn to AT MOST two segments — the view carries no interleaving info', () => {
+    const rebuilt = threadToMessages([
+      { role: 'user', text: 'make it pop' },
+      { role: 'assistant', text: 'done', tools: [{ name: 'setStyle', ok: true }] },
+      { role: 'assistant', text: 'just words' },
+      { role: 'assistant', text: '', tools: [{ name: 'query', ok: true }] },
+    ]);
+    expect(rebuilt[0]?.segments).toEqual([{ kind: 'text', text: 'make it pop' }]);
+    expect(rebuilt[1]?.segments).toEqual([
+      { kind: 'text', text: 'done' },
+      { kind: 'tools', calls: [{ tool: 'setStyle', ok: true }] },
+    ]);
+    expect(rebuilt[2]?.segments).toEqual([{ kind: 'text', text: 'just words' }]);
+    expect(rebuilt[3]?.segments).toEqual([{ kind: 'tools', calls: [{ tool: 'query', ok: true }] }]);
+  });
 });
 
 describe('keepsLocalTurn: which view survives a thread-get rebuild', () => {
@@ -327,8 +451,24 @@ describe('mergeInFlight: persisted history + the live local tail', () => {
 
   it('keeps the in-flight tail on top of the persisted history', () => {
     const local: ChatMessage[] = [
-      { id: 'u1', role: 'user', text: 'go', toolCalls: [], edits: [], streaming: false },
-      { id: 'a1', role: 'assistant', text: 'streamed', toolCalls: [], edits: [], streaming: true },
+      {
+        id: 'u1',
+        role: 'user',
+        segments: [{ kind: 'text', text: 'go' }],
+        text: 'go',
+        toolCalls: [],
+        edits: [],
+        streaming: false,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        segments: [{ kind: 'text', text: 'streamed' }],
+        text: 'streamed',
+        toolCalls: [],
+        edits: [],
+        streaming: true,
+      },
     ];
     const merged = mergeInFlight(persisted, local);
     expect(merged).toHaveLength(3);
@@ -338,7 +478,15 @@ describe('mergeInFlight: persisted history + the live local tail', () => {
 
   it('lets the rebuild win when nothing is in flight', () => {
     const local: ChatMessage[] = [
-      { id: 'a0', role: 'assistant', text: 'old view', toolCalls: [], edits: [], streaming: false },
+      {
+        id: 'a0',
+        role: 'assistant',
+        segments: [{ kind: 'text', text: 'old view' }],
+        text: 'old view',
+        toolCalls: [],
+        edits: [],
+        streaming: false,
+      },
     ];
     expect(mergeInFlight(persisted, local)).toEqual(persisted);
   });
@@ -347,8 +495,24 @@ describe('mergeInFlight: persisted history + the live local tail', () => {
     // The SW appends the user message before the turn runs, so the persisted thread already
     // carries it; keeping the local one too would show "go" twice.
     const local: ChatMessage[] = [
-      { id: 'u1', role: 'user', text: 'go', toolCalls: [], edits: [], streaming: false },
-      { id: 'a1', role: 'assistant', text: 'streamed', toolCalls: [], edits: [], streaming: true },
+      {
+        id: 'u1',
+        role: 'user',
+        segments: [{ kind: 'text', text: 'go' }],
+        text: 'go',
+        toolCalls: [],
+        edits: [],
+        streaming: false,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        segments: [{ kind: 'text', text: 'streamed' }],
+        text: 'streamed',
+        toolCalls: [],
+        edits: [],
+        streaming: true,
+      },
     ];
     const merged = mergeInFlight(threadToMessages([{ role: 'user', text: 'go' }]), local);
     expect(merged.filter((m) => m.role === 'user')).toHaveLength(1);

@@ -158,6 +158,81 @@ describe('<Message> working line', () => {
   });
 });
 
+// A turn's body renders its ORDERED segments (stores/chat.ts): the model alternates prose and
+// tool bursts, and the DOM must show that true order — prose, then the chips it led into, then
+// the next prose — not "all prose, then every chip at the bottom".
+describe('<Message> ordered segments', () => {
+  it('renders prose–chips–prose in DOM order for an assistant turn', () => {
+    const turn = mountTurn({
+      role: 'assistant',
+      text: 'I checked. All set.',
+      segments: [
+        { kind: 'text', text: 'I checked.' },
+        { kind: 'tools', calls: [{ tool: 'setStyle', ok: true }] },
+        { kind: 'text', text: 'All set.' },
+      ],
+    });
+
+    // querySelectorAll returns document order — this IS the relative-order assertion.
+    const body = Array.from(turn.querySelectorAll('.dz-markdown, .dz-tool-call-list'));
+    expect(body).toHaveLength(3);
+    expect(body[0]).toHaveClass('dz-markdown');
+    expect(body[0]).toHaveTextContent('I checked.');
+    expect(body[1]).toHaveClass('dz-tool-call-list');
+    expect(body[1]).toHaveTextContent('1 action');
+    expect(body[2]).toHaveClass('dz-markdown');
+    expect(body[2]).toHaveTextContent('All set.');
+  });
+
+  it('gives each tool burst its own group with its own count', () => {
+    const turn = mountTurn({
+      role: 'assistant',
+      text: 'then',
+      segments: [
+        {
+          kind: 'tools',
+          calls: [
+            { tool: 'pageFacts', ok: true },
+            { tool: 'query', ok: true },
+          ],
+        },
+        { kind: 'text', text: 'then' },
+        { kind: 'tools', calls: [{ tool: 'setStyle', ok: true }] },
+      ],
+    });
+
+    const groups = Array.from(turn.querySelectorAll('.dz-tool-call-list'));
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toHaveTextContent('2 actions');
+    expect(groups[1]).toHaveTextContent('1 action');
+  });
+
+  it('renders a user turn segment as plain text, not markdown', () => {
+    const turn = mountTurn({
+      role: 'user',
+      text: 'make it *pop*',
+      segments: [{ kind: 'text', text: 'make it *pop*' }],
+    });
+
+    expect(turn.querySelector('.dz-markdown')).toBeNull();
+    expect(turn.querySelector('.dz-message__text')).toHaveTextContent('make it *pop*');
+  });
+
+  it('without segments, the flat props still render as one text block then one chip group', () => {
+    // The pre-segment layout, kept for callers that predate segments (fallbackSegments).
+    const turn = mountTurn({
+      role: 'assistant',
+      text: 'Done.',
+      toolCalls: [{ tool: 'setStyle', ok: true }],
+    });
+
+    const body = Array.from(turn.querySelectorAll('.dz-markdown, .dz-tool-call-list'));
+    expect(body).toHaveLength(2);
+    expect(body[0]).toHaveClass('dz-markdown');
+    expect(body[1]).toHaveClass('dz-tool-call-list');
+  });
+});
+
 describe('editsSummary', () => {
   it('uses the singular for exactly one edit', () => {
     expect(editsSummary(1)).toBe('1 edit recorded');

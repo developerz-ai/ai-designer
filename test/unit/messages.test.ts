@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   A11yResult,
   A11ySnapshotInput,
+  BudgetPreset,
   CaptureRequest,
   CaptureResult,
   CheckResponsiveInput,
@@ -10,6 +11,7 @@ import {
   ControlTool,
   Conversation,
   ConversationSummary,
+  DEFAULT_BUDGET_PRESET,
   DomTool,
   FrameInfo,
   FramesInput,
@@ -249,6 +251,29 @@ describe('provider config message schemas (openai-compatible BYOK)', () => {
     // A stray apiKey on the config is stripped by the omit schema, not echoed to the panel.
     const parsed = GetProviderResult.parse({ ok: true, config: { ...cfg }, hasKey: true });
     expect(parsed.config && 'apiKey' in parsed.config).toBe(false);
+  });
+
+  it('budgetPreset is ADDITIVE: a pre-preset config without the field still validates', () => {
+    // Exactly the shape every install persisted before the field existed — must keep parsing,
+    // and every reader resolves the absence to DEFAULT_BUDGET_PRESET ('unlimited').
+    const old = ProviderConfig.parse(cfg);
+    expect(old.budgetPreset).toBeUndefined();
+    expect(old.budgetPreset ?? DEFAULT_BUDGET_PRESET).toBe('unlimited');
+  });
+
+  it('accepts every budget tier and rejects an unknown one', () => {
+    for (const budgetPreset of ['standard', 'high', 'max', 'unlimited'] as const) {
+      expect(ProviderConfig.safeParse({ ...cfg, budgetPreset }).success).toBe(true);
+      expect(BudgetPreset.safeParse(budgetPreset).success).toBe(true);
+    }
+    expect(ProviderConfig.safeParse({ ...cfg, budgetPreset: 'infinite' }).success).toBe(false);
+    // …and the tier rides the get-provider echo to the panel (non-secret, unlike apiKey).
+    const parsed = GetProviderResult.parse({
+      ok: true,
+      config: { baseURL: cfg.baseURL, model: cfg.model, budgetPreset: 'max' },
+      hasKey: true,
+    });
+    expect(parsed.config?.budgetPreset).toBe('max');
   });
 });
 

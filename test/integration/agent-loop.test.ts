@@ -7,6 +7,7 @@ import type {
 } from '@ai-sdk/provider';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
+import { budgetForPreset } from '@/agent/budget';
 import { runTurn } from '@/agent/loop';
 import type { DescribeToolDeps } from '@/agent/tools/describe';
 import type { DomDispatch } from '@/agent/tools/dom';
@@ -686,5 +687,115 @@ describe('integration: identity/describe tools (slice 14) wire in and route scen
     });
 
     expect(outcome.stop).toBe('done');
+  });
+});
+
+// --- the user-configurable budget presets, consumed by the loop ---------------------------------
+//
+// background.ts maps the persisted Settings tier to the turn's limits (`budgetForPreset(
+// cfg.budgetPreset ?? DEFAULT_BUDGET_PRESET)`, detected contextWindow merged in beside it); this
+// suite proves the loop actually RUNS under those limits: 'high' stops at its 600k token ceiling
+// (not standard's 200k), and 'unlimited' — the shipped default — never budget-stops and never
+// injects the mid-turn "[Budget: …]" warning, exactly as the quality-over-cost default demands.
+
+// Like `twoStepModel`, but the first (tool-calling) step reports `firstStepTokens` of input —
+// lets a test place the turn's spend on either side of a tier's token ceiling.
+function spendingTwoStepModel(firstStepTokens: number): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doStream: [
+      stream([
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 't1',
+          toolName: 'edit',
+          input: JSON.stringify({
+            op: 'setStyle',
+            intent: 'Test intent',
+            selector: '#cta',
+            props: { 'background-color': '#f97316' },
+          }),
+        },
+        finish(usage(firstStepTokens, 100), 'tool-calls'),
+      ]),
+      stream([
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: '2' },
+        { type: 'text-delta', id: '2', delta: 'Done.' },
+        { type: 'text-end', id: '2' },
+        finish(usage(500, 40), 'stop'),
+      ]),
+    ],
+  });
+}
+
+describe("integration: budget presets — a turn runs under the tier's real ceilings", () => {
+  it("preset 'high': a spend past 600k tokens force-stops the turn on the token ceiling", async () => {
+    const { calls, dispatch } = fakeContent();
+    const { events, emit } = collectEmit();
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'overhaul the page' }],
+      model: spendingTwoStepModel(700_000), // step 1 alone crosses high's 600k
+      instructions: 'You are a design agent.',
+      dispatch,
+      emit,
+      limits: budgetForPreset('high'),
+    });
+
+    expect(calls).toHaveLength(1); // the second model call never happened
+    expect(outcome.stop).toBe('budget');
+    expect(outcome.budgetReason).toBe('tokens');
+    expect(tokensOf(events).toLowerCase()).toContain('budget');
+  });
+
+  it("preset 'high': a 500k-token step — fatal under standard's 200k — keeps running to a natural finish", async () => {
+    const { dispatch } = fakeContent();
+    const { emit } = collectEmit();
+    const model = spendingTwoStepModel(500_000);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'overhaul the page' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch,
+      emit,
+      limits: budgetForPreset('high'),
+    });
+
+    expect(outcome.stop).toBe('done');
+    expect(outcome.budgetReason).toBeNull();
+    expect(outcome.usage.steps).toBe(2);
+    // 500k of 600k is past the 0.6 warn fraction: the one-shot budget warning DID reach the
+    // model on its second call — the capped tiers keep their guardrails.
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt ?? [])).toContain('[Budget:');
+  });
+
+  it("preset 'unlimited' (the shipped default): never budget-stops and never injects the warning", async () => {
+    const { dispatch } = fakeContent();
+    const { emit } = collectEmit();
+    // 50M tokens on step one — far past every capped tier's ceiling.
+    const model = spendingTwoStepModel(50_000_000);
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'overhaul the page' }],
+      model,
+      instructions: 'You are a design agent.',
+      dispatch,
+      emit,
+      limits: budgetForPreset('unlimited'),
+    });
+
+    // Ran to its own natural finish — the Stop button (abort signal) is the only guard.
+    expect(outcome.stop).toBe('done');
+    expect(outcome.budgetReason).toBeNull();
+    expect(outcome.usage.steps).toBe(2);
+    // The spend the panel/turn-log reads is still a real finite number.
+    expect(outcome.usage.tokens).toBe(50_000_640);
+    // And no "[Budget: …% used]" nudge ever reached the model to make it wrap up early.
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt ?? [])).not.toContain('[Budget:');
   });
 });

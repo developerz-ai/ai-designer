@@ -286,6 +286,25 @@ settings:
     openrouter: OpenRouter
     openai: OpenAI
     custom: Custom
+  # Per-turn budget tiers (stores/settings.ts BUDGET_PRESETS → agent/budget.ts budgetForPreset).
+  # BYOK: every hint owns the fact that a bigger turn bills the user's own key. Unlimited is the
+  # shipped default and its hint must stay honest — Stop is the only guard.
+  budget:
+    label: Turn budget
+    preset:
+      unlimited: Unlimited (default)
+      standard: Standard
+      high: High
+      max: Max
+    hint:
+      unlimited: No ceilings — a stuck turn only stops when you press Stop, and every step re-bills
+        the whole conversation to your API key.
+      standard: Caps a turn at ~200k tokens (24 steps) — stops a runaway loop at a small, known
+        cost to your API key.
+      high: Caps a turn at ~600k tokens (48 steps) — longer vision-heavy turns, spending about 3×
+        the Standard cap of your API budget.
+      max: Caps a turn at ~2M tokens (96 steps) — very long turns for large-context models; one
+        turn can spend about 10× the Standard cap.
   error:
     noModel: Choose a model before saving.
     hostDenied: Host access denied.

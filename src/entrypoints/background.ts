@@ -3,6 +3,7 @@ import { defineBackground } from '#imports';
 import { toStoredUserContent, toUserContent } from '@/agent/attachments';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
+import { budgetForPreset } from '@/agent/budget';
 import { withCaptureLock } from '@/agent/capture-lock';
 import { shouldRideCaptureLock } from '@/agent/capture-policy';
 import { type CaptureTargetProbe, captureBlockedReason } from '@/agent/capture-target';
@@ -115,10 +116,12 @@ import type {
   ThreadGetResult,
   UserMessageResult,
 } from '@/shared/messages';
-// Value import (a Zod schema, parsed at runtime) — the block below is `import type`.
+// Value import (Zod schemas parsed at runtime + the shipped budget-preset default) — the block
+// above is `import type`.
 import {
   CaptureRequest,
   ContentToSw,
+  DEFAULT_BUDGET_PRESET,
   DesignReadResult,
   IdentityResult,
   OverlayAck,
@@ -1378,14 +1381,22 @@ export default defineBackground(() => {
             // Never auto-ship: the in-loop `handoff` tool stays denied — Ship is the user-triggered
             // `ship`/`send-report` RPC (`runHandoffRoute`), not something the agent invokes itself.
             approveHandoff: () => false,
-            // The model's REAL context window, captured at save-provider time. Only the
-            // context-shaped ceiling is overridden here: the cost-shaped `maxTokens` is a spend
-            // decision that has nothing to do with how much the model can hold, and the two must
-            // not be collapsed (see `BudgetLimits.contextWindow`). Absent ⇒ `DEFAULT_BUDGET`'s
-            // visible fallback.
-            ...(cfg.contextWindow !== undefined
-              ? { limits: { contextWindow: cfg.contextWindow } }
-              : {}),
+            // The turn's ceilings, from two independent sources merged in cost/capacity halves:
+            //   • COST — the user's persisted budget preset (Settings → `ProviderConfig.
+            //     budgetPreset`), mapped to ceilings by `budgetForPreset`. Absent (a config saved
+            //     before the field existed) ⇒ `DEFAULT_BUDGET_PRESET` = 'unlimited', the shipped
+            //     default: no ceilings, the user's Stop button is the only guard (quality over
+            //     token savings — see PRESET_LIMITS in budget.ts). The capped tiers are opt-in.
+            //   • CAPACITY — the model's REAL context window, captured at save-provider time.
+            //     Spread SECOND so the detected window always wins; a preset never carries one
+            //     (`budgetForPreset` returns `Omit<…, 'contextWindow'>`), because how much the
+            //     model can hold has nothing to do with what the user chose to spend, and the two
+            //     must not be collapsed (see `BudgetLimits.contextWindow`). Absent ⇒
+            //     `DEFAULT_BUDGET`'s visible fallback.
+            limits: {
+              ...budgetForPreset(cfg.budgetPreset ?? DEFAULT_BUDGET_PRESET),
+              ...(cfg.contextWindow !== undefined ? { contextWindow: cfg.contextWindow } : {}),
+            },
           })
             .then(async (outcome) => {
               // #168 B: persist the REAL turn — `compactForThread` over the SDK's response
@@ -1641,8 +1652,15 @@ export default defineBackground(() => {
       // Presence + non-secret config only — never the key value (apiKey is stripped here).
       case 'get-provider': {
         const cfg = await getProviderConfig();
+        // `budgetPreset` rides the echo so Settings hydrates the user's saved tier; absent on a
+        // pre-preset config and the panel resolves it to DEFAULT_BUDGET_PRESET itself.
         const config = cfg
-          ? { baseURL: cfg.baseURL, model: cfg.model, label: cfg.label }
+          ? {
+              baseURL: cfg.baseURL,
+              model: cfg.model,
+              label: cfg.label,
+              budgetPreset: cfg.budgetPreset,
+            }
           : undefined;
         return { ok: true, config, hasKey: await hasProviderKey() };
       }
@@ -1672,12 +1690,16 @@ export default defineBackground(() => {
       }
       case 'set-model': {
         // Set the model on the current config (OpenRouter preset if none), preserving the
-        // stored key via the apiKey-omitted save path.
+        // stored key via the apiKey-omitted save path. `budgetPreset` is preserved too — it is
+        // a per-USER cost choice, not per-model metadata, so a composer quick-switch must not
+        // silently reset it. (`contextWindow` is deliberately NOT carried over: it IS per-model,
+        // and the stale window of the previous model would mis-size compaction for the new one.)
         const cfg = await getProviderConfig();
         await saveProviderConfig({
           baseURL: cfg?.baseURL ?? OPENROUTER_BASE_URL,
           label: cfg?.label,
           model: msg.model,
+          budgetPreset: cfg?.budgetPreset,
         });
         void pushReadiness().catch(() => {});
         return { ok: true };

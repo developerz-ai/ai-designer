@@ -45,6 +45,7 @@ import { createResourceTools, type NamedTools } from './tools/resources';
 import { createResponsiveTools, type ResponsiveToolDeps } from './tools/responsive';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
 import { createVisionTools, type VisionToolDeps } from './tools/vision';
+import { evictStaleVision } from './vision-evict';
 
 // Shown alongside a screenshot fed back to the model, so it reads the image as its own result
 // to judge and refine — the vision self-correction loop (docs/architecture/agent-loop.md).
@@ -180,7 +181,9 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     // approaching the window, and it costs a prefix invalidation (see its own doc comment) — the
     // right trade against a hard context-overflow error, but not one to pay a step early.
     prepareStep: ({ messages }) => {
-      const trimmed = capInFlightResults(pruneInFlightImages(messages));
+      // `evictStaleVision` first (step-age: a lone screenshot from 3+ steps back becomes a stub
+      // even when the set-count window never fills), then the set-count and text caps as before.
+      const trimmed = capInFlightResults(pruneInFlightImages(evictStaleVision(messages)));
       const fitted = compactToWindow(trimmed, budget.limits.contextWindow);
       const warning = budget.warning();
       return {

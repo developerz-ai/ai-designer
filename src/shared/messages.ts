@@ -133,6 +133,25 @@ export const SendReport = z.object({
   problems: z.array(z.string().max(600)).max(40).optional(),
 });
 
+// Per-turn budget preset (user-configurable in Settings, persisted on ProviderConfig below).
+// The VOCABULARY lives here — the bus and both worlds' stores speak it — while the preset →
+// ceilings mapping is agent policy and lives in `src/agent/budget.ts` (`budgetForPreset`),
+// mirroring how `Mode` is defined here and interpreted in `agent/modes.ts`.
+//   • `standard` / `high` / `max` — opt-in COST CONTROLS: hard per-turn ceilings at roughly
+//     1× / 3× / 10× the original defaults, for users who want a runaway turn capped.
+//   • `unlimited` — no ceilings at all (the Stop button is the only guard).
+// A preset never carries or overrides `contextWindow`: that is detected per model
+// (capacity-shaped), not chosen (cost-shaped) — see `BudgetLimits.contextWindow`.
+export const BudgetPreset = z.enum(['standard', 'high', 'max', 'unlimited']);
+export type BudgetPreset = z.infer<typeof BudgetPreset>;
+
+// The SHIPPED default. `unlimited`, deliberately: this product optimizes for output quality,
+// not token savings — a budget that stops a design turn mid-thought, or a mid-turn
+// "[Budget: …% used]" warning nudging the model to wrap up early, trades quality for cost,
+// and that is the wrong default here. The capped presets stay as explicit opt-ins. Configs
+// persisted before the field existed resolve to this same default (see `budgetPreset` below).
+export const DEFAULT_BUDGET_PRESET: BudgetPreset = 'unlimited';
+
 // Settings / BYOK (panel -> service worker). The OpenRouter key is entered in the
 // panel, but custody + crypto + network are SW-only: the plaintext key crosses
 // panel->SW only (both are the trusted extension origin), NEVER panel->content.
@@ -154,6 +173,12 @@ export const ProviderConfig = z.object({
   // back visibly (`budget.ts` `DEFAULT_CONTEXT_WINDOW`). Not a secret — it is public model
   // metadata, so it rides the stored config beside `model` rather than the key store.
   contextWindow: z.number().int().positive().max(100_000_000).optional(),
+  // The user's per-turn budget preset (see `BudgetPreset` above). OPTIONAL and additive: a
+  // config saved before the field existed still validates, and every reader resolves absence
+  // to `DEFAULT_BUDGET_PRESET` ('unlimited') — the shipped default — rather than trusting a
+  // zod `.default()` to have run (the panel echoes configs it never re-parsed). Rides the
+  // plaintext config beside `model`/`contextWindow`: a tier name, not a secret.
+  budgetPreset: BudgetPreset.optional(),
 });
 export type ProviderConfig = z.infer<typeof ProviderConfig>;
 

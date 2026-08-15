@@ -44,10 +44,22 @@ export interface ToolCallEntry {
   error?: string;
 }
 
+/** One ordered slice of an assistant turn. The model alternates prose and tool runs
+ *  (text → calls → text → calls…), and flattening that into "all prose, then all chips" misstated
+ *  what happened — a retry narrated AFTER a failed call rendered ABOVE it. A `text` segment is a
+ *  run of streamed tokens; a `tools` segment is the burst of calls between two runs of prose. */
+export type Segment = { kind: 'text'; text: string } | { kind: 'tools'; calls: ToolCallEntry[] };
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
+  /** The turn in the order it actually happened. SOURCE OF TRUTH for the bubble's body —
+   *  `text`/`toolCalls` below are flattenings derived from it on every fold. */
+  segments: Segment[];
+  /** All prose, concatenated in segment order. DERIVED — kept because the working-line gate
+   *  ("is the reply still empty?"), `mergeInFlight` and the tests read the turn flat. */
   text: string;
+  /** All calls, concatenated in segment order. DERIVED — `turn-phase.ts` takes the flat list. */
   toolCalls: ToolCallEntry[];
   edits: Edit[];
   error?: string;
@@ -121,15 +133,19 @@ function isTurnEvent(msg: SwToPanel): msg is TurnEvent {
 export function reduceChat(messages: ChatMessage[], msg: SwToPanel): ChatMessage[] {
   switch (msg.type) {
     case 'token':
-      return foldIntoAssistant(messages, (m) => ({ ...m, text: m.text + msg.text }));
+      return foldIntoAssistant(messages, (m) => withSegments(m, appendToken(m.segments, msg.text)));
     case 'tool-call':
-      return foldIntoAssistant(messages, (m) => ({
-        ...m,
-        toolCalls: [
-          ...m.toolCalls,
-          { tool: msg.tool, selector: msg.selector, kind: msg.kind, id: msg.id },
-        ],
-      }));
+      return foldIntoAssistant(messages, (m) =>
+        withSegments(
+          m,
+          appendCall(m.segments, {
+            tool: msg.tool,
+            selector: msg.selector,
+            kind: msg.kind,
+            id: msg.id,
+          }),
+        ),
+      );
     case 'tool-result':
       return settleToolCall(messages, msg);
     case 'edit-recorded':
@@ -155,36 +171,90 @@ export function reduceChat(messages: ChatMessage[], msg: SwToPanel): ChatMessage
   }
 }
 
+/** All prose in segment order — the derived `text` flattening. */
+function textOf(segments: Segment[]): string {
+  let out = '';
+  for (const s of segments) if (s.kind === 'text') out += s.text;
+  return out;
+}
+
+/** All calls in segment order — the derived `toolCalls` flattening. */
+function callsOf(segments: Segment[]): ToolCallEntry[] {
+  return segments.flatMap((s) => (s.kind === 'tools' ? s.calls : []));
+}
+
+/** Adopt `segments` as the message's new body and re-derive the flat views from it, so the
+ *  aggregates can never drift from the ordered truth. */
+function withSegments(m: ChatMessage, segments: Segment[]): ChatMessage {
+  return { ...m, segments, text: textOf(segments), toolCalls: callsOf(segments) };
+}
+
+/** A token grows the trailing text segment, or opens one when the turn just moved out of a tool
+ *  burst (or has not started). Pure — always a new array + new tail object, never a mutation. */
+function appendToken(segments: Segment[], text: string): Segment[] {
+  const tail = segments.at(-1);
+  if (tail?.kind === 'text') {
+    return [...segments.slice(0, -1), { kind: 'text', text: tail.text + text }];
+  }
+  return [...segments, { kind: 'text', text }];
+}
+
+/** A call joins the trailing tools segment, or opens one when the model just stopped narrating. */
+function appendCall(segments: Segment[], call: ToolCallEntry): Segment[] {
+  const tail = segments.at(-1);
+  if (tail?.kind === 'tools') {
+    return [...segments.slice(0, -1), { kind: 'tools', calls: [...tail.calls, call] }];
+  }
+  return [...segments, { kind: 'tools', calls: [call] }];
+}
+
 /** Fold one `tool-result` onto the call it settles: by `id` when the SW carried one, else the
- *  newest still-unsettled call of the same name (the fallback the bus schema documents). Never
- *  opens a bubble — an outcome with no call to attach to is dropped rather than invented. */
+ *  newest still-unsettled call of the same name (the fallback the bus schema documents). The call
+ *  may live in ANY tools segment — the model has usually moved on to narrating (or a later burst)
+ *  by the time a slow call reports back. Never opens a bubble — an outcome with no call to attach
+ *  to is dropped rather than invented. */
 function settleToolCall(
   messages: ChatMessage[],
   msg: Extract<SwToPanel, { type: 'tool-result' }>,
 ): ChatMessage[] {
   const last = messages.at(-1);
   if (last?.role !== 'assistant') return messages;
-  const idx = findToolCall(last.toolCalls, msg);
-  const target = last.toolCalls[idx];
+  const loc = locateToolCall(last.segments, msg);
+  if (!loc) return messages;
+  const seg = last.segments[loc.seg];
+  if (seg?.kind !== 'tools') return messages; // unreachable — locateToolCall only returns tools
+  const target = seg.calls[loc.call];
   if (!target) return messages;
-  const toolCalls = last.toolCalls.slice();
-  toolCalls[idx] = { ...target, ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) };
-  return [...messages.slice(0, -1), { ...last, toolCalls }];
+  const calls = seg.calls.slice();
+  calls[loc.call] = { ...target, ok: msg.ok, ...(msg.error ? { error: msg.error } : {}) };
+  const segments = last.segments.slice();
+  segments[loc.seg] = { kind: 'tools', calls };
+  return [...messages.slice(0, -1), withSegments(last, segments)];
 }
 
-function findToolCall(
-  calls: ToolCallEntry[],
+/** Where the settling call lives: by id anywhere in the turn, else the newest still-unsettled
+ *  call of the same name, scanning segments (and calls within them) newest-first. */
+function locateToolCall(
+  segments: Segment[],
   msg: Extract<SwToPanel, { type: 'tool-result' }>,
-): number {
+): { seg: number; call: number } | null {
   if (msg.id) {
-    const byId = calls.findIndex((c) => c.id === msg.id);
-    if (byId !== -1) return byId;
+    for (let s = 0; s < segments.length; s++) {
+      const seg = segments[s];
+      if (seg?.kind !== 'tools') continue;
+      const byId = seg.calls.findIndex((c) => c.id === msg.id);
+      if (byId !== -1) return { seg: s, call: byId };
+    }
   }
-  for (let i = calls.length - 1; i >= 0; i--) {
-    const c = calls[i];
-    if (c?.tool === msg.tool && c.ok === undefined) return i;
+  for (let s = segments.length - 1; s >= 0; s--) {
+    const seg = segments[s];
+    if (seg?.kind !== 'tools') continue;
+    for (let i = seg.calls.length - 1; i >= 0; i--) {
+      const c = seg.calls[i];
+      if (c?.tool === msg.tool && c.ok === undefined) return { seg: s, call: i };
+    }
   }
-  return -1;
+  return null;
 }
 
 /** Zero-spend baseline for a fresh session's usage meter. */
@@ -203,14 +273,26 @@ export function nextUsage(prev: TurnUsage, msg: SwToPanel): TurnUsage {
  *  fabricates an in-flight bubble; a genuinely live turn re-opens one via its own stream events.
  *  Pure — exported for a mock-free unit test. */
 export function threadToMessages(thread: ThreadViewMessage[]): ChatMessage[] {
-  return thread.map((m) => ({
-    id: crypto.randomUUID(),
-    role: m.role,
-    text: m.text,
-    toolCalls: (m.tools ?? []).map((t) => ({ tool: t.name, ok: t.ok })),
-    edits: [],
-    streaming: false,
-  }));
+  return thread.map((m) => {
+    const toolCalls: ToolCallEntry[] = (m.tools ?? []).map((t) => ({ tool: t.name, ok: t.ok }));
+    // The persisted thread view carries NO interleaving info (text and tools arrive as two flat
+    // fields), so a rehydrated turn maps to AT MOST TWO segments — one text, one tools, in the
+    // order the pre-segment UI always rendered them. Losing the interleave on restore is accepted:
+    // the SW is the source of truth for what was said, not for the order it streamed in.
+    const segments: Segment[] = [
+      ...(m.text.length > 0 ? [{ kind: 'text', text: m.text } as const] : []),
+      ...(toolCalls.length > 0 ? [{ kind: 'tools', calls: toolCalls } as const] : []),
+    ];
+    return {
+      id: crypto.randomUUID(),
+      role: m.role,
+      segments,
+      text: m.text,
+      toolCalls,
+      edits: [],
+      streaming: false,
+    };
+  });
 }
 
 /** Whether this panel's OWN in-flight turn must survive a `thread-get` rebuild.
@@ -273,6 +355,7 @@ function newAssistantMessage(): ChatMessage {
   return {
     id: crypto.randomUUID(),
     role: 'assistant',
+    segments: [],
     text: '',
     toolCalls: [],
     edits: [],
@@ -284,6 +367,8 @@ function newUserMessage(text: string, attachments?: Attachments): ChatMessage {
   return {
     id: crypto.randomUUID(),
     role: 'user',
+    // A user turn is one utterance — a single text segment, no tool bursts to interleave with.
+    segments: [{ kind: 'text', text }],
     text,
     toolCalls: [],
     edits: [],

@@ -10,6 +10,7 @@ import { runTurn } from '@/agent/loop';
 import { compactForThread, IMAGE_PRUNED_PLACEHOLDER } from '@/agent/thread-compact';
 import { INVALID_TOOL_NAME } from '@/agent/tool-repair';
 import type { DomDispatch } from '@/agent/tools/dom';
+import { STALE_VISION_STUB } from '@/agent/vision-evict';
 import type { DomTool, SwToPanel } from '@/shared/messages';
 
 // loop.ts conversation memory + tool-call robustness (#168), against a mocked model (no
@@ -272,9 +273,10 @@ describe('within-turn image pruning (prepareStep wiring)', () => {
     expect(imageCount(prompts[2] ?? '')).toBe(2);
     expect(prompts[2]).not.toContain(IMAGE_PRUNED_PLACEHOLDER);
 
-    // Step 4 sees three shots: the oldest is a placeholder, the newest two are intact.
+    // Step 4 sees three shots: the oldest aged out of the vision window (evictStaleVision runs
+    // BEFORE the count-based prune, so the age stub wins), the newest two are intact.
     expect(prompts[3]).toBeDefined();
     expect(imageCount(prompts[3] ?? '')).toBe(2);
-    expect(prompts[3]).toContain(IMAGE_PRUNED_PLACEHOLDER);
+    expect(prompts[3]).toContain(STALE_VISION_STUB);
   });
 });
