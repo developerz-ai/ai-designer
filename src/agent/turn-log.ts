@@ -208,7 +208,12 @@ export function renderTurnLog(context: LogContext, log: readonly LogEntry[]): st
   const start = log[0]?.at ?? 0;
   const body = log.map((entry) => {
     const offset = ((entry.at - start) / 1000).toFixed(1);
-    return `+${offset.padStart(6)}s  ${entry.kind.padEnd(5)} ${entry.text}`;
+    // One entry, one line, and nothing that can close the fence early: error/message text carries
+    // provider payloads verbatim, so an embedded newline would produce an offset-less body line and
+    // a triple backtick would end the ```text block mid-log — a paste that renders as broken
+    // Markdown defeats the whole feature.
+    const flat = entry.text.replace(/\r?\n/g, ' ⏎ ').replaceAll('```', "'''");
+    return `+${offset.padStart(6)}s  ${entry.kind.padEnd(5)} ${flat}`;
   });
   return [...head, '```text', ...body, '```', ''].join('\n');
 }

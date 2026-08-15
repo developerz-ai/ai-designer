@@ -268,6 +268,15 @@ describe('renderTurnLog', () => {
     expect(renderTurnLog(context, log)).toContain('capped');
   });
 
+  it('keeps every entry on one fenced line — a provider payload cannot break the Markdown', () => {
+    const log = [{ at: 0, kind: 'error' as const, text: 'boom\nline2 ```\nescape' }];
+    const md = renderTurnLog(context, log);
+    const fenced = md.slice(md.indexOf('```text'));
+    expect(fenced).not.toContain('boom\nline2');
+    expect(fenced.match(/```/g)?.length).toBe(2);
+    expect(md).toContain("'''");
+  });
+
   it('names an unconfigured provider instead of rendering empty fields', () => {
     const md = renderTurnLog({ ...context, model: '', providerHost: '' }, []);
     expect(md).toContain('(none configured)');

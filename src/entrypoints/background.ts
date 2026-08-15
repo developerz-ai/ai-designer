@@ -1830,7 +1830,7 @@ export default defineBackground(() => {
             providerHost: providerOrigin(config?.baseURL),
             // The conversation tab's own URL when it has a session; the live tab object is only
             // right when the resolution landed on the active tab.
-            pageUrl: session?.url ?? (tabId === active ? (tab?.url ?? '(no tab)') : '(no tab)'),
+            pageUrl: pageUrlForLog(session?.url ?? (tabId === active ? tab?.url : undefined)),
             tabId: tabId ?? -1,
           },
           log,
@@ -2362,6 +2362,21 @@ function providerOrigin(baseURL: string | undefined): string {
   if (!baseURL) return '';
   try {
     return new URL(baseURL).origin;
+  } catch {
+    return '(unparseable)';
+  }
+}
+
+/** The page's ORIGIN + PATH for the debug log — never the query or the fragment. Same reason
+ *  `providerOrigin` drops them: a magic-link token, an OAuth `#access_token=`, or an email in a
+ *  query parameter would ride a paste into a public issue, and `redactSecrets` only recognizes
+ *  key-shaped and NAMED values. Origin + path still answers "which page". */
+function pageUrlForLog(pageUrl: string | undefined): string {
+  if (!pageUrl) return '(no tab)';
+  try {
+    const parsed = new URL(pageUrl);
+    const trimmed = `${parsed.origin}${parsed.pathname}`;
+    return parsed.search || parsed.hash ? `${trimmed} (query omitted)` : trimmed;
   } catch {
     return '(unparseable)';
   }
