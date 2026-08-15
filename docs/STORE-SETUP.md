@@ -93,10 +93,14 @@ AMO signs the `.xpi` on its side, so there is no key to keep.
 > | `chrome.debugger` (25 sites) — device emulation | does not exist |
 > | `chrome.identity.launchWebAuthFlow` (9 sites) — MCP OAuth | exists, different redirect host |
 >
-> The manifest also has no `browser_specific_settings.gecko.id`, so AMO cannot pin a stable
-> add-on ID. Treat Firefox as its own piece of work: port the panel to `sidebarAction`,
-> drop or feature-gate the debugger tools, add the gecko ID. Getting the AMO account and
-> API keys now is still worth it — it reserves the add-on name.
+> Two of the gaps closed in #180: the toolbar button now toggles the sidebar (a
+> `browserAction.onClicked` → `sidebarAction.toggle()` handler, registered only where
+> `chrome.sidePanel` is absent), and the manifest carries
+> `browser_specific_settings.gecko.id: designer@developerz.ai` so AMO can pin a stable
+> add-on ID. What remains before listing: the `chrome.debugger` tool family (screenshots,
+> device emulation, responsive scan, visual inspect) has no Firefox fallback, and nothing
+> has been verified on a real Firefox run. Treat AMO publish as blocked on that QA; getting
+> the account and API keys now is still worth it — it reserves the add-on name.
 
 ## 4. Hand-over checklist
 

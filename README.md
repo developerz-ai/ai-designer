@@ -55,7 +55,7 @@ Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
 | `bun run local` | |
 |--|--|
 | *(no flags)* | chrome, plain build → `build/chrome-mv3` |
-| `--firefox` | firefox MV2 → `build/firefox-mv2` |
+| `--firefox` | firefox MV2 → `build/firefox-mv2` — **experimental**: the toolbar button toggles the sidebar, but every `chrome.debugger`-backed tool (screenshots, device emulation, responsive scan, visual inspect) is unavailable there, and the build has no real-Firefox test coverage |
 | `--check` | run the gate (lint + typecheck + unit + integration) first |
 | `--zip` | also produce the distributable `.zip` |
 
