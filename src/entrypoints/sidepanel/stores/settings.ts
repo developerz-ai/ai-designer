@@ -2,6 +2,8 @@ import { createStore } from 'solid-js/store';
 import { i18n } from '#i18n';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import {
+  type BudgetPreset,
+  DEFAULT_BUDGET_PRESET,
   GetProviderResult,
   type ModelOption,
   ModelsResult,
@@ -37,6 +39,41 @@ export const PRESETS: PresetDef[] = [
   { id: 'custom', label: i18n.t('settings.preset.custom'), baseURL: null },
 ];
 
+// The turn-budget tiers, ordered for the dropdown: the shipped default first, then the opt-in
+// cost controls ascending. The preset → ceilings mapping is agent policy (`src/agent/budget.ts`
+// `budgetForPreset`, SW-side); this table is only the panel's presentation of the same ids —
+// labels + the per-tier hint the panel shows under the control (BYOK: higher tiers spend more of
+// the user's own API budget per turn; `unlimited` has no ceilings at all, so the hint says
+// plainly that Stop is the only guard).
+interface BudgetPresetDef {
+  id: BudgetPreset;
+  label: string;
+  hint: string;
+}
+
+export const BUDGET_PRESETS: BudgetPresetDef[] = [
+  {
+    id: 'unlimited',
+    label: i18n.t('settings.budget.preset.unlimited'),
+    hint: i18n.t('settings.budget.hint.unlimited'),
+  },
+  {
+    id: 'standard',
+    label: i18n.t('settings.budget.preset.standard'),
+    hint: i18n.t('settings.budget.hint.standard'),
+  },
+  {
+    id: 'high',
+    label: i18n.t('settings.budget.preset.high'),
+    hint: i18n.t('settings.budget.hint.high'),
+  },
+  {
+    id: 'max',
+    label: i18n.t('settings.budget.preset.max'),
+    hint: i18n.t('settings.budget.hint.max'),
+  },
+];
+
 interface SettingsState {
   preset: ProviderPreset;
   baseURL: string;
@@ -46,6 +83,9 @@ interface SettingsState {
   savedBaseURL: string | null;
   hasKey: boolean;
   model: string | null;
+  // The user's per-turn budget tier (see BUDGET_PRESETS above). Persisted with the provider
+  // config on Save; a config saved before the field existed hydrates to the shipped default.
+  budgetPreset: BudgetPreset;
   models: ModelOption[];
   modelsLoading: boolean;
   saveStatus: SaveStatus;
@@ -66,6 +106,7 @@ const [settings, set] = createStore<SettingsState>({
   savedBaseURL: null,
   hasKey: false,
   model: null,
+  budgetPreset: DEFAULT_BUDGET_PRESET,
   models: [],
   modelsLoading: false,
   saveStatus: 'idle',
@@ -90,6 +131,9 @@ export async function hydrate(): Promise<void> {
         baseURL: r.config.baseURL,
         savedBaseURL: r.config.baseURL,
         model: r.config.model,
+        // Absent on a config saved before budget presets existed ⇒ the shipped default
+        // ('unlimited' — see DEFAULT_BUDGET_PRESET in src/shared/messages.ts).
+        budgetPreset: r.config.budgetPreset ?? DEFAULT_BUDGET_PRESET,
         hasKey: r.hasKey ?? false,
       });
     } else {
@@ -126,6 +170,22 @@ export function setCustomBaseURL(url: string): void {
  *  config, see src/shared/messages.ts). */
 export function pickModel(model: string): void {
   set('model', model);
+}
+
+/** Optimistic budget-tier pick from the dropdown; persisted with the rest of the config on Save
+ *  (same rule as {@link pickModel} — `save-provider` takes the full config). */
+export function pickBudgetPreset(preset: BudgetPreset): void {
+  set('budgetPreset', preset);
+}
+
+/** The hint line for the CURRENTLY selected tier — the panel renders this verbatim, so the
+ *  tier → copy mapping stays in the store (components render + dispatch only). Reactive: reads
+ *  `settings.budgetPreset`, so a JSX call site re-renders on a pick. */
+export function budgetPresetHint(): string {
+  return (
+    BUDGET_PRESETS.find((p) => p.id === settings.budgetPreset)?.hint ??
+    i18n.t('settings.budget.hint.unlimited')
+  );
 }
 
 /** Fetch the model list for the current base URL. Reuses the SW's saved (decrypted)
@@ -203,6 +263,7 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
           apiKey: apiKeyText.trim() || undefined,
           model: trimmedModel,
           label: preset && preset.id !== 'custom' ? preset.label : undefined,
+          budgetPreset: settings.budgetPreset,
         },
       },
       SaveProviderResult,
@@ -244,6 +305,7 @@ export async function clearProvider(): Promise<void> {
     savedBaseURL: null,
     hasKey: false,
     model: null,
+    budgetPreset: DEFAULT_BUDGET_PRESET,
     models: [],
     saveStatus: 'idle',
     error: null,

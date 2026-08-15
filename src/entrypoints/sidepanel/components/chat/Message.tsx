@@ -1,8 +1,8 @@
-import { For, mergeProps, Show } from 'solid-js';
+import { createMemo, For, Index, Match, mergeProps, Show, Switch } from 'solid-js';
 import { i18n } from '#i18n';
 import type { Attachment } from '@/shared/attachments';
 import type { Edit } from '@/shared/changeset';
-import type { ToolCallEntry } from '../../stores/chat';
+import type { Segment, ToolCallEntry } from '../../stores/chat';
 import { Icon } from '../Icon';
 import { AttachmentChip } from './AttachmentChip';
 import './Message.scss';
@@ -25,6 +25,14 @@ export interface MessageProps {
   text: string;
   streaming?: boolean;
   error?: string;
+  /** The turn's body in the order it actually happened: prose, the tool burst it led into, more
+   *  prose… (`stores/chat.ts` `Segment`). When present it IS the body — `text`/`toolCalls` are
+   *  that same content flattened, kept for the working-line gate and turn-phase. When absent
+   *  (a caller that predates segments, e.g. a bare notice), the flat props render as one text
+   *  block + one chip group — see `fallbackSegments`. */
+  segments?: Segment[];
+  /** The turn's calls FLAT — what `turn-phase.ts` derives the working line from, and the body's
+   *  fallback shape when `segments` is absent. */
   toolCalls?: ToolCallEntry[];
   edits?: Edit[];
   /** Reference material this turn was SENT with. Read-only here — a turn already sent cannot
@@ -62,6 +70,27 @@ export function editsSummary(count: number): string {
   return i18n.t('message.editsSummary', count);
 }
 
+/** The body a caller WITHOUT ordered segments gets: the flat props as one text block then one
+ *  chip group — exactly the pre-segment layout. Pure (unit-testable without mounting), and the
+ *  only shape-mapping this component does: the real interleave is folded upstream in the store
+ *  (CLAUDE.md "SolidJS + SRP"). */
+export function fallbackSegments(text: string, toolCalls: ToolCallEntry[]): Segment[] {
+  return [
+    ...(text.length > 0 ? [{ kind: 'text', text } as const] : []),
+    ...(toolCalls.length > 0 ? [{ kind: 'tools', calls: toolCalls } as const] : []),
+  ];
+}
+
+/** Narrowing accessors, so the JSX reads a segment without a cast. The wrong kind yields the
+ *  empty value — unreachable behind the `kind` switch, but total functions keep TS honest. */
+export function segmentText(segment: Segment): string {
+  return segment.kind === 'text' ? segment.text : '';
+}
+
+export function segmentCalls(segment: Segment): ToolCallEntry[] {
+  return segment.kind === 'tools' ? segment.calls : [];
+}
+
 export function Message(rawProps: MessageProps) {
   const props = mergeProps(
     {
@@ -71,6 +100,11 @@ export function Message(rawProps: MessageProps) {
       attachments: [] as Attachment[],
     },
     rawProps,
+  );
+
+  // The ordered body when the store provided one, the flat props re-shaped when it did not.
+  const segments = createMemo(
+    () => props.segments ?? fallbackSegments(props.text, props.toolCalls),
   );
 
   return (
@@ -122,12 +156,31 @@ export function Message(rawProps: MessageProps) {
         </ul>
       </Show>
 
-      <Show when={showMarkdown(props.role)} fallback={<p class="dz-message__text">{props.text}</p>}>
-        <MarkdownView text={props.text} />
-      </Show>
-
-      {/* Renders nothing at all for a turn with no tool calls — no empty list node. */}
-      <ToolCallList calls={props.toolCalls} streaming={props.streaming} />
+      {/* The turn's body, in the order it happened: prose, then the tool burst it led into, then
+          the next prose… `Index` (position-keyed), for the same reason as Thread/MarkdownView: the
+          store replaces the TAIL segment object on every fold, so keying by identity would
+          dispose+remount the streaming segment per token — and remounting an earlier ToolCallList
+          would also reset its collapse state. Segments only append and only the tail changes, so
+          position keying is exact. Each `tools` segment gets its own ToolCallList — its own
+          header count and its own collapse, scoped to that burst. */}
+      <Index each={segments()}>
+        {(segment) => (
+          <Switch>
+            <Match when={segment().kind === 'text'}>
+              <Show
+                when={showMarkdown(props.role)}
+                fallback={<p class="dz-message__text">{segmentText(segment())}</p>}
+              >
+                <MarkdownView text={segmentText(segment())} />
+              </Show>
+            </Match>
+            <Match when={segment().kind === 'tools'}>
+              {/* Renders nothing at all for an empty group — no empty list node. */}
+              <ToolCallList calls={segmentCalls(segment())} streaming={props.streaming} />
+            </Match>
+          </Switch>
+        )}
+      </Index>
 
       <Show when={props.edits.length > 0}>
         <p class="dz-message__edits">

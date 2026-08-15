@@ -134,8 +134,10 @@ function compactToolResult(part: ToolResultPart): ToolResultPart {
 }
 
 /** Shrink one tool output: text truncated; JSON stringified+truncated only when oversized (small
- *  JSON keeps its structure); every media item in a `content` output becomes placeholder text. */
-function compactToolOutput(
+ *  JSON keeps its structure); every media item in a `content` output becomes placeholder text.
+ *  Exported for `vision-evict.ts`, which applies the same replacement with its own stub — one
+ *  media-item taxonomy, not two that drift. */
+export function compactToolOutput(
   output: ToolOutput,
   placeholder = IMAGE_OMITTED_PLACEHOLDER,
 ): ToolOutput {
@@ -265,7 +267,9 @@ function isMediaPart(part: UserPart | AssistantPart): boolean {
   return part.type === 'image' || part.type === 'file';
 }
 
-function outputHasMedia(output: ToolOutput): boolean {
+/** Whether a tool output carries any media item. Exported for `vision-evict.ts` (see
+ *  {@link compactToolOutput}). */
+export function outputHasMedia(output: ToolOutput): boolean {
   return (
     output.type === 'content' &&
     output.value.some((item) => item.type !== 'text' && item.type !== 'custom')

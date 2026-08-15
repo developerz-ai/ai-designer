@@ -1,13 +1,17 @@
 import { For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import type { BudgetPreset } from '@/shared/messages';
 import { openOnboarding } from '../stores/onboarding';
 import { startSession } from '../stores/session';
 import {
+  BUDGET_PRESETS,
+  budgetPresetHint,
   clearProvider,
   hydrate,
   loadModels,
   PRESETS,
   type ProviderPreset,
+  pickBudgetPreset,
   pickModel,
   type SaveStatus,
   saveProvider,
@@ -168,6 +172,23 @@ export function SettingsPanel(props: SettingsPanelProps = {}) {
             </button>
           </div>
           <p class="dz-settings__hint">{i18n.t('settings.model.hint')}</p>
+        </div>
+
+        {/* Turn budget: how much one instruction may spend (BYOK — the user's own key pays for
+            every step). Same field anatomy as the provider preset above; the tier → hint copy
+            mapping lives in the store (budgetPresetHint), this just renders it. */}
+        <div class="dz-settings__field">
+          <label class="dz-field__label" for="dz-budget">
+            {i18n.t('settings.budget.label')}
+          </label>
+          <select
+            id="dz-budget"
+            value={settings.budgetPreset}
+            onChange={(e) => pickBudgetPreset(e.currentTarget.value as BudgetPreset)}
+          >
+            <For each={BUDGET_PRESETS}>{(p) => <option value={p.id}>{p.label}</option>}</For>
+          </select>
+          <p class="dz-settings__hint">{budgetPresetHint()}</p>
         </div>
       </div>
 
