@@ -272,7 +272,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           // uniform "edit", losing the one thing they exist to show. The operation is the name the
           // user has always seen, and it stays stable regardless of future regrouping — same
           // reasoning as `overlay-step.ts` classifying on `op` rather than a tool-name list.
-          const operation = operationOf(part.input) ?? part.toolName;
+          const operation = operationOf(part.input, part.toolName) ?? part.toolName;
           const { selector, kind } = classifyTool(part.toolName, part.input);
           emit({ type: 'tool-call', tool: operation, selector, kind, id: part.toolCallId });
           break;
@@ -292,7 +292,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
             // The OPERATION, matching the `tool-call` above — the panel correlates the two halves
             // of a chip by `toolCallId`, but a mismatched name would still read wrong anywhere the
             // id is missing (an older thread, a rehydrated view).
-            tool: operationOf(part.input) ?? part.toolName,
+            tool: operationOf(part.input, part.toolName) ?? part.toolName,
             id: part.toolCallId,
             ...toolOutcome(part.output),
           });
@@ -301,7 +301,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
         case 'tool-error':
           emit({
             type: 'tool-result',
-            tool: operationOf(part.input) ?? part.toolName,
+            tool: operationOf(part.input, part.toolName) ?? part.toolName,
             id: part.toolCallId,
             ok: false,
             error: boundedError(errorText(part.error)),

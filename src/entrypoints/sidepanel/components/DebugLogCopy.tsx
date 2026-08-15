@@ -1,6 +1,6 @@
 import { createSignal, onCleanup } from 'solid-js';
 import { i18n } from '#i18n';
-import { copyDebugLog } from '../stores/debug-log';
+import { type CopyOutcome, copyDebugLog } from '../stores/debug-log';
 import { Icon } from './Icon';
 import './DebugLogCopy.scss';
 
@@ -18,7 +18,7 @@ import './DebugLogCopy.scss';
 // confirmation, so a screen reader hears "Copied" from the control it just activated instead of from
 // an announcement region elsewhere in the tree.
 
-type CopyState = 'idle' | 'copying' | 'copied' | 'failed';
+type CopyState = 'idle' | 'copying' | CopyOutcome;
 
 /** How long the confirmation shows before the button returns to its resting label. */
 const RESET_MS = 2000;
@@ -48,6 +48,8 @@ export function DebugLogCopy() {
         return i18n.t('about.debugLog.copying');
       case 'copied':
         return i18n.t('about.debugLog.copied');
+      case 'empty':
+        return i18n.t('about.debugLog.empty');
       case 'failed':
         return i18n.t('about.debugLog.failed');
       default:

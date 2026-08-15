@@ -29,11 +29,18 @@ export type OverlayStepKind = 'read' | 'act' | 'info';
 // (src/dom/mutate.ts), the page drivers (interact.ts), widgets.ts's widgetAct, and the session
 // recorder. Everything not named here is a read when it targets an element, else info.
 //
-// Kept as one literal set rather than derived from the `DomTool` union: the union also holds the
+// Kept as literal sets rather than derived from the `DomTool` union: the union also holds the
 // reads, and a new operation must be classified DELIBERATELY — an unclassified mutation silently
 // defaults to the read accent, which is exactly the defect this module exists to prevent.
-const ACT_OPS: ReadonlySet<string> = new Set([
-  // design mutations
+//
+// EXPORTED as the ONE registration point for this vocabulary. The panel's turn-phase derivation
+// (`src/entrypoints/sidepanel/components/chat/turn-phase.ts`) used to hand-copy these names into
+// its own reading/editing sets; a mutation added here and forgotten there silently rendered as a
+// read in the working line. Panel consumers derive, never re-list.
+
+/** Design mutations — they land in the changeset. The `edit` resource's ops, exactly
+ *  (`agent/tools/resources.ts` `RESOURCE_OF`, guarded by resources.test.ts). */
+export const EDIT_OPS: ReadonlySet<string> = new Set([
   'setStyle',
   'setText',
   'setAttr',
@@ -48,10 +55,10 @@ const ACT_OPS: ReadonlySet<string> = new Set([
   'replaceNode',
   'injectCss',
   'batch',
-  'undo',
-  'redo',
-  'discardUndo',
-  // page drivers
+]);
+
+/** Page drivers — they move the browser to reach a state, changing no design. */
+export const DRIVE_OPS: ReadonlySet<string> = new Set([
   'click',
   'type',
   'pressKey',
@@ -60,19 +67,52 @@ const ACT_OPS: ReadonlySet<string> = new Set([
   'scrollTo',
   'widgetAct',
   'setDevice',
-  // session
-  'recordEdit',
 ]);
 
+/** The durable-record verbs — they mutate the changeset, not the page's design directly. */
+export const RECORD_OPS: ReadonlySet<string> = new Set([
+  'recordEdit',
+  'undo',
+  'redo',
+  'discardUndo',
+]);
+
+/** Everything that ACTS (the overlay's emerald accent): the union of the three sets above plus
+ *  the acting page ops. Same membership the old private literal set had. */
+export const ACT_OPS: ReadonlySet<string> = new Set([...EDIT_OPS, ...DRIVE_OPS, ...RECORD_OPS]);
+
 /** Page operations (`pageOp`) that act rather than read. Most of the `PageOp` union is derived
- *  layout — pure reads — but motion/media/form control drives the page. */
-const ACT_PAGE_OPS: ReadonlySet<string> = new Set([
+ *  layout — pure reads — but motion/media/form/page-function control drives the page. Names are
+ *  the REAL `PageOp` discriminants (`src/shared/page-ops.ts`): the previous list carried
+ *  `setFieldValue`/`submitForm`/`focusField`, operations that do not exist, so `setField`,
+ *  `pageCall` and `flush` all rendered in the read accent. Exported with the sets above —
+ *  turn-phase.ts derives from these too. */
+export const ACT_PAGE_OPS: ReadonlySet<string> = new Set([
   'freezeMotion',
   'media',
-  'setFieldValue',
-  'submitForm',
-  'focusField',
+  'setField',
+  'pageCall',
+  'flush',
 ]);
+
+/** Tools whose INPUT names the operation: the grouped resources plus dispatcher-shaped per-verb
+ *  tools. Everything else — MCP backends above all — owns its name; reading a stray `type` field
+ *  off a third-party input labelled an `acme__task` call "bug" in the chip, overlay, log and
+ *  rehydrated thread. */
+export const DISPATCHER_TOOLS: ReadonlySet<string> = new Set([
+  'inspect',
+  'edit',
+  'interact',
+  'session',
+  'pageOp',
+  'batch',
+]);
+
+/** Does this operation ACT on the page (design mutation, driver, record verb, or an acting page
+ *  op)? One answer for the overlay accent here and the panel's phase fallback (turn-phase.ts). */
+export function isActOperation(operation: string): boolean {
+  return ACT_OPS.has(operation) || ACT_PAGE_OPS.has(operation);
+}
 
 export interface ToolCallClassification {
   selector?: string;
@@ -100,8 +140,14 @@ function firstOp(input: Record<string, unknown> | null): Record<string, unknown>
  * The operation this call performs, independent of how the tool surface is grouped: an explicit
  * `op`/`type` on the input, else the first batched op's `type`/`op`, else `undefined` for a
  * per-verb tool that carries no operation of its own.
+ *
+ * When the caller names the tool, only a DISPATCHER's input is read (`DISPATCHER_TOOLS`): a
+ * third-party (MCP) tool's input can carry an `op`/`type` field of its own vocabulary, and
+ * reading it relabelled the call everywhere the operation is shown. Callers that predate the
+ * gate (no `toolName`) keep the old behaviour.
  */
-export function operationOf(input: unknown): string | undefined {
+export function operationOf(input: unknown, toolName?: string): string | undefined {
+  if (toolName !== undefined && !DISPATCHER_TOOLS.has(toolName)) return undefined;
   const record = asRecord(input);
   const direct = stringField(record, 'op') ?? stringField(record, 'type');
   if (direct) return direct;
@@ -124,11 +170,8 @@ function selectorOf(input: unknown): string | undefined {
  *  a cosmetic read/act/info accent. Operation-first, tool-name as fallback. */
 export function classifyTool(tool: string, input: unknown): ToolCallClassification {
   const selector = selectorOf(input);
-  const operation = operationOf(input);
-  const acts =
-    operation !== undefined
-      ? ACT_OPS.has(operation) || ACT_PAGE_OPS.has(operation)
-      : ACT_OPS.has(tool);
+  const operation = operationOf(input, tool);
+  const acts = operation !== undefined ? isActOperation(operation) : ACT_OPS.has(tool);
   const kind: OverlayStepKind = acts ? 'act' : selector ? 'read' : 'info';
   return selector ? { selector, kind } : { kind };
 }
@@ -138,6 +181,6 @@ export function classifyTool(tool: string, input: unknown): ToolCallClassificati
  *  `edit → .hero` says far less than `setStyle → .hero`, and the operation is what the user is
  *  actually watching happen. */
 export function overlayLabel(tool: string, selector?: string, input?: unknown): string {
-  const name = (input !== undefined ? operationOf(input) : undefined) ?? tool;
+  const name = (input !== undefined ? operationOf(input, tool) : undefined) ?? tool;
   return selector ? `${name} → ${selector}` : name;
 }

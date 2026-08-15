@@ -17,6 +17,12 @@
   min-height: 0;
 
   &__error {
+    // Flex row: the message shares the line with the debug-log copy button that rides with it,
+    // wrapping under it when the notice runs long instead of squeezing the control.
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: tokens.$dz-space-2;
     margin: 0 tokens.$dz-space-6 tokens.$dz-space-2;
     color: var(--dz-status-error);
     font-size: tokens.$dz-font-sm;

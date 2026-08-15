@@ -533,6 +533,39 @@ describe('compactToWindow', () => {
     expect(compactToWindow(messages, 0)).toBe(messages);
     expect(compactToWindow(messages, -1)).toBe(messages);
   });
+
+  it('keeps the in-flight turn on a small context window (8192)', () => {
+    // At 8k the STANDING-context estimate exceeds the whole compaction budget, so the transcript
+    // budget bottomed out at 0 and `tailStartIndex` fell through to the last user-role message —
+    // which mid-turn is the SDK's appended budget WARNING, not the ask, so the turn's own steps
+    // were digested on every pass and the agent re-read the page forever. The floor
+    // (`MIN_TRANSCRIPT_FRACTION`) keeps a real working set.
+    const messages: ChatMessage[] = [
+      { role: 'user', content: `earlier ask: ${'q'.repeat(4_000)}` },
+      { role: 'assistant', content: `earlier reply: ${'a'.repeat(4_000)}` },
+      textResult('t0', 'getStyles', 'r'.repeat(4_000)),
+      { role: 'user', content: 'now fix the header' }, // the in-flight turn's ask
+      toolCall('t1', 'getStyles', {}),
+      textResult('t1', 'getStyles', 's'.repeat(2_000)),
+      // A user-role message appended AFTER the steps (the budget warning shape) — pre-fix, the
+      // tail fallback landed HERE and discarded the turn's own tool activity above it.
+      { role: 'user', content: 'Budget warning: wrap up soon.' },
+    ];
+    const compacted = compactToWindow(messages, 8_192);
+    expect(compacted).not.toBe(messages);
+
+    const askIndex = compacted.findIndex(
+      (m) => typeof m.content === 'string' && m.content === 'now fix the header',
+    );
+    expect(askIndex).toBeGreaterThanOrEqual(0);
+    // At least one of the turn's own following assistant/tool messages survives verbatim.
+    const followers = compacted.slice(askIndex + 1);
+    expect(followers.some((m) => m.role === 'assistant' || m.role === 'tool')).toBe(true);
+
+    // Second pass: idempotent — the compacted thread now fits the floored budget.
+    expect(compactToWindow(compacted, 8_192)).toBe(compacted);
+    roundTrips(compacted);
+  });
 });
 
 function isImagePart(part: { type: string }): boolean {

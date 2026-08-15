@@ -104,6 +104,20 @@ function surface(): NamedTools {
       meta: z.unknown().optional(),
     }),
   );
+  // A union-ROOTED MCP tool: converts to a root `anyOf` with no `type`, which is exactly the
+  // whole-request rejection OpenRouter raises. The discriminator is theirs, not ours — it has to
+  // be DISCOVERED (`detectDiscriminator`), never assumed to be called `op`.
+  tools.acme__ticket = fakeTool(
+    z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('bug'), title: z.string() }),
+      z.object({ kind: z.literal('chore'), due: z.string().optional() }),
+    ]),
+  );
+  // …and one with NO discriminator at all: still must flatten to a root object rather than keep
+  // the union at the root.
+  tools.acme__anything = fakeTool(
+    z.union([z.object({ a: z.string() }), z.object({ b: z.number() })]),
+  );
   return tools as unknown as NamedTools;
 }
 
@@ -143,8 +157,30 @@ describe('every tool the model is offered is in the portable subset', () => {
         'handoff',
         'invalidTool',
         'acme__task',
+        'acme__ticket',
+        'acme__anything',
       ]),
     );
+  });
+
+  it('flattens a discriminated-union root from an MCP backend around ITS discriminator', async () => {
+    const parameters = await parametersOf(built.acme__ticket);
+    expect(parameters.type).toBe('object');
+    expect(parameters.anyOf).toBeUndefined();
+    const kind = parameters.properties?.kind as { enum?: unknown[] } | undefined;
+    expect(kind?.enum).toEqual(expect.arrayContaining(['bug', 'chore']));
+    expect((parameters as { required?: string[] }).required).toContain('kind');
+  });
+
+  it('flattens a discriminator-less union root from an MCP backend', async () => {
+    const parameters = await parametersOf(built.acme__anything);
+    expect(parameters.type).toBe('object');
+    expect(parameters.anyOf).toBeUndefined();
+    // Both members' properties survive into the flat bag; neither is globally required (each
+    // belongs to only one member, and the wire must not reject the other member's calls).
+    expect(Object.keys(parameters.properties ?? {})).toEqual(expect.arrayContaining(['a', 'b']));
+    expect((parameters as { required?: string[] }).required ?? []).not.toContain('a');
+    expect((parameters as { required?: string[] }).required ?? []).not.toContain('b');
   });
 });
 

@@ -195,11 +195,26 @@ function discriminatorValues(member: JsonSchemaNode, discriminator: string): str
   return [];
 }
 
+/** The property every member constrains to a string literal — a union's discriminator, discovered
+ *  rather than declared, because an MCP backend's schema never tells us its name. */
+export function detectDiscriminator(members: readonly JsonSchemaNode[]): string | undefined {
+  const first = members[0];
+  if (!first?.properties) return undefined;
+  return Object.keys(first.properties).find((name) =>
+    members.every((m) => discriminatorValues(m, name).length > 0),
+  );
+}
+
 /**
  * Flatten a union-rooted schema into ONE object schema (rule 1). A root with no union on it is
  * returned untouched — this repairs a specific shape, it is not a tax every schema pays.
+ *
+ * With no usable discriminator (`undefined`, or one whose values never materialize), the members'
+ * properties still merge into one flat object — the wire loses the exclusivity the union stated,
+ * which the tool's own validator keeps enforcing, but the root satisfies rule 1 instead of being
+ * a shape the provider rejects for the whole request.
  */
-export function flattenUnionRoot(root: JsonSchemaNode, discriminator: string): JsonSchemaNode {
+export function flattenUnionRoot(root: JsonSchemaNode, discriminator?: string): JsonSchemaNode {
   const members = root.oneOf ?? root.anyOf;
   if (!Array.isArray(members) || members.length === 0) return root;
 
@@ -211,7 +226,7 @@ export function flattenUnionRoot(root: JsonSchemaNode, discriminator: string): J
 
   for (const rawMember of members) {
     const member = sanitizeSchema(rawMember);
-    ops.push(...discriminatorValues(member, discriminator));
+    if (discriminator !== undefined) ops.push(...discriminatorValues(member, discriminator));
 
     for (const [name, schema] of Object.entries(member.properties ?? {})) {
       if (name === discriminator || !schema) continue;
@@ -225,30 +240,40 @@ export function flattenUnionRoot(root: JsonSchemaNode, discriminator: string): J
     }
   }
 
+  const properties: Record<string, JsonSchemaNode> = {};
   const uniqueOps = [...new Set(ops)];
-  if (uniqueOps.length === 0) return root;
-
-  const properties: Record<string, JsonSchemaNode> = {
-    [discriminator]: {
+  if (discriminator !== undefined && uniqueOps.length > 0) {
+    properties[discriminator] = {
       type: 'string',
       enum: uniqueOps,
       description:
         'Which operation to perform. The other parameters are the chosen operation’s own — ' +
         'each operation lists the ones it takes in this tool’s description.',
-    },
-  };
+    };
+  }
   for (const [name, seen] of variants) {
     // One variant: use it. Several: a property-level union, types in the ITEMS (rule 2). This is the
     // collision case — two ops carrying the same property name at different types.
     properties[name] = seen.length === 1 ? (seen[0] as JsonSchemaNode) : { anyOf: seen };
   }
 
+  // Only what EVERY member requires may stay required: the flat object cannot express "required
+  // when op is X", and promoting a per-member requirement would reject valid calls at the wire.
   const alwaysRequired = [...requiredIn]
     .filter(([, count]) => count === members.length)
     .map(([name]) => name);
+  const required =
+    properties[discriminator ?? ''] !== undefined && discriminator !== undefined
+      ? [discriminator, ...alwaysRequired]
+      : alwaysRequired;
 
   const { oneOf: _oneOf, anyOf: _anyOf, properties: _p, required: _r, ...rest } = root;
-  return { ...rest, type: 'object', properties, required: [discriminator, ...alwaysRequired] };
+  return {
+    ...rest,
+    type: 'object',
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -279,13 +304,25 @@ export function providerSafeInputSchema<T>(schema: z.ZodType<T>, discriminator: 
   );
 }
 
+/** Rule 1 for schemas we did not author. `sanitizeSchema` alone STRIPS the root `type` off a union
+ *  and leaves `anyOf` at the root — precisely the shape OpenRouter rejects for the whole request.
+ *  A union root is flattened first (discriminator discovered when the schema has one, merged flat
+ *  when it does not); a non-union root is left to the plain sanitize pass — wrapping it would
+ *  change the call shape. */
+export function providerSafeRoot(node: JsonSchemaNode): JsonSchemaNode {
+  const members = node.anyOf ?? node.oneOf;
+  const flat = members ? flattenUnionRoot(node, detectDiscriminator(members)) : node;
+  return sanitizeSchema(flat);
+}
+
 /**
  * Sanitize EVERY tool in a set — including ones this codebase did not author.
  *
  * MCP backend tools are the reason this exists as a set-wide pass rather than only wrapping the
  * resources: their schemas arrive from third-party servers, they are exactly where `$ref`, untyped
- * fields and nullable-as-`anyOf` show up, and one of them is enough to have the provider reject
- * every turn. Validators are preserved per tool, so nothing about what we ACCEPT changes.
+ * fields, nullable-as-`anyOf` and UNION ROOTS show up, and one of them is enough to have the
+ * provider reject every turn. Validators are preserved per tool, so nothing about what we ACCEPT
+ * changes.
  */
 export function providerSafeToolSet<T extends Record<string, unknown>>(tools: T): T {
   const out: Record<string, unknown> = {};
@@ -299,7 +336,7 @@ export function providerSafeToolSet<T extends Record<string, unknown>>(tools: T)
       ...candidate,
       inputSchema: rewrite(
         asSchema(candidate.inputSchema as Parameters<typeof asSchema>[0]),
-        sanitizeSchema,
+        providerSafeRoot,
       ),
     };
   }

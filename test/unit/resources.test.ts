@@ -7,6 +7,7 @@ import {
   RESOURCE_NAMES,
   RESOURCE_OF,
 } from '@/agent/tools/resources';
+import { DISPATCHER_TOOLS, EDIT_OPS } from '@/shared/overlay-step';
 
 // The consolidation's safety net: four resources instead of forty-seven verbs, and NOT ONE
 // capability lost on the way.
@@ -129,6 +130,24 @@ describe('the properties the rest of the system depends on', () => {
   it('passes through the repair channel and MCP backend tools untouched', () => {
     expect(built.invalidTool).toBeDefined();
     expect(built.acme__task).toBeDefined();
+  });
+
+  it('every resource is a known dispatcher — overlay-step reads `op` only off these names', () => {
+    // `operationOf` is gated on `DISPATCHER_TOOLS` (so an MCP tool's stray `type` field can never
+    // relabel a call). A resource missing from that set would silently lose its operation names
+    // in every chip, overlay card and rehydrated thread.
+    expect(RESOURCE_NAMES.every((name) => DISPATCHER_TOOLS.has(name))).toBe(true);
+  });
+
+  it('overlay-step EDIT_OPS is exactly the `edit` resource ops — one vocabulary, no drift', () => {
+    // `shared/overlay-step.ts` exports the classification vocabulary the panel derives from
+    // (turn-phase.ts). Its design-mutation set and this module's `edit` routing must be the SAME
+    // list, or a new mutation renders as a read somewhere.
+    const editOps = Object.entries(RESOURCE_OF)
+      .filter(([, resource]) => resource === 'edit')
+      .map(([name]) => name)
+      .sort();
+    expect([...EDIT_OPS].sort()).toEqual(editOps);
   });
 
   it('puts the OPERATION in the input, which is what the overlay classifies on', () => {

@@ -5,6 +5,7 @@ import {
   LOG_CAP,
   type LogEntry,
   logEntryFor,
+  mergeLogs,
   redactSecrets,
   renderTurnLog,
 } from '@/agent/turn-log';
@@ -191,6 +192,43 @@ describe('appendBounded', () => {
     let log: LogEntry[] = [];
     for (let n = 0; n < LOG_CAP + 10; n += 1) log = appendBounded(log, entry(n));
     expect(log).toHaveLength(LOG_CAP);
+  });
+});
+
+describe('mergeLogs — one chronological log from the SW-global ring and a session', () => {
+  const entry = (at: number, text: string): LogEntry => ({ at, kind: 'note', text });
+
+  it('interleaves the two sources in timestamp order', () => {
+    // A pre-session error (global) precedes the turn's entries; a late escaped error follows them.
+    const global = [entry(100, 'global-early'), entry(900, 'global-late')];
+    const session = [entry(400, 'session-a'), entry(600, 'session-b')];
+    expect(mergeLogs(global, session).map((e) => e.text)).toEqual([
+      'global-early',
+      'session-a',
+      'session-b',
+      'global-late',
+    ]);
+  });
+
+  it('keeps equal-timestamp entries stable (global half first)', () => {
+    const merged = mergeLogs([entry(5, 'g')], [entry(5, 's')]);
+    expect(merged.map((e) => e.text)).toEqual(['g', 's']);
+  });
+
+  it('caps like an append — the NEWEST entries survive', () => {
+    const global = [entry(1, '#1'), entry(2, '#2')];
+    const session = [entry(3, '#3'), entry(4, '#4')];
+    expect(mergeLogs(global, session, 3).map((e) => e.text)).toEqual(['#2', '#3', '#4']);
+  });
+
+  it('defaults to LOG_CAP', () => {
+    const many = Array.from({ length: LOG_CAP + 20 }, (_, n) => entry(n, `#${n}`));
+    expect(mergeLogs(many, [])).toHaveLength(LOG_CAP);
+  });
+
+  it('an empty session log still yields the global entries — the pre-session paste is non-empty', () => {
+    const merged = mergeLogs([entry(1, 'ERROR Add a model provider in Settings to start.')], []);
+    expect(merged).toHaveLength(1);
   });
 });
 

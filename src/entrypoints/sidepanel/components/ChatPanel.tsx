@@ -15,6 +15,7 @@ import { Composer } from './chat/Composer';
 import { EmptyState } from './chat/EmptyState';
 import type { Suggestion } from './chat/SuggestionChips';
 import { Thread } from './chat/Thread';
+import { DebugLogCopy } from './DebugLogCopy';
 import { ShipBar } from './ShipBar';
 import { TaskTimeline } from './TaskTimeline';
 import { UsageMeter } from './UsageMeter';
@@ -64,7 +65,17 @@ export function ChatPanel() {
         <UsageMeter usage={usage()} />
       </Show>
 
-      <Show when={error()}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>
+      {/* The debug-log button rides WITH the failure it explains: the moment something goes wrong
+          is the moment a trace is worth copying, and the Settings→About instance is three clicks
+          away from a user staring at this notice. */}
+      <Show when={error()}>
+        {(msg) => (
+          <p class="dz-chat__error">
+            {msg()}
+            <DebugLogCopy />
+          </p>
+        )}
+      </Show>
 
       <Composer />
     </div>

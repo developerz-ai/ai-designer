@@ -15,6 +15,10 @@ export interface ThreadProps {
  *  empty again well before the next turn starts. */
 const ANNOUNCE_CLEAR_MS = 500;
 
+/** How close to the foot counts as "reading the newest content". Outside this band the thread is
+ *  left where the reader put it. */
+const STICK_TO_BOTTOM_PX = 80;
+
 /** The part of an in-flight reply that ends on a sentence boundary, or `''` if no sentence has
  *  completed yet. Announcing per token machine-guns a screen reader with fragments; announcing
  *  whole sentences is the arrangement WCAG/APG actually asks for. Pure + greedy: matches through
@@ -38,6 +42,9 @@ export function Thread(props: ThreadProps) {
     void last?.streaming;
     const el = logEl;
     if (!el) return;
+    // Measured BEFORE the DOM grows: "was the reader at the foot a moment ago". A reader who has
+    // scrolled back to compare an earlier reply must not be yanked to the bottom by every token.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > STICK_TO_BOTTOM_PX) return;
     queueMicrotask(() => {
       el.scrollTop = el.scrollHeight;
     });

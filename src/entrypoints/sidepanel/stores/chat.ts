@@ -213,6 +213,39 @@ export function threadToMessages(thread: ThreadViewMessage[]): ChatMessage[] {
   }));
 }
 
+/** Whether this panel's OWN in-flight turn must survive a `thread-get` rebuild.
+ *  `thread-get` renders the SW's PERSISTED thread, and background.ts appends a turn's assistant
+ *  messages only once the whole turn resolves — so mid-turn the rebuild provably cannot contain
+ *  what this panel has just streamed. While this panel believes a turn is streaming, its in-flight
+ *  tail outranks the rebuild — UNLESS the SW names a DIFFERENT turn as running (the one case the
+ *  local bubble is provably stale). `turnRunning: false` is deliberately NOT enough to overrule:
+ *  a reconnect can reach a fresh worker before the turn re-registers; that claim is verified by
+ *  `scheduleTurnLivenessCheck`, which closes the bubble WITHOUT deleting its text. */
+export function keepsLocalTurn(
+  local: { streaming: boolean; activeTurnId: string | null },
+  sw: { turnRunning: boolean; currentTurnId?: string },
+): boolean {
+  if (!local.streaming) return false;
+  if (sw.currentTurnId !== undefined && local.activeTurnId !== null) {
+    return sw.currentTurnId === local.activeTurnId;
+  }
+  // One id missing (the window between send and the first stamped event, or an SW that names no
+  // turn): protect anyway. A stricter branch cannot tell "our turn, no stamp yet" from "stale
+  // panel", and the failure modes are not symmetric — over-protecting defers a rebuild until the
+  // turn settles (flushPendingRehydrate) or the liveness check closes the bubble; under-protecting
+  // deletes streamed text the SW has not persisted, which is the P0 this guard exists to stop.
+  return true;
+}
+
+/** Persisted history + this panel's live tail: everything from the in-flight assistant bubble
+ *  onward (`foldIntoAssistant` only ever streams the LAST message, so there is at most one).
+ *  The local USER bubble is dropped in favour of the persisted copy rather than duplicated — the
+ *  SW appends the user message before the turn runs. With nothing in flight the rebuild wins. */
+export function mergeInFlight(persisted: ChatMessage[], local: ChatMessage[]): ChatMessage[] {
+  const from = local.findIndex((m) => m.role === 'assistant' && m.streaming);
+  return from === -1 ? persisted : [...persisted, ...local.slice(from)];
+}
+
 /** Append `patch` onto the in-flight assistant message, or start a new one when the last message
  *  isn't a streaming assistant bubble (turn start, or the previous one already closed out). */
 function foldIntoAssistant(
@@ -310,6 +343,7 @@ async function confirmTurnLiveness(): Promise<void> {
     setMessages(endStreaming);
     setStreaming(false);
     setActiveTurnId(null);
+    flushPendingRehydrate();
   } catch {
     // Transport hiccup — keep streaming; the next state push re-schedules the check.
   }
@@ -343,6 +377,7 @@ function onStream(msg: SwToPanel): void {
   if (msg.type === 'turn-done') {
     setStreaming(false);
     setActiveTurnId(null);
+    flushPendingRehydrate();
   } else if (msg.type === 'error') {
     // Attributed (or turnless-while-idle) — terminal for the turn, but keep the turn key: the
     // SW still emits the settling `turn-done` (with the session's usage) after an error, and
@@ -352,6 +387,7 @@ function onStream(msg: SwToPanel): void {
     if (msg.state !== 'running') {
       setStreaming(false);
       setActiveTurnId(null);
+      flushPendingRehydrate();
     } else if (msg.turnRunning === false && streaming()) {
       scheduleTurnLivenessCheck();
     }
@@ -383,6 +419,17 @@ export function initChatStore(): void {
 // the newest pair of replies — mirrors stores/changeset.ts's `refreshSeq`.
 let hydrateSeq = 0;
 
+// A retarget that arrived while this panel's own turn was streaming is SKIPPED, not applied — the
+// live turn outranks it. Remembered and re-fired when the turn settles, so the panel still ends
+// up on the tab the user is looking at.
+let pendingRehydrate = false;
+
+function flushPendingRehydrate(): void {
+  if (!pendingRehydrate) return;
+  pendingRehydrate = false;
+  void hydrateThread();
+}
+
 /** Rebuild the transcript from the SW's per-tab thread (#168 finding 3): `session-get` for the
  *  lifecycle + in-flight turn, `thread-get` for the rendered messages. The rebuilt view replaces
  *  the local replica wholesale — the SW thread is the source of truth — and an in-flight turn is
@@ -397,8 +444,31 @@ export async function hydrateThread(): Promise<void> {
   try {
     const s = await request({ type: 'session-get' }, SessionStateResult);
     if (seq !== hydrateSeq) return;
-    const t = await request({ type: 'thread-get' }, ThreadGetResult);
+    // Pinned to the tab this transcript is keyed to ONLY while this panel believes a turn is in
+    // flight: mid-turn the transcript belongs to the turn's tab (and the pin protects even across
+    // an SW restart that lost `runningTurnTabId`), so a tab switch must not re-target the query
+    // away from it. Between turns the ask is deliberately UNPINNED — the SW's own resolution
+    // (running turn's tab → active tab with a session → last turn's tab) is what implements "the
+    // chat follows the tab you're looking at", and a standing pin would freeze the panel on its
+    // first conversation forever (an explicit ask wins SW-side whenever the pinned tab has a
+    // session).
+    const t = await request(
+      { type: 'thread-get', tabId: streaming() ? (viewTabId() ?? undefined) : undefined },
+      ThreadGetResult,
+    );
     if (seq !== hydrateSeq) return;
+    if (keepsLocalTurn({ streaming: streaming(), activeTurnId: activeTurnId() }, s)) {
+      // Never `setMessages([])`, never drop the turn key (`classifyEvent` would then DROP the rest
+      // of this turn's own stamped events), never lower `streaming` (that turns Stop back into
+      // Send while the agent is still editing the page).
+      if (!t.ok || t.tabId !== viewTabId()) {
+        pendingRehydrate = true; // nothing to merge for a tab this transcript isn't keyed to
+        return;
+      }
+      setMessages((local) => mergeInFlight(threadToMessages(t.thread ?? []), local));
+      if (!s.turnRunning) scheduleTurnLivenessCheck(); // verify, don't act on the first answer
+      return;
+    }
     if (!t.ok) {
       // "No session for this tab" — an empty chat is the truth for that tab. Re-key and clear
       // rather than keep showing another tab's transcript over it.

@@ -3,6 +3,8 @@ import {
   type ChatMessage,
   classifyEvent,
   type EventContext,
+  keepsLocalTurn,
+  mergeInFlight,
   nextUsage,
   reduceChat,
   threadToMessages,
@@ -268,6 +270,92 @@ describe('threadToMessages: thread-get rebuild mapping (#168)', () => {
 
   it('an empty thread maps to an empty chat', () => {
     expect(threadToMessages([])).toEqual([]);
+  });
+});
+
+describe('keepsLocalTurn: which view survives a thread-get rebuild', () => {
+  it('protects a streaming turn the SW confirms is running', () => {
+    expect(
+      keepsLocalTurn(
+        { streaming: true, activeTurnId: 't1' },
+        { turnRunning: true, currentTurnId: 't1' },
+      ),
+    ).toBe(true);
+  });
+
+  it('yields when the SW is on a DIFFERENT turn — the local bubble is provably stale', () => {
+    expect(
+      keepsLocalTurn(
+        { streaming: true, activeTurnId: 't1' },
+        { turnRunning: true, currentTurnId: 't9' },
+      ),
+    ).toBe(false);
+  });
+
+  it('never protects an idle panel — with nothing in flight the rebuild wins', () => {
+    expect(
+      keepsLocalTurn(
+        { streaming: false, activeTurnId: null },
+        { turnRunning: false, currentTurnId: undefined },
+      ),
+    ).toBe(false);
+    expect(
+      keepsLocalTurn(
+        { streaming: false, activeTurnId: 't1' },
+        { turnRunning: true, currentTurnId: 't1' },
+      ),
+    ).toBe(false);
+  });
+
+  it('protects when the SW names no turn — turnRunning:false alone is not proof of death', () => {
+    // The reconnect race (#168 finding 2): a fresh worker answers before the turn re-registers.
+    // The liveness check owns closing the bubble; the rebuild must not delete its text.
+    expect(keepsLocalTurn({ streaming: true, activeTurnId: 't1' }, { turnRunning: false })).toBe(
+      true,
+    );
+    expect(keepsLocalTurn({ streaming: true, activeTurnId: null }, { turnRunning: true })).toBe(
+      true,
+    );
+  });
+});
+
+describe('mergeInFlight: persisted history + the live local tail', () => {
+  const persisted = threadToMessages([
+    { role: 'user', text: 'go' },
+    { role: 'assistant', text: 'earlier reply' },
+  ]);
+
+  it('keeps the in-flight tail on top of the persisted history', () => {
+    const local: ChatMessage[] = [
+      { id: 'u1', role: 'user', text: 'go', toolCalls: [], edits: [], streaming: false },
+      { id: 'a1', role: 'assistant', text: 'streamed', toolCalls: [], edits: [], streaming: true },
+    ];
+    const merged = mergeInFlight(persisted, local);
+    expect(merged).toHaveLength(3);
+    expect(merged.slice(0, 2)).toEqual(persisted);
+    expect(merged[2]).toMatchObject({ role: 'assistant', text: 'streamed', streaming: true });
+  });
+
+  it('lets the rebuild win when nothing is in flight', () => {
+    const local: ChatMessage[] = [
+      { id: 'a0', role: 'assistant', text: 'old view', toolCalls: [], edits: [], streaming: false },
+    ];
+    expect(mergeInFlight(persisted, local)).toEqual(persisted);
+  });
+
+  it('drops the local user bubble in favour of the persisted copy — never duplicated', () => {
+    // The SW appends the user message before the turn runs, so the persisted thread already
+    // carries it; keeping the local one too would show "go" twice.
+    const local: ChatMessage[] = [
+      { id: 'u1', role: 'user', text: 'go', toolCalls: [], edits: [], streaming: false },
+      { id: 'a1', role: 'assistant', text: 'streamed', toolCalls: [], edits: [], streaming: true },
+    ];
+    const merged = mergeInFlight(threadToMessages([{ role: 'user', text: 'go' }]), local);
+    expect(merged.filter((m) => m.role === 'user')).toHaveLength(1);
+    expect(merged.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'go'],
+      ['assistant', 'streamed'],
+    ]);
   });
 });
 
@@ -679,13 +767,17 @@ describe('chat store: thread-get rebuild + adoption (#168 C/E)', () => {
         'thread-get': () => ({ ok: false, tabId: 3, error: 'no session' }),
       }),
     );
-    installPortFake();
+    const port = installPortFake();
     const store = await import('@/entrypoints/sidepanel/stores/chat');
 
     store.initChatStore();
-    // Seed a fake prior view, as if the panel had been showing another tab.
+    // Seed a fake prior view, as if the panel had been showing another tab. The seeded turn is
+    // SETTLED before the retarget: a still-streaming local turn is a different case, protected by
+    // the hydrate guard (see "a rebuild never clobbers the live local turn" below).
     await store.send('old tab message');
+    port.emit({ type: 'turn-done', usage: { steps: 1, tokens: 10 }, turnId: 't1' });
     expect(store.messages()).toHaveLength(1);
+    expect(store.streaming()).toBe(false);
 
     await store.hydrateThread();
 
@@ -734,6 +826,195 @@ describe('chat store: thread-get rebuild + adoption (#168 C/E)', () => {
     await store.hydrateThread(); // view was unkeyed (null) -> tab 5 counts as a re-key
 
     expect(store.usage()).toEqual(store.ZERO_USAGE);
+  });
+});
+
+describe('chat store: a rebuild never clobbers the live local turn (P0 hydrate guard)', () => {
+  // The bug: `thread-get` renders the SW's PERSISTED thread, and the SW appends a turn's assistant
+  // messages only once the whole turn resolves — so every retarget trigger (port reconnect,
+  // tabs.onActivated, windows.onFocusChanged, the agent's OWN tab activations) that landed mid-turn
+  // rebuilt the transcript WITHOUT the text this panel had just streamed: appear → disappear →
+  // reappear, sometimes blanking the panel to EmptyState and orphaning the turn.
+
+  const idleSession = { ok: true, state: 'idle', turnRunning: false, tabId: 1 };
+  const midTurnSession = {
+    ok: true,
+    state: 'running',
+    turnRunning: true,
+    tabId: 1,
+    currentTurnId: 't1',
+  };
+  // What the SW has PERSISTED mid-turn: the user message only — the streamed reply is not there.
+  const midTurnThread = [{ role: 'user', text: 'go' }];
+
+  /** Chrome fake whose hydration replies can be swapped mid-test, so the store can be keyed to
+   *  tab 1 first (an applied initial hydrate) and then hit with a mid-turn rebuild. */
+  function installSwappableFake() {
+    let handler: SendMessage = ackHandler({
+      'session-get': () => idleSession,
+      'thread-get': () => ({ ok: true, tabId: 1, thread: [] }),
+    });
+    const { sendMessage } = installChromeFake((msg) => handler(msg));
+    return {
+      sendMessage,
+      swap: (over: Parameters<typeof ackHandler>[0]) => {
+        handler = ackHandler(over);
+      },
+    };
+  }
+
+  async function bootStreamingOnTab1() {
+    const port = installPortFake();
+    const store = await import('@/entrypoints/sidepanel/stores/chat');
+    store.initChatStore();
+    await store.hydrateThread(); // keys the view to tab 1 while idle
+    expect(store.viewTabId()).toBe(1);
+    await store.send('go');
+    port.emit({ type: 'token', text: 'streamed reply', turnId: 't1' });
+    expect(store.messages().at(-1)).toMatchObject({ text: 'streamed reply', streaming: true });
+    return { store, port };
+  }
+
+  it('keeps the streamed reply when a retarget rebuild lands mid-turn', async () => {
+    vi.resetModules();
+    const fake = installSwappableFake();
+    const { store, port } = await bootStreamingOnTab1();
+
+    fake.swap({
+      'session-get': () => midTurnSession,
+      'thread-get': () => ({ ok: true, tabId: 1, thread: midTurnThread }),
+    });
+    await store.hydrateThread(); // tabs.onActivated / reconnect retarget, mid-turn
+
+    // Pre-guard this was `[user 'go']` — the streamed text vanished under the reader.
+    expect(store.messages().map((m) => [m.role, m.text])).toEqual([
+      ['user', 'go'],
+      ['assistant', 'streamed reply'],
+    ]);
+    expect(store.streaming()).toBe(true);
+    expect(store.activeTurnId()).toBe('t1');
+
+    // The next token folds onto the SAME bubble — exactly one streaming assistant message.
+    port.emit({ type: 'token', text: ' continues', turnId: 't1' });
+    const streamingAssistants = store
+      .messages()
+      .filter((m) => m.role === 'assistant' && m.streaming);
+    expect(streamingAssistants).toHaveLength(1);
+    expect(streamingAssistants[0]?.text).toBe('streamed reply continues');
+  });
+
+  it('leaves transcript, turn key and Stop state alone on a thread-get ok:false mid-turn', async () => {
+    vi.resetModules();
+    const fake = installSwappableFake();
+    const { store, port } = await bootStreamingOnTab1();
+
+    fake.swap({
+      'session-get': () => midTurnSession,
+      'thread-get': () => ({ ok: false, tabId: 4, error: 'no session' }),
+    });
+    await store.hydrateThread();
+
+    // Pre-guard this branch blanked the panel to EmptyState (`setMessages([])`), dropped the turn
+    // key (orphaning the rest of the turn's stamped events) and turned Stop back into Send.
+    expect(store.messages().map((m) => [m.role, m.text])).toEqual([
+      ['user', 'go'],
+      ['assistant', 'streamed reply'],
+    ]);
+    expect(store.streaming()).toBe(true);
+    expect(store.activeTurnId()).toBe('t1');
+
+    port.emit({ type: 'token', text: ' still folds', turnId: 't1' });
+    expect(store.messages().at(-1)?.text).toBe('streamed reply still folds');
+  });
+
+  it('re-targets once the turn settles: a skipped hydrate is re-fired on turn-done', async () => {
+    vi.resetModules();
+    const fake = installSwappableFake();
+    const { store, port } = await bootStreamingOnTab1();
+
+    let threadGets = 0;
+    fake.swap({
+      'session-get': () => midTurnSession,
+      'thread-get': () => {
+        threadGets++;
+        return { ok: false, tabId: 4, error: 'no session' };
+      },
+    });
+    await store.hydrateThread(); // skipped: nothing to merge for a foreign tab
+    expect(threadGets).toBe(1);
+
+    port.emit({ type: 'turn-done', usage: { steps: 1, tokens: 100 }, turnId: 't1' });
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let the re-fired hydrate run
+
+    expect(threadGets).toBe(2); // the panel still ends up on the tab the user is looking at
+  });
+
+  it('pins the thread-get query to the turn tab mid-turn, and unpins it once idle', async () => {
+    // Additive `tabId` on the RPC, sent ONLY while a turn is in flight: mid-turn the transcript
+    // belongs to the turn's tab, and the SW honours an explicit ask that has a session — so a tab
+    // switch cannot re-target the query away from the conversation being streamed. Once the turn
+    // settles the ask must go out UNPINNED: the SW's own resolution is what implements "the chat
+    // follows the tab you're looking at", and a standing pin would freeze the panel on its first
+    // conversation forever.
+    vi.resetModules();
+    const fake = installSwappableFake();
+    const { store, port } = await bootStreamingOnTab1();
+
+    let asked: Extract<PanelToSw, { type: 'thread-get' }> | undefined;
+    fake.swap({
+      'session-get': () => midTurnSession,
+      'thread-get': (msg) => {
+        asked = msg as Extract<PanelToSw, { type: 'thread-get' }>;
+        return { ok: true, tabId: 1, thread: midTurnThread };
+      },
+    });
+    await store.hydrateThread(); // mid-turn: pinned to the keyed tab
+    expect(asked).toMatchObject({ type: 'thread-get', tabId: 1 });
+
+    port.emit({ type: 'turn-done', usage: { steps: 1, tokens: 100 }, turnId: 't1' });
+    expect(store.streaming()).toBe(false);
+    fake.swap({
+      'session-get': () => idleSession,
+      'thread-get': (msg) => {
+        asked = msg as Extract<PanelToSw, { type: 'thread-get' }>;
+        return { ok: true, tabId: 1, thread: midTurnThread };
+      },
+    });
+    await store.hydrateThread(); // idle: unpinned, so following stays alive
+    expect(asked?.type).toBe('thread-get');
+    expect(asked?.tabId).toBeUndefined();
+  });
+
+  it('still rebuilds when the SW has moved on to another turn', async () => {
+    vi.resetModules();
+    const fake = installSwappableFake();
+    const { store } = await bootStreamingOnTab1();
+
+    fake.swap({
+      'session-get': () => ({
+        ok: true,
+        state: 'running',
+        turnRunning: true,
+        tabId: 1,
+        currentTurnId: 't9',
+      }),
+      'thread-get': () => ({
+        ok: true,
+        tabId: 1,
+        thread: [
+          { role: 'user', text: 'go' },
+          { role: 'assistant', text: 'done elsewhere' },
+        ],
+      }),
+    });
+    await store.hydrateThread();
+
+    // The one case the local bubble is provably stale: wholesale replace, adopt the SW's turn.
+    expect(store.messages().map((m) => [m.role, m.text, m.streaming])).toEqual([
+      ['user', 'go', false],
+      ['assistant', 'done elsewhere', false],
+    ]);
+    expect(store.activeTurnId()).toBe('t9');
   });
 });
 

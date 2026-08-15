@@ -161,6 +161,17 @@ export function appendBounded(
   return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
+/** One chronological log from the SW-global fallback and a session's own entries. Both are
+ *  epoch-ms stamped, so a stable sort by `at` interleaves them truthfully; capped like an append. */
+export function mergeLogs(
+  a: readonly LogEntry[],
+  b: readonly LogEntry[],
+  cap: number = LOG_CAP,
+): LogEntry[] {
+  const all = [...a, ...b].sort((x, y) => x.at - y.at);
+  return all.length > cap ? all.slice(all.length - cap) : all;
+}
+
 /** The environment half of the paste — everything a reader needs that is not an event. */
 export interface LogContext {
   readonly version: string;

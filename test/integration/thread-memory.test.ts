@@ -6,6 +6,7 @@ import type {
 } from '@ai-sdk/provider';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { conversationTabId } from '@/agent/conversation-tab';
 import { HistoryStore } from '@/agent/history-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
@@ -13,9 +14,10 @@ import { cachedSystemPrompt, withCacheBreakpoint } from '@/agent/prompt-cache';
 import { type ChatMessage, SessionStore } from '@/agent/session';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import { compactForThread } from '@/agent/thread-compact';
+import { toThreadView } from '@/agent/thread-view';
 import type { DomDispatch } from '@/agent/tools/dom';
-import type { SwToPanel, ThreadViewMessage } from '@/shared/messages';
-import { operationOf } from '@/shared/overlay-step';
+import { logEntryFor, renderTurnLog } from '@/agent/turn-log';
+import type { SwToPanel } from '@/shared/messages';
 
 // Integration (#168 cross-turn amnesia): the conversation-memory wiring background.ts's
 // `user-message` handler drives — persist the REAL turn (`compactForThread(outcome.
@@ -23,10 +25,11 @@ import { operationOf } from '@/shared/overlay-step';
 // across a supersede/stop by AWAITING the old turn's finalization before appending the new user
 // message, stamp `turnId` on every per-turn stream event, and render the thread down to
 // `ThreadViewMessage`s for `thread-get`. background.ts itself can't be imported under Vitest (it
-// pulls the WXT `#imports` virtual module), so `sendUserMessage`/`stampTurnId`/`toThreadView`
-// below mirror its wiring 1:1 against the REAL cooperating modules (`agent/loop.ts` runTurn,
-// `agent/thread-compact.ts`, `agent/session.ts`, `agent/history-store.ts`) — the same approach as
-// history-flow.test.ts and agent-loop.test.ts.
+// pulls the WXT `#imports` virtual module), so `sendUserMessage`/`stampTurnId` below mirror its
+// wiring 1:1 against the REAL cooperating modules (`agent/loop.ts` runTurn,
+// `agent/thread-compact.ts`, `agent/session.ts`, `agent/history-store.ts`,
+// `agent/thread-view.ts` — the view mapping is the REAL export now, no longer a mirror) — the
+// same approach as history-flow.test.ts and agent-loop.test.ts.
 
 // Named PAGE_URL, not URL: a bare `URL` constant would shadow the global URL constructor the
 // `isOpenRouterBase` mirror parses baseURLs with (it silently disabled the cache gating).
@@ -278,6 +281,16 @@ async function sendUserMessage(
   await sw.sessions.patch(TAB_ID, { status: 'running', lastMode: mode });
   const cacheable = isOpenRouterBase(opts.baseURL ?? STRICT_BASE_URL);
   const systemPrompt = buildSystemPrompt();
+  // Mirrors background.ts's split fan-out: the wire gets the turnId-stamped event, the
+  // conversation's debug log gets the same event's spine entry (fire-and-forget, like the SW).
+  const logTurnEvent = (update: SwToPanel): void => {
+    const entry = logEntryFor(update, Date.now());
+    if (entry) void sw.sessions.appendLog(TAB_ID, entry).catch(() => {});
+  };
+  const emitTurn = (update: SwToPanel): void => {
+    emit(stampTurnId(update, turnId));
+    logTurnEvent(update);
+  };
   const done = runTurn({
     tabId: TAB_ID,
     messages: cacheable ? annotatePriorThreadTail(session.messages) : session.messages,
@@ -285,7 +298,7 @@ async function sendUserMessage(
     model,
     instructions: cacheable ? cachedSystemPrompt(systemPrompt) : systemPrompt,
     dispatch: opts.dispatch ?? fakeContent().dispatch,
-    emit: (event) => emit(stampTurnId(event, turnId)),
+    emit: emitTurn,
   })
     .then(async (outcome) => {
       if (sw.forfeited.has(turnId)) return;
@@ -303,119 +316,11 @@ async function sendUserMessage(
       if (wasCurrent) sw.turnAbort = null;
       if (sw.settlingTurn?.id === turnId) sw.settlingTurn = null;
       sw.forfeited.delete(turnId);
-      if (wasCurrent) emit({ type: 'turn-done', usage: { steps: 0, tokens: 0 }, turnId });
+      // Through emitTurn (as in background.ts): stamped on the wire AND logged as the boundary.
+      if (wasCurrent) emitTurn({ type: 'turn-done', usage: { steps: 2, tokens: 640 } });
     });
   sw.settlingTurn = { id: turnId, done };
   return { turnId, done };
-}
-
-// --- thread-get view mapping, mirrored 1:1 from background.ts `toThreadView` ---------------------
-
-interface ThreadViewTool {
-  name: string;
-  ok: boolean;
-  id?: string;
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  const texts: string[] = [];
-  for (const part of content) {
-    if (
-      part !== null &&
-      typeof part === 'object' &&
-      'type' in part &&
-      part.type === 'text' &&
-      'text' in part &&
-      typeof part.text === 'string' &&
-      part.text.length > 0
-    ) {
-      texts.push(part.text);
-    }
-  }
-  return texts.join('\n\n');
-}
-
-function toolOutputOk(output: unknown): boolean {
-  if (output === null || typeof output !== 'object') return true;
-  const type = 'type' in output ? output.type : undefined;
-  if (type === 'error-text' || type === 'error-json' || type === 'execution-denied') return false;
-  const value = 'value' in output ? output.value : output;
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    'ok' in value &&
-    typeof value.ok === 'boolean'
-  ) {
-    return value.ok;
-  }
-  return true;
-}
-
-function settleThreadTool(
-  tools: ThreadViewTool[],
-  part: { toolCallId?: string; toolName: string; output?: unknown },
-): void {
-  const ok = toolOutputOk(part.output);
-  const byId = part.toolCallId ? tools.find((t) => t.id === part.toolCallId) : undefined;
-  const target = byId ?? [...tools].reverse().find((t) => t.name === part.toolName);
-  if (target) target.ok = ok;
-  else tools.push({ name: part.toolName, ok });
-}
-
-function toThreadView(messages: readonly ChatMessage[]): ThreadViewMessage[] {
-  const view: ThreadViewMessage[] = [];
-  let turn: { texts: string[]; tools: ThreadViewTool[] } | null = null;
-
-  const flushTurn = (): void => {
-    if (!turn) return;
-    const tools = turn.tools.slice(0, 100).map(({ name, ok }) => ({ name, ok }));
-    view.push({
-      role: 'assistant',
-      text: turn.texts.filter((t) => t.length > 0).join('\n\n'),
-      ...(tools.length > 0 ? { tools } : {}),
-    });
-    turn = null;
-  };
-
-  for (const message of messages) {
-    if (message.role === 'system') continue;
-    if (message.role === 'user') {
-      flushTurn();
-      view.push({ role: 'user', text: contentText(message.content) });
-      continue;
-    }
-    if (message.role === 'assistant') {
-      turn ??= { texts: [], tools: [] };
-      if (typeof message.content === 'string') {
-        if (message.content.length > 0) turn.texts.push(message.content);
-        continue;
-      }
-      for (const part of message.content) {
-        if (part.type === 'text') {
-          if (part.text.length > 0) turn.texts.push(part.text);
-        } else if (part.type === 'tool-call') {
-          // Mirrors background.ts: the chip carries the OPERATION, not the resource the tool
-          // surface groups it under, so a rehydrated transcript reads the same as the live one.
-          turn.tools.push({
-            name: operationOf(part.input) ?? part.toolName,
-            ok: true,
-            id: part.toolCallId,
-          });
-        } else if (part.type === 'tool-result') {
-          settleThreadTool(turn.tools, part);
-        }
-      }
-      continue;
-    }
-    turn ??= { texts: [], tools: [] };
-    for (const part of message.content) {
-      if (part.type === 'tool-result') settleThreadTool(turn.tools, part);
-    }
-  }
-  flushTurn();
-  return view;
 }
 
 // --- assertions helpers --------------------------------------------------------------------------
@@ -617,6 +522,85 @@ describe('thread-get: the persisted thread renders down to text + per-tool outco
     const view = toThreadView(sw.sessions.get(TAB_ID)?.messages ?? []);
     const assistant = view.find((m) => m.role === 'assistant');
     expect(assistant?.tools).toEqual([{ name: 'setStyle', ok: false }]);
+  });
+});
+
+// --- thread-get answers for the CONVERSATION, not the active tab (P0) ----------------------------
+
+describe('thread-get survives a mid-turn tab activation', () => {
+  /** Mirrors background.ts's thread-get tab resolution (the conversationTabId call is the REAL
+   *  export; only the chrome tab plumbing is mirrored). */
+  function resolveThreadTab(
+    sw: SwMirror,
+    ids: { running: number | null; active: number | null; lastTurn: number | null },
+  ): number | null {
+    const has = (id: number) => sw.sessions.get(id) !== undefined;
+    return conversationTabId([ids.running, ids.active, ids.lastTurn], has) ?? ids.active;
+  }
+
+  it('a turn on tab A keeps answering for A while tab B is active, and reports turnRunning', async () => {
+    const sw = newSw();
+    const gated = gatedSecondStepModel();
+
+    // Turn runs on TAB_ID; the agent (or the user) activates another, session-less tab mid-turn.
+    await sendUserMessage(sw, 'restyle the hero', gated.model);
+    await vi.waitFor(() => expect(gated.model.doStreamCalls.length).toBe(2));
+    const NEW_TAB = 99; // opened by tabs(op:'open', active:true) — no session
+
+    const tabId = resolveThreadTab(sw, { running: TAB_ID, active: NEW_TAB, lastTurn: TAB_ID });
+    expect(tabId).toBe(TAB_ID);
+    // The pre-fix resolution (active tab, unconditionally) answered for the session-less tab:
+    expect(sw.sessions.get(NEW_TAB)).toBeUndefined();
+
+    // The thread the panel re-hydrates from is still tab A's conversation, mid-turn…
+    const view = toThreadView(sw.sessions.get(tabId as number)?.messages ?? []);
+    expect(view[0]).toEqual({ role: 'user', text: 'restyle the hero' });
+    // …and session-get would still report the turn as running (turnAbort is live).
+    expect(sw.turnAbort).not.toBeNull();
+
+    gated.release();
+    await sw.settlingTurn?.done;
+  });
+
+  it('between turns, the active tab own session wins; a session-less active tab falls back to the last turn', async () => {
+    const sw = newSw();
+    await (await sendUserMessage(sw, 'make the CTA orange', textOnlyModel('Done.'))).done;
+
+    const has = (id: number) => sw.sessions.get(id) !== undefined;
+    // No running turn, active tab HAS a session (it is the conversation).
+    expect(conversationTabId([null, TAB_ID, null], has)).toBe(TAB_ID);
+    // No running turn, active tab has NO session — the last turn's tab still answers.
+    expect(conversationTabId([null, 42, TAB_ID], has)).toBe(TAB_ID);
+    // Nothing matches: null, so the caller reports "no session yet" for the active tab.
+    expect(conversationTabId([null, 42, null], has)).toBeNull();
+  });
+});
+
+// --- the debug log gets the turn boundary + spend (P1) --------------------------------------------
+
+describe('the turn boundary reaches the conversation debug log', () => {
+  it('renders "turn ended" with the spend after a completed turn', async () => {
+    const sw = newSw();
+    const { done } = await sendUserMessage(sw, 'make the CTA orange', toolTurnModel());
+    await done;
+
+    // appendLog is fire-and-forget in the fan-out (as in the SW) — wait for it to land.
+    await vi.waitFor(() => {
+      const log = sw.sessions.get(TAB_ID)?.log ?? [];
+      expect(log.some((entry) => entry.kind === 'turn')).toBe(true);
+    });
+
+    const markdown = renderTurnLog(
+      {
+        version: '0.0.0-test',
+        model: 'test/model',
+        providerHost: 'http://localhost',
+        pageUrl: PAGE_URL,
+        tabId: TAB_ID,
+      },
+      sw.sessions.get(TAB_ID)?.log ?? [],
+    );
+    expect(markdown).toMatch(/turn ended — \d+ steps, \d+ tokens/);
   });
 });
 
