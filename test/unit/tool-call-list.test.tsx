@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, within } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import { describe, expect, it } from 'vitest';
 import {
+  collapsedCalls,
   failedCount,
   pinnedCalls,
   runGlyph,
@@ -197,14 +199,27 @@ describe('<ToolCallList>', () => {
 
 // ── Collapse contract ──────────────────────────────────────────────────────────────────────
 // A turn routinely fires 6-12 calls. Expanded, they pushed the assistant's actual answer off the
-// top of the thread. Collapsed, the header states the shape of the run and the two rows anybody
+// top of the thread. Collapsed, the header states the shape of the run and the rows anybody
 // wants — whatever is in flight, and anything that failed — stay on screen.
+//
+// The invariant that outranks all of it: a collapsed run that HAS calls never shows zero rows.
+// It used to render `pinnedCalls` directly, and every outcome of a successful run settles to
+// `done`, so the group emptied itself the instant the run finished — reported as "3 actions:
+// pageFacts, describe, screenshot ... then disappears", leaving a short answer looking like
+// nothing had run at all.
 describe('collapsed runs', () => {
   const RUN: ToolCallView[] = [
     { tool: 'extractIdentity', ok: true },
     { tool: 'screenshot', ok: true },
     { tool: 'setStyle', selector: '#gone', ok: false, error: 'no element matches #gone' },
     { tool: 'setText', ok: true },
+  ];
+
+  // The exact run from the report: three reads, all fine, nothing to pin.
+  const SETTLED: ToolCallView[] = [
+    { tool: 'pageFacts', kind: 'info', ok: true },
+    { tool: 'describe', kind: 'read', ok: true },
+    { tool: 'screenshot', kind: 'read', ok: true },
   ];
 
   it('pins the running and failed calls, and only those', () => {
@@ -230,6 +245,30 @@ describe('collapsed runs', () => {
     expect(failedCount([])).toBe(0);
   });
 
+  // `pinnedCalls` is a filter and is allowed to return nothing; `collapsedCalls` is a render
+  // list and is not. Keeping both is the point — the fallback must not smuggle a settled
+  // success into the "pinned" set, or a green row would sit where only a live one belongs.
+  it('falls back to the last call when a settled run has nothing to pin', () => {
+    expect(collapsedCalls(SETTLED).map((c) => c.tool)).toEqual(['screenshot']);
+    expect(pinnedCalls(SETTLED)).toEqual([]);
+  });
+
+  it('prefers the pinned rows whenever there are any', () => {
+    expect(collapsedCalls(RUN).map((c) => c.tool)).toEqual(['setStyle']);
+    expect(collapsedCalls([...RUN, { tool: 'browse' }], true).map((c) => c.tool)).toEqual([
+      'setStyle',
+      'browse',
+    ]);
+  });
+
+  it('shows nothing only when there is nothing — a run with calls always yields a row', () => {
+    expect(collapsedCalls([])).toEqual([]);
+    for (const call of [{ tool: 'a', ok: true }, { tool: 'a', ok: false }, { tool: 'a' }]) {
+      expect(collapsedCalls([call], false).length).toBeGreaterThan(0);
+      expect(collapsedCalls([call], true).length).toBeGreaterThan(0);
+    }
+  });
+
   it('hides the successful calls but never the failure', () => {
     render(() => <ToolCallList calls={RUN} />);
 
@@ -245,5 +284,78 @@ describe('collapsed runs', () => {
 
     fireEvent.click(header);
     expect(screen.getAllByRole('listitem')).toHaveLength(4);
+  });
+
+  // ── Regression: the group must not empty itself ──────────────────────────────────────────
+  it('keeps the last call on screen when a run settles with everything successful', () => {
+    render(() => <ToolCallList calls={SETTLED} />);
+
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(1);
+    expect(items[0]?.querySelector('.dz-tool-chip__name')).toHaveTextContent('screenshot');
+
+    // Still collapsed: the other two are behind the fold, and the header still counts them.
+    expect(screen.queryByText('pageFacts')).not.toBeInTheDocument();
+    expect(runHeader()).toHaveTextContent('3 actions');
+
+    expandRun();
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
+
+  // The reported sequence, played through: rows on screen while streaming, then the results
+  // land and streaming stops. The list must not go blank on that transition.
+  it('does not empty itself when a streaming run settles under the reader', () => {
+    const [calls, setCalls] = createSignal<ToolCallView[]>([
+      { tool: 'pageFacts', kind: 'info' },
+      { tool: 'describe', kind: 'read' },
+      { tool: 'screenshot', kind: 'read' },
+    ]);
+    const [streaming, setStreaming] = createSignal(true);
+
+    render(() => <ToolCallList calls={calls()} streaming={streaming()} />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+
+    setCalls(SETTLED);
+    setStreaming(false);
+
+    expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
+    expect(screen.getByText('screenshot')).toBeInTheDocument();
+  });
+});
+
+// ── Row noise ──────────────────────────────────────────────────────────────────────────────
+// A settled row read "screenshot read done" — of which only the tool name told the reader
+// anything. The kind badge and the outcome word are now visually-hidden (ToolChip.scss,
+// ToolCallList.scss); both stay in the tree, because a glyph and a border colour are not a
+// distinction to a screen reader (WCAG 1.4.1). jsdom loads no stylesheet, so what is pinned
+// here is the markup contract the stylesheet hangs off: the text is present, under the classes
+// that hide it.
+describe('row chrome', () => {
+  it('keeps the kind and the outcome word in the tree, under the classes that hide them', () => {
+    render(() => <ToolCallList calls={[{ tool: 'screenshot', kind: 'read', ok: true }]} />);
+
+    const [item] = screen.getAllByRole('listitem');
+    if (!item) throw new Error('expected one rendered call');
+
+    expect(item.querySelector('.dz-tool-chip__kind')).toHaveTextContent('read');
+    expect(item.querySelector('.dz-tool-call-list__status')).toHaveTextContent('done');
+    // The tool name is not one of the hidden bits — it is the row.
+    expect(item.querySelector('.dz-tool-chip__name')).toHaveTextContent('screenshot');
+  });
+
+  it('still tells a failure apart from a success without either hidden word', () => {
+    render(() => (
+      <ToolCallList
+        calls={[{ tool: 'setText', selector: '#gone', ok: false, error: 'no element matches' }]}
+      />
+    ));
+
+    const [item] = screen.getAllByRole('listitem');
+    expect(item).toHaveAttribute('data-status', 'failed');
+    expect(item?.querySelector('.dz-tool-chip')).toHaveClass('dz-tool-chip--error');
+    // The reason is visible prose, not a hidden label — a failure is the one row that shouts.
+    expect(item?.querySelector('.dz-tool-call-list__error')).toHaveTextContent(
+      'no element matches',
+    );
   });
 });

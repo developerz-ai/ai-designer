@@ -63,7 +63,9 @@
     @include mixins.visually-hidden;
   }
 
-  // "⋯ Editing the page…" — the only thing on screen between hitting send and the first token.
+  // "⋯ Reading the page…" — the only thing on screen between hitting send and the first token, and
+  // the text changes as the turn moves (`turn-phase.ts`), so this line must stay comfortable with a
+  // varying string: no fixed width, no truncation.
   &__working {
     display: flex;
     align-items: center;

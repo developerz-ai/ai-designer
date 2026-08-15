@@ -64,6 +64,16 @@ about:
     ariaLabel: About
   repoLink: GitHub repository
   issueLink: Report an issue
+  # Copy this conversation's agent trace (tool calls, failures, provider errors) as Markdown, to
+  # paste straight into the issue the link above opens. The label carries its own confirmation.
+  debugLog:
+    copy: Copy debug log
+    copying: Copying…
+    copied: Copied — paste it into your report
+    # The header (tab/model/provider) was still copied — worth pasting — but the trace itself is
+    # empty, and saying "Copied" alone would let the user believe they pasted a log.
+    empty: Copied, but this tab has logged nothing yet
+    failed: Could not copy the log
 
 # ─── First-run onboarding (Onboarding.tsx) ────────────────────────────────────────
 onboarding:
@@ -387,7 +397,10 @@ contextChip:
   picking: Picking element…
   # Sits beside the Picking… chip. The picker runs on the PAGE, so the panel has to say
   # where to look and how to get out — neither is discoverable from the panel alone.
-  pickingHint: Click an element on the page · Esc to cancel
+  # It says elementS, plural, and that clicking again removes: an armed picker accumulates
+  # (src/dom/picker.ts), and while this line read "Click an element" users reported that
+  # attaching several was impossible. The capability existed; only this sentence was hiding it.
+  pickingHint: Click elements on the page to attach · click again to remove · Esc to finish
   stopPicking:
     ariaLabel: Stop picking
   remove:
@@ -454,19 +467,51 @@ message:
     1: $1 edit recorded
     n: $1 edits recorded
   # Shown from send until the first token lands — the gap where a silent panel reads as hung.
-  working: Editing the page…
+  # The generic fallback; prefer a `phase.*` line below, which says what is ACTUALLY happening.
+  # NO TRAILING ELLIPSIS on this or any `phase.*` line. The three animated dots to the LEFT of this
+  # text (`.dz-message__dots`) already say "still going", and a "…" repeats that in the same breath:
+  # "⋯ Reading the page…" states it twice, once in motion and once in punctuation.
+  working: Working
+  # WHAT THE AGENT IS DOING RIGHT NOW, derived from the turn's latest tool call.
+  # A single hardcoded "Editing the page…" was actively misleading: the first thing every turn does
+  # is READ (pageFacts / describe / screenshot), so the panel claimed to be changing a page it had
+  # not touched yet — alarming when you did not ask for an edit, and useless as progress.
+  phase:
+    starting: Getting started
+    reading: Reading the page
+    looking: Looking at the page
+    editing: Editing the page
+    thinking: Working it out
+    shipping: Preparing the handoff
 
 # ─── Suggestion chips (chat/SuggestionChips.tsx) ──────────────────────────────────
 suggestion:
-  copyHero:
-    label: Copy nvidia's hero
-    prompt: Copy nvidia.com's hero section onto this page.
-  debugFilter:
-    label: Debug this filter
-    prompt: This filter looks broken — debug and fix it.
-  ship:
-    label: Ship to developerz.ai
-    prompt: Ship my accepted edits to developerz.ai as a PR.
+  # A tap SENDS immediately (ChatPanel `selectSuggestion`), so every prompt here has to be complete
+  # and has to work on WHATEVER page the user happens to be on. The previous three failed all of
+  # that: "Copy nvidia's hero" hardcoded someone else's brand, "Debug this filter" named a control
+  # most pages do not have, and "Ship to developerz.ai" offered a TERMINAL action as an opener —
+  # there are no accepted edits to ship before the first turn has run.
+  modernize:
+    label: Modernize this page
+    prompt: >-
+      Modernize this page's visual design — tighten the spacing, rebalance the type scale, and
+      improve the colour and contrast. Keep the content and structure as they are.
+    # WORDED TO TRIP NEITHER KEYWORD LIST in src/agent/modes.ts, which is load-bearing, not fussy.
+    # "fix" is a DEBUG keyword and "redesign"/"like" are COPY keywords; either one drags a mode
+    # ADDENDUM onto a turn that wants none. The copy addendum is written entirely around a
+    # reference ("read the reference's identity first… browse it in a background tab"), and this
+    # request has no reference — so it told the agent to go read a site that does not exist.
+    # There is no "design" mode to pin: `Mode` is copy | debug. Matching nothing is the point.
+  mobile:
+    label: Check it on mobile
+    prompt: >-
+      Check this page at mobile widths, find anything that overflows, wraps badly or becomes
+      unreadable, and fix it.
+  accessibility:
+    label: Find accessibility problems
+    prompt: >-
+      Audit this page for accessibility problems — colour contrast, focus states, text size and
+      missing labels — then fix the ones you safely can and tell me the rest.
 
 # ─── Thread (chat/Thread.tsx) ─────────────────────────────────────────────────────
 thread:

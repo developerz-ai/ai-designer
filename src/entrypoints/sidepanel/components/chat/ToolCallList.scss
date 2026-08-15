@@ -7,7 +7,10 @@
 //
 // The run collapses behind a one-line header. Twelve expanded cards pushed the answer
 // itself off the top of the thread; collapsed, the header states the shape of the run
-// ("12 actions · 1 failed") and keeps the in-flight and failed rows on screen.
+// ("12 actions · 1 failed") and keeps the in-flight and failed rows on screen — or, once
+// a run has settled with neither, its last call. A collapsed group that HAS calls never
+// renders zero rows: filtering them all away emptied the list under the reader and the
+// turn looked like nothing had happened (see ToolCallList.tsx `collapsedCalls`).
 .dz-tool-call-list {
   display: flex;
   flex-direction: column;

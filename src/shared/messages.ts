@@ -417,6 +417,26 @@ export type ReadinessState = z.infer<typeof ReadinessState>;
 
 export const Readiness = z.object({ type: z.literal('readiness') });
 
+// Fetch THIS conversation's debug log, already rendered as pasteable Markdown by the service worker
+// (`src/agent/turn-log.ts` `renderTurnLog`). Rendered SW-side rather than shipping raw entries the
+// panel would have to format: the environment header (extension version, model, provider origin)
+// is only knowable in the service worker, and rendering there keeps one format for every consumer.
+// `tabId` (optional, additive): the tab whose CONVERSATION the panel is displaying. Without it the
+// SW resolves the conversation itself (running turn's tab, else the last turn's, else the active
+// tab) — resolving only the ACTIVE tab read the log off whatever tab the user happened to be on.
+export const DebugLogGet = z.object({
+  type: z.literal('debug-log-get'),
+  tabId: z.number().int().optional(),
+});
+// `entries` (optional, additive): how many log lines the rendered markdown carries — lets the
+// panel distinguish "no activity" from a render of a real log without parsing the markdown.
+export const DebugLogResult = z.object({
+  ok: z.boolean(),
+  markdown: z.string(),
+  entries: z.number().int().nonnegative().optional(),
+});
+export type DebugLogResult = z.infer<typeof DebugLogResult>;
+
 // The panel-visible session tri-state: `idle` (pre-Start) -> `running` (session-start) ->
 // `stopped` (session-stop aborted the in-flight turn; the session stays open for the next
 // message). Named + shared so the `session-state` push, the `session-get` reply, and the SW's
@@ -444,7 +464,13 @@ export const SessionGet = z.object({ type: z.literal('session-get') });
 // RPC is the reconciliation source of truth: the SW renders its persisted per-tab session thread
 // down to `ThreadViewMessage`s (text + tool outcomes — never raw provider parts) and the panel
 // replaces its replica wholesale. Reply: `ThreadGetResult`.
-export const ThreadGet = z.object({ type: z.literal('thread-get') });
+// `tabId` (optional, additive): the tab whose conversation the panel wants. Absent, the SW answers
+// for the conversation it judges current (running turn's tab → active tab with a session → last
+// turn's tab) — never blindly the active tab, which mid-turn may be one the agent itself opened.
+export const ThreadGet = z.object({
+  type: z.literal('thread-get'),
+  tabId: z.number().int().optional(),
+});
 
 // --- on-page agent-decision overlay, opt-in (slice 09) --------------------
 // Cursor-style "watch the agent work" surface (`src/dom/overlay.ts`). Opt-in + persisted to
@@ -519,6 +545,7 @@ export const PanelToSw = z.discriminatedUnion('type', [
   McpAuthStart,
   McpStatusRequest,
   Readiness,
+  DebugLogGet,
   SessionStart,
   SessionStop,
   SessionGet,
@@ -2288,18 +2315,23 @@ export const SwToPanel = z.discriminatedUnion('type', [
   }),
   // Record pushes are tab-stamped at the SW emit sites (turn path + curation): the panel folds
   // them only into a Diff view keyed to the same tab, so a turn on tab A can never bleed phantom
-  // rows into a view of tab B (#141 review).
+  // rows into a view of tab B (#141 review). `turnId` (optional, additive) is stamped on the
+  // TURN-path pushes only, so the panel can attribute a recorded edit to the turn that made it;
+  // curation pushes stay unstamped — no turn made them.
   z.object({
     type: z.literal('edit-recorded'),
     edit: Edit,
     tabId: z.number().int().optional(),
+    turnId: z.string().optional(),
   }),
   // `tabId` stamps which tab's durable record this is (set on curation + turn-path pushes alike)
-  // — the panel folds it only into a view keyed to the same tab.
+  // — the panel folds it only into a view keyed to the same tab. `turnId`: turn-path pushes only,
+  // as on `edit-recorded`.
   z.object({
     type: z.literal('changeset'),
     changeset: Changeset,
     tabId: z.number().int().optional(),
+    turnId: z.string().optional(),
   }),
   // One task's live status on the Ship timeline (slice 07). A multi-task fan-out streams several,
   // each tagged with its own `taskId`/`title` and `index`/`total` so the panel drives one timeline

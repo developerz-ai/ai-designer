@@ -31,18 +31,32 @@ describe('toolChipStatusIcon', () => {
   ] as const)('maps status "%s" to icon "%s"', (status, icon) => {
     expect(toolChipStatusIcon(status)).toBe(icon);
   });
+
+  // The row now spends its width on the tool name alone (the kind badge went visually-hidden —
+  // "screenshot read done" said one useful word in three), so the glyph is the only VISUAL
+  // state marker left. Three states, three shapes: if any two collided, a failed call would
+  // look like a finished one on screen. The word itself still rides in the accessibility tree
+  // (ToolCallList renders it visually-hidden) — shape and colour alone are not a distinction,
+  // WCAG 1.4.1.
+  it('gives each status a shape of its own, so no two states look alike', () => {
+    const icons = (['running', 'done', 'error'] as const).map(toolChipStatusIcon);
+    expect(new Set(icons).size).toBe(icons.length);
+  });
 });
 
 describe('toolChipKindLabel', () => {
-  it('is undefined when no kind is given — the badge stays hidden', () => {
+  it('is undefined when no kind is given — nothing is rendered for it at all', () => {
     expect(toolChipKindLabel(undefined)).toBeUndefined();
   });
 
+  // The badge no longer shows on screen; the label is now what a screen reader reads for the
+  // row's kind, which is exactly why it must stay a real word and not be dropped with the
+  // styling. Hidden is not deleted.
   it.each([
     ['read', 'read'],
     ['act', 'act'],
     ['info', 'info'],
-  ] as const)('labels kind "%s" as "%s"', (kind, label) => {
+  ] as const)('labels kind "%s" as "%s" for assistive tech', (kind, label) => {
     expect(toolChipKindLabel(kind)).toBe(label);
   });
 });

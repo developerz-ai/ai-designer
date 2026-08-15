@@ -649,6 +649,37 @@ describe('turn attribution on the SwToPanel stream (#168)', () => {
     );
   });
 
+  it('accepts a turn-stamped edit-recorded/changeset push AND a legacy unstamped one', () => {
+    const edit = { intent: 'lift the CTA', selector };
+    // Turn-path pushes stamp the turn that recorded the edit…
+    expect(
+      SwToPanel.safeParse({ type: 'edit-recorded', edit, tabId: 7, turnId: 't1' }).success,
+    ).toBe(true);
+    // …curation pushes (and pre-stamp emitters) stay valid without one.
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit, tabId: 7 }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit }).success).toBe(true);
+    const changeset = {
+      url: 'https://example.com',
+      createdAt: new Date().toISOString(),
+      sessionId: '123e4567-e89b-42d3-a456-426614174000',
+      edits: [],
+    };
+    expect(
+      SwToPanel.safeParse({ type: 'changeset', changeset, tabId: 7, turnId: 't1' }).success,
+    ).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'changeset', changeset, tabId: 7 }).success).toBe(true);
+    // A malformed stamp is still rejected — additive never means unchecked.
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit, turnId: 42 }).success).toBe(false);
+  });
+
+  it('thread-get and debug-log-get accept an optional conversation tabId (additive)', () => {
+    expect(PanelToSw.safeParse({ type: 'thread-get' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'thread-get', tabId: 7 }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'thread-get', tabId: 'x' }).success).toBe(false);
+    expect(PanelToSw.safeParse({ type: 'debug-log-get' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'debug-log-get', tabId: 7 }).success).toBe(true);
+  });
+
   it('parses the user-message ack with and without the turnId it now names', () => {
     expect(UserMessageResult.safeParse({ ok: true, turnId: 42 }).success).toBe(false);
     expect(UserMessageResult.safeParse({ ok: true }).success).toBe(true); // pre-#168 SW reply

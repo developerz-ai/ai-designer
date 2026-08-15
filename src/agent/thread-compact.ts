@@ -543,6 +543,10 @@ export const STANDING_CONTEXT_APPROX_TOKENS = 11_764;
  *  the results being acted on — while guaranteeing the compaction actually reclaims something. */
 const TAIL_FRACTION_OF_BUDGET = 0.5;
 
+/** The transcript's guaranteed floor of the compaction budget, whatever the standing-context
+ *  estimate claims it needs — see the derivation at the `transcriptBudget` computation below. */
+const MIN_TRANSCRIPT_FRACTION = 0.5;
+
 /** Approximate prompt tokens for a transcript, including the standing context it shares the window
  *  with. Same chars/4 approximation the rest of this module uses. */
 export function approxPromptTokens(
@@ -585,7 +589,16 @@ export function compactToWindow(
 
   // Both thresholds are expressed to `compactSessionThread` in ITS vocabulary (approx tokens of
   // transcript, standing context excluded) so there is one compaction implementation, not two.
-  const transcriptBudget = Math.max(0, budget - standing);
+  //
+  // Never let the standing-context ESTIMATE eat the whole window: at 8k it exceeds the estimate
+  // outright, `transcriptBudget` went to 0, and `tailStartIndex` fell through to "the last user
+  // message" on EVERY step — the turn's own tool results discarded each step, so the agent re-read
+  // the page forever. Half the budget is a floor, not a target: it only binds when the estimate
+  // says there is no room at all.
+  const transcriptBudget = Math.max(
+    Math.floor(budget * MIN_TRANSCRIPT_FRACTION),
+    budget - standing,
+  );
   const { messages: compacted, compacted: didCompact } = compactSessionThread(
     messages,
     transcriptBudget,

@@ -128,6 +128,16 @@ export default defineConfig({
     },
   }),
   vite: () => ({
+    // `wxt prepare`/`wxt dev` import every entrypoint through vite-node. When the wxt CLI
+    // runs under Bun (Windows dev boxes without Node — Bun's .exe shims execute node-shebang
+    // bins with Bun itself), vite-node externalizes zod and native-imports it. Bun exposes
+    // `__esModule` on EVERY ESM namespace object, so vite-node's interopModule() mistakes
+    // zod's `default` export (the `z` namespace re-export) for a transpiled-CJS module and
+    // swaps the real namespace for it — which has no `z`, so `import { z } from 'zod'`
+    // arrives undefined and prepare dies in src/shared/attachments.ts. Inlining zod keeps it
+    // on vite-node's own evaluator (no native-import interop). SSR options never reach the
+    // extension build (client-only), and the cost on Node runners is one processed dep.
+    ssr: { noExternal: ['zod'] },
     build: {
       target: 'esnext',
       minify: 'esbuild',

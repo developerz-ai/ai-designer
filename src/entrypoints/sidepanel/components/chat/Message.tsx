@@ -8,6 +8,7 @@ import { AttachmentChip } from './AttachmentChip';
 import './Message.scss';
 import { MarkdownView } from './MarkdownView';
 import { ToolCallList } from './ToolCallList';
+import { workingPhaseKey } from './turn-phase';
 
 // One turn in the thread — user/assistant/system, rendered + dispatch-only (CLAUDE.md "SolidJS +
 // SRP": no business logic here, just mapping a `ChatMessage`-shaped prop onto markup). Assistant
@@ -88,17 +89,22 @@ export function Message(rawProps: MessageProps) {
         {(speaker) => <span class="dz-message__speaker">{speaker()}</span>}
       </Show>
 
-      {/* Says what is happening while the reply is still empty. The trailing caret alone answers
-          "is it alive?" only once tokens start landing — the gap before the first token is
-          exactly when a user is most likely to think the panel has hung. */}
-      <Show when={props.streaming && props.role === 'assistant'}>
+      {/* Says what is happening while the reply is still empty — and ONLY while it is empty: the
+          moment the first token lands, the reply text itself (with its trailing caret) answers
+          "is it alive?", and a status line under a growing answer reads as a second speaker. The
+          gap before the first token is exactly when a user is most likely to think the panel has
+          hung. The words come from the turn's own tool calls (`turn-phase.ts`) and CHANGE as the
+          turn moves: a single hardcoded "Editing the page…" was false for most of that gap —
+          every turn reads first — and a sentence that never changes is indistinguishable from a
+          hung panel. */}
+      <Show when={props.streaming && props.role === 'assistant' && props.text.length === 0}>
         <p class="dz-message__working">
           <span class="dz-message__dots" aria-hidden="true">
             <span />
             <span />
             <span />
           </span>
-          {i18n.t('message.working')}
+          {i18n.t(workingPhaseKey(props.toolCalls))}
         </p>
       </Show>
 

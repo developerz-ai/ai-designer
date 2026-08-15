@@ -19,25 +19,46 @@ export interface Suggestion {
   icon?: IconName;
 }
 
-// The set itself is fixed (asserted verbatim in test/unit/suggestion-chips.test.ts); only the
-// `icon` field is new.
+// A tap SENDS immediately (`ChatPanel.selectSuggestion` → `sendMessage`), so every entry has to be
+// a COMPLETE instruction that works on WHATEVER page the user is on. The previous three failed
+// that and a real user said so: "Copy nvidia's hero" hardcoded someone else's brand and assumed
+// you wanted it, "Debug this filter" named a control most pages don't have, and "Ship to
+// developerz.ai" offered a TERMINAL action as an opener — before the first turn there are no
+// accepted edits to ship. The replacements ask for work any page can receive; the set is asserted
+// in test/unit/suggestion-chips.test.ts, prompts included.
 export const SUGGESTIONS: Suggestion[] = [
   {
-    label: i18n.t('suggestion.copyHero.label'),
-    prompt: i18n.t('suggestion.copyHero.prompt'),
-    mode: 'copy',
-    icon: 'copy',
+    label: i18n.t('suggestion.modernize.label'),
+    prompt: i18n.t('suggestion.modernize.prompt'),
+    // NO `mode` key, deliberately. `Mode` is copy | debug, and this turn is neither: it is ordinary
+    // design work on the page already in front of you. Pinning 'copy' looked right from the base
+    // MODES prose and was wrong in practice — the copy ADDENDUM (`modes.ts` COPY_ADDENDUM) is
+    // written entirely around a REFERENCE ("Read the reference's identity first… browsing it in a
+    // background tab"), so the agent was instructed to go read a site the user never named. With
+    // the key omitted, `inferMode` runs, and the prompt is worded to match neither keyword list, so
+    // the turn carries no addendum at all — the correct amount of instruction for "make this page
+    // nicer". The two rows below pin `debug` because we DO know their activity at authoring time.
+    // Spacing/type/colour dials, not a duplicate-page glyph: nothing is being copied from anywhere.
+    icon: 'sliders',
   },
   {
-    label: i18n.t('suggestion.debugFilter.label'),
-    prompt: i18n.t('suggestion.debugFilter.prompt'),
+    label: i18n.t('suggestion.mobile.label'),
+    prompt: i18n.t('suggestion.mobile.prompt'),
+    // Diagnostic: find what breaks at a narrow width, then fix it. The debug addendum's
+    // `setDevice` + `checkResponsive` emphasis is exactly this turn's tool order.
     mode: 'debug',
-    icon: 'bug',
+    // Look at the page at another width — `bug` belongs to a defect report, not to a look-and-see.
+    icon: 'eye',
   },
   {
-    label: i18n.t('suggestion.ship.label'),
-    prompt: i18n.t('suggestion.ship.prompt'),
-    icon: 'ship',
+    label: i18n.t('suggestion.accessibility.label'),
+    prompt: i18n.t('suggestion.accessibility.prompt'),
+    // Diagnostic: an audit that reports findings with evidence, which is what debug mode's
+    // `a11ySnapshot`-first emphasis and repro-steps discipline produce.
+    mode: 'debug',
+    // "Find …" — a search, not a `warning` triangle: that glyph is this panel's error signal and
+    // would read as "this page is already broken" before the agent has looked at anything.
+    icon: 'search',
   },
 ];
 

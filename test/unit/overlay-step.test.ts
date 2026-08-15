@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTool, overlayLabel } from '@/shared/overlay-step';
+import {
+  ACT_OPS,
+  ACT_PAGE_OPS,
+  classifyTool,
+  DRIVE_OPS,
+  EDIT_OPS,
+  isActOperation,
+  overlayLabel,
+  RECORD_OPS,
+} from '@/shared/overlay-step';
 
 describe('classifyTool', () => {
   it('classifies a mutating tool as "act" even without a selector', () => {
@@ -71,14 +80,28 @@ describe('classifyTool: dispatcher-shaped inputs', () => {
     ).toEqual({ selector: '.hero', kind: 'act' });
   });
 
-  it('classifies a grouped resource by its op, whatever the tool is called', () => {
-    // The property the consolidation depends on: renaming the outer tool cannot change the accent.
-    for (const tool of ['edit', 'manage', 'anything']) {
+  it('classifies every grouped resource by its op — the dispatcher set, not a free-for-all', () => {
+    // Only a KNOWN dispatcher's input names an operation (`DISPATCHER_TOOLS`): reading `op`/`type`
+    // off arbitrary tool names is how an MCP tool's own field relabelled its call (below).
+    for (const tool of ['edit', 'interact', 'session', 'inspect']) {
       expect(classifyTool(tool, { op: 'setStyle', selector: '.cta' }), tool).toEqual({
         selector: '.cta',
         kind: 'act',
       });
     }
+  });
+
+  it('never reads an operation off an unknown (MCP) tool input', () => {
+    // `acme__task`'s input carries a `type` field of ITS vocabulary — it is not our operation, and
+    // treating it as one labelled the call "bug" in the chip, overlay, log and rehydrated thread.
+    expect(classifyTool('acme__task', { type: 'bug', title: 'broken checkout' })).toEqual({
+      kind: 'info',
+    });
+    // …and an `op`-shaped field is equally out of bounds on a name we do not dispatch.
+    expect(classifyTool('acme__manage', { op: 'setStyle', selector: '.cta' })).toEqual({
+      selector: '.cta',
+      kind: 'read', // it targets an element, but it is NOT one of our mutations
+    });
   });
 
   it('still reads a grouped READ as a read', () => {
@@ -89,7 +112,7 @@ describe('classifyTool: dispatcher-shaped inputs', () => {
   });
 
   it('finds a selector nested under `params`', () => {
-    expect(classifyTool('manage', { op: 'click', params: { selector: '#go' } })).toEqual({
+    expect(classifyTool('interact', { op: 'click', params: { selector: '#go' } })).toEqual({
       selector: '#go',
       kind: 'act',
     });
@@ -102,6 +125,21 @@ describe('classifyTool: dispatcher-shaped inputs', () => {
       selector: 'main',
       kind: 'read',
     });
+  });
+
+  it('classifies the REAL acting page ops — setField/pageCall/flush drive the page', () => {
+    // These are `PageOp` discriminants (src/shared/page-ops.ts). The old list named
+    // `setFieldValue`/`submitForm`/`focusField` — operations that do not exist — so every one of
+    // these rendered in the read accent.
+    expect(classifyTool('interact', { op: 'setField', selector: '#email', value: 'x' })).toEqual({
+      selector: '#email',
+      kind: 'act',
+    });
+    expect(classifyTool('interact', { op: 'pageCall', path: 'app.reload' })).toEqual({
+      kind: 'act',
+    });
+    expect(classifyTool('pageOp', { op: 'flush' })).toEqual({ kind: 'act' });
+    expect(classifyTool('pageOp', { op: 'media', action: 'pause' })).toEqual({ kind: 'act' });
   });
 
   it('covers the new structural mutations', () => {
@@ -125,6 +163,26 @@ describe('classifyTool: dispatcher-shaped inputs', () => {
   });
 });
 
+describe('the exported classification vocabulary (turn-phase.ts derives from these)', () => {
+  it('ACT_OPS is exactly the union of the three exported subsets — same membership as before', () => {
+    expect([...ACT_OPS].sort()).toEqual([...EDIT_OPS, ...DRIVE_OPS, ...RECORD_OPS].sort());
+  });
+
+  it('the subsets are disjoint — every operation is classified exactly once', () => {
+    const all = [...EDIT_OPS, ...DRIVE_OPS, ...RECORD_OPS, ...ACT_PAGE_OPS];
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it('isActOperation answers for every acting set and denies reads', () => {
+    for (const op of [...EDIT_OPS, ...DRIVE_OPS, ...RECORD_OPS, ...ACT_PAGE_OPS]) {
+      expect(isActOperation(op), op).toBe(true);
+    }
+    for (const op of ['query', 'getStyles', 'describe', 'box', 'overflow', 'screenshot']) {
+      expect(isActOperation(op), op).toBe(false);
+    }
+  });
+});
+
 describe('overlayLabel: names the operation, not the wrapper', () => {
   it('prefers the op over the tool name when the input is available', () => {
     expect(overlayLabel('edit', '.hero', { op: 'setStyle', selector: '.hero' })).toBe(
@@ -135,5 +193,9 @@ describe('overlayLabel: names the operation, not the wrapper', () => {
   it('keeps the old two-argument behaviour', () => {
     expect(overlayLabel('navigate')).toBe('navigate');
     expect(overlayLabel('setStyle', '.hero')).toBe('setStyle → .hero');
+  });
+
+  it('keeps an MCP tool own name even when its input carries a `type` field', () => {
+    expect(overlayLabel('acme__task', undefined, { type: 'bug', title: 'x' })).toBe('acme__task');
   });
 });
