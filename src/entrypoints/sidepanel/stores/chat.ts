@@ -441,6 +441,12 @@ let ackPending = false;
 let heldTurnEvents: SwToPanel[] = [];
 const MAX_HELD_EVENTS = 200;
 
+// Which conversation a `send` belongs to. `newConversation` advances it, so a send whose ack is
+// still in flight when the reset lands sees the bump and drops its ack instead of appending the
+// reset-away bubble to the fresh transcript (the SW-side reset stands down for a NEWER turn; this
+// is the mirror rule for a send the reset beat).
+let conversationGen = 0;
+
 function onStream(msg: SwToPanel): void {
   const verdict = classifyEvent(msg, {
     activeTurnId: activeTurnId(),
@@ -601,6 +607,7 @@ export async function send(
   setError(null);
   setStreaming(true);
   ackPending = true;
+  const gen = conversationGen;
   const multi = multiSelectors();
   try {
     const r = await request(
@@ -620,6 +627,10 @@ export async function send(
       },
       UserMessageResult,
     );
+    // A reset advanced the conversation while this ack was in flight: the ack is dead news for a
+    // transcript that no longer exists. Touch nothing — `newConversation` already normalized the
+    // local state, and appending here would resurrect the reset-away bubble.
+    if (gen !== conversationGen) return false;
     if (!r.ok) {
       setStreaming(false);
       setError(r.error ?? 'The agent did not accept the message. Try again.');
@@ -639,13 +650,57 @@ export async function send(
     for (const m of held) onStream(m);
     return true;
   } catch (e) {
-    setStreaming(false);
-    setError(errMsg(e));
+    if (gen === conversationGen) {
+      setStreaming(false);
+      setError(errMsg(e));
+    }
     return false;
   } finally {
     ackPending = false;
     heldTurnEvents = [];
   }
+}
+
+/** Start a FRESH conversation on the current tab (the chat toolbar's "New conversation").
+ *
+ *  The SW does the real work (`conversation-new`): aborts any in-flight turn the way Stop does,
+ *  waits for its finalization to ARCHIVE the partial to history, then resets its per-tab thread +
+ *  debug log and re-keys the changeset — the recorded edits survive, because the live page still
+ *  carries them. Only after the SW acks does this replica reset: transcript cleared, turn key
+ *  dropped, streaming off, usage zeroed — then a hydrate confirms against the SW's (now empty)
+ *  thread, exactly the "empty chat is the truth for this tab" path `hydrateThread` already owns.
+ *  Pinned to the conversation this panel is SHOWING (`viewTabId`), same rule as `copyDebugLog`.
+ *  Returns whether the SW accepted; a refusal surfaces as a composer-level notice and leaves the
+ *  transcript untouched. Never throws. */
+export async function newConversation(): Promise<boolean> {
+  try {
+    const r = await request(
+      { type: 'conversation-new', tabId: viewTabId() ?? undefined },
+      OkResult,
+    );
+    if (!r.ok) {
+      setError(r.error ?? 'Could not start a new conversation.');
+      return false;
+    }
+  } catch (e) {
+    setError(errMsg(e));
+    return false;
+  }
+  // The reset supersedes any hydrate still in flight — its replies predate the reset and would
+  // resurrect the archived transcript (same last-writer-wins rule as `send`). Same for a send
+  // whose ack hasn't landed: advance the generation so the delayed ack drops instead of appending
+  // its bubble to the fresh transcript, and drop the events it was holding for a turn that's over.
+  conversationGen++;
+  ackPending = false;
+  heldTurnEvents = [];
+  hydrateSeq++;
+  setMessages([]);
+  setStreaming(false);
+  setActiveTurnId(null);
+  setUsage(ZERO_USAGE);
+  setError(null);
+  void hydrateThread();
+  return true;
 }
 
 /** Abort the in-flight turn (Stop button in the composer) without ending the session — mirrors

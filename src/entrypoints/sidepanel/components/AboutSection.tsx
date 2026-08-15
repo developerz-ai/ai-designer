@@ -1,6 +1,7 @@
 import { i18n } from '#i18n';
 import { NEW_ISSUE_URL, REPO_URL } from '../../../shared/links';
 import { DebugLogCopy } from './DebugLogCopy';
+import { DebugLogView } from './DebugLogView';
 import { Icon } from './Icon';
 import './AboutSection.scss';
 
@@ -26,6 +27,9 @@ export function AboutSection() {
       </a>
       {/* Directly under the issue link, because the useful order is copy → open → paste. */}
       <DebugLogCopy />
+      {/* …and the viewer under the copy, for the user who wants to READ the trace before (or
+          instead of) reporting it. */}
+      <DebugLogView />
     </section>
   );
 }

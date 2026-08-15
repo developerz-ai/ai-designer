@@ -1,0 +1,27 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// Quiet toolbar action — ghost, borderless, muted at rest: it sits above the thread and must not
+// compete with the conversation (the same restraint as `.dz-debug-log`). The armed state warms the
+// label instead of turning red: archiving is reversible-adjacent (the thread lands in History),
+// not destructive.
+.dz-newconv {
+  @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+
+  padding: 0 tokens.$dz-space-2;
+  color: var(--dz-fg-muted);
+  font-size: tokens.$dz-font-sm;
+
+  .dz-icon {
+    flex: none;
+  }
+
+  &:not(:disabled):hover {
+    color: var(--dz-fg-strong);
+  }
+
+  &[data-armed='true'] {
+    color: var(--dz-fg-strong);
+    background: var(--dz-wash-hover);
+  }
+}

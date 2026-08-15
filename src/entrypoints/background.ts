@@ -1969,6 +1969,93 @@ export default defineBackground(() => {
           thread: toThreadView(session.messages),
         } satisfies ThreadGetResult;
       }
+      // Start a FRESH conversation on the current tab. Three steps, in order:
+      //   1. ABORT any in-flight turn exactly like `session-stop` (same clears, same reason each
+      //      is cleared there).
+      //   2. ARCHIVE — which is a WAIT, not a write: the aborted turn's `.then` finalization
+      //      already persists its partial messages to the session thread and appends them to
+      //      history (`historyStore.appendTurn`, keyed by the changeset's sessionId — the exact
+      //      path every finished turn takes), and every PREVIOUS turn of this conversation is in
+      //      history the same way. So the bounded settle-wait (the supersede pattern from
+      //      `user-message`) is all the archiving there is to do; a provider that hangs on abort
+      //      forfeits that partial rather than holding the reset hostage.
+      //   3. RESET — wipe the tab's thread/log/usage and RE-KEY the changeset to a fresh
+      //      sessionId on BOTH mirrors (the persister record is what the next turn loads FIRST),
+      //      so the next turn opens a NEW history conversation. The EDITS survive deliberately:
+      //      the live page still carries them and Ship must stay truthful about what it hands off.
+      // The session LIFECYCLE is untouched — the session stays open for the next message; only
+      // the conversation resets.
+      case 'conversation-new': {
+        // Same conversation resolution as `thread-get`: an explicit ask wins (when it has a
+        // session), else running turn's tab → active tab → last turn's tab.
+        const active = (await resolveTargetTab())?.id ?? null;
+        const tabId =
+          (msg.tabId !== undefined && hasSession(msg.tabId) ? msg.tabId : null) ??
+          conversationTabId([runningTurnTabId, active, lastTurnTabId], hasSession) ??
+          active;
+        const priorTurn = settlingTurn;
+        if (turnAbort) {
+          turnAbort.abort();
+          turnAbort = null;
+          runningTurnId = null;
+          runningTurnTabId = null;
+          turnChangeset = null;
+        }
+        if (priorTurn) {
+          const settledInTime = await Promise.race([
+            priorTurn.done.then(() => true),
+            browseDelay(SUPERSEDE_SETTLE_MS).then(
+              () => false,
+              () => false,
+            ),
+          ]);
+          if (!settledInTime) forfeitedTurns.add(priorTurn.id);
+        }
+        // No session = nothing to archive or reset; the next turn starts fresh anyway.
+        if (tabId === null || !hasSession(tabId)) return { ok: true };
+        // Ride the per-tab changeset chain (#142 item 1) so the re-key can't interleave with a
+        // curation op's save→mirror tail or a starting turn's rehydration — and so both mirrors
+        // adopt the SAME re-keyed object.
+        await enqueueChangesetMutation(tabId, async () => {
+          // A `user-message` that slipped in after the abort above owns this tab again by the
+          // time this callback's chain slot comes up — its rehydration (same chain) and thread
+          // append may already have landed. That turn is NEWER news than this reset: wiping now
+          // would clear its persisted user message from under it, so the reset stands down
+          // instead. Checked again before the writes below — the loads await.
+          const newerTurnOwnsTab = (): boolean => runningTurnTabId === tabId && turnAbort !== null;
+          if (newerTurnOwnsTab()) return;
+          const persister = createSessionChangesetPersister(tabId);
+          const priorState = await persister.load();
+          const current = sessions.get(tabId);
+          if (!current) return; // tab closed under us — nothing left to reset
+          // Same committed-URL guard as turn start (above): the persister record can hold a
+          // changeset for a URL this tab has since left — nav-clear is async, and a reset issued
+          // right after a navigation can beat it. Re-keying that record would carry another
+          // document's edits into the fresh conversation, and Ship would hand off edits the live
+          // page no longer carries. On mismatch BOTH mirrors restart EMPTY for the current
+          // committed URL (redo stack dropped too — it only references the stale record's edits).
+          const prior = priorState?.changeset ?? current.changeset;
+          const committedUrl =
+            (await readCommittedUrl(tabId)) ??
+            lastCommittedUrl.get(tabId) ??
+            (await chrome.tabs.get(tabId).catch(() => undefined))?.url;
+          const stale = committedUrl !== undefined && prior.url !== committedUrl;
+          const rekeyed = stale
+            ? emptyChangeset(committedUrl, new Date().toISOString(), crypto.randomUUID())
+            : { ...prior, sessionId: crypto.randomUUID() };
+          if (newerTurnOwnsTab()) return;
+          await persister.save({
+            changeset: rekeyed,
+            redoStack: stale ? [] : (priorState?.redoStack ?? []),
+          });
+          await sessions.resetConversation(tabId, rekeyed);
+        });
+        // Tell every open panel the turn (if one ran) is over — this panel resets its transcript
+        // itself, but a second window's in-flight bubble settles through the same liveness path a
+        // Stop uses. The lifecycle value is unchanged; only `turnRunning` is news here.
+        postToPanel({ type: 'session-state', state: sessionState, turnRunning: isTurnRunning() });
+        return { ok: true };
+      }
 
       // --- history: last-10 conversations + reports (slice 08) ------------
       // Lightweight summaries for the History SPA list — never the full thread/report payload.

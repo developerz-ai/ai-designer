@@ -154,6 +154,26 @@ export class SessionStore {
     return this.patch(tabId, { changeset });
   }
 
+  /** Start a FRESH conversation on a tab (the `conversation-new` RPC): wipe the thread, debug
+   *  log, usage and turn status — everything the next turn folds into its model input — while
+   *  adopting `changeset` as the tab's record. The caller passes the changeset RE-KEYED to a fresh
+   *  `sessionId` (edits kept — the live page still carries them and Ship must stay truthful) so
+   *  the next turn opens a NEW history conversation; building the re-key here would hide that the
+   *  persister mirror (`changeset/store.ts`) must adopt the SAME object. `lastMode` resets too: a
+   *  fresh conversation must not inherit the archived one's copy/debug stickiness. Throws if the
+   *  tab has no session — callers check first (no session = nothing to reset). */
+  async resetConversation(tabId: number, changeset: Changeset): Promise<TurnSession> {
+    this.require(tabId);
+    return this.patch(tabId, {
+      messages: [],
+      log: [],
+      usage: { steps: 0, tokens: 0 },
+      status: 'idle',
+      lastMode: undefined,
+      changeset,
+    });
+  }
+
   /** Append one debug-log entry for a tab, ring-buffered at `LOG_CAP`.
    *
    *  A NO-OP for a tab with no session yet, rather than a throw: this is called from the turn's
