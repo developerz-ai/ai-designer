@@ -95,6 +95,7 @@ export const RESOURCE_OF: Readonly<Record<string, ResourceName>> = {
   wrapNode: 'edit',
   unwrapNode: 'edit',
   replaceNode: 'edit',
+  bulkStructural: 'edit',
   injectCss: 'edit',
   // --- interact: moves the browser to reach a state. Changes no design. ----------------------
   click: 'interact',
