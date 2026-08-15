@@ -228,11 +228,17 @@ async function configureProvider(panel: Page): Promise<void> {
   await openRoom(panel, 'Settings');
   await panel.locator('#dz-key').fill('sk-or-v1-…your-own-key…');
   await panel.getByRole('button', { name: 'Refresh' }).click();
+  // #dz-model is a text combobox (ModelCombobox), disabled while the catalogue loads and NOT
+  // auto-filled when more than one model comes back — type the pick, then Save (whose click
+  // blurs the input, which is what commits a typed value).
   await panel.waitForFunction(
-    () => Boolean((document.querySelector('#dz-model') as HTMLSelectElement | null)?.value),
+    () => (document.querySelector('#dz-model') as HTMLInputElement | null)?.disabled === false,
     undefined,
     { timeout: 15_000 },
   );
+  const model = panel.locator('#dz-model');
+  await model.click();
+  await model.fill('anthropic/claude-sonnet-5');
   await panel.getByRole('button', { name: 'Save', exact: true }).click();
   await panel.getByText('Provider saved and reachable.').waitFor({ timeout: 15_000 });
 }
