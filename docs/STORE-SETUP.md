@@ -116,6 +116,47 @@ gh secret set AMO_JWT_ISSUER     # when Firefox is actually ready
 gh secret set AMO_JWT_SECRET
 ```
 
-Then uncomment the publish step in `.github/workflows/release.yml` and a tag ships to the
-store. Until then a tag builds, signs, and attaches artifacts to a GitHub Release only —
-which is the right state for manual QA.
+The publish step in `.github/workflows/release.yml` is live and **guarded on
+`CWS_EXTENSION_ID` being set**: the moment the four `CWS_*` secrets exist, the next tag
+uploads to the store and auto-publishes. Until then a tag builds, signs, and attaches
+artifacts to a GitHub Release only — which is the right state for manual QA. No workflow
+edit needed when the secrets land.
+
+## 5. Dry-run the upload (before trusting a tag)
+
+Validates the credentials and the zip against the real Web Store API **without
+publishing** — the upload lands as a draft you can discard in the dev console:
+
+```bash
+bun run zip:store
+bunx chrome-webstore-upload-cli@3 upload \
+  --source build/*-chrome.zip \
+  --extension-id "$CWS_EXTENSION_ID" \
+  --client-id "$CWS_CLIENT_ID" \
+  --client-secret "$CWS_CLIENT_SECRET" \
+  --refresh-token "$CWS_REFRESH_TOKEN"
+```
+
+No `--auto-publish` = upload only. Check the item shows the new version as a draft in the
+[dev console](https://chrome.google.com/webstore/devconsole), then discard or submit it by
+hand. Two failure modes worth knowing: `invalid_grant` = the refresh token died (consent
+screen left in *Testing*, or token unused for six months) — re-run the consent flow;
+`ITEM_NOT_UPDATABLE` = the item is stuck in a pending review, wait it out.
+
+## 6. Rollback / unpublish
+
+The Web Store has **no downgrade**: versions only go up, and a published bad version stays
+until something higher replaces it.
+
+- **Bad version live** → fix, bump, tag again. That IS the rollback path: re-tag the last
+  good code as a higher version (`git checkout v1.4.0 && git tag v1.4.2 && git push origin
+  v1.4.2`). Review time applies (usually hours, `debugger` items can take longer).
+- **Stop the bleeding now** → dev console → the item → **Unpublish**. Takes the listing
+  down for new installs within ~hours; existing installs keep working and keep the
+  last-synced version. Republishing later needs no new review if the version didn't change.
+- **Catastrophic (leaked secret in a shipped bundle)** → unpublish, rotate the secret, and
+  remember installed copies still hold the old bundle — rotation server-side is the only
+  real kill switch. (BYOK means the only repo-side secrets in scope are the publish
+  credentials themselves — rotate in Google Cloud console.)
+- A submitted-but-pending version can be **cancelled** from the dev console without
+  affecting the live one.
