@@ -237,8 +237,10 @@ async function configureProvider(panel: Page): Promise<void> {
     { timeout: 15_000 },
   );
   const model = panel.locator('#dz-model');
-  await model.click();
   await model.fill('anthropic/claude-sonnet-5');
+  // Enter takes the highlighted row AND closes the list — the open listbox otherwise covers
+  // the Save button and Playwright (correctly) refuses the click.
+  await model.press('Enter');
   await panel.getByRole('button', { name: 'Save', exact: true }).click();
   await panel.getByText('Provider saved and reachable.').waitFor({ timeout: 15_000 });
 }
