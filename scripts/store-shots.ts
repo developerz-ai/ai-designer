@@ -381,8 +381,10 @@ async function main(): Promise<void> {
     console.log('running the canned turn…');
     await panel.getByPlaceholder('Tell the agent what to change…').fill(INSTRUCTION);
     await panel.getByRole('button', { name: 'Send' }).click();
+    // .first(): the final text renders in the bubble AND the thread's aria-live announcer.
     await panel
       .getByText('recorded in the changeset', { exact: false })
+      .first()
       .waitFor({ timeout: 45_000 });
     await panel.waitForTimeout(800); // stream settle + usage row
 
