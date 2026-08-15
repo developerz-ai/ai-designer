@@ -47,8 +47,9 @@ jobs:
       - name: Render assets
         run: bun run store:shots
       - name: Upload store assets
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: store-assets
           path: docs/store/assets/*.png
-          if-no-files-found: error
+          if-no-files-found: warn

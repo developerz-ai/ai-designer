@@ -295,6 +295,29 @@ async function renderComposition(
 
 // --- scenes -------------------------------------------------------------------------------------
 
+let panelForDiagnostics: Page | undefined;
+
+async function dumpFailureState(err: unknown): Promise<void> {
+  console.error(String(err));
+  const panel = panelForDiagnostics;
+  if (!panel || panel.isClosed()) return;
+  try {
+    await panel.screenshot({ path: path.join(OUT_DIR, 'failure-panel.png') });
+    const status = await panel
+      .locator('.dz-settings__status')
+      .innerText({ timeout: 1_000 })
+      .catch(() => '(no status element)');
+    const body = await panel
+      .locator('body')
+      .innerText({ timeout: 1_000 })
+      .catch(() => '');
+    console.error(`settings status: ${status}`);
+    console.error(`panel text:\n${body.slice(0, 2_000)}`);
+  } catch {
+    // diagnostics must never mask the real failure
+  }
+}
+
 async function main(): Promise<void> {
   if (!existsSync(EXTENSION_DIR)) {
     throw new Error(`Built extension not found at ${EXTENSION_DIR} — run \`bun run build\` first.`);
@@ -321,6 +344,10 @@ async function main(): Promise<void> {
     const panel = await context.newPage();
     await panel.setViewportSize({ width: 392, height: 704 });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+
+    // Any failure below dumps the panel's state — a blind TimeoutError from CI costs a full
+    // build round-trip to diagnose; a screenshot + the status line usually names the cause.
+    panelForDiagnostics = panel;
 
     console.log('configuring provider…');
     await configureProvider(panel);
@@ -439,9 +466,16 @@ async function main(): Promise<void> {
     console.log(`  wrote ${path.relative(process.cwd(), path.join(OUT_DIR, 'promo-440x280.png'))}`);
 
     console.log('done.');
+  } catch (err) {
+    await dumpFailureState(err); // before close() — diagnostics need the live panel
+    throw err;
   } finally {
     await context.close();
   }
 }
 
-await main();
+try {
+  await main();
+} catch {
+  process.exit(1); // already dumped inside main, where the panel was still alive
+}
