@@ -69,14 +69,14 @@ describe('toUserContent: no attachments', () => {
 });
 
 describe('toUserContent: images', () => {
-  it('emits a text part plus one image part carrying the data URL and its media type', () => {
+  it('emits a text part plus one image file part carrying the data URL and its media type', () => {
     const content = toUserContent('match this', [image()]);
     const list = parts(content);
     expect(list).toHaveLength(2);
     expect(list[0]?.type).toBe('text');
     const img = list[1];
-    if (img?.type !== 'image') throw new Error('expected an image part');
-    expect(img.image).toBe(PNG);
+    if (img?.type !== 'file') throw new Error('expected an image file part');
+    expect(img.data).toBe(PNG);
     expect(img.mediaType).toBe('image/png');
   });
 
@@ -98,11 +98,11 @@ describe('toUserContent: images', () => {
     const list = parts(content);
     expect(list).toHaveLength(3);
     const [first, second] = [list[1], list[2]];
-    if (first?.type !== 'image' || !second || second.type !== 'image') {
-      throw new Error('expected two image parts');
+    if (first?.type !== 'file' || !second || second.type !== 'file') {
+      throw new Error('expected two image file parts');
     }
-    expect(first.image).toBe(PNG);
-    expect(second.image).toBe(WEBP);
+    expect(first.data).toBe(PNG);
+    expect(second.data).toBe(WEBP);
     expect(second.mediaType).toBe('image/webp');
 
     const line = textPart(content);
@@ -162,7 +162,7 @@ describe('toUserContent: text attachments', () => {
     const content = toUserContent('match this using those tokens', [text(), image()]);
     const list = parts(content);
     expect(list).toHaveLength(2);
-    expect(list[1]?.type).toBe('image');
+    expect(list[1]?.type).toBe('file');
     const body = textPart(content);
     expect(body).toContain('reference image');
     expect(body).toContain('text attachment');
@@ -180,7 +180,7 @@ describe('toUserContent: totality', () => {
     ];
     expect(() => toUserContent('', many)).not.toThrow();
     const list = parts(toUserContent('', many));
-    expect(list.filter((p) => p.type === 'image')).toHaveLength(3);
+    expect(list.filter((p) => p.type === 'file')).toHaveLength(3);
     // An empty instruction leaves no blank gap between the context line and the paste block.
     expect(textPart(toUserContent('', many))).not.toContain('\n\n\n');
   });
@@ -273,7 +273,7 @@ describe('round-trip through the schemas that actually gate this', () => {
     if (typeof content === 'string' || !Array.isArray(content)) {
       throw new Error('expected the compacted content to stay multipart');
     }
-    expect(content.some((p) => p.type === 'image')).toBe(false);
+    expect(content.some((p) => p.type === 'file')).toBe(false);
     expect(content.every((p) => p.type === 'text')).toBe(true);
     // And the compacted result is still a legal model message (session rehydrate validates it).
     expect(() => modelMessageSchema.parse(compacted[0])).not.toThrow();

@@ -134,7 +134,10 @@ describe('generateReport: assembles a grounded, agent-authored brief', () => {
     expect(calls[0]?.schema).toBeDefined();
     expect(calls[0]?.system).toMatch(/senior web developer/i);
     const parts = calls[0]?.messages[0]?.content;
-    expect(Array.isArray(parts) && parts.some((p) => p.type === 'image')).toBe(true);
+    expect(
+      Array.isArray(parts) &&
+        parts.some((p) => p.type === 'file' && p.mediaType.startsWith('image/')),
+    ).toBe(true);
   });
 
   it('falls back to a deterministic summary when the model reply is malformed', async () => {

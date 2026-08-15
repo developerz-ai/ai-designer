@@ -61,7 +61,7 @@ describe('runInspect', () => {
     if (!call) throw new Error('model was not called');
     const [msg] = call.messages;
     expect(msg?.role).toBe('user');
-    expect(msg?.content).toContainEqual({ type: 'image', image: PNG });
+    expect(msg?.content).toContainEqual({ type: 'file', data: PNG, mediaType: 'image/png' });
     expect(JSON.stringify(msg?.content)).toContain('contrast');
   });
 
@@ -162,7 +162,7 @@ describe('runDescribeScene', () => {
     const [call] = generated;
     if (!call) throw new Error('model was not called');
     const [msg] = call.messages;
-    expect(msg?.content).toContainEqual({ type: 'image', image: PNG });
+    expect(msg?.content).toContainEqual({ type: 'file', data: PNG, mediaType: 'image/png' });
   });
 
   it('does not call the model when the capture fails', async () => {

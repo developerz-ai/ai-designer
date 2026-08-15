@@ -11,7 +11,7 @@
 // is injected ({@link GenerateReport}), so this stays unit-testable against a fake `generate` with no
 // `chrome.*`, exactly like `src/agent/vision.ts`. `background.ts` adapts the real `generateObject`.
 
-import type { ImagePart, LanguageModel, ModelMessage } from 'ai';
+import type { FilePart, LanguageModel, ModelMessage } from 'ai';
 import type { z } from 'zod';
 import type { Changeset, Edit } from '@/shared/changeset';
 import type { DiagnosticsReport, Finding } from '@/shared/diagnostics';
@@ -23,6 +23,7 @@ import {
   type ReportImage,
   type ReportLink,
 } from '@/shared/report';
+import { imageFilePart } from './image-part';
 
 /** The turn's copy/debug framing (slice 06), so the brief leads with design fidelity vs diagnosed
  *  problems. Omitted ⇒ a neutral review. */
@@ -163,12 +164,12 @@ export function reportSystemPrompt(mode?: ReportMode): string {
 /** Assemble the user turn: the session described as text, plus up to {@link MAX_VISION_IMAGES}
  *  screenshots as image parts so the vision model reviews what the page actually looks like. */
 export function buildReportMessages(input: ReportInput): ModelMessage[] {
-  const parts: Array<{ type: 'text'; text: string } | ImagePart> = [
+  const parts: Array<{ type: 'text'; text: string } | FilePart> = [
     { type: 'text', text: buildReportContext(input) },
   ];
   for (const img of visionImages(input)) {
     parts.push({ type: 'text', text: `Screenshot: ${img.label}` });
-    parts.push({ type: 'image', image: img.src });
+    parts.push(imageFilePart(img.src));
   }
   return [{ role: 'user', content: parts }];
 }
