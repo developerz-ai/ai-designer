@@ -351,6 +351,9 @@ async function main(): Promise<void> {
       .waitFor({ timeout: 10_000 });
     await demo.locator('#cta').click();
     await panel.locator('.dz-context-chip__label').getByText('#cta').waitFor({ timeout: 10_000 });
+    // The picker ACCUMULATES picks and stays armed — Escape is the documented finish. Without
+    // it, every later mouse position paints a hover badge into the page captures.
+    await demo.keyboard.press('Escape');
 
     console.log('running the canned turn…');
     await panel.getByPlaceholder('Tell the agent what to change…').fill(INSTRUCTION);
@@ -368,7 +371,7 @@ async function main(): Promise<void> {
     // painted over the freshly-branded CTA, and a hover tooltip can linger where the pick
     // happened. Mouse to a corner so no hover state survives into the capture.
     await panel.getByRole('button', { name: 'Remove this element' }).click();
-    await demo.mouse.move(4, 4);
+    await demo.mouse.move(200, 650); // plain whitespace — nothing hoverable to repaint
     await demo.waitForTimeout(500);
     const demoShot = await demo.screenshot();
 
