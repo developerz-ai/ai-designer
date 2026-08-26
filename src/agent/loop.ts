@@ -52,6 +52,24 @@ import { evictStaleVision } from './vision-evict';
 const SCREENSHOT_HINT =
   'Screenshot of the current result. Inspect it and refine if it does not yet match the intent.';
 
+/**
+ * Shown when a turn ran to a natural finish having produced NOTHING — no prose, no tool call.
+ *
+ * This is the half of "the model returned no output" the AI SDK does not raise
+ * `AI_NoOutputGeneratedError` for. That error fires only when the stream carried no completed step
+ * at all; an OpenAI-compatible gateway that answers `200` and then closes still yields a finish
+ * chunk, so a step IS recorded and `streamText` reports a clean, empty finish. Three real gateway
+ * replies land here — an empty `text/event-stream` body, a JSON error object served under the
+ * event-stream content type, and a chunk carrying `choices: []` — and all three are how such a
+ * gateway says "that model id resolved to no provider" without an HTTP error to trip the SDK's
+ * retry. Left unnamed, the turn returned `done` with an empty reply and the panel showed the agent
+ * shrugging: a config bug wearing the costume of a lazy model.
+ */
+export const EMPTY_TURN_ERROR =
+  'The model returned nothing — no reply and no tool calls. That usually means the model id is ' +
+  'not available on this provider, or the provider dropped the request. Check the model in ' +
+  'Settings, then try again.';
+
 /** How the agent turn ended. `budget` = force-stopped on the step/token ceiling; `aborted` =
  *  the caller's signal fired (user Stop / superseded turn); `error` = the run threw. */
 export type TurnStop = 'done' | 'budget' | 'aborted' | 'error';
@@ -229,6 +247,9 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
 
   let text = '';
   let stop: TurnStop = 'done';
+  // Did the model ask for ANY tool this turn? Half of the "the turn produced nothing" test below
+  // — a turn that only edited the page and never narrated is a real turn, not an empty reply.
+  let sawToolCall = false;
   // Accumulated per COMPLETED step (the SDK builds `step.response.messages` at each
   // finish-step), so every exit path below — throw, abort, budget stop, natural finish —
   // returns whatever tool activity actually happened. Never read from the result's settled
@@ -265,6 +286,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           }
           break;
         case 'tool-call': {
+          sawToolCall = true;
           // `selector`/`kind` (slice 09): feeds the panel tool chip and, when the on-page overlay
           // is opted in, background.ts's `forwardOverlayStep` mirror to content.
           //
@@ -349,6 +371,15 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
       text += chunk;
       emit({ type: 'token', text: chunk });
     }
+  }
+
+  // A natural finish that produced nothing is a FAILURE, not a quiet success — see
+  // {@link EMPTY_TURN_ERROR}. Gated on `stop === 'done'` so it can only ever describe a turn the
+  // model ended on its own: an abort (`aborted`), a ceiling (`budget`, relabeled above) and a
+  // stream error (`error`) each already carry their own reason, and none of them reaches here.
+  if (stop === 'done' && !sawToolCall && text.trim() === '') {
+    stop = 'error';
+    emit({ type: 'error', message: EMPTY_TURN_ERROR });
   }
 
   return {
