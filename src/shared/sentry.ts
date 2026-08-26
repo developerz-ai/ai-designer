@@ -99,6 +99,38 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
   return breadcrumb;
 }
 
+/**
+ * The name of the browser SDK's session integration, which {@link initSentry} removes. See
+ * {@link withoutSessionTracking}.
+ */
+const BROWSER_SESSION_INTEGRATION = 'BrowserSession';
+
+/** One entry of the browser SDK's default integration set. Derived from the SDK's own factory —
+ *  `@sentry/browser` does not re-export the `Integration` type, and re-declaring the shape here
+ *  would be a copy that can drift from the version we actually install. */
+type BrowserIntegration = ReturnType<typeof Sentry.getDefaultIntegrations>[number];
+
+/**
+ * Crashes only — never release health.
+ *
+ * `browserSessionIntegration` ships in the browser SDK's DEFAULT integration set and calls
+ * `captureSession()` from its `setupOnce`, so a session envelope leaves the browser on every side
+ * panel mount, before anything has gone wrong. It had been inert here purely by accident:
+ * `Client.sendSession` discards a session when the client has no `release`, so stamping `release`
+ * below is precisely what switches it on. Verified as a real request, not a reading of the SDK —
+ * `test/e2e/smoke.spec.ts` ("zero blocked/remote font or script requests") went red on a
+ * `glitchtip…/api/2/envelope/` POST from a freshly opened panel that had done nothing.
+ *
+ * Two reasons it comes out rather than being tolerated. It is unsolicited network traffic from a
+ * panel at rest, in an extension whose entire crash-report seam exists to make sure nothing
+ * leaves the browser unless it has to. And `beforeSend` cannot police it: that hook sees ERROR
+ * events, not session envelopes, so the scrub and the `isUserAbort` drop both sit downstream of
+ * a lane they never see.
+ */
+function withoutSessionTracking(defaults: BrowserIntegration[]): BrowserIntegration[] {
+  return defaults.filter((integration) => integration.name !== BROWSER_SESSION_INTEGRATION);
+}
+
 // Error tracking only. GlitchTip ingests error events but supports neither Sentry
 // Session Replay nor performance tracing; and enabling Session Replay in the
 // all_urls content script would record every page the user visits — so neither
@@ -115,6 +147,10 @@ export function initSentry(): void {
     // exactly that: no way to tell a report from a build that predates a fix from one that
     // survives it. The extension version is our own manifest field, not page-derived.
     ...(release !== undefined ? { release } : {}),
+    // Subtractive on purpose: keep whatever the SDK version ships by default, minus the one lane
+    // we refuse. See {@link withoutSessionTracking} — and note it is `release` above that would
+    // otherwise arm it.
+    integrations: withoutSessionTracking,
     // Two hooks, one per concern: drop the reports that are not crashes (`isUserAbort`), then
     // scrub page content off the ones that are.
     beforeSend: (event) => (isUserAbort(event) ? null : scrubEvent(event)),

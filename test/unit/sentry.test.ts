@@ -35,10 +35,38 @@ describe('initSentry', () => {
     // GlitchTip supports neither Session Replay nor performance tracing, and
     // replay in the all_urls content script would leak the user's browsing — so
     // assert those stay off (regression guard).
-    expect(options).not.toHaveProperty('integrations');
     expect(options).not.toHaveProperty('tracesSampleRate');
     expect(options).not.toHaveProperty('replaysSessionSampleRate');
     expect(options).not.toHaveProperty('replaysOnErrorSampleRate');
+  });
+
+  // The panel must make ZERO network requests at rest. `browserSessionIntegration` is in the
+  // SDK's default set and `captureSession()`s at init; it stayed quiet only because the client
+  // had no `release`, so the `release` stamp below is what arms it. Asserted against the REAL
+  // default set — a hard-coded name filtered out of a list that no longer contains it is a guard
+  // that proves nothing.
+  it('removes the browser-session integration, keeping every other default', async () => {
+    const Sentry = await import('@sentry/browser');
+    const actual = await vi.importActual<typeof import('@sentry/browser')>('@sentry/browser');
+    const { initSentry } = await import('@/shared/sentry');
+
+    initSentry();
+
+    const integrations = vi.mocked(Sentry.init).mock.calls[0]?.[0]?.integrations;
+    if (typeof integrations !== 'function') {
+      throw new Error('Sentry.init was not called with an integrations reducer');
+    }
+
+    const defaults = actual.getDefaultIntegrations({});
+    // Non-vacuity: the thing being removed must actually be there to remove.
+    expect(defaults.map((i) => i.name)).toContain('BrowserSession');
+
+    const kept = integrations(defaults);
+    expect(kept.map((i) => i.name)).not.toContain('BrowserSession');
+    // Subtractive, not a hand-written allowlist that silently drops a future default.
+    expect(kept.map((i) => i.name)).toEqual(
+      defaults.map((i) => i.name).filter((name) => name !== 'BrowserSession'),
+    );
   });
 
   it('wires the privacy scrub hooks: beforeSend + console/dom breadcrumb suppression', async () => {
