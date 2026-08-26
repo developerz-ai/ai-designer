@@ -1,13 +1,18 @@
 // @vitest-environment node
 import type { Breadcrumb, ErrorEvent } from '@sentry/browser';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { scrubBreadcrumb, scrubEvent } from '@/shared/sentry';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isUserAbort, scrubBreadcrumb, scrubEvent } from '@/shared/sentry';
 
 vi.mock('@sentry/browser', () => ({ init: vi.fn() }));
 
 describe('initSentry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    // The release test stubs `chrome`; nothing after it may inherit an extension world.
+    vi.unstubAllGlobals();
   });
 
   it('inits Sentry with the GlitchTip DSN + environment, error tracking only', async () => {
@@ -30,10 +35,38 @@ describe('initSentry', () => {
     // GlitchTip supports neither Session Replay nor performance tracing, and
     // replay in the all_urls content script would leak the user's browsing — so
     // assert those stay off (regression guard).
-    expect(options).not.toHaveProperty('integrations');
     expect(options).not.toHaveProperty('tracesSampleRate');
     expect(options).not.toHaveProperty('replaysSessionSampleRate');
     expect(options).not.toHaveProperty('replaysOnErrorSampleRate');
+  });
+
+  // The panel must make ZERO network requests at rest. `browserSessionIntegration` is in the
+  // SDK's default set and `captureSession()`s at init; it stayed quiet only because the client
+  // had no `release`, so the `release` stamp below is what arms it. Asserted against the REAL
+  // default set — a hard-coded name filtered out of a list that no longer contains it is a guard
+  // that proves nothing.
+  it('removes the browser-session integration, keeping every other default', async () => {
+    const Sentry = await import('@sentry/browser');
+    const actual = await vi.importActual<typeof import('@sentry/browser')>('@sentry/browser');
+    const { initSentry } = await import('@/shared/sentry');
+
+    initSentry();
+
+    const integrations = vi.mocked(Sentry.init).mock.calls[0]?.[0]?.integrations;
+    if (typeof integrations !== 'function') {
+      throw new Error('Sentry.init was not called with an integrations reducer');
+    }
+
+    const defaults = actual.getDefaultIntegrations({});
+    // Non-vacuity: the thing being removed must actually be there to remove.
+    expect(defaults.map((i) => i.name)).toContain('BrowserSession');
+
+    const kept = integrations(defaults);
+    expect(kept.map((i) => i.name)).not.toContain('BrowserSession');
+    // Subtractive, not a hand-written allowlist that silently drops a future default.
+    expect(kept.map((i) => i.name)).toEqual(
+      defaults.map((i) => i.name).filter((name) => name !== 'BrowserSession'),
+    );
   });
 
   it('wires the privacy scrub hooks: beforeSend + console/dom breadcrumb suppression', async () => {
@@ -59,6 +92,104 @@ describe('initSentry', () => {
     expect(options.beforeBreadcrumb?.({ category: 'ui.input' })).toBeNull();
     const navCrumb: Breadcrumb = { category: 'navigation' };
     expect(options.beforeBreadcrumb?.(navCrumb)).toBe(navCrumb);
+  });
+
+  // The wired hook is the seam that decides what ships, so assert the abort drop THROUGH it —
+  // `isUserAbort` returning true means nothing if beforeSend forwards the event anyway.
+  it('beforeSend drops a user-abort report and still sends every other crash', async () => {
+    const Sentry = await import('@sentry/browser');
+    const { initSentry } = await import('@/shared/sentry');
+
+    initSentry();
+
+    const options = vi.mocked(Sentry.init).mock.calls[0]?.[0];
+    const beforeSend = options?.beforeSend;
+    if (!beforeSend) {
+      throw new Error('Sentry.init was not called with a beforeSend hook');
+    }
+    const hint = {};
+
+    expect(beforeSend(abortEvent(), hint)).toBeNull();
+    // …and the error class this whole investigation is about still reports, scrubbed.
+    const kept = beforeSend(noOutputEvent(), hint) as ErrorEvent | null;
+    expect(kept).not.toBeNull();
+    expect(kept?.exception?.values?.[0]?.type).toBe('AI_NoOutputGeneratedError');
+    expect(kept?.exception?.values?.[0]?.value).toBe('[redacted]');
+  });
+
+  it('stamps the build so a report can be tied to a version, and omits it off-extension', async () => {
+    const Sentry = await import('@sentry/browser');
+    const { initSentry } = await import('@/shared/sentry');
+
+    // No `chrome` global (a test/node world): no release rather than a bogus one.
+    initSentry();
+    expect(vi.mocked(Sentry.init).mock.calls[0]?.[0]).not.toHaveProperty('release');
+
+    vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '1.1.0' }) } });
+    initSentry();
+    expect(vi.mocked(Sentry.init).mock.calls[1]?.[0]?.release).toBe('designer@1.1.0');
+  });
+});
+
+// An unhandled rejection carrying the DOMException an `AbortController.abort()` produces — the
+// shape GlitchTip issue 76 recorded, down to the mechanism.
+function abortEvent(): ErrorEvent {
+  return {
+    type: undefined,
+    event_id: 'evt-abort',
+    exception: {
+      values: [
+        {
+          type: 'AbortError',
+          value: 'The user aborted a request.',
+          mechanism: { type: 'auto.browser.global_handlers.onunhandledrejection', handled: false },
+          stacktrace: { frames: [{ filename: 'chrome-extension://abc/background.js' }] },
+        },
+      ],
+    },
+  };
+}
+
+// The shape GlitchTip issues 67/75/91/93 recorded.
+function noOutputEvent(): ErrorEvent {
+  return {
+    type: undefined,
+    event_id: 'evt-nooutput',
+    exception: {
+      values: [
+        {
+          type: 'AI_NoOutputGeneratedError',
+          value: 'No output generated. Check the stream for errors.',
+          mechanism: { type: 'auto.browser.global_handlers.onunhandledrejection', handled: false },
+          stacktrace: { frames: [{ filename: 'chrome-extension://abc/background.js' }] },
+        },
+      ],
+    },
+  };
+}
+
+describe('isUserAbort', () => {
+  it('is true for an AbortError unhandled rejection', () => {
+    expect(isUserAbort(abortEvent())).toBe(true);
+  });
+
+  it('is false for every other error class', () => {
+    expect(isUserAbort(noOutputEvent())).toBe(false);
+  });
+
+  // A chained error whose LINKED cause happens to be an abort is still a real crash: only an
+  // event that is nothing but aborts may be dropped.
+  it('is false when an abort is merely one of several exceptions', () => {
+    const mixed = abortEvent();
+    mixed.exception?.values?.push({ type: 'TypeError', value: 'boom' });
+    expect(isUserAbort(mixed)).toBe(false);
+  });
+
+  it('is false for an event with no exception at all (a captureMessage)', () => {
+    expect(isUserAbort({ type: undefined, event_id: 'evt-msg' })).toBe(false);
+    expect(isUserAbort({ type: undefined, event_id: 'evt-msg', exception: { values: [] } })).toBe(
+      false,
+    );
   });
 });
 
