@@ -79,6 +79,43 @@ body {
   }
 }
 
+// The exits. Every overlay in the panel used to open with an animation and vanish with a hard
+// cut, because a `<Show>` removes the node before a transition can run — see `presence.ts`,
+// which keeps it mounted long enough for these to play. Deliberately faster than the matching
+// enter: a thing arriving deserves a beat, a thing leaving is just in the way.
+@keyframes dz-pop-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes dz-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+// A message landing in the thread. Slightly further and slower than `dz-rise`, because this one
+// is the answer to "did my message send?" — it has to be seen, not just technically animated.
+@keyframes dz-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(#{tokens.rem(10)});
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 // Chips and inline badges appearing — same idea, tighter.
 @keyframes dz-chip-in {
   from {

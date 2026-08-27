@@ -154,37 +154,40 @@ $_elevations: (
 // unshipped-work count, on/off switches.
 @mixin button-primary($height: t.$dz-control-md, $radius: t.$dz-radius) {
   @include _button-base($height, $radius);
-  padding: 0 t.$dz-space-4;
-  background: var(--dz-accent-fill);
-  border: t.$dz-border-width solid var(--dz-accent-edge);
-  color: var(--dz-accent);
+  padding: 0 t.$dz-space-5;
+  background: var(--dz-solid);
+  // A transparent border, not `none`: it holds the same box as the ghost button beside it, so a
+  // primary/secondary pair lines up on the baseline instead of the primary sitting 2px shorter.
+  border: t.$dz-border-width solid transparent;
+  color: var(--dz-solid-fg);
   font-weight: t.$dz-weight-semibold;
 
-  // Deepen the wash rather than brightening a fill — `filter: brightness` on a translucent
-  // surface shifts whatever shows through it too, which is how a hover ends up tinting the card
-  // behind the button.
   &:not(:disabled):hover {
-    background: var(--dz-accent-fill-strong);
-    border-color: var(--dz-accent);
+    background: var(--dz-solid-hover);
   }
 
   &:not(:disabled):active {
-    background: var(--dz-accent-fill-strong);
-    border-color: var(--dz-accent);
-    color: var(--dz-fg-strong);
+    background: var(--dz-solid);
+    transform: translateY(t.rem(1));
   }
 }
 
-// Quiet action — transparent until hovered, subtle outline for shape.
+// The secondary half of the pair — a recessed slab with a visible outline, not a bare label.
+// It sits beside `button-primary` and has to read as the same KIND of object at a glance: same
+// height, same radius, same padding rhythm; only the value inverts.
 @mixin button-ghost($height: t.$dz-control-md, $radius: t.$dz-radius, $border: true) {
   @include _button-base($height, $radius);
-  padding: 0 t.$dz-space-3;
-  background: transparent;
+  padding: 0 t.$dz-space-5;
+  background: var(--dz-elev-card);
   color: var(--dz-fg);
 
   @if $border {
     border: t.$dz-border-width solid var(--dz-border-subtle);
   } @else {
+    // No outline asked for, so no fill either — this variant is a bare label (a menu row, an
+    // inline link-ish control), and giving it a card background would put a floating rectangle
+    // in the middle of a list.
+    background: transparent;
     border: none;
   }
 
@@ -266,16 +269,15 @@ $_elevations: (
   @include focus-ring;
 
   @if $tone == 'accent' {
-    // Same reasoning as `button-primary`: the send disc sits at the foot of every screen, so a
-    // solid accent puck is permanently the brightest object in the panel. Washed + edged reads
-    // as the primary affordance without owning the composer.
-    background: var(--dz-accent-fill);
-    border: t.$dz-border-width solid var(--dz-accent-edge);
-    color: var(--dz-accent);
+    // The send disc is the composer's primary action, so it takes the same near-white slab the
+    // primary button does — one language for "this is the thing you press", whether it is a
+    // labelled button or a 32px puck.
+    background: var(--dz-solid);
+    border: t.$dz-border-width solid transparent;
+    color: var(--dz-solid-fg);
 
     &:not(:disabled):hover {
-      background: var(--dz-accent-fill-strong);
-      border-color: var(--dz-accent);
+      background: var(--dz-solid-hover);
     }
   } @else {
     // Border, not tone, carries the shape here — so it must clear 3:1 on its own.

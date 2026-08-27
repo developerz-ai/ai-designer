@@ -114,7 +114,7 @@ describe('ModelPicker', () => {
     expect(checked[0]).toHaveTextContent('GPT-5');
   });
 
-  it('dispatches switchModel and closes when an item is chosen', () => {
+  it('dispatches switchModel and closes when an item is chosen', async () => {
     mocked.__setSettings({ models: MODELS, model: null });
     render(() => <ModelPicker />);
     fireEvent.click(screen.getByRole('button'));
@@ -122,7 +122,11 @@ describe('ModelPicker', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Gemini 3 Pro' }));
 
     expect(mocked.switchModel).toHaveBeenCalledExactlyOnceWith('google/gemini-3-pro');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    // Closing now runs an exit animation, so the popover is held in the DOM for the length of it
+    // (`presence.ts`) and marked `is-leaving` rather than being torn out on the same tick. What
+    // matters for the contract is that it stops being interactive immediately and then goes.
+    expect(screen.getByRole('menu').closest('.dz-modelpicker__popover')).toHaveClass('is-leaving');
+    await vi.waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 
   // The catalogue can run to ~300 entries, so the menu opens onto its SEARCH field — a keystroke
@@ -181,7 +185,7 @@ describe('ModelPicker', () => {
     expect(tabbable).toHaveLength(1);
   });
 
-  it('closes on Escape and returns focus to the trigger', () => {
+  it('closes on Escape and returns focus to the trigger', async () => {
     mocked.__setSettings({ models: MODELS, model: null });
     render(() => <ModelPicker />);
     const t = screen.getByRole('button');
@@ -189,8 +193,11 @@ describe('ModelPicker', () => {
 
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    // Focus returns to the trigger IMMEDIATELY — it must not wait on the exit animation, or a
+    // keyboard user is parked on a menu that is on its way out.
     expect(t).toHaveFocus();
+    expect(screen.getByRole('menu').closest('.dz-modelpicker__popover')).toHaveClass('is-leaving');
+    await vi.waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
     expect(mocked.switchModel).not.toHaveBeenCalled();
   });
 
