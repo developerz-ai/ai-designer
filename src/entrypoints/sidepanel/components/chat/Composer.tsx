@@ -21,6 +21,7 @@ import {
 import { Icon } from '../Icon';
 import { AttachmentTray } from './AttachmentTray';
 import './Composer.scss';
+import { createPresence } from '../presence';
 import { ElementRefs } from './ElementRefs';
 import { filterMentions, MentionMenu, mentionQuery } from './MentionMenu';
 import { ModelPicker } from './ModelPicker';
@@ -123,6 +124,7 @@ export function Composer() {
 
   const mentionItems = createMemo(() => filterMentions(recentReferences(), mention()?.query ?? ''));
   const mentionOpen = createMemo(() => mention() !== null && mentionItems().length > 0);
+  const mentionPresence = createPresence(mentionOpen);
 
   /** Re-derive the mention state from the field's live value + caret. Called on every input and
    *  on selection moves, because the caret can leave a mention without the text changing. */
@@ -289,11 +291,12 @@ export function Composer() {
             its filtered list is non-empty, and an empty query matches everything — so once
             anything had been pinned this session the listbox sat permanently above the composer,
             with no combobox state on the textarea and no keys wired to it. */}
-        <Show when={mentionOpen()}>
+        <Show when={mentionPresence.mounted()}>
           <MentionMenu
             items={recentReferences()}
             query={mention()?.query ?? ''}
             active={activeMention()}
+            leaving={mentionPresence.leaving()}
             onPick={takeMention}
           />
         </Show>

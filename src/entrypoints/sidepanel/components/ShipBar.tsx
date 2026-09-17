@@ -15,6 +15,7 @@ import { setTab } from '../stores/nav';
 import { dismissOnOutsidePress } from './dismiss';
 import { Icon } from './Icon';
 import { OriginRepoSection } from './OriginRepoSection';
+import { createPresence } from './presence';
 import './ShipBar.scss';
 
 // Render + dispatch only (CLAUDE.md "SolidJS + SRP"): Ship / Download brief / Send to… each fire
@@ -25,6 +26,7 @@ import './ShipBar.scss';
 export function ShipBar() {
   const [sendOpen, setSendOpen] = createSignal(false);
   let sendEl: HTMLDivElement | undefined;
+  const sendPresence = createPresence(sendOpen);
 
   onMount(() => {
     initChangesetStore();
@@ -96,8 +98,8 @@ export function ShipBar() {
 
           {/* Opens UPWARD. The ship bar is docked directly above the composer, so a downward
               menu covers the input the user is about to type into. */}
-          <Show when={sendOpen()}>
-            <ul class="dz-shipbar__menu">
+          <Show when={sendPresence.mounted()}>
+            <ul class="dz-shipbar__menu" classList={{ 'is-leaving': sendPresence.leaving() }}>
               <li class="dz-shipbar__menuTitle">{i18n.t('ship.sendTo')}</li>
               <For each={connected()}>
                 {(s) => (
