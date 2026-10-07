@@ -51,6 +51,6 @@ Full detail: `CLAUDE.md`, `docs/architecture/`, `.claude/skills/`.
 ## Commits & PRs
 
 - Conventional-ish: `feat:`, `fix:`, `docs:`, `chore:`, `test:`.
-- PR must be green (CI runs lint, typecheck, unit, integration, build in parallel on Blacksmith 2vcpu).
+- PR must be green (CI runs lint, typecheck, unit, integration, build in parallel on GitHub-hosted `ubuntu-latest`).
 - Keep PRs small + SRP. Never commit keys/tokens — BYOK.
 - Never force-push shared branches.
