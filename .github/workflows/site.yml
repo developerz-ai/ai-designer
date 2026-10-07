@@ -33,7 +33,8 @@ jobs:
     # the hCaptcha fail-closed guard so a future weakening can't silently reship the
     # always-pass test key (#128).
     name: Site (landing)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # GitHub-hosted runner (org rule: private repos on Ubicloud, public on GitHub-hosted).
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0

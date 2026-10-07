@@ -47,7 +47,7 @@ unit (vitest)  ─┼─► all green ┤
 integration    ─┘             └─► e2e (playwright, builds its own copy)
 ```
 
-- `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on Blacksmith runners (2vcpu; 4vcpu for the two test jobs).
+- `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on GitHub-hosted `ubuntu-latest` runners.
 - `build` and `e2e` are siblings — each gates on those four; `e2e` runs its own `bun run build` rather than consuming `build`'s artifact. See the CI workflow.
 
 ## Commands

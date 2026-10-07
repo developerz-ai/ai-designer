@@ -70,7 +70,7 @@ reviews:
 
     - path: ".github/workflows/**"
       instructions: |
-        - Runners must be blacksmith-2vcpu-ubuntu-2404 unless a job genuinely needs more.
+        - Runners must be GitHub-hosted `ubuntu-latest` (public repo — org rule: private on Ubicloud, public on GitHub-hosted). Flag any Blacksmith, Ubicloud or self-hosted label.
         - Pin third-party actions by tag.
 
     - path: "test/integration/**"

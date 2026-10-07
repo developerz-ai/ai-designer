@@ -20,8 +20,7 @@ runs:
         bun-version: ${{ inputs.bun-version }}
 
     # Cache Bun's global package store, keyed by the lockfile, so the CI jobs hit
-    # warm tarballs instead of a cold download each. Blacksmith transparently
-    # accelerates native actions/cache (useblacksmith/cache is deprecated).
+    # warm tarballs instead of a cold download each.
     # Best-effort by design: a cache miss or backend hiccup warns and continues,
     # so caching can never fail CI.
     - name: cache bun package store
