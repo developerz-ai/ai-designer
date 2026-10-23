@@ -19,7 +19,7 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
               └─► changeset (selectors, styles, screenshots, intent)
                      │ MCP
                      ▼
-              ai-dev / developerz.ai ─► real code edit ─► PR ─► CI
+              developerz.ai ─► real code edit ─► PR ─► CI
 ```
 
 ## Why
@@ -65,7 +65,7 @@ Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/des
 
 1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `build/chrome-mv3`.
 2. **Add your OpenRouter key** — side panel → settings (BYOK, stored encrypted, used only in the service worker).
-3. **Connect a backend** — MCP tab → add `https://ai-dev.miamibeachstart.com/mcp` (or developerz.ai). OAuth on first use.
+3. **Connect a backend** — MCP tab → add `https://mcp.developerz.ai/v1/mcp` (developerz.ai). OAuth on first use.
 4. **Open any page**, open the side panel, start designing.
 
 Release build (tree-shaken, minified, optimized CSS/JS):
@@ -82,7 +82,7 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 | UI | [SolidJS](https://www.solidjs.com/) + SCSS — prebuilt static bundle (CSP-clean) |
 | Agent | [Vercel AI SDK](https://github.com/vercel/ai) loop in the service worker, BYOK |
 | Inference | [OpenRouter](https://openrouter.ai/docs) — model-agnostic |
-| Handoff | [MCP](https://modelcontextprotocol.io/) → [ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai |
+| Handoff | [MCP](https://modelcontextprotocol.io/) → [developerz.ai](https://developerz.ai) |
 | Build | [Bun](https://bun.sh/) + TypeScript + [WXT](https://wxt.dev/) |
 | Tests | [Vitest](https://vitest.dev/) unit + integration, [Playwright](https://playwright.dev/) E2E |
 | Lint | [Biome](https://biomejs.dev/) |
@@ -97,4 +97,4 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 
 ## Status
 
-Spec + scaffold phase. v0: live-edit + chat, no handoff. v1: full MCP handoff to ai-dev.
+Spec + scaffold phase. v0: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.

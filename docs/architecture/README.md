@@ -2,7 +2,7 @@
 
 Deep reference for developerz.ai Designer. For the elevator pitch see [`../idea/README.md`](../idea/README.md); this set goes down to worlds, sequences, and trade-offs.
 
-**System:** a Chrome MV3 extension. Chat with an agent → it live-edits the page → ship the result as real code via MCP handoff to a dev-agent backend (ai-dev / developerz.ai).
+**System:** a Chrome MV3 extension. Chat with an agent → it live-edits the page → ship the result as real code via MCP handoff to a dev-agent backend (developerz.ai).
 
 ## Read in this order
 
@@ -29,7 +29,7 @@ C4Context
 
     System_Ext(page, "Target Web Page", "Any site: localhost, staging, prod")
     System_Ext(openrouter, "OpenRouter", "BYOK model gateway")
-    System_Ext(mcp, "MCP Dev Backend", "ai-dev / developerz.ai. Turns changesets into PRs")
+    System_Ext(mcp, "MCP Dev Backend", "developerz.ai. Turns changesets into PRs")
     System_Ext(git, "Git Forge", "GitHub. PRs, CI")
 
     Rel(user, designer, "Chats, reviews, ships")

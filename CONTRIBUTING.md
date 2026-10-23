@@ -13,7 +13,7 @@ Load the extension:
 
 1. `chrome://extensions` → enable **Developer mode**.
 2. **Load unpacked** → select `build/chrome-mv3`.
-3. Open the side panel, add your **OpenRouter** key (BYOK, stored locally), connect an MCP backend (ai-dev).
+3. Open the side panel, add your **OpenRouter** key (BYOK, stored locally), connect an MCP backend (developerz.ai).
 
 `just` users: `just dev`, `just verify`, `just build` (see `justfile`).
 
