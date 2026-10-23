@@ -93,7 +93,7 @@ last_updated: <YYYY-MM-DD>
 - Self-contained: executor reads only `overview.md`, the slice it's on, and the files those cite.
 - Respect `CLAUDE.md` + `docs/idea/principles.md`: **three worlds** (keys + network + MCP tokens only in the service worker, DOM only in the content script, UI only in the side panel; every cross-world message Zod-validated in `src/shared`, no `any` across the bus). **No remote code / `eval`** — Solid prebuilt, CSP-clean. **Thin orchestrator** — the extension designs and delegates; real coding happens in ai-dev, not here. **BYOK only** — keys encrypted in `chrome.storage.local`, never in the repo. **Live edits ephemeral** — only durable output is a changeset → PR. **Stable selectors** (data-attrs/roles/text). **Human in the loop** — Ship is user-triggered; never auto-ship, never auto-merge.
 - Stack rules: TS strict, no `any`, no `as` without a why-comment. Biome (no ESLint/Prettier). Zod at every boundary (message bus, `chrome.storage`, MCP, model I/O). SolidJS SRP — one component per `.tsx` + co-located `.scss`, no business logic in components, state in signals/stores. SCSS scoped to a root class, tokens from `src/styles/_tokens.scss` (never hardcode a token value).
-- Cross-repo work (the ai-dev / developerz.ai MCP backend that receives the handoff) → one `<NN>-<aspect>.md` per repo; note that repo is edited from its own checkout, not here.
+- Cross-repo work (the developerz.ai MCP backend that receives the handoff) → one `<NN>-<aspect>.md` per repo; note that repo is edited from its own checkout, not here.
 
 ## Output
 ```

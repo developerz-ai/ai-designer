@@ -35,7 +35,7 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
               └─► changeset (selectors, styles, screenshots, intent)
                      │ MCP
                      ▼
-              ai-dev / developerz.ai ─► real code edit ─► PR ─► CI
+              developerz.ai ─► real code edit ─► PR ─► CI
 ```
 
 - **Design loop.** In-browser agent edits the real DOM/CSS. Nothing persists — it's a sandbox over the page you're looking at.
@@ -51,7 +51,7 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
 | UI | [SolidJS](https://www.solidjs.com/) — chat + MCP panel, prebuilt static bundle |
 | Agent | [Vercel AI SDK](https://github.com/vercel/ai) loop in the extension, BYOK |
 | Inference | [OpenRouter](https://openrouter.ai/docs) — model-agnostic |
-| Handoff | [MCP](https://modelcontextprotocol.io/) → [ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai |
+| Handoff | [MCP](https://modelcontextprotocol.io/) → [developerz.ai](https://developerz.ai) |
 | Build | [Bun](https://bun.sh/) + TypeScript + [WXT](https://wxt.dev/) (or CRXJS) |
 | Tests | [Vitest](https://vitest.dev/) unit + integration, Playwright E2E on a loaded extension |
 
@@ -59,4 +59,4 @@ See [testing.md](testing.md) for the test pyramid and [ui.md](ui.md) for the Sol
 
 ## Status
 
-Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to ai-dev.
+Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.

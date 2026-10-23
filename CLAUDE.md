@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Developerz.ai Designer — Chrome MV3 extension. Chat with an agent → it live-edits the page DOM/CSS in real time → on Ship, hands a changeset over MCP to ai-dev/developerz.ai which makes the real code change and opens a PR.
+Developerz.ai Designer — Chrome MV3 extension. Chat with an agent → it live-edits the page DOM/CSS in real time → on Ship, hands a changeset over MCP to developerz.ai which makes the real code change and opens a PR.
 
 v0 design loop shipped (chat → live edits → changeset → ship/report; slices 01–16). Docs: `docs/idea/`, `docs/architecture/`.
 

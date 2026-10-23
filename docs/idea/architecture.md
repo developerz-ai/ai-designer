@@ -28,7 +28,7 @@ Top-level components and data flow. MV3 boundaries are load-bearing — keep DOM
                                               │  The live page   │
                                               └─────────────────┘
 
-   Service Worker ──MCP──► ai-dev / developerz.ai ──► repo edit ──► PR
+   Service Worker ──MCP──► developerz.ai ──► repo edit ──► PR
 ```
 
 ## Data flow — design
