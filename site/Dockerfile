@@ -14,7 +14,7 @@
 #     index.html
 
 # ---- build the static site ----
-FROM oven/bun:1.4.3-slim AS build
+FROM oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4 AS build
 WORKDIR /app
 
 # Lockfile first for a cache-friendly, frozen install; then the sources.
