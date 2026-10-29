@@ -50,6 +50,13 @@
   // The popover: search field over the menu. Opens UPWARD — the composer is docked to the foot
   // of the panel, so a downward menu would open off the bottom edge.
   &__popover {
+    // Exit: `presence.ts` holds the node for 140ms after close so this can play. Accelerating
+    // out — a decelerating leave reads as the menu hesitating on its way off screen.
+    &.is-leaving {
+      animation: dz-pop-out var(--dz-motion-fast) var(--dz-ease-out) forwards;
+      pointer-events: none;
+    }
+
     @include mixins.menu-surface(tokens.$dz-radius-lg, tokens.rem(6));
     position: absolute;
     bottom: calc(100% + #{tokens.$dz-space-1});

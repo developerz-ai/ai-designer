@@ -8,6 +8,7 @@ import { McpPanel } from './components/McpPanel';
 import { NavMenu, roomName } from './components/NavMenu';
 import { Onboarding } from './components/Onboarding';
 import { PreStart } from './components/PreStart';
+import { createPresence } from './components/presence';
 import type { DeepLinkTab } from './components/ReadinessDropdown';
 import { ReadinessDropdown } from './components/ReadinessDropdown';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -51,6 +52,8 @@ export function App() {
   // reader — the body is replaced and the user is still parked on whatever they clicked. The
   // `<Show>` keeps the same heading node across room-to-room moves, so this has to be an effect
   // on `tab`, not a `ref` callback (which fires once, on mount).
+  const onboarding = createPresence(onboardingVisible, 200);
+
   let roomTitle: HTMLHeadingElement | undefined;
   createEffect(() => {
     if (tab() !== 'chat') roomTitle?.focus();
@@ -106,8 +109,10 @@ export function App() {
         </Switch>
       </main>
 
-      <Show when={onboardingVisible()}>
-        <Onboarding onNavigate={handleNavigate} />
+      {/* Held through its exit so the scrim and card fade out instead of blinking away — the
+          first-run guide is dismissed by choice, and a hard cut on that click reads as a crash. */}
+      <Show when={onboarding.mounted()}>
+        <Onboarding onNavigate={handleNavigate} leaving={onboarding.leaving()} />
       </Show>
     </div>
   );
