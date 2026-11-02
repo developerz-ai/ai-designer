@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# one-command dev — established by dz-runner setup mode. One command; adjust as the repo grows.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mkdir -p /tmp/dz-wxt-rc && printf 'disabled=true\n' > /tmp/dz-wxt-rc/.webextrc && XDG_CONFIG_HOME=/tmp/dz-wxt-rc bun run dev
