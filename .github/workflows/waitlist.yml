@@ -37,7 +37,8 @@ jobs:
           install: 'false'
       - name: Install waitlist dependencies (including dev dependencies)
         working-directory: waitlist
-        run: bun install --frozen-lockfile --production=false
+        # Bun installs dev dependencies by default; --production is a valueless flag.
+        run: bun install --frozen-lockfile
       - name: Test
         working-directory: waitlist
         run: bun run test --config vitest.config.ts --maxWorkers=2 --reporter=verbose
