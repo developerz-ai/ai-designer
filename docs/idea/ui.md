@@ -1,6 +1,6 @@
 # UI
 
-SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS with SRP: **one component = one `.tsx` + one co-located `.scss`**. Icons are self-hosted FontAwesome SVG (`Icon.tsx` + `icon-registry.ts`) — built from imported icon data, nothing fetched at runtime, no `innerHTML`.
+SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS with SRP: **one component = one `.tsx` + one co-located `.scss`**. Icons are local inline SVG (`Icon.tsx` + `icon-registry.ts`) — built from literal local glyph data in `icon-registry.ts`, nothing fetched at runtime, no `innerHTML`.
 
 ## Surfaces
 
@@ -67,7 +67,7 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `AuthDialog.tsx` | OAuth/PKCE + API-key entry |
 | `HistoryPanel.tsx` / `ConversationView.tsx` | Last-10 list + read-only replay |
 | `SettingsPanel.tsx` | Provider config + model picker |
-| `Icon.tsx` / `icon-registry.ts` | Self-hosted FontAwesome SVG icons |
+| `Icon.tsx` / `icon-registry.ts` | Local inline SVG icons from literal glyph data in `icon-registry.ts`; no runtime fetch or `innerHTML` |
 
 ## Styling
 
