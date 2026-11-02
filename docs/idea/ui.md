@@ -15,8 +15,30 @@ Four tabs (`Tab = 'chat' | 'mcp' | 'history' | 'settings'`) — there is no stan
 
 - **Chat** — the design conversation. Modes (copy / debug / none) are pinned per message or inferred from its text — suggestion chips, no picker UI. Streamed tokens, tool-call chips, the picked-element context chip, the input box, task status timelines + PR links after a Ship, and the **Ship bar** (Ship or Download report, per [handoff.md](handoff.md)).
 - **MCP** — connected backends, auth status (API key / OAuth per server). Feature-flagged, on by default. The origin→repo mapping is storage-only today (no UI — see #20). See [mcp.md](mcp.md).
-- **History** — last 10 conversations (+ their reports/PR links). Selecting one swaps in a read-only replay; delete supported. See [Memory](agent.md#memory).
+- **History** — last 10 conversations (+ their reports/PR links). Selecting one swaps in a read-only replay; delete supported. See [Memory](agent.md#memory) and [History](#history).
 - **Settings** — provider config (base URL, API key, model picker), overlay opt-in.
+
+## History
+
+The last 10 conversations, kept as a ring buffer in `chrome.storage.local` (`src/agent/history-store.ts`) — newest first, the 11th push evicts the oldest. Service-worker only: the panel reaches it over the typed bus, never storage directly.
+
+What one persisted conversation keeps:
+
+| Kept | Shape |
+|------|-------|
+| Thread | The message thread — screenshots stripped to `[image omitted from history]`, other long strings truncated |
+| Report | A finished session's brief as rendered Markdown text — never raw images |
+| PR link | The URL a Ship opened, when the session shipped one |
+
+Three RPCs carry it across the bus (`src/shared/messages.ts`):
+
+| RPC | Carries |
+|-----|---------|
+| `history-list` | Summaries — title, URL, mode, timestamp, message count, report flag |
+| `history-get(id)` | The full record — thread, report, PR link |
+| `history-delete(id)` | Removes one conversation |
+
+The panel surface: selecting a conversation swaps in a read-only replay of the thread — no new chat, no re-applied edits. The report can be re-downloaded as a `.md` file, the PR link opens in a new tab, and every row has a delete action. User-facing guide: [wiki/history.md](../wiki/history.md).
 
 ## Readiness header
 
