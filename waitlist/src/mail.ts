@@ -67,6 +67,15 @@ export async function sendWelcome(to: string): Promise<void> {
   });
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 /** Notify the team of a NEW confirmed signup. */
 export async function sendNotify(subscriberEmail: string): Promise<void> {
   const { from, notify } = env();
@@ -76,6 +85,6 @@ export async function sendNotify(subscriberEmail: string): Promise<void> {
     to: notify,
     subject: 'New designer waitlist signup',
     text: `New confirmed signup: ${subscriberEmail}`,
-    html: `<p>New confirmed signup: <code>${subscriberEmail}</code></p>`,
+    html: `<p>New confirmed signup: <code>${escapeHtml(subscriberEmail)}</code></p>`,
   });
 }
