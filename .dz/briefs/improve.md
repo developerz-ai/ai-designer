@@ -25,3 +25,11 @@ a missing publish and a stuck Dependabot PR belong to `health`.
 
 One small PR per improvement, its evidence in the body, `bun run verify` green first. Never bump the version or touch release or store automation here.
 Check no open PR or issue already covers it. If nothing is worth changing, do nothing: no empty PRs, no churn.
+
+## Rows
+
+- `gate` — First: run `bun run verify` on fresh `main`; address anything broken or flaky at its root cause, never with a retry or a skip.
+- `dependency-majors` — Second: use `bun outdated` to identify dependency majors Dependabot could not land, one per PR.
+- `open-bugs` — Third: use `gh issue list --state open --label bug --json number,title,url`; each bug starts from a test that fails on `main`.
+- `stale-docs` — Fourth: docs that no longer match the code.
+- `dead-code` — After stale docs: dead code.
