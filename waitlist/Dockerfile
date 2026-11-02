@@ -1,8 +1,7 @@
 # designer-waitlist — Bun + Hono double-opt-in service (:3000, non-root).
-# Bun runs the TS directly (no build step, no dist). Image base is digest-pinned
-# by the registry-standardization rule at deploy time; the tag here is the
-# dev-local build target.
-FROM oven/bun:1
+# Bun runs the TS directly (no build step, no dist). Base identity is fixed
+# in FROM for both local and deployment builds: exact version + registry digest.
+FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
 WORKDIR /app
 
 # Production deps only (devDeps — vitest, biome, types — excluded).
