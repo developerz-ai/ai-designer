@@ -158,7 +158,7 @@ describe('integration: a turn that produced nothing is reported, not shrugged of
   it('leaves a gateway reply that streams real content alone', async () => {
     const { events, emit } = collectEmit();
     const body =
-      'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Done."}}]}\n\n' +
+      'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\n' +
       'data: [DONE]\n\n';
 
     const outcome = await runTurn({
@@ -173,5 +173,25 @@ describe('integration: a turn that produced nothing is reported, not shrugged of
     expect(outcome.stop).toBe('done');
     expect(outcome.text).toBe('Done.');
     expect(errorsOf(events)).toEqual([]);
+  });
+
+  // Partition: content that stops with no finish reason is a truncated reply, not an empty one.
+  it('names a reply truncated before its finish reason', async () => {
+    const { events, emit } = collectEmit();
+    const body =
+      'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Do"}}]}\n\n';
+
+    const outcome = await runTurn({
+      tabId: 1,
+      messages: [{ role: 'user', content: 'make the CTA orange' }],
+      model: providerAnswering(() => eventStream(body)),
+      instructions: 'You are a design agent.',
+      dispatch,
+      emit,
+    });
+
+    expect(outcome.stop).toBe('error');
+    expect(outcome.text).toBe('Do');
+    expect(errorsOf(events)).toEqual(['Response stream ended without a finish reason.']);
   });
 });

@@ -49,34 +49,34 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^2.0.10",
-    "@ai-sdk/openai-compatible": "^3.0.7",
-    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "@ai-sdk/mcp": "^2.0.78",
+    "@ai-sdk/openai-compatible": "^3.0.71",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
     "@sentry/browser": "^10.62.0",
-    "@wxt-dev/i18n": "^0.2.6",
-    "ai": "^7.0.19",
-    "solid-js": "^1.9.5",
-    "zod": "^4.4.3"
+    "@wxt-dev/i18n": "^0.2.8",
+    "ai": "^7.0.143",
+    "solid-js": "^1.9.17",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
-    "@playwright/test": "^1.61.1",
+    "@biomejs/biome": "^2.5.15",
+    "@playwright/test": "^1.64.1",
     "@solidjs/testing-library": "^0.8.10",
-    "@testing-library/jest-dom": "^7.0.0",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/chrome": "^0.1.43",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/user-event": "^14.6.8",
+    "@types/chrome": "^0.3.5",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^25.9.3",
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "^4.1.9",
     "@wxt-dev/module-solid": "^1.1.0",
     "crx3": "^2.0.0",
-    "fake-indexeddb": "^6.2.5",
+    "fake-indexeddb": "^6.2.6",
     "jsdom": "^29.1.1",
-    "sass": "^1.83.0",
+    "sass": "^1.105.2",
     "typescript": "^7.0.2",
     "vite-plugin-solid": "^2.11.14",
     "vitest": "^4.1.9",
-    "wxt": "^0.20.0"
+    "wxt": "^0.21.4"
   }
 }

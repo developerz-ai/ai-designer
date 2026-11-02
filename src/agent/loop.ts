@@ -11,6 +11,7 @@
 
 import {
   type Instructions,
+  InvalidResponseDataError,
   isStepCount,
   type LanguageModel,
   ToolLoopAgent,
@@ -69,6 +70,14 @@ export const EMPTY_TURN_ERROR =
   'The model returned nothing — no reply and no tool calls. That usually means the model id is ' +
   'not available on this provider, or the provider dropped the request. Check the model in ' +
   'Settings, then try again.';
+
+/** The `@ai-sdk/openai-compatible` refusal for a stream that closed with no finish reason. */
+function isUnfinishedStream(error: unknown): boolean {
+  return (
+    InvalidResponseDataError.isInstance(error) &&
+    error.message === 'Response stream ended without a finish reason.'
+  );
+}
 
 /** How the agent turn ended. `budget` = force-stopped on the step/token ceiling; `aborted` =
  *  the caller's signal fired (user Stop / superseded turn); `error` = the run threw. */
@@ -337,7 +346,17 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           break;
         case 'error':
           stop = 'error';
-          emit({ type: 'error', message: errorText(part.error) });
+          emit({
+            type: 'error',
+            // An empty reply now reaches here instead of the clean finish the guard below reads:
+            // the provider reports the missing finish reason as a stream error. Nothing arrived,
+            // so it is the same failure with the same actionable message; once output arrived,
+            // the SDK's own words correctly name a truncated reply.
+            message:
+              !sawToolCall && text.trim() === '' && isUnfinishedStream(part.error)
+                ? EMPTY_TURN_ERROR
+                : errorText(part.error),
+          });
           break;
         default:
           break;
