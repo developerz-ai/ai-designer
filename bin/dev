@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# one-command dev — established by dz-runner setup mode. One command; adjust as the repo grows.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# WXT resolves its web-ext runner config from $XDG_CONFIG_HOME/.webextrc
+# (c12 -> rc9.readUser). That file must live in a directory only this user can
+# write: a predictable /tmp path can be pre-created by a local attacker as a
+# symlink, and the redirect below would then overwrite a file of their choosing.
+# mktemp -d gives an unpredictable, 0700 directory; the trap removes it on exit.
+rc_dir="$(mktemp -d)"
+trap 'rm -rf -- "$rc_dir"' EXIT
+printf 'disabled=true\n' > "$rc_dir/.webextrc"
+
+XDG_CONFIG_HOME="$rc_dir" bun run dev
