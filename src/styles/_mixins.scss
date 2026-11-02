@@ -126,7 +126,12 @@ $_elevations: (
   font: inherit;
   font-size: t.$dz-font-md;
   font-weight: t.$dz-weight-medium;
-  line-height: t.$dz-leading-tight;
+  // 1.4, not 1.25: the reference's control label runs 12px/1.4/600 (the header's Start
+  // control, docs/design/designer/app/app.tsx:538), and every label in the panel shares
+  // that leading, so a 12px status pill, a 12px ghost toggle and a 13px CTA are one voice
+  // rather than three. Weight and size stay per variant — `button-primary` is 600, the
+  // ghost is 500 — the leading is the one metric the shared skeleton owns.
+  line-height: t.$dz-leading-snug;
   cursor: pointer;
   transition: background-color var(--dz-motion-fast) var(--dz-ease),
     color var(--dz-motion-fast) var(--dz-ease), border-color var(--dz-motion-fast) var(--dz-ease);
@@ -508,10 +513,15 @@ $_elevations: (
 
 // Small uppercase section label — "READINESS", "SEND TO", "SERVERS". Leo's menus and
 // grouped lists both use it; letter-spacing is what keeps 11px uppercase legible.
+//
+// 600, not 500: the reference's group label is semibold (the GroupLabel,
+// docs/design/designer/app/app.tsx:1716 — 11px/1.4/600, tracking .06em, uppercase). At
+// 11px the difference between 500 and 600 is the difference between a caption and a
+// heading, and this is the panel's only heading type.
 @mixin eyebrow-label {
   color: var(--dz-fg-muted);
   font-size: t.$dz-font-xs;
-  font-weight: t.$dz-weight-medium;
+  font-weight: t.$dz-weight-semibold;
   line-height: t.$dz-leading-snug;
   letter-spacing: 0.06em;
   text-transform: uppercase;

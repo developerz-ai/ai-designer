@@ -19,8 +19,6 @@ app:
   # Short form shown in the panel header bar — the document title is too wide at the
   # 360px Chrome pins the side panel to.
   panelTitle: Designer
-  logo:
-    alt: developerz.ai
   header:
     compose:
       ariaLabel: New chat
