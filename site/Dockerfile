@@ -32,7 +32,9 @@ ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 RUN bun run build
 
 # ---- serve the static bundle (unprivileged nginx, :8080, uid 101) ----
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+# Docker Hub registry-1.docker.io/v2/nginxinc/nginx-unprivileged/manifests/1.29-alpine
+# Verified index digest + linux/amd64; reproduce: docker buildx imagetools inspect nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6 AS runtime
 # Static server config: listen 8080, immutable /assets/, index.html fallback.
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
