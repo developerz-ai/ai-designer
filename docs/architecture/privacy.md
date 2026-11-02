@@ -49,9 +49,12 @@ GlitchTip, error events only, and off unless a build sets `WXT_SENTRY_DSN` (`src
 |------------|-----|
 | `sidePanel` | Durable UI surface; survives page navigation. |
 | `storage` | `chrome.storage.local` (encrypted keys, MCP connections) + `chrome.storage.session` (turn, changeset). |
-| `scripting` | Inject the content script for DOM tools. |
 | `activeTab` | Page access only on explicit user gesture. |
 | `tabs` | Capture screenshots; track the active tab for edits. |
+| `identity` | OAuth (PKCE) consent window when you connect an MCP backend; tokens stay in the service worker. |
+| `webNavigation` | Enumerating a page's frames so tools can address iframes. |
+| `debugger` | Device emulation for responsive checks (`setDevice`) — triggers Chrome's "started debugging" banner while active. |
+| `scripting` | `chrome.scripting.executeScript` — the service worker re-injects the extension's own shipped content scripts into existing http(s) tabs it can already access, on install/update and every worker boot. No remote code, no added host grant. |
 | `host_permissions: https://openrouter.ai/*` | BYOK model endpoint; SW-only, CORS-exempt. |
 | `host_permissions: https://glitchtip.infra.developerz.ai/*` | Crash ingest; SW-only, CORS-exempt. |
 | `optional_host_permissions: <all_urls>` | Granted per-site, on demand. User can scope to one origin. Revocable. |
