@@ -143,6 +143,9 @@ function rowForPermission(docPath: string, permission: string): TableRow | undef
   );
 }
 
+// Require a prohibition, not merely a mention (e.g. "Allows remote code").
+const remoteCodeProhibition = /\b(?:no remote code|never fetching or running remote code)\b/i;
+
 describe('documentation states the granted surface honestly', () => {
   for (const docPath of Object.values(DOCS)) {
     it(`${docPath} documents scripting as service-worker-only reinjection`, () => {
@@ -152,9 +155,23 @@ describe('documentation states the granted surface honestly', () => {
       expect(text).toMatch(/re-?inject/i); // the actual use
       expect(text).toMatch(/service[\s-]?worker/i); // who does it — only the SW holds the permission
       expect(text).toMatch(/shipped|bundled/i); // the extension's OWN shipped files, never code composed at runtime
-      expect(text).toMatch(/remote code/i); // and it never fetches or runs any
+      expect(text).toMatch(remoteCodeProhibition); // and it never fetches or runs any
       expect(text).not.toMatch(/unused|not used/i); // it IS used — the stale claim
     });
+
+    it.each(['Allows remote code', 'Fetches and runs remote code', 'Remote code'])(
+      `${docPath} rejects "%s" instead of a remote-code prohibition`,
+      (replacement) => {
+        const row = rowForPermission(docPath, 'scripting');
+        const text = (row?.cells ?? []).join(' ');
+        const mutated = text.replace(
+          /no remote code|never fetching or running remote code/i,
+          replacement,
+        );
+        expect(mutated).not.toBe(text);
+        expect(mutated).not.toMatch(remoteCodeProhibition);
+      },
+    );
   }
 
   it('both docs list every permission the manifest grants', () => {
