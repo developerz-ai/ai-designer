@@ -13,8 +13,17 @@ const BASE_URL = 'https://openrouter.ai/api/v1';
 // claim about the panel is a claim about that width, not about the tab's default viewport.
 const PANEL_WIDTH = 360;
 
-/** What the CTA measurement reads off the button: its wrapping rule and its box. */
-type CtaMetrics = { whiteSpace: string; scrollHeight: number; clientHeight: number };
+/** Label overflow and button bounds, measured in the same viewport. */
+type CtaMetrics = {
+  whiteSpace: string;
+  scrollHeight: number;
+  clientHeight: number;
+  scrollWidth: number;
+  clientWidth: number;
+  left: number;
+  right: number;
+  viewportWidth: number;
+};
 
 async function stubProvider(context: BrowserContext): Promise<void> {
   await context.route(`${BASE_URL}/models`, (route) =>
@@ -87,6 +96,7 @@ test('the pre-Start CTA shows its whole label at the panel width, and the wordma
   // half of it is a button.
   const ctaBox = await cta.evaluate<CtaMetrics, HTMLElement>((el) => {
     const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
     return {
       whiteSpace: style.whiteSpace,
       // The content the label needs, against the box it has to fit in: the pill is a fixed
@@ -94,6 +104,11 @@ test('the pre-Start CTA shows its whole label at the panel width, and the wordma
       // which is what "the CTA shows its whole label" has to mean.
       scrollHeight: el.scrollHeight,
       clientHeight: el.clientHeight,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: document.documentElement.clientWidth,
     };
   });
 
@@ -101,6 +116,10 @@ test('the pre-Start CTA shows its whole label at the panel width, and the wordma
   // pill, so a wrapped label is a CLIPPED one ("provider" cut off by the pill's edge).
   expect(ctaBox.whiteSpace).toBe('nowrap');
   expect(ctaBox.scrollHeight).toBeLessThanOrEqual(ctaBox.clientHeight);
+  // `nowrap` alone can still clip horizontally inside a constrained button.
+  expect(ctaBox.scrollWidth).toBeLessThanOrEqual(ctaBox.clientWidth);
+  expect(ctaBox.left).toBeGreaterThanOrEqual(0);
+  expect(ctaBox.right).toBeLessThanOrEqual(ctaBox.viewportWidth);
 
   // The wordmark is the header row's only flexible child — it gives ground first when the
   // readiness cluster grows, but it must never end up truncated.
