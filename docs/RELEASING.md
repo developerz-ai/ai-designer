@@ -51,7 +51,39 @@ Dev builds (`bun run dev`) skip minification for fast HMR.
 
 ## CI gate
 
-Every push/PR runs `.github/workflows/ci.yml` first: `lint`, `typecheck`, `test-unit`, `test-integration`, `build` (all parallel except `build`, which needs the rest green), plus `actionlint`. A tag won't produce a usable release if these are red — fix main first.
+Every push/PR runs `.github/workflows/ci.yml` first — six jobs:
+
+| Job | Command | Needs |
+|--|--|--|
+| `lint` | `bun run lint` (Biome) | — |
+| `typecheck` | `bun run typecheck` (tsgo) | — |
+| `test` | `bun run test` — **one** job, unit + integration in a single `vitest run` | — |
+| `build` | `bun run release` (build + zip) | `lint`, `typecheck` |
+| `test-e2e` | `bun run build`, then `bun run test:e2e` | `lint`, `typecheck` |
+| `actionlint` | `./actionlint -color`, pinned to 1.7.12 | — |
+
+`build` and `test-e2e` wait on the two cheapest jobs only — the `test` job is off the critical path. A tag won't produce a usable release if any of the six is red — fix main first.
+
+### The local mirror
+
+`bin/check` runs the same six gates, in this order:
+
+1. `bun run verify` — lint + typecheck (concurrent), then the unit + integration suite.
+2. `bun run release` — the `build` job (build + zip).
+3. `bun run test:e2e` — the `test-e2e` job; locally it reuses the release build, CI builds independently.
+4. `actionlint -color` — the `actionlint` job, last.
+
+It installs nothing and downloads nothing. `actionlint` resolves from an executable `./actionlint` in the repo root, else `actionlint` on `PATH`.
+
+**A missing actionlint is reported, not fatal.** With neither path present, `bin/check` prints a loud warning on stderr naming the CI job it mirrors (`actionlint`), the pinned version (1.7.12), the release URL (<https://github.com/rhysd/actionlint/releases/tag/v1.7.12>) and the literal token `NOT RUN` — then runs the remaining gates and exits 0 if they pass. `bin/setup` never provisions actionlint, so this is the default on a fresh box.
+
+With actionlint present it runs last, and a non-zero exit fails the gate — no later command runs. Once every gate passes, `bin/check` prints a coverage summary: each ci.yml job and whether it ran locally, `NOT RUN` for a skipped actionlint.
+
+`.githooks/pre-commit` execs `bin/check`, so a commit that would fail CI fails here first. One exception: with no actionlint installed locally, `bin/check` skips the `actionlint` job and still exits 0, so a commit that only fails CI's actionlint job passes the hook and is caught by CI instead.
+
+### Other workflows are separate pipelines
+
+`release.yml`, `site.yml`, `site-deploy.yml`, `waitlist-deploy.yml` and `store-assets.yml` are their own pipelines with their own gates — `site.yml` lints, typechecks and builds the separate `site/` sub-project. `bin/check` mirrors `ci.yml` only; it never runs those.
 
 ## Signing key + extension ID
 

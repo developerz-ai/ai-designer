@@ -1,5 +1,90 @@
 #!/usr/bin/env bash
-# one-command check (typecheck + lint + test) — established by dz-runner setup mode. One command; adjust as the repo grows.
+# Local CI gate - mirrors the EXTENSION pipeline in .github/workflows/ci.yml ONLY.
+# ci.yml runs six jobs: lint, typecheck, test, build, test-e2e, actionlint.
+# The other workflows under .github/workflows/ (release.yml, site.yml, site-deploy.yml,
+# waitlist-deploy.yml, store-assets.yml) are separate pipelines with their own gates;
+# bin/check does not mirror them.
+#
+# Order (CI's build job feeds its E2E job; locally E2E reuses the release build):
+#   bun run verify    -> lint + typecheck + unit/integration tests (scripts/verify.sh)
+#   bun run release   -> build + zip
+#   bun run test:e2e  -> Playwright E2E on the release build
+#   actionlint -color -> workflow lint; runs last, a non-zero exit fails the gate
+#
+# actionlint is resolved BEFORE the expensive gates: repo-root ./actionlint first, then
+# `actionlint` on PATH. When it is ABSENT the gate does NOT abort - a loud STDERR warning
+# and the closing coverage summary report the actionlint CI job as NOT RUN, and the
+# remaining gates decide the exit status. Nothing is installed or downloaded here;
+# bin/setup owns provisioning (dependencies + Playwright Chromium/OS dependencies).
+# The pre-commit hook delegates here: every commit now includes packaging + E2E.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+
+# Repo root, using bash builtins only (no dirname dependency).
+# A path-carrying $0 keeps its own directory. A path-less $0 (the script found
+# through PATH, `bash check`, `bash < bin/check`) must be RESOLVED: guessing "."
+# would point the gate at the PARENT of the current directory and run every
+# gate - and the actionlint lookup - in the wrong tree.
+case "$0" in
+  */*) script_dir="${0%/*}" ;;
+  *)
+    resolved=''
+    resolved=$(command -v -- "$0" 2>/dev/null) || resolved=''
+    case "$resolved" in
+      */*) script_dir="${resolved%/*}" ;;
+      *) script_dir='' ;;
+    esac
+    # The repository root is the directory that holds package.json. Anything else
+    # means $0 was never the gate (a resolved shell, an unrelated command), and
+    # running the gate there would be silently wrong.
+    if [[ -z "$script_dir" || ! -f "$script_dir/../package.json" ]]; then
+      printf 'ERROR: cannot resolve the repository root from $0=%s (resolved: %s).\n' \
+        "$0" "${resolved:-not found}" >&2
+      printf '  Invoke the gate as ./bin/check from the repository root, or put its bin/ directory on PATH.\n' >&2
+      exit 2
+    fi
+    ;;
+esac
+cd "$script_dir/.."
+
+actionlint_version='1.7.12'
+actionlint_url='https://github.com/rhysd/actionlint/releases/tag/v1.7.12'
+
+# Resolve actionlint before the expensive gates: the CI-style repo-root binary wins
+# over PATH, exactly like ci.yml invokes ./actionlint.
+actionlint_bin=''
+if [[ -f ./actionlint && -x ./actionlint ]]; then
+  actionlint_bin='./actionlint'
+elif actionlint_on_path=$(command -v actionlint 2>/dev/null); then
+  actionlint_bin="$actionlint_on_path"
+fi
+
+if [[ -z "$actionlint_bin" ]]; then
+  printf '%s\n' \
+    "WARNING: actionlint NOT RUN - the CI job 'actionlint' (.github/workflows/ci.yml) is not mirrored locally." \
+    "  actionlint ${actionlint_version} was not found (looked for ./actionlint in the repo root, then 'actionlint' on PATH)." \
+    "  Install it from ${actionlint_url} and re-run to close this gap." \
+    '  The other ci.yml jobs (lint, typecheck, test, build, test-e2e) still run; a missing actionlint does not fail this gate.' >&2
+fi
+
 bun run verify
+bun run release
+bun run test:e2e
+
+if [[ -n "$actionlint_bin" ]]; then
+  "$actionlint_bin" -color
+fi
+
+actionlint_status='NOT RUN'
+actionlint_detail='(actionlint binary not found)'
+if [[ -n "$actionlint_bin" ]]; then
+  actionlint_status='RAN'
+  actionlint_detail="${actionlint_bin} -color"
+fi
+
+printf '\n%s\n' 'CI job coverage (.github/workflows/ci.yml):'
+printf '  %-10s %-8s %s\n' 'lint' 'RAN' 'bun run lint (via bun run verify)'
+printf '  %-10s %-8s %s\n' 'typecheck' 'RAN' 'bun run typecheck (via bun run verify)'
+printf '  %-10s %-8s %s\n' 'test' 'RAN' 'bun run test (via bun run verify)'
+printf '  %-10s %-8s %s\n' 'build' 'RAN' 'bun run release'
+printf '  %-10s %-8s %s\n' 'test-e2e' 'RAN' 'bun run test:e2e'
+printf '  %-10s %-8s %s\n' 'actionlint' "$actionlint_status" "$actionlint_detail"

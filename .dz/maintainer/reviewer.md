@@ -7,7 +7,7 @@
 
 ## Stack
 
-Bun + TypeScript + WXT + SolidJS. The gate is `bin/check` (`bun run verify`): a change that does not pass it is not proven, whatever its description says.
+Bun + TypeScript + WXT + SolidJS. The gate is `bin/check` — `bun run verify` (lint + typecheck + unit + integration), `bun run release`, `bun run test:e2e`, then `actionlint -color` (skipped, not failed, when no actionlint binary is installed): a change that does not pass it is not proven, whatever its description says.
 
 ## Review conventions
 
