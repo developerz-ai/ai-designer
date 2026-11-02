@@ -104,13 +104,12 @@ describe('derivePass', () => {
     expect(derivePass(verdict)).toBe(expected);
   });
 
-  it.each([
-    'It depends.',
-    'Not sure — the contrast is borderline.',
-    'Yellowish text on white.',
-  ])('stays undefined on hedged / boundary-adjacent prose: %s', (verdict) => {
-    expect(derivePass(verdict)).toBeUndefined();
-  });
+  it.each(['It depends.', 'Not sure — the contrast is borderline.', 'Yellowish text on white.'])(
+    'stays undefined on hedged / boundary-adjacent prose: %s',
+    (verdict) => {
+      expect(derivePass(verdict)).toBeUndefined();
+    },
+  );
 });
 
 describe('inspectPrompt', () => {
