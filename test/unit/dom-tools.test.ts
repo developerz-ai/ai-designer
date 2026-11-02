@@ -127,21 +127,20 @@ const CASES = [
 ] as const;
 
 describe('createDomTools: execute round-trips to the content script', () => {
-  it.each(CASES)('$tool reassembles a valid DomTool and dispatches it', async ({
-    tool,
-    input,
-    msg,
-  }) => {
-    // The expected message is itself a valid DomTool (guards the reconstruction).
-    expect(DomTool.safeParse(msg).success).toBe(true);
+  it.each(CASES)(
+    '$tool reassembles a valid DomTool and dispatches it',
+    async ({ tool, input, msg }) => {
+      // The expected message is itself a valid DomTool (guards the reconstruction).
+      expect(DomTool.safeParse(msg).success).toBe(true);
 
-    const { calls, tools } = harness();
-    const signal = new AbortController().signal;
-    const returned = await callExecute(tools[tool].execute, input, signal);
+      const { calls, tools } = harness();
+      const signal = new AbortController().signal;
+      const returned = await callExecute(tools[tool].execute, input, signal);
 
-    const call = only(calls);
-    expect(call.msg).toEqual(msg); // correct `type` re-attached + fields forwarded
-    expect(call.signal).toBe(signal); // abort signal threaded to the bus
-    expect(returned).toBe(RESULT); // execute returns the content script's ToolResult verbatim
-  });
+      const call = only(calls);
+      expect(call.msg).toEqual(msg); // correct `type` re-attached + fields forwarded
+      expect(call.signal).toBe(signal); // abort signal threaded to the bus
+      expect(returned).toBe(RESULT); // execute returns the content script's ToolResult verbatim
+    },
+  );
 });
