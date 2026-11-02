@@ -1,11 +1,6 @@
 import type { Breadcrumb, ErrorEvent, Exception } from '@sentry/browser';
 import * as Sentry from '@sentry/browser';
 
-// Public GlitchTip ingest key for the ai-designer project (infra #497). A DSN is
-// a write-only ingest key, safe to ship in the extension bundle — baked in here
-// per the standalone-DSN convention (no cluster secret for a browser extension).
-const DSN = 'https://bf037adaf792452d8b77377abb682bd4@glitchtip.infra.developerz.ai/2';
-
 // Written over any free-form, page-derivable string we refuse to send.
 const REDACTED = '[redacted]';
 
@@ -138,9 +133,14 @@ function withoutSessionTracking(defaults: BrowserIntegration[]): BrowserIntegrat
 // (see isUserAbort) and strips page content off the rest; beforeBreadcrumb stops the
 // two page-derived crumb kinds from being recorded (see scrubEvent / scrubBreadcrumb).
 export function initSentry(): void {
+  // The ingest key comes from the build environment and is never committed: anyone
+  // holding one can post crash events to the tracker. No build sets it today, and this
+  // extension has no login to report behind, so crash reporting is off.
+  const dsn = import.meta.env.WXT_SENTRY_DSN as string | undefined;
+  if (!dsn) return;
   const release = extensionRelease();
   Sentry.init({
-    dsn: DSN,
+    dsn,
     environment: import.meta.env.MODE ?? 'development',
     // The build that crashed. `scrubEvent` has always allowlisted `release`, but nothing ever set
     // it, so every report arrived unattributed — and triaging GlitchTip issue 93 stalled on

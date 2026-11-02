@@ -1,21 +1,41 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
 import type { Breadcrumb, ErrorEvent } from '@sentry/browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isUserAbort, scrubBreadcrumb, scrubEvent } from '@/shared/sentry';
 
 vi.mock('@sentry/browser', () => ({ init: vi.fn() }));
 
+const TEST_DSN = 'https://public@tracker.test/2';
+
 describe('initSentry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('WXT_SENTRY_DSN', TEST_DSN);
   });
 
   afterEach(() => {
     // The release test stubs `chrome`; nothing after it may inherit an extension world.
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
-  it('inits Sentry with the GlitchTip DSN + environment, error tracking only', async () => {
+  it('stays off when the build sets no DSN', async () => {
+    vi.stubEnv('WXT_SENTRY_DSN', '');
+    const Sentry = await import('@sentry/browser');
+    const { initSentry } = await import('@/shared/sentry');
+
+    initSentry();
+
+    expect(Sentry.init).not.toHaveBeenCalled();
+  });
+
+  it('commits no ingest key to source', () => {
+    const source = readFileSync(new URL('../../src/shared/sentry.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/https?:\/\/[^'"\s]+@/);
+  });
+
+  it('inits Sentry with the build DSN + environment, error tracking only', async () => {
     const Sentry = await import('@sentry/browser');
     const { initSentry } = await import('@/shared/sentry');
 
@@ -27,9 +47,7 @@ describe('initSentry', () => {
       throw new Error('Sentry.init was not called with options');
     }
 
-    expect(options.dsn).toBe(
-      'https://bf037adaf792452d8b77377abb682bd4@glitchtip.infra.developerz.ai/2',
-    );
+    expect(options.dsn).toBe(TEST_DSN);
     expect(options).toHaveProperty('environment');
 
     // GlitchTip supports neither Session Replay nor performance tracing, and
