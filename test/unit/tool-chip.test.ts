@@ -14,13 +14,12 @@ describe('toolChipStatus', () => {
     expect(toolChipStatus(undefined)).toBe('done');
   });
 
-  it.each([
-    'running',
-    'done',
-    'error',
-  ] as const)('passes an explicit status "%s" straight through', (status) => {
-    expect(toolChipStatus(status)).toBe(status);
-  });
+  it.each(['running', 'done', 'error'] as const)(
+    'passes an explicit status "%s" straight through',
+    (status) => {
+      expect(toolChipStatus(status)).toBe(status);
+    },
+  );
 });
 
 describe('toolChipStatusIcon', () => {

@@ -41,15 +41,12 @@ describe('turnPhase', () => {
     expect(turnPhase([call(tool)])).toBe('reading');
   });
 
-  it.each([
-    'screenshot',
-    'responsiveCapture',
-    'inspectVisually',
-    'readImages',
-    'readImageContent',
-  ])('reports "looking" for the vision op %s — a distinct, slow, visible thing', (tool) => {
-    expect(turnPhase([call(tool)])).toBe('looking');
-  });
+  it.each(['screenshot', 'responsiveCapture', 'inspectVisually', 'readImages', 'readImageContent'])(
+    'reports "looking" for the vision op %s — a distinct, slow, visible thing',
+    (tool) => {
+      expect(turnPhase([call(tool)])).toBe('looking');
+    },
+  );
 
   it.each([
     'setStyle',
