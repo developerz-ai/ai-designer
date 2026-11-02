@@ -10,14 +10,20 @@
   // below the fold with nothing able to scroll to it, because `__body` clips by contract.
   height: 100%;
 
-  // Quiet title row: brand + name on the left, the readiness pill and its Start/Stop
-  // toggle on the right. One hairline beneath it and nothing else — the tab strip below
-  // reads as content chrome, not as a second toolbar.
+  // Quiet title row: the wordmark disclosure on the left, the readiness pill and its
+  // Start/Stop toggle on the right. One hairline beneath it and nothing else — the tab
+  // strip below reads as content chrome, not as a second toolbar.
   //
   // Fixed 40px, not `min-height: 44px`. The row holds two 28px controls, so 44 left a
   // visible band of dead space above the tab strip; the controls keep their 44px POINTER
   // area through the hit-target pseudo (mixins.hit-target), which is what 2.5.5 asks for
   // — it governs the target, not the bar it sits in.
+  //
+  // The width budget, at the 360px panel width Chrome pins the panel to: 360 − 32
+  // (gutters) = 328px of content. The readiness cluster is `flex: none` — it never gives
+  // ground — so the WORDMARK is this row's flexible child and truncates first. Its worst
+  // case ("Setup needed" + "Start") is ~190px and the wordmark needs ~80px, which leaves
+  // ~40px of slack. The brand mark that used to sit here took 24px of it.
   &__header {
     display: flex;
     flex: none;
@@ -26,13 +32,12 @@
     height: tokens.rem(40);
     padding: 0 tokens.$dz-space-6;
     border-bottom: tokens.$dz-border-width solid var(--dz-border-subtle);
-  }
-
-  &__logo {
-    flex: none;
-    width: tokens.$dz-icon-size-sm;
-    height: tokens.$dz-icon-size-sm;
-    border-radius: tokens.$dz-radius-xs;
+    // The row's own type rather than the body's 14px: the wordmark and the cluster's
+    // labels are 12–13px on a 40px bar (reference: 13px/1.4 for the wordmark, 12px/1.4
+    // for the controls). Declaring it here means the next child added to this row
+    // inherits the row's metrics instead of the panel's body text.
+    font-size: tokens.$dz-font-md;
+    line-height: tokens.$dz-leading-snug;
   }
 
   // The four secondary surfaces get a 32px bar naming where you are and how to leave. It

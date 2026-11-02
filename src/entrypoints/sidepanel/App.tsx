@@ -18,10 +18,10 @@ import { initSessionStore, sessionState } from './stores/session';
 import './App.scss';
 
 // Root side-panel shell — composition only (CLAUDE.md "SolidJS + SRP"). Chrome is a quiet
-// title row (brand + the readiness pill and its Start/Stop toggle, the single loud element
-// in the panel) over the `TabBar`; the body hosts one surface at a time: the design
-// conversation (Chat), the changeset (Diff), MCP backend management, History and Settings
-// (BYOK provider key + model picker). See docs/idea/ui.md.
+// title row (the wordmark disclosure + the readiness pill and its Start/Stop toggle, the
+// single loud element in the panel) over the `TabBar`; the body hosts one surface at a
+// time: the design conversation (Chat), the changeset (Diff), MCP backend management,
+// History and Settings (BYOK provider key + model picker). See docs/idea/ui.md.
 export function App() {
   // First-run guide: auto-shown on a fresh install and re-shown each open until skipped/finished
   // (see stores/onboarding.ts), plus re-openable from Settings. Rendered as an overlay below so it
@@ -59,7 +59,12 @@ export function App() {
   return (
     <div class="dz-app">
       <header class="dz-app__header">
-        <img class="dz-app__logo" src="/logo.png" alt={i18n.t('app.logo.alt')} />
+        {/* No brand mark in this row: the readiness pill is the header's ONE coloured
+            element (#179), and the logo's accent block was the second one. Dropping it
+            also hands the wordmark the 24px the image and its gap took — the wordmark is
+            this row's only flexible child, so at the 360px panel width it is what gives
+            ground first when the status cluster grows. The wordmark disclosure carries
+            the identity instead. */}
         <NavMenu />
         <ReadinessDropdown onNavigate={handleNavigate} />
       </header>

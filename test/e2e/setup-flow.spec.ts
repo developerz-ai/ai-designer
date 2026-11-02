@@ -9,6 +9,22 @@ import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 const BASE_URL = 'https://openrouter.ai/api/v1';
 
+// Chrome pins the side panel to 360 CSS px — the default AND the minimum — so every layout
+// claim about the panel is a claim about that width, not about the tab's default viewport.
+const PANEL_WIDTH = 360;
+
+/** Label overflow and button bounds, measured in the same viewport. */
+type CtaMetrics = {
+  whiteSpace: string;
+  scrollHeight: number;
+  clientHeight: number;
+  scrollWidth: number;
+  clientWidth: number;
+  left: number;
+  right: number;
+  viewportWidth: number;
+};
+
 async function stubProvider(context: BrowserContext): Promise<void> {
   await context.route(`${BASE_URL}/models`, (route) =>
     route.fulfill({
@@ -19,6 +35,103 @@ async function stubProvider(context: BrowserContext): Promise<void> {
   );
   await stubAuthProbe(context, BASE_URL);
 }
+
+test('the header row is neutral: no brand image, and the Start toggle is an outlined ghost', async ({
+  context,
+  openExtensionPage,
+}) => {
+  await stubProvider(context);
+  const page = await openExtensionPage('sidepanel.html');
+  await page.setViewportSize({ width: PANEL_WIDTH, height: 800 });
+
+  // The readiness pill is the header's ONE coloured element. The brand logo used to sit beside
+  // it as a second warm block, so the pill stopped reading as the status.
+  await expect(page.locator('.dz-app__header')).toBeVisible();
+  await expect(page.locator('.dz-app__header img')).toHaveCount(0);
+
+  // The Start/Stop toggle is a neutral outlined ghost in BOTH states: a transparent fill and
+  // the neutral hairline, never the accent.
+  const toggle = page.locator('.dz-readiness__toggle');
+  await expect(toggle).toBeVisible();
+
+  const toggleStyle = await toggle.evaluate((el) => {
+    const style = getComputedStyle(el);
+    // Resolve a token to the colour the browser actually paints, so the assertion names the
+    // ROLE ("the neutral border") instead of hard-coding today's hex.
+    const resolve = (token: string): string => {
+      const probe = document.createElement('span');
+      probe.style.color = style.getPropertyValue(token).trim();
+      document.body.appendChild(probe);
+      const resolved = getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    };
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      accent: resolve('--dz-accent'),
+      neutralBorder: resolve('--dz-border-strong'),
+    };
+  });
+
+  expect(toggleStyle.background).toBe('rgba(0, 0, 0, 0)');
+  expect(toggleStyle.border).toBe(toggleStyle.neutralBorder);
+  expect(toggleStyle.border).not.toBe(toggleStyle.accent);
+});
+
+test('the pre-Start CTA shows its whole label at the panel width, and the wordmark is not cut off', async ({
+  context,
+  openExtensionPage,
+}) => {
+  await stubProvider(context);
+  const page = await openExtensionPage('sidepanel.html');
+  await page.setViewportSize({ width: PANEL_WIDTH, height: 800 });
+
+  const cta = page.locator('.dz-prestart__cta');
+  await expect(cta).toBeVisible();
+  await expect(cta).toHaveText('Set up provider');
+
+  // The CTA is a <button>, so the element IS an HTMLElement — stated in the TYPE, not asserted
+  // with a cast: Playwright types a locator's element as the SVG/HTML union, and only the HTML
+  // half of it is a button.
+  const ctaBox = await cta.evaluate<CtaMetrics, HTMLElement>((el) => {
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return {
+      whiteSpace: style.whiteSpace,
+      // The content the label needs, against the box it has to fit in: the pill is a fixed
+      // 32px, so a label that WRAPS overflows its content box — and this comparison goes red,
+      // which is what "the CTA shows its whole label" has to mean.
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
+
+  // `nowrap` is the declaration that keeps the label on ONE line: the CTA is a fixed 32px
+  // pill, so a wrapped label is a CLIPPED one ("provider" cut off by the pill's edge).
+  expect(ctaBox.whiteSpace).toBe('nowrap');
+  expect(ctaBox.scrollHeight).toBeLessThanOrEqual(ctaBox.clientHeight);
+  // `nowrap` alone can still clip horizontally inside a constrained button.
+  expect(ctaBox.scrollWidth).toBeLessThanOrEqual(ctaBox.clientWidth);
+  expect(ctaBox.left).toBeGreaterThanOrEqual(0);
+  expect(ctaBox.right).toBeLessThanOrEqual(ctaBox.viewportWidth);
+
+  // The wordmark is the header row's only flexible child — it gives ground first when the
+  // readiness cluster grows, but it must never end up truncated.
+  const wordmark = page.locator('.dz-nav__wordmark');
+  await expect(wordmark).toBeVisible();
+  const wordmarkBox = await wordmark.evaluate((el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+  }));
+  // 1px of slack for sub-pixel layout rounding; a real truncation is several px wide.
+  expect(wordmarkBox.scrollWidth).toBeLessThanOrEqual(wordmarkBox.clientWidth + 1);
+});
 
 test('install -> "set up provider" -> configure -> "start designing" -> the conversation', async ({
   context,

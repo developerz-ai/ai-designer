@@ -15,5 +15,7 @@ Regenerate: `bun store/screenshots/capture.ts` and `bun store/promo/render.ts`
 from the repo root (both need `bun run build` first — the capture loads the
 built extension).
 
-The extension's own icons (`src/public/icon/`, `src/public/logo.png` for the
-panel header) are the same brand, wired in `wxt.config.ts`.
+The extension's own icons (`src/public/icon/`) and `src/public/logo.png` are the
+same brand, shipped from `src/public` — WXT's `publicDir`, set in `wxt.config.ts`,
+which also wires the icon set into the manifest. The panel header does NOT render
+`logo.png`: the header carries the wordmark disclosure (`NavMenu`) instead.
