@@ -1,14 +1,35 @@
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
 import { expect, test } from './fixtures';
+
+function emittedSidePanelPath(): string {
+  const buildDir = realpathSync('build/chrome-mv3');
+  const manifest = z
+    .object({ side_panel: z.object({ default_path: z.string().trim().min(1) }) })
+    .parse(JSON.parse(readFileSync(path.join(buildDir, 'manifest.json'), 'utf8')));
+  const panelPath = manifest.side_panel.default_path;
+  const target = realpathSync(path.resolve(buildDir, panelPath));
+  const relativeTarget = path.relative(buildDir, target);
+  expect(relativeTarget, 'side-panel target must stay within build/chrome-mv3').not.toBe('');
+  expect(relativeTarget.startsWith(`..${path.sep}`) || relativeTarget === '..').toBe(false);
+  expect(path.isAbsolute(relativeTarget)).toBe(false);
+  expect(statSync(target).isFile(), `side-panel target must be a file: ${panelPath}`).toBe(true);
+  console.info(`Emitted side_panel.default_path: ${panelPath} (target exists)`);
+  test.info().annotations.push({ type: 'side_panel.default_path', description: panelPath });
+  return panelPath;
+}
 
 // E2E smoke — loads the built extension (build/chrome-mv3) and asserts the side
 // panel mounts. MV3 side panels can't be opened via a Playwright toolbar gesture,
 // so navigate a tab directly to the panel's extension-origin page and assert the
-// Chat surface renders. WXT flattens the entrypoint to `sidepanel.html` at the
-// output root (the source path is `sidepanel/index.html`).
+// Chat surface renders. Read the emitted manifest rather than assuming WXT
+// preserves the source config path or flattens it to a particular output name.
 test('side panel mounts on the Chat tab, gated behind Start on a fresh profile', async ({
   openExtensionPage,
 }) => {
-  const page = await openExtensionPage('sidepanel.html');
+  const panelPath = emittedSidePanelPath();
+  const page = await openExtensionPage(panelPath);
 
   // App shell rendered (App.tsx → <div class="dz-app">).
   await expect(page.locator('.dz-app')).toBeVisible({ timeout: 10_000 });
@@ -46,7 +67,8 @@ test('side panel makes zero blocked/remote font or script requests', async ({
     failedRequests.push(`${request.url()} (${request.failure()?.errorText ?? 'unknown'})`);
   });
 
-  await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+  const panelPath = emittedSidePanelPath();
+  await page.goto(`chrome-extension://${extensionId}/${panelPath}`);
   await expect(page.locator('.dz-app')).toBeVisible({ timeout: 10_000 });
 
   const remoteRequests = requestUrls.filter((url) => !url.startsWith('chrome-extension://'));
