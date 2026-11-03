@@ -475,13 +475,26 @@ describe('query is bounded (the token bomb)', () => {
     return doc;
   }
 
-  it('caps the returned matches and reports the real total', () => {
+  // The 200-link fixtures are slow ONLY under jsdom: its selector engine (nwsapi) has no
+  // `:nth-of-type()` fast path, so each css-path verification in `pickUnique` costs ~100ms
+  // there — MEASURED ~3s for one `query(links(200))`, versus microseconds in a real content
+  // script, where Blink matches these natively. 200 links is the property under test (a real
+  // page's 200 matches capped to 25 with a truthful total), so the fixture stays and these
+  // tests take an explicit timeout instead of tripping the 5s default whenever the suite runs
+  // on a busy box (see vitest.config.ts on CPU contention and the 5s testTimeout).
+  const SLOW_FIXTURE_TIMEOUT = 30_000;
+
+  it('caps the returned matches and reports the real total', {
+    timeout: SLOW_FIXTURE_TIMEOUT,
+  }, () => {
     const result = query(links(200), 'a');
     expect(result.matches.length).toBeLessThanOrEqual(25);
     expect(result.total).toBe(200);
   });
 
-  it('explains the page in words, with both remedies', () => {
+  it('explains the page in words, with both remedies', {
+    timeout: SLOW_FIXTURE_TIMEOUT,
+  }, () => {
     const result = query(links(200), 'a');
     expect(result.note).toContain('1-25 of 200');
     // Paging on, or narrowing — a capped result that offers neither leaves the agent guessing.
@@ -518,7 +531,9 @@ describe('query is bounded (the token bomb)', () => {
     expect(result.note).toBeUndefined();
   });
 
-  it('keeps one broad query well under the size that caused the blow-up', () => {
+  it('keeps one broad query well under the size that caused the blow-up', {
+    timeout: SLOW_FIXTURE_TIMEOUT,
+  }, () => {
     // 200, not 500: `pickUnique` verifies each candidate with a real querySelectorAll, so the
     // fixture itself is the slow part under jsdom. The cap is what this asserts, and the cap does
     // not care how many matched.
