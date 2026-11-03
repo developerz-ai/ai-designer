@@ -21,7 +21,8 @@ import { IMAGE_WORKER_FILE } from '@/entrypoints/sidepanel/lib/image-encode-prot
 // That is the nasty part: the fallback is silent and CORRECT, so the feature works, the unit
 // suite is green, `bun run build` succeeds — and the worker is inert. Only looking at the emitted
 // bundle finds it. So this file looks at the source (always) and at the emitted bundle (whenever
-// one is present).
+// one is present, or required explicitly by the post-build CI step). Handy build-free unit runs
+// remain optional; DZ_REQUIRE_IMAGE_WORKER_BUILD=1 makes missing output a failure.
 //
 // Resolve from `import.meta.url` as a `file:` URL — the same jsdom pitfall `manifest-invariant.
 // test.ts` documents: `new URL('.', import.meta.url)` rewrites the base to http://localhost.
@@ -141,16 +142,21 @@ describe('encode worker — source invariants', () => {
   });
 });
 
-// Only meaningful against a real build. Skipped on a clean checkout so the unit suite still runs
-// without one; run after `wxt build` (the gate does) and these are the assertions that would have
-// caught the shipped-but-inert worker.
+// Only meaningful against a real build. Build-free unit runs skip these assertions unless
+// DZ_REQUIRE_IMAGE_WORKER_BUILD=1. CI sets it after release; the local gate runs tests BEFORE
+// building, so it does not guarantee post-build validation of the shipped-but-inert worker.
 const built = existsSync(BUILD);
+const requireBuild = process.env.DZ_REQUIRE_IMAGE_WORKER_BUILD === '1';
 
-describe.skipIf(!built)('encode worker — emitted bundle', () => {
+describe.skipIf(!built && !requireBuild)('encode worker — emitted bundle', () => {
   const emitted = (): string[] => walk(BUILD, (f) => extname(f) === '.js');
 
   it('emits the worker file at the path the client asks chrome for', () => {
-    expect(existsSync(join(BUILD, IMAGE_WORKER_FILE))).toBe(true);
+    expect(existsSync(BUILD), 'Missing build/chrome-mv3; run bun run release first').toBe(true);
+    expect(
+      existsSync(join(BUILD, IMAGE_WORKER_FILE)),
+      `Missing emitted worker: build/chrome-mv3/${IMAGE_WORKER_FILE}`,
+    ).toBe(true);
   });
 
   it('emits no Worker construction pointing at a source path', () => {
