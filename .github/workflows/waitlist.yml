@@ -1,0 +1,44 @@
+name: Waitlist
+
+on:
+  pull_request:
+    paths:
+      - 'waitlist/**'
+      - '.github/workflows/waitlist.yml'
+      - '.github/actions/bun-setup/**'
+  push:
+    branches: [main]
+    paths:
+      - 'waitlist/**'
+      - '.github/workflows/waitlist.yml'
+      - '.github/actions/bun-setup/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  waitlist:
+    name: Waitlist tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          # waitlist/ owns its dependencies and lockfile; skip the root install.
+          install: 'false'
+      - name: Install waitlist dependencies (including dev dependencies)
+        working-directory: waitlist
+        # Bun installs dev dependencies by default; --production is a valueless flag.
+        run: bun install --frozen-lockfile
+      - name: Test
+        working-directory: waitlist
+        run: bun run test --config vitest.config.ts --maxWorkers=2 --reporter=verbose
