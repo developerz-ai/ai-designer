@@ -113,6 +113,74 @@ function waitlistScripts(): Record<string, string> {
   return parsed.scripts ?? {};
 }
 
+/** The trigger names declared under `on:` — the events that can start this workflow. */
+function onTriggers(src: string): string[] {
+  const lines = src.split('\n');
+  const start = lines.findIndex((line) => /^on:\s*$/.test(line));
+  if (start === -1) {
+    // Shorthand form: `on: [push, pull_request]`, or the single-event scalar.
+    const value = (lines.find((line) => /^on:\s*\S/.test(line)) ?? '')
+      .replace(/^on:\s*/, '')
+      .trim();
+    const items = /^\[(.*)\]$/.exec(value)?.[1] ?? value;
+    return items
+      .split(',')
+      .map((item) => item.trim().replace(/^['"]|['"]$/g, ''))
+      .filter((item) => item.length > 0);
+  }
+  const triggers: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === '') continue;
+    if (!/^ {2}/.test(line)) break; // the next top-level key ends the `on:` block
+    const match = /^ {2}([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (match?.[1]) triggers.push(match[1]);
+  }
+  return triggers;
+}
+
+/** `[scope, value]` pairs of one `permissions:` block — inline or indented map. */
+function permissionScopes(block: string): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  // Inline map: `permissions: { contents: read }` — the pairs sit on the key line.
+  const inline = /permissions:\s*\{(.*)\}\s*$/.exec(block)?.[1] ?? '';
+  for (const pair of inline.split(',')) {
+    const match = /^\s*([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)\s*$/.exec(pair);
+    if (match?.[1] && match?.[2]) entries.push([match[1], match[2]]);
+  }
+  // Indented map: one `scope: value` line under the key. The key line itself
+  // never matches (`permissions: contents: write` is not valid YAML here), and
+  // a scalar (`permissions: read-all`) parses as one entry whose scope name is
+  // `permissions` — which the caller rejects, as it should: read-all is wider
+  // than `contents: read`.
+  for (const line of block.split('\n')) {
+    const match = /^\s+([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)\s*$/.exec(line);
+    if (match?.[1] && match?.[2]) entries.push([match[1], match[2]]);
+  }
+  return entries;
+}
+
+/** Every `permissions:` key nested inside `jobs:` — a job-level override. */
+function jobPermissions(src: string): string[] {
+  const lines = blockOf(src, 'jobs').split('\n');
+  const blocks: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^( +)permissions:\s*(.*)$/.exec(lines[i] ?? '');
+    if (!match) continue;
+    const indent = (match[1] ?? '').length;
+    const body: string[] = [lines[i] ?? ''];
+    for (const line of lines.slice(i + 1)) {
+      if (line.trim() === '') {
+        body.push(line);
+        continue;
+      }
+      if ((/^( +)/.exec(line)?.[1] ?? '').length <= indent) break; // next key at this indent
+      body.push(line);
+    }
+    blocks.push(body.join('\n'));
+  }
+  return blocks;
+}
+
 // ---------------------------------------------------------------------------
 
 describe('waitlist package.json runs lint and typecheck before the suite', () => {
@@ -170,5 +238,45 @@ describe('waitlist CI workflow invariants', () => {
     const test = steps.findIndex((step) => step.run.startsWith('bun run test'));
     expect(install).toBeGreaterThanOrEqual(0);
     expect(test).toBeGreaterThan(install);
+  });
+});
+
+// Mirrors of the permission and trigger guards in
+// test/unit/waitlist-workflow-invariant.test.ts — pinned here too because a
+// waitlist-only PR runs this suite, never the root one.
+describe('waitlist CI workflow invariants: permissions and triggers', () => {
+  it('pins the top-level grant to `contents: read`', () => {
+    // The base the job-level check below is measured against: a job with no
+    // `permissions:` key of its own inherits exactly this.
+    const permissions = blockOf(workflow, 'permissions');
+    expect(permissions).toMatch(/contents:\s*read/);
+    expect(permissions).not.toMatch(/write/);
+    for (const [scope, value] of permissionScopes(permissions)) {
+      expect(`${scope}: ${value}`).toBe('contents: read');
+    }
+  });
+
+  it('keeps every job-level permissions override within the top-level grant', () => {
+    // A job-level `permissions:` key REPLACES the top-level block for that
+    // job (GitHub does not intersect the two), so `permissions: { contents:
+    // write }` on the job widens what CI can do while the top-level block
+    // still reads `contents: read`. Every override must stay within the
+    // grant: only `contents`, only `read` — an explicit `write` value, the
+    // `write-all` shorthand and any second scope fail here.
+    for (const block of jobPermissions(workflow)) {
+      expect(block).not.toMatch(/write/);
+      for (const [scope, value] of permissionScopes(block)) {
+        expect(`${scope}: ${value}`, 'job-level permissions widen the grant').toBe(
+          'contents: read',
+        );
+      }
+    }
+  });
+
+  it('declares both triggers that put the job on PRs and main pushes', () => {
+    // Deleting a trigger disables the check for everything it covered. This
+    // existence pin is what makes "no `paths:` filter" mean "unrestricted"
+    // rather than "never runs" in the paths-coverage guard of the root copy.
+    expect(onTriggers(workflow)).toEqual(expect.arrayContaining(['pull_request', 'push']));
   });
 });
