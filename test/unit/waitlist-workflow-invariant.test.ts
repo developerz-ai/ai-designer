@@ -180,23 +180,56 @@ function onTriggers(src: string): string[] {
   return triggers;
 }
 
-/** `[scope, value]` pairs of one `permissions:` block — inline or indented map. */
+/**
+ * `[scope, value]` pairs of one `permissions:` grant — inline map, indented
+ * map, or the `read-all` / `write-all` scalar. Line comments (` # …`) are
+ * stripped first, so a suffix cannot hide the grant's shape from either
+ * branch. Any nonempty remainder that does not parse THROWS: an unparseable
+ * widened grant must fail the test, never silently parse to zero entries and
+ * pass the caller's `contents: read` pin.
+ */
 function permissionScopes(block: string): Array<[string, string]> {
+  const lines = block.split('\n').map((line) => line.replace(/\s+#.*$/, '').trimEnd());
+  const keyLine = lines.find((line) => /^\s*permissions:/.test(line)) ?? '';
+  const inlineValue = keyLine.replace(/^\s*permissions:\s*/, '').trim();
   const entries: Array<[string, string]> = [];
-  // Inline map: `permissions: { contents: read }` — the pairs sit on the key line.
-  const inline = /permissions:\s*\{(.*)\}\s*$/.exec(block)?.[1] ?? '';
-  for (const pair of inline.split(',')) {
-    const match = /^\s*([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)\s*$/.exec(pair);
-    if (match?.[1] && match?.[2]) entries.push([match[1], match[2]]);
+
+  // The key line's own value: an inline map or a scalar shorthand.
+  if (inlineValue.length > 0) {
+    const inlineBody = /^\{(.*)\}$/.exec(inlineValue)?.[1] ?? null;
+    if (inlineBody !== null) {
+      // Inline map: `permissions: { contents: read, issues: read }`.
+      for (const pair of inlineBody.split(',')) {
+        const entry = pair.trim();
+        if (entry === '') continue; // `{ }` — an explicit empty grant
+        const match = /^([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)$/.exec(entry);
+        if (!match?.[1] || !match?.[2]) {
+          throw new Error(`unparseable permissions entry: "${entry}"`);
+        }
+        entries.push([match[1], match[2]]);
+      }
+    } else {
+      // Scalar shorthand: `read-all` / `write-all` — every scope, i.e. wider
+      // than the grant. Recorded as one entry the caller's `contents: read`
+      // pin rejects.
+      if (!/^(read|write)-all$/.test(inlineValue)) {
+        throw new Error(`unparseable permissions value: "${inlineValue}"`);
+      }
+      entries.push(['all', inlineValue]);
+    }
   }
-  // Indented map: one `scope: value` line under the key. The key line itself
-  // never matches (`permissions: contents: write` is not valid YAML here), and
-  // a scalar (`permissions: read-all`) parses as one entry whose scope name is
-  // `permissions` — which the caller rejects, as it should: read-all is wider
-  // than `contents: read`.
-  for (const line of block.split('\n')) {
-    const match = /^\s+([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)\s*$/.exec(line);
-    if (match?.[1] && match?.[2]) entries.push([match[1], match[2]]);
+
+  // Indented map: one `scope: value` line under the key. The key line never
+  // reaches here — its remainder starts with `permissions:`, not a scope.
+  for (const line of lines) {
+    if (/^\s*permissions:/.test(line)) continue;
+    const entry = line.trim();
+    if (entry === '') continue;
+    const match = /^([A-Za-z0-9_-]+):\s*([A-Za-z0-9_-]+)$/.exec(entry);
+    if (!match?.[1] || !match?.[2]) {
+      throw new Error(`unparseable permissions line: "${entry}"`);
+    }
+    entries.push([match[1], match[2]]);
   }
   return entries;
 }
@@ -222,6 +255,48 @@ function jobPermissions(src: string): string[] {
   }
   return blocks;
 }
+
+describe('permissionScopes: every widened or unparseable grant must fail', () => {
+  // The exact predicate the workflow guards apply: each parsed pair must be
+  // `contents: read`; an unparseable grant throws out of the parser itself.
+  const withinGrant = (block: string): void => {
+    for (const [scope, value] of permissionScopes(block)) {
+      expect(`${scope}: ${value}`, 'permissions widen the grant').toBe('contents: read');
+    }
+  };
+
+  it('accepts the narrow shapes the workflow uses, comments included', () => {
+    expect(() => withinGrant('')).not.toThrow(); // no grant at all
+    expect(() => withinGrant('  contents: read')).not.toThrow();
+    expect(() => withinGrant('  contents: read # why')).not.toThrow();
+    expect(() => withinGrant('    permissions: { contents: read }')).not.toThrow();
+    expect(() => withinGrant('    permissions: { contents: read } # why')).not.toThrow();
+    expect(() => withinGrant('    permissions: { }')).not.toThrow(); // empty grant
+  });
+
+  it('rejects a widened inline map even when a comment follows it', () => {
+    // Regression: `{ contents: read, issues: read } # CI` used to defeat the
+    // inline regex (`\}\s*$`) and parse to zero entries, so the second scope
+    // slipped past the `contents: read` pin.
+    const widened = '    permissions: { contents: read, issues: read } # CI';
+    expect(() => withinGrant(widened)).toThrow();
+  });
+
+  it('rejects the read-all / write-all scalars even when a comment follows them', () => {
+    // Regression: `read-all # CI` used to parse to zero entries the same way
+    // and leave every override check passing on a grant wider than the repo's.
+    expect(() => withinGrant('    permissions: read-all # CI')).toThrow();
+    expect(() => withinGrant('    permissions: write-all # CI')).toThrow();
+    expect(() => withinGrant('    permissions: read-all')).toThrow();
+  });
+
+  it('fails closed on a nonempty grant it cannot parse', () => {
+    // The parser must never mistake an unparseable grant for an empty one.
+    expect(() => withinGrant(`    permissions: \${{ github.token }}`)).toThrow();
+    expect(() => withinGrant('    permissions: contents read')).toThrow();
+    expect(() => withinGrant('  contents: read\n  issues: read, write')).toThrow();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Glob matching (GitHub path filters): `**` spans any number of segments,
@@ -370,17 +445,12 @@ describe('waitlist CI workflow invariants', () => {
   });
 
   it('does not widen the workflow permissions', () => {
-    // `contents: read` only. A `write` permission or a second scope would
-    // widen what an untrusted PR can reach from CI.
+    // `contents: read` only, through the same parser the job-level guard uses:
+    // a `write` value, a second scope or a scalar shorthand widens what an
+    // untrusted PR can reach from CI, and an unparseable grant throws.
     const permissions = blockOf(workflow, 'permissions');
     expect(permissions).not.toMatch(/write/);
-    const scopes = permissions
-      .split('\n')
-      .map((line) => /^\s{2}([A-Za-z0-9_-]+):\s*(.+?)\s*$/.exec(line))
-      .filter((match): match is RegExpExecArray => Boolean(match));
-    // group 1 is the scope name, group 2 its value.
-    expect(scopes.map(([, , value]) => value)).toEqual(['read']);
-    expect(scopes.map(([, name]) => name)).toEqual(['contents']);
+    expect(permissionScopes(permissions)).toEqual([['contents', 'read']]);
   });
 
   it('keeps every job-level permissions override within the top-level grant', () => {
@@ -388,7 +458,9 @@ describe('waitlist CI workflow invariants', () => {
     // (GitHub does not intersect the two), so `permissions: { contents: write }
     // on the job widens what CI can do while the top-level block still reads
     // `contents: read` — which the test above alone would keep passing. Every
-    // override must stay within the grant: only `contents`, only `read`.
+    // override must stay within the grant: only `contents`, only `read`. The
+    // parser fails closed: a grant it cannot parse — including one hidden
+    // behind a trailing comment — throws rather than parsing to nothing.
     for (const block of jobPermissions(workflow)) {
       // `write` anywhere in the block: an explicit `write` value, or the
       // `write-all` shorthand.
