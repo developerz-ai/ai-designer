@@ -577,6 +577,7 @@ function TabStrip({ active = 'chat' }: { active?: TabKey }) {
       className="flex items-stretch gap-[2px] border-b border-[var(--dz-border-subtle)] px-[10px]"
     >
       <button
+        type="button"
         role="tab"
         aria-selected={cur === 'chat'}
         onClick={() => setCur('chat')}
@@ -586,6 +587,7 @@ function TabStrip({ active = 'chat' }: { active?: TabKey }) {
         Chat
       </button>
       <button
+        type="button"
         role="tab"
         aria-selected={cur === 'diff'}
         onClick={() => setCur('diff')}
@@ -600,6 +602,7 @@ function TabStrip({ active = 'chat' }: { active?: TabKey }) {
         </span>
       </button>
       <button
+        type="button"
         role="tab"
         aria-selected={cur === 'mcp'}
         onClick={() => setCur('mcp')}
@@ -609,6 +612,7 @@ function TabStrip({ active = 'chat' }: { active?: TabKey }) {
         MCP
       </button>
       <button
+        type="button"
         role="tab"
         aria-selected={cur === 'history'}
         onClick={() => setCur('history')}
@@ -620,6 +624,7 @@ function TabStrip({ active = 'chat' }: { active?: TabKey }) {
         <IHistory />
       </button>
       <button
+        type="button"
         role="tab"
         aria-selected={cur === 'settings'}
         onClick={() => setCur('settings')}
@@ -1110,7 +1115,9 @@ function AssistantProse({ streaming }: { streaming?: boolean }) {
       </blockquote>
       <p>
         Reference:{' '}
-        <a href="#">https://www.nvidia.com/en-us/design-system/foundations/typography/</a>
+        <a href="https://www.nvidia.com/en-us/design-system/foundations/typography/">
+          https://www.nvidia.com/en-us/design-system/foundations/typography/
+        </a>
         {streaming ? <span className="dz-caret" /> : null}
       </p>
     </div>
@@ -1266,8 +1273,8 @@ function ToolRun({ tools, defaultOpen = false }: { tools: Tool[]; defaultOpen?: 
         <span className="ml-auto">{open ? <IChevUp size={12} /> : <IChevDown size={12} />}</span>
       </button>
       <ul className="mt-[6px] flex flex-col gap-[4px]">
-        {(open ? tools : pinned).map((t, i) => (
-          <ToolChip key={i} t={t} open={!open && t.status === 'error'} />
+        {(open ? tools : pinned).map((t) => (
+          <ToolChip key={`${t.name}:${t.summary}`} t={t} open={!open && t.status === 'error'} />
         ))}
       </ul>
     </div>
@@ -1372,12 +1379,12 @@ function TaskTimeline() {
                 </span>
               ) : null}
               {r.pr ? (
-                <a
-                  href="#"
+                <button
+                  type="button"
                   className="dz-t inline-flex items-center gap-[4px] text-[11px] leading-[1.4] font-medium text-[var(--dz-accent)] hover:underline"
                 >
                   View PR <IExternal size={11} />
-                </a>
+                </button>
               ) : null}
             </div>
             {r.err ? (
@@ -1817,7 +1824,7 @@ export default function App() {
 
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: TOKENS }} />
+      <style>{TOKENS}</style>
       <main className="dz min-h-screen bg-[var(--dz-elev-base)] px-[24px] py-[32px]">
         <header className="mb-[24px] max-w-[70ch]">
           <div className="flex items-center gap-[8px]">
@@ -2549,7 +2556,7 @@ export default function App() {
             <div className="dz-scroll h-[540px] px-[16px] py-[12px]">
               <GroupLabel n={3}>Provider</GroupLabel>
               <div className="flex flex-col gap-[10px]">
-                <label className="flex flex-col gap-[4px]">
+                <div className="flex flex-col gap-[4px]">
                   <span className="text-[11px] leading-[1.4] font-medium text-[var(--dz-fg-muted)]">
                     Preset
                   </span>
@@ -2557,7 +2564,7 @@ export default function App() {
                     <span className="flex-1 text-[12px] text-[var(--dz-fg)]">OpenRouter</span>
                     <IChevDown size={12} />
                   </span>
-                </label>
+                </div>
                 <Field label="API key" placeholder="•••• saved" type="password" />
                 <Combobox mode="closed" />
                 <div className="flex items-center gap-[8px]">
@@ -2581,9 +2588,9 @@ export default function App() {
                   'Report an issue',
                   'Privacy — your key never leaves this device',
                 ].map((l) => (
-                  <a
+                  <button
                     key={l}
-                    href="#"
+                    type="button"
                     className="dz-t flex items-center gap-[8px] rounded-[8px] px-[2px] py-[8px] text-[13px] leading-[1.4] text-[var(--dz-fg-body)] hover:text-[var(--dz-fg-strong)]"
                   >
                     <span className="text-[var(--dz-fg-muted)]">
@@ -2593,7 +2600,7 @@ export default function App() {
                     <span className="text-[var(--dz-fg-muted)]">
                       <IExternal size={12} />
                     </span>
-                  </a>
+                  </button>
                 ))}
                 <button
                   type="button"
@@ -2608,7 +2615,7 @@ export default function App() {
           <Frame caption="Settings — Custom base URL, combobox open, saving" height={420}>
             <div className="px-[16px] py-[12px]">
               <div className="flex flex-col gap-[10px]">
-                <label className="flex flex-col gap-[4px]">
+                <div className="flex flex-col gap-[4px]">
                   <span className="text-[11px] leading-[1.4] font-medium text-[var(--dz-fg-muted)]">
                     Preset
                   </span>
@@ -2616,7 +2623,7 @@ export default function App() {
                     <span className="flex-1 text-[12px] text-[var(--dz-fg)]">Custom</span>
                     <IChevDown size={12} />
                   </span>
-                </label>
+                </div>
                 <Field label="Base URL" value="http://127.0.0.1:11434/v1" mono />
                 <Field label="API key" placeholder="Paste your key" type="password" />
                 <Combobox mode="open" />
