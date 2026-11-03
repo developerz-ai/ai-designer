@@ -14,7 +14,7 @@ SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS w
 Four tabs (`Tab = 'chat' | 'mcp' | 'history' | 'settings'`) — there is no standalone "diff review" tab; the changeset lives inside the Chat flow.
 
 - **Chat** — the design conversation. Modes (copy / debug / none) are pinned per message or inferred from its text — suggestion chips, no picker UI. Streamed tokens, tool-call chips, the picked-element context chip, the input box, task status timelines + PR links after a Ship, and the **Ship bar** (Ship or Download report, per [handoff.md](handoff.md)).
-- **MCP** — connected backends, auth status (API key / OAuth per server). Feature-flagged, on by default. The origin→repo mapping is storage-only today (no UI — see #20). See [mcp.md](mcp.md).
+- **MCP** — connected backends, auth status (API key / OAuth per server), and the **Origin → repo mapping** section (`OriginRepoSection.tsx`): map the active page's origin to a repo, list every saved mapping, remove one. Feature-flagged, on by default. See [mcp.md](mcp.md).
 - **History** — last 10 conversations (+ their reports/PR links). Selecting one swaps in a read-only replay; delete supported. See [Memory](agent.md#memory) and [History](#history).
 - **Settings** — provider config (base URL, API key, model picker), overlay opt-in.
 
@@ -63,7 +63,7 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `chat/AttachmentTray.tsx` | Attached mockups + promoted big pastes, above the composer shell |
 | `ShipBar.tsx` | Ship / Download report actions |
 | `TaskTimeline.tsx` | Handoff status → PR link |
-| `McpPanel.tsx` | Connected backends + add/remove (origin→repo mapping is storage-only, no UI — #20) |
+| `McpPanel.tsx` / `OriginRepoSection.tsx` | Connected backends + add/remove; origin→repo mapping form (active origin) + saved-map list |
 | `AuthDialog.tsx` | OAuth/PKCE + API-key entry |
 | `HistoryPanel.tsx` / `ConversationView.tsx` | Last-10 list + read-only replay |
 | `SettingsPanel.tsx` | Provider config + model picker |

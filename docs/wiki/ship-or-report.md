@@ -9,7 +9,7 @@ Every session ends the same way: you click a button. The extension never sends y
 | **Ship** | An MCP backend is connected *and* this page's origin is mapped to a repo | A real PR — the dev-agent maps your edits to source, writes code, opens a PR |
 | **Download report** | No backend connected, or no repo mapped for this origin | A Markdown file — paste it into any coding agent (Claude Code, Cursor, Copilot, whatever you use) |
 
-You don't choose the path — the Ship bar shows whichever is actually available. Connecting a backend is step one; the origin→repo mapping that completes **Ship** is storage-only today (no UI yet — #20).
+You don't choose the path — the Ship bar shows whichever is actually available. Connecting a backend is step one; map the origin to its repo next — side panel → **MCP** tab → **Origin → repo mapping**. The Ship bar offers the same mapping inline when a Ship falls back for a missing repo: save it and it ships again.
 
 ## What's in the brief either way
 

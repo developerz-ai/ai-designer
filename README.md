@@ -8,7 +8,7 @@
 
 Chrome extension. Open any page — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, click **Ship** and the agent hands the change off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR.
 
-Not a page builder. Not a Figma clone. It edits **your codebase**, and the only durable output is a reviewable PR.
+Not a page builder. Not a Figma clone. It edits **your codebase**, and the only durable output is a reviewable PR or a Markdown brief.
 
 ## The loop
 
@@ -17,9 +17,10 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
               │                    │ iterate, see it instantly
               │ "Ship"             ▼
               └─► changeset (selectors, styles, screenshots, intent)
-                     │ MCP
-                     ▼
+                     │ MCP                                │ Download report
+                     ▼                                    ▼
               developerz.ai ─► real code edit ─► PR ─► CI
+                                                      Markdown brief
 ```
 
 ## Why
@@ -37,7 +38,7 @@ The gap: **what you see** (the rendered page) and **what you change** (the sourc
 | Talk | Side-panel chat | "Make the hero full-bleed, CTA orange, tighten the nav." Attach mockups (button, paste or drop) and the agent redesigns the live page towards them. |
 | See | Live page | Agent mutates real DOM/CSS. Instant. You react, refine. |
 | Accept | Side-panel chat | Each change recorded as a structured changeset entry (edit chips + undo). |
-| Ship | MCP handoff | Changeset → dev-agent → finds source → edits code → PR. |
+| Ship | MCP handoff **or** Markdown download | Changeset → dev-agent → finds source → edits code → PR. No backend/repo mapped → downloadable Markdown brief instead. |
 | Verify | PR / CI | Real change, tested, reviewable. You merge. |
 
 - **Live edits are ephemeral.** Mutations never persist to the site. Reload = clean page.
@@ -94,7 +95,8 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 | [docs/idea/](docs/idea/README.md) | Vision, the design→ship loop, principles, surfaces |
 | [docs/architecture/](docs/architecture/README.md) | Components, MV3 worlds, agent loop, handoff, security, ADRs |
 | [Privacy policy](docs/architecture/privacy.md) | Data handling: BYOK inference, ephemeral edits, changeset-only durable output |
+| [docs/design/](docs/design/) | Design sandbox — the v0 side-panel redesign source; the shipped panel is `src/entrypoints/sidepanel/` |
 
 ## Status
 
-Spec + scaffold phase. v0: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+v0 shipped: the full design loop — chat → live DOM/CSS edits → changeset → **Ship** hands it to a backend that opens a PR, or downloads a Markdown report when no backend/repo is mapped. Readiness/Start gate, copy + debug modes, history and the on-page overlay are in. See [docs/idea/roadmap.md](docs/idea/roadmap.md).

@@ -63,7 +63,7 @@ The changeset is the task spec. Maps to ai-dev's domain tool:
 ```
 
 - `template` picked from the backend's agent templates (`frontend_dev` for UI work).
-- `repo` from the persisted origin→repo map (see [mcp.md](mcp.md)) — set once per origin, reused after. Storage-only today; the panel UI for it is #20.
+- `repo` from the persisted origin→repo map (see [mcp.md](mcp.md)) — set once per origin, reused after. Map it in the MCP tab's **Origin → repo mapping** section, or from the Ship bar's inline form when a Ship falls back for a missing repo.
 - Screenshots travel as attachments/URLs so the dev-agent can visually verify its result against intent.
 
 ## Status back

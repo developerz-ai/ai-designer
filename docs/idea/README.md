@@ -4,7 +4,7 @@ Chrome extension. **Talk to an agent, redesign the live page in real time, then 
 
 Pitch: **Design in the page. Ship the real code.**
 
-You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR.
+You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR — or, with no backend/repo mapped, hands you a downloadable Markdown brief instead.
 
 Two surfaces, one extension: a **chat** (design conversation) and **MCP management** (where the work actually lands).
 
@@ -24,7 +24,7 @@ Two surfaces, one extension: a **chat** (design conversation) and **MCP manageme
 | [ui.md](ui.md) | SolidJS side panel — chat + MCP + history + settings tabs |
 | [testing.md](testing.md) | Unit + integration + E2E pyramid, what gets mocked |
 | [ai-first.md](ai-first.md) | How we build it with Claude Code — `.claude/`, skills, compressed config |
-| [roadmap.md](roadmap.md) | v0 → v1 → v2 → anti-roadmap |
+| [roadmap.md](roadmap.md) | Shipped / Next / Anti-roadmap |
 
 ## How it works
 
@@ -33,14 +33,15 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
               │                    │ you iterate, see it instantly
               │ "ship it"          ▼
               └─► changeset (selectors, styles, screenshots, intent)
-                     │ MCP
-                     ▼
+                     │ MCP                                │ Download report
+                     ▼                                    ▼
               developerz.ai ─► real code edit ─► PR ─► CI
+                                                      Markdown brief
 ```
 
 - **Design loop.** In-browser agent edits the real DOM/CSS. Nothing persists — it's a sandbox over the page you're looking at.
 - **Capture.** Every accepted edit is recorded as a structured changeset: stable selector, before/after, computed styles, before/after screenshots, your intent in words.
-- **Handoff.** Changeset goes over MCP to a dev-agent that finds the source, makes the equivalent change in the codebase, runs tests, opens a PR.
+- **Handoff.** Changeset goes over MCP to a dev-agent that finds the source, makes the equivalent change in the codebase, runs tests, opens a PR. No backend/repo mapped → **Download report**, a Markdown brief you paste into any coding agent.
 - **BYOK.** OpenRouter key for the design agent. MCP token for the dev backend. We never resell tokens.
 
 ## Stack
@@ -59,4 +60,4 @@ See [testing.md](testing.md) for the test pyramid and [ui.md](ui.md) for the Sol
 
 ## Status
 
-Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+v0 shipped: the full design loop — chat → live DOM/CSS edits → changeset → **Ship** hands it to a backend that opens a PR, or downloads a Markdown report when no backend/repo is mapped. Readiness/Start gate, copy + debug modes, history and the on-page overlay are in. See [roadmap.md](roadmap.md).
