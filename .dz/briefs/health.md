@@ -16,3 +16,10 @@ For each unhealthy signal, one ask, unless an open issue already carries its exa
 Titles are stable: nothing that changes run to run (sha, run URL, version) goes in one; that goes in the body,
 with the command and its output. Unreadable evidence is no verdict: re-run it, never file it as a defect.
 A red `main` comes first: nothing releases from it.
+
+## Rows
+
+- `main-green` — `main` is green: `gh run list --workflow ci.yml --branch main --event push --limit 1 --json conclusion,headSha,url` against `git rev-parse origin/main`; healthy is `success` on the `origin/main` tip — a null conclusion or another sha is no verdict.
+- `last-tag-built` — the last tag built: latest `v[0-9]*` tag on origin/main (`git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main`), then `gh run list --workflow release.yml --limit 5 --json conclusion,headSha,url` against `git rev-parse "$t^{commit}"`; healthy is `success` on that sha — no run on that sha is no verdict.
+- `release-artifacts` — the GitHub Release carries the artifacts: `gh release view "$t" --json isDraft,publishedAt,assets`; healthy is not a draft, published, at least one `.zip` and one `.crx`.
+- `dependabot-not-stuck` — Dependabot is not stuck: `gh pr list --app dependabot --state open --limit 100 --json number,updatedAt,statusCheckRollup`; healthy is no PR with failed checks and more than 7 days since `updatedAt`.
