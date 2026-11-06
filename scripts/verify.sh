@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# Local gate. Mirrors what CI checks, but ordered for a fast inner loop.
-#   bun run verify          lint + typecheck (concurrent) → tests
-#   bun run verify --check  lint + typecheck only, no tests
+# Local gate. Mirrors the CI validation jobs in .github/workflows/ci.yml, ordered for a fast
+# inner loop. `bin/check` is the entry point — it prints the job-by-job coverage table.
+#   bun run verify          postinstall + lint + typecheck (concurrent) → tests
+#   bun run verify --check  postinstall + lint + typecheck only, no tests
 #   bun run verify --gate   everything above + build + E2E on the loaded extension
+#
+# Source of truth is .github/workflows/ci.yml. Mirrored here, job for job:
+#   lint       ci.yml:44   bun run lint
+#   typecheck  ci.yml:56   bun run postinstall, then ci.yml:58 bun run typecheck
+#   test       ci.yml:75   bun run test — ONE job over unit + integration
+#
+# CI-only, deliberately not run here: `build` (a release build on a clean runner), `test-e2e`
+# (needs that build plus Playwright Chromium) — `--gate` runs both — and `actionlint`, which
+# has no in-checkout tool: it is not a dependency and ci.yml downloads the binary at job time.
 #
 # lint and typecheck are independent processes, so they run at the same time.
 # Tests run as ONE vitest invocation rather than test:unit then test:integration:
@@ -24,6 +34,20 @@ done
 
 step() { printf '\n\033[1;36m▸ %s\033[0m\n' "$1"; }
 
+# ci.yml:55-56 runs `bun run postinstall` (wxt prepare → .wxt/) before typecheck, and typecheck
+# resolves `#i18n` through .wxt/i18n/index.ts (tsconfig.json:32). Without this step a checkout
+# that has node_modules but no `.wxt/` fails typecheck here for a reason CI never has.
+step "wxt prepare (postinstall)"
+# Own failure banner, for the same reason the test step below has one: run bare under `set -e`,
+# a broken wxt.config or a stale `.wxt/` aborted printing no ✗ line at all — while bin/check:70
+# tells the reader the failing step IS the ✗ line scripts/verify.sh printed.
+if bun run postinstall; then
+  :
+else
+  printf '\n\033[1;31m✗ wxt prepare (postinstall) failed\033[0m\n'
+  exit 1
+fi
+
 step "lint + typecheck (concurrent)"
 lint_log=$(mktemp); tc_log=$(mktemp)
 trap 'rm -f "$lint_log" "$tc_log"' EXIT
@@ -43,7 +67,14 @@ printf '\033[1m-- typecheck --\033[0m\n'; cat "$tc_log"
 [ "$MODE" = check ] && { printf '\n\033[1;32m✓ check clean\033[0m\n'; exit 0; }
 
 step "tests (unit + integration, one pool)"
-bun run test
+# Own failure banner: each step names itself on the way out, so a red gate says WHICH step failed
+# instead of leaving the reader to guess from the tail of the log (bin/check prints the verdict).
+if bun run test; then
+  :
+else
+  printf '\n\033[1;31m✗ tests failed\033[0m\n'
+  exit 1
+fi
 
 if [ "$MODE" = gate ]; then
   step "build"
