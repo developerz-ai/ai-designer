@@ -91,9 +91,13 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 
 | | |
 |--|--|
+| [docs/](docs/README.md) | The docs index — one row per area and per docs-root page |
 | [docs/idea/](docs/idea/README.md) | Vision, the design→ship loop, principles, surfaces |
 | [docs/architecture/](docs/architecture/README.md) | Components, MV3 worlds, agent loop, handoff, security, ADRs |
+| [docs/wiki/](docs/wiki/README.md) | User guide: install, copy/debug modes, ship-or-report, history, keys |
 | [Privacy policy](docs/architecture/privacy.md) | Data handling: BYOK inference, ephemeral edits, changeset-only durable output |
+| [docs/RELEASING.md](docs/RELEASING.md) · [docs/STORE-SETUP.md](docs/STORE-SETUP.md) · [docs/store/LISTING.md](docs/store/LISTING.md) | Release: tag → signed build → GitHub Release. Store accounts + the CI secrets to publish. The paste-ready dashboard listing |
+| [CONTRIBUTING.md](CONTRIBUTING.md) · [store/README.md](store/README.md) | Setup, checks and conventions; the store assets and how to regenerate them |
 
 ## Status
 
