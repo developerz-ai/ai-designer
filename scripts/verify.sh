@@ -41,11 +41,15 @@ step "wxt prepare (postinstall)"
 # Own failure banner, for the same reason the test step below has one: run bare under `set -e`,
 # a broken wxt.config or a stale `.wxt/` aborted printing no ✗ line at all — while bin/check:70
 # tells the reader the failing step IS the ✗ line scripts/verify.sh printed.
+# `status=$?` is captured BEFORE the banner: `printf` overwrites `$?`, so an `exit $?` after it
+# would exit 0 and report a red gate as clean. The step's own code is what bin/check:70 prints as
+# `✗ gate FAILED (exit %s)`, so collapsing it to 1 hides how the step failed.
 if bun run postinstall; then
   :
 else
+  status=$?
   printf '\n\033[1;31m✗ wxt prepare (postinstall) failed\033[0m\n'
-  exit 1
+  exit "$status"
 fi
 
 step "lint + typecheck (concurrent)"
@@ -55,14 +59,19 @@ trap 'rm -f "$lint_log" "$tc_log"' EXIT
 bun run lint      >"$lint_log" 2>&1 & lint_pid=$!
 bun run typecheck >"$tc_log"   2>&1 & tc_pid=$!
 
-fail=0
-wait "$lint_pid" || fail=1
-wait "$tc_pid"   || fail=1
+status=0
+wait "$lint_pid" || status=$?
+# Two concurrent steps cannot both supply one exit status, so the LAST one to fail names it —
+# typecheck over lint. bin/check's `✗ gate FAILED (exit %s)` then prints a real code, not a 1.
+wait "$tc_pid"   || status=$?
 
 # Print both logs regardless, so one failure never hides the other's output.
 printf '\033[1m-- lint --\033[0m\n';      cat "$lint_log"
 printf '\033[1m-- typecheck --\033[0m\n'; cat "$tc_log"
-[ "$fail" -eq 0 ] || { printf '\n\033[1;31m✗ lint/typecheck failed\033[0m\n'; exit 1; }
+if [ "$status" -ne 0 ]; then
+  printf '\n\033[1;31m✗ lint/typecheck failed\033[0m\n'
+  exit "$status"
+fi
 
 [ "$MODE" = check ] && { printf '\n\033[1;32m✓ check clean\033[0m\n'; exit 0; }
 
@@ -72,8 +81,9 @@ step "tests (unit + integration, one pool)"
 if bun run test; then
   :
 else
+  status=$?
   printf '\n\033[1;31m✗ tests failed\033[0m\n'
-  exit 1
+  exit "$status"
 fi
 
 if [ "$MODE" = gate ]; then

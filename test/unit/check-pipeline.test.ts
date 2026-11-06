@@ -164,6 +164,36 @@ function tableRows(table: readonly string[], knownIds: readonly string[]): Table
   return rows;
 }
 
+/**
+ * Failure branches that lose the failing step's own exit code. bin/check:70 prints
+ * `✗ gate FAILED (exit %s)`, so the number a reader sees has to be the step's, not a stand-in:
+ *
+ *  - `exit 1` collapses every failure to one number;
+ *  - `exit $?` written AFTER the banner exits 0 — printf's own status — reporting red as green;
+ *  - a `status=$?` written BELOW the banner captures that same 0.
+ *
+ * So every `✗ … failed` line needs a capture above it and `exit "$status"` as its next statement.
+ * Empty when each branch keeps the status it captured.
+ */
+function exitPropagationGaps(shell: string): string[] {
+  const gaps: string[] = [];
+  const lines = shell.split('\n').map((line) => line.trim());
+  for (const [index, line] of lines.entries()) {
+    if (!line.includes('✗') || !line.includes('failed')) continue;
+    // The capture sits ABOVE the banner: printf overwrites `$?` with its own 0.
+    if (!lines.slice(0, index).some((seen) => /\bstatus=\$\?/.test(seen))) {
+      gaps.push(`line ${index + 1}: banner prints before any \`status=$?\` captured its code`);
+    }
+    const next = lines.slice(index + 1).find((candidate) => candidate !== '');
+    if (next !== 'exit "$status"') {
+      gaps.push(
+        `line ${index + 1}: the branch exits \`${next ?? 'nothing'}\`, not the captured status`,
+      );
+    }
+  }
+  return gaps;
+}
+
 /** The route each CI-only job's row must name — CI owns it, the gate reports it. */
 const CI_ONLY_ROUTES: Readonly<Record<string, string>> = {
   'Build extension': 'bun run gate',
@@ -256,6 +286,39 @@ describe('bin/check mirrors the ci.yml validation jobs', () => {
     // ✗ at all while bin/check pointed the reader at "the ✗ line scripts/verify.sh printed".
     expect(verifyCommands).toContain('✗ wxt prepare (postinstall) failed');
     expect(binCheckCommands).not.toContain('lint/typecheck failed');
+  });
+
+  it("propagates the failing step's own exit code to `gate FAILED (exit %s)`", () => {
+    // The three banners used to exit 1 for every failure — bin/check:70 then printed `exit 1` no
+    // matter what the step returned, so no code was ever distinguishable. Each branch now exits the
+    // status it captured BEFORE the banner overwrote `$?` with printf's 0.
+    expect(exitPropagationGaps(verifyCommands)).toEqual([]);
+    expect(verifyCommands).not.toMatch(/^\s*exit 1$/m);
+    expect(verifyCommands).not.toMatch(/^\s*exit \$\?$/m);
+  });
+
+  it('fails when a banner exits `$?` after printf, or collapses to 1', () => {
+    // The exact shape the finding suggested — `printf` … then `exit $?` — would exit 0 and report
+    // a red gate as clean, so the guard has to reject it, not accept it.
+    const afterPrintf = verifySh.replace(
+      /status=\$\?\n(\s*)printf([^\n]*✗[^\n]*)\n\s*exit "\$status"/,
+      '$1printf$2\n  exit $?',
+    );
+    expect(afterPrintf).not.toBe(verifySh);
+    expect(exitPropagationGaps(commandText(afterPrintf)).join('\n')).toMatch(
+      /not the captured status/,
+    );
+    const collapsed = verifySh.replace(/exit "\$status"/, 'exit 1');
+    expect(collapsed).not.toBe(verifySh);
+    expect(exitPropagationGaps(commandText(collapsed)).join('\n')).toMatch(
+      /not the captured status/,
+    );
+    // And dropping the capture above a banner is caught too — the banner would print a stale code.
+    const noCapture = verifySh.replace(/^\s*status=\$\?\n(?=\s*printf[^\n]*✗)/m, '');
+    expect(noCapture).not.toBe(verifySh);
+    expect(exitPropagationGaps(commandText(noCapture)).join('\n')).toMatch(
+      /before any `status=\$\?`/,
+    );
   });
 
   it('probes actionlint instead of aborting when it is absent', () => {
@@ -395,6 +458,18 @@ describe('docs/RELEASING.md states the CI gate it really has', () => {
   it('documents the local mirror and the CI-only remainder', () => {
     expect(releasing).toContain('bin/check');
     expect(releasing).toContain('CI-only');
+  });
+
+  it('never claims the gate runs `bun run verify` and nothing else', () => {
+    // That strong claim contradicted the actionlint bullet two lines below it inside the same
+    // subsection: the gate also probes actionlint and reports it. A reader who believes the
+    // absolute version assumes the gate executes nothing beyond verify.
+    const start = releasing.indexOf('### Locally: `./bin/check`');
+    expect(start).toBeGreaterThan(-1);
+    const subsection = releasing.slice(start).split(/\n## /)[0] ?? '';
+    // The section must still send the reader to the probe, or the assertion below goes vacuous.
+    expect(subsection).toContain('actionlint');
+    expect(subsection).not.toMatch(/nothing else/);
   });
 
   it('makes no claim about the split test jobs CI does not have', () => {

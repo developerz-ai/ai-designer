@@ -71,13 +71,14 @@ usable release while these are red.
 
 ### Locally: `./bin/check`
 
-`./bin/check` is the executable mirror of the three validation jobs. It runs `bun run verify` — and
-nothing else — which is `scripts/verify.sh`: `bun run postinstall`, then `bun run lint` and
-`bun run typecheck` concurrently, then ONE `bun run test`.
+`./bin/check` is the executable mirror of the three validation jobs. The steps are `bun run verify`
+(`scripts/verify.sh`): `bun run postinstall`, then `bun run lint` and `bun run typecheck`
+concurrently, then ONE `bun run test` — followed by the advisory actionlint probe below, which is
+reported but never part of the exit status.
 
 - **Mirrored** — `Lint`, `Typecheck`, `Test (unit + integration)`. Same commands, same scope as CI.
 - **CI-only** — `Build extension` and `Test (e2e)`. `bun run gate` runs part of each locally:
-  `bun run build` then `bun run test:e2e` (`scripts/verify.sh:79-84`) — never `bun run release`,
+  `bun run build` then `bun run test:e2e` (`scripts/verify.sh:89-94`) — never `bun run release`,
   so no `.zip` and no `.crx` land in `build/`. Three steps of those jobs stay CI-only: the zip,
   the emitted image-worker check (`DZ_REQUIRE_IMAGE_WORKER_BUILD=1 bun run test
   test/unit/image-encode-bundling.test.ts`) and the `extension-zip` upload. The gate reports the
