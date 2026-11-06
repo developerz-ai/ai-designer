@@ -76,6 +76,24 @@ export async function sendNotify(subscriberEmail: string): Promise<void> {
     to: notify,
     subject: 'New designer waitlist signup',
     text: `New confirmed signup: ${subscriberEmail}`,
-    html: `<p>New confirmed signup: <code>${subscriberEmail}</code></p>`,
+    html: `<p>New confirmed signup: <code>${htmlEscape(subscriberEmail)}</code></p>`,
   });
+}
+
+// Defence-in-depth at the HTML sink. A subscriber address is already shape-gated
+// upstream (EMAIL_RE in index.ts), but that pattern admits < > " ' & — so the
+// guarantee that an address cannot close <code> or open a tag has to live here,
+// where the markup is built. Ampersand is encoded first so the entities below are
+// not double-escaped.
+const HTML_ENTITIES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
+/** Encode the five HTML-significant characters in `value` for text/attribute context. */
+export function htmlEscape(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => HTML_ENTITIES[char] ?? char);
 }
