@@ -37,7 +37,7 @@ Bun + TypeScript + WXT + SolidJS + SCSS. Agent: AI SDK 7 (`ai`, `ToolLoopAgent`)
 | `src/entrypoints/content.ts` | Content | DOM bridge (isolated), picker mount, overlay mount, recorder relay |
 | `src/entrypoints/injected.content.ts` | MAIN | Page-facts + chart-lib bridge + page-ops (framework state, `window` path reads, `pageCall`). **No secrets, ever** — but no longer read-only: `pageCall` invokes page-owned functions by path, never by code string. No `eval`/`new Function`/`<script>`; path guard + identity check against aliased `eval`/`Function`; hostile-page-safe result marshalling |
 | `src/shared/` | all | Zod schemas (messages, changeset, report, overlay), port/relay plumbing |
-| `src/entrypoints/sidepanel/components/Icon.tsx` | Panel | FontAwesome SVG-core inline, tree-shaken (no remote fetch, CSP-clean) |
+| `src/entrypoints/sidepanel/components/Icon.tsx` | Panel | Name → size/spin class mapping, mounts the SVG DOM node built by `icon-registry.ts` (hand-authored 16×16 glyph table, 1.5px stroke, `currentColor`, `createElementNS` — no `innerHTML`, no remote fetch, no icon package, CSP-clean) |
 
 ## SCSS
 
