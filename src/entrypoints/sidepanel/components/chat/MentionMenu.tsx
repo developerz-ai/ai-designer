@@ -48,6 +48,8 @@ export interface MentionMenuProps {
   query: string;
   /** Index of the row Enter would take. Owned by Composer, which also owns the arrow keys. */
   active: number;
+  /** True while the menu is animating out — Composer keeps it mounted for that window. */
+  leaving?: boolean;
   onPick: (sel: StableSelector) => void;
 }
 
@@ -64,6 +66,7 @@ export function MentionMenu(props: MentionMenuProps) {
           gives the row two conflicting semantics. */}
       <div
         class="dz-mention"
+        classList={{ 'is-leaving': props.leaving }}
         id="dz-mention-list"
         role="listbox"
         aria-label={i18n.t('mention.ariaLabel')}
