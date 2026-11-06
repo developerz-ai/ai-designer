@@ -32,7 +32,13 @@ ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 RUN bun run build
 
 # ---- serve the static bundle (unprivileged nginx, :8080, uid 101) ----
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+# Pinned like the build stage: tag kept for readability, digest makes it immutable.
+# Tag `1.29-alpine` -> manifest-LIST digest (OCI image index, resolves for
+# linux/amd64 — the deploy target); not the per-arch child manifest.
+# Resolved 2026-11-06 via `docker buildx imagetools inspect` and the registry tag
+# API (hub.docker.com/v2/repositories/nginxinc/nginx-unprivileged/tags/1.29-alpine,
+# tag_last_pushed 2026-05-11T04:24:41Z). Re-resolve both when bumping the tag.
+FROM nginxinc/nginx-unprivileged:1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6 AS runtime
 # Static server config: listen 8080, immutable /assets/, index.html fallback.
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
