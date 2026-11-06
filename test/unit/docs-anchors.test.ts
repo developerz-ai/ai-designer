@@ -11,13 +11,36 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..');
 const DOCS_ROOT = resolve(REPO_ROOT, 'docs');
 
-/** Every markdown file under `docs/` — the guard's whole input set. */
-function markdownFiles(dir: string): string[] {
+/**
+ * Directories that hold other people's markdown, not this repo's. `node_modules` is vendored and
+ * gitignored, so it is absent on CI — and while it was walked, a checkout that had one reported
+ * 179 "broken anchors" inside dependency READMEs while CI stayed green: the guard failing for
+ * files no maintainer can fix. Hidden directories (`.git`, `.next`, `.cache`, …) are tooling state
+ * for the same reason. The guard reads what the repo ships.
+ */
+function skippedDir(name: string): boolean {
+  return name === 'node_modules' || name.startsWith('.');
+}
+
+/** The directory entry shape the walker needs — injected below so the skip rule is testable. */
+interface DirEntry {
+  readonly name: string;
+  readonly isDirectory: () => boolean;
+  readonly isFile: () => boolean;
+}
+
+/** The real filesystem, behind the walker's I/O seam. */
+const realReadDir = (dir: string): DirEntry[] => readdirSync(dir, { withFileTypes: true });
+
+/** Every markdown file the repo ships under `docs/` — the guard's whole input set. */
+function markdownFiles(dir: string, readDir: (dir: string) => DirEntry[] = realReadDir): string[] {
   const found: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of readDir(dir)) {
     const full = resolve(dir, entry.name);
-    if (entry.isDirectory()) found.push(...markdownFiles(full));
-    else if (entry.isFile() && entry.name.endsWith('.md')) found.push(full);
+    if (entry.isDirectory()) {
+      if (skippedDir(entry.name)) continue;
+      found.push(...markdownFiles(full, readDir));
+    } else if (entry.isFile() && entry.name.endsWith('.md')) found.push(full);
   }
   return found.sort();
 }
@@ -216,6 +239,32 @@ describe('docs cross-page anchors', () => {
     for (const known of KNOWN_ANCHORS) {
       expect(keys, `no doc links to ${known}`).toContain(known);
     }
+  });
+});
+
+describe('markdown walker', () => {
+  const root = resolve('/tmp/docs');
+  const entry = (name: string, kind: 'dir' | 'file'): DirEntry => ({
+    name,
+    isDirectory: () => kind === 'dir',
+    isFile: () => kind === 'file',
+  });
+  /** A tree as the walker sees it — no temp files, no cleanup. */
+  const tree: Record<string, DirEntry[]> = {
+    [root]: [entry('idea', 'dir'), entry('node_modules', 'dir'), entry('.next', 'dir')],
+    [resolve(root, 'idea')]: [entry('real.md', 'file'), entry('notes.txt', 'file')],
+    [resolve(root, 'node_modules')]: [entry('zod', 'dir')],
+    [resolve(root, 'node_modules/zod')]: [entry('README.md', 'file')],
+    [resolve(root, '.next')]: [entry('cache.md', 'file')],
+  };
+  const read = (dir: string): DirEntry[] => tree[dir] ?? [];
+
+  it('walks shipped docs, skipping vendored and hidden directories', () => {
+    expect(markdownFiles(root, read)).toEqual([resolve(root, 'idea/real.md')]);
+  });
+
+  it('never reaches a dependency README', () => {
+    expect(markdownFiles(root, read)).not.toContain(resolve(root, 'node_modules/zod/README.md'));
   });
 });
 

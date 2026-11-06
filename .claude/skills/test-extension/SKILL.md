@@ -3,7 +3,8 @@ name: test-extension
 description: Testing patterns for the extension — Vitest unit + integration projects and Playwright E2E on a loaded extension. Use when writing or fixing tests, setting up mocks for the agent loop / DOM tools / MCP, or when CI test jobs fail.
 ---
 
-Test pyramid. See `docs/idea/testing.md`. CI runs unit + integration as **parallel** jobs.
+Test pyramid. See `docs/idea/testing.md`. CI runs both in ONE `bun run test` job (one vitest
+pool); `test:unit` / `test:integration` select a directory locally.
 
 ## Layers
 

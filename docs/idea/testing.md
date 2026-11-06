@@ -10,7 +10,7 @@ Test pyramid: fast [Vitest](https://vitest.dev/) unit + integration run **in par
 | Integration | Vitest + jsdom | Agent loop end-to-end with mocked OpenRouter + mocked DOM tools; handoff assembly | sub-second |
 | E2E | Playwright | Real Chromium, extension loaded unpacked, driving a fixture page | seconds |
 
-Unit and integration are **separate Vitest projects** so CI runs them as parallel jobs (see below).
+One Vitest project (`vitest.config.ts`), two directories: `test/unit/` and `test/integration/`, selectable per directory with `bun run test:unit` / `test:integration`. CI runs both in ONE `bun run test` job, one worker pool — not as separate jobs (see below).
 
 ## What's mocked vs real
 
@@ -38,24 +38,30 @@ Unit and integration are **separate Vitest projects** so CI runs them as paralle
 - Open the side panel, type a prompt → recorded-edit chip + Ship bar appear (chat-streaming spec, stubbed model); DOM tools mutate/undo the fixture page over the real content-script bus (dom-tools spec).
 - Ship against a mock MCP server → assert `task(action:'create')` payload.
 
-## CI (parallel)
+## CI
+
+Six jobs in `.github/workflows/ci.yml` — the workflow is the source of truth:
 
 ```
-lint (biome)   ─┐             ┌─► build
-typecheck (tsc)─┤             │
-unit (vitest)  ─┼─► all green ┤
-integration    ─┘             └─► e2e (playwright, builds its own copy)
+Lint (biome)     ─┐                         ┌─► Build extension (needs both)
+                 ├─ (starts in parallel) ──┤
+Typecheck (tsgo) ─┘                         └─► Test (e2e)      (needs both)
+
+Test (unit + integration)   no needs — ONE `bun run test`
+actionlint                  no needs — downloads its own binary
 ```
 
-- `lint`, `typecheck`, `unit`, `integration` run as independent parallel jobs on GitHub-hosted `ubuntu-latest` runners.
-- `build` and `e2e` are siblings — each gates on those four; `e2e` runs its own `bun run build` rather than consuming `build`'s artifact. See the CI workflow.
+- `Lint` (`bun run lint`), `Typecheck` (`bun run postinstall` → `bun run typecheck`) and `Test (unit + integration)` are independent jobs with no `needs:` — all three start at once on `ubuntu-latest`. Unit and integration share ONE job and one vitest worker pool (`ci.yml:60-75`); they are not split.
+- `Build extension` and `Test (e2e)` are siblings, each gated on `Lint` + `Typecheck` only — never on the test job, which keeps the suite off the build's critical path (`ci.yml:81`, `ci.yml:115`). `Test (e2e)` runs its own `bun run build` rather than consuming `build`'s artifact.
+- `actionlint` is CI-only: it downloads the 1.7.12 binary at job time, so it is not a dependency of this repo (`ci.yml:149-160`).
+- Locally `./bin/check` mirrors the three validation jobs via `bun run verify`; `Build extension`, `Test (e2e)` and `actionlint` are CI-only — the gate reports them rather than skipping them silently, and `bun run gate` adds the first two. See [RELEASING.md](../RELEASING.md#ci-gate).
 
 ## Commands
 
 | Command | Does |
 |---------|------|
 | `bun run test` | unit + integration |
-| `bun run test:unit` / `test:integration` | one project |
+| `bun run test:unit` / `test:integration` | one directory (`vitest run unit` / `integration`) |
 | `bun run test:e2e` | Playwright |
 | `bun run lint` / `lint:fix` | Biome check / write |
-| `bun run typecheck` | `tsc --noEmit` |
+| `bun run typecheck` | `tsgo --noEmit` (`typecheck:tsc` for the stock-tsc bisect) |
