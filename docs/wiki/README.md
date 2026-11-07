@@ -15,7 +15,7 @@ User docs for the developerz.ai Designer Chrome extension. Design on the live pa
 
 ## In one line
 
-Chat with an agent in the side panel → it edits the DOM/CSS of the page you're looking at, live → when it's right, click **Ship** for a real PR or **Download** for a Markdown brief you paste into any coding agent.
+Chat with an agent in the side panel → it edits the DOM/CSS of the page you're looking at, live → when it's right, click **Ship** for a real PR or **Download** for a Markdown brief you paste into any coding agent. The full v0 design loop is shipped — see [the shipped record](../roadmap-note.md).
 
 ## Not sure where to start?
 
