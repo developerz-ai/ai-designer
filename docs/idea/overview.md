@@ -26,6 +26,8 @@ The gap: **the thing you see** (the rendered page) and **the thing you change** 
 
 Design and implementation become one conversation. You never leave the page.
 
+The v0 design loop described here is shipped — see [the shipped record](../roadmap-note.md) (slices S1–S021-H01, PRs #71–#105) for what landed and what is next.
+
 ## Audience
 
 | Who | Why they care |

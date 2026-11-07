@@ -59,4 +59,14 @@ See [testing.md](testing.md) for the test pyramid and [ui.md](ui.md) for the Sol
 
 ## Status
 
-Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+Shipped. The v0 design loop — chat, live-edit, changeset, and ship-or-report (MCP handoff to developerz.ai or a Markdown report download) — landed as slices S1–S021-H01 via PRs #71–#105; see [roadmap-note](../roadmap-note.md) for the record.
+
+## Backlog
+
+Scoped for v1, not yet built:
+
+- Origin→repo mapping writer (storage-only today; UI is #20)
+- Design-token awareness — edits emit token changes when a token system is detected
+- Team sharing — shareable changesets / sessions
+- Push status updates — subscribe to backend `watch` events instead of polling
+- Server-side project memory beyond the local last-10 history

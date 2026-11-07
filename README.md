@@ -61,8 +61,6 @@ Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
 
 Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` — generated on the first build and gitignored. Back it up: that key is the extension ID.
 
-Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` (generated on first build, gitignored — back it up, it defines the extension ID).
-
 1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `build/chrome-mv3`.
 2. **Add your OpenRouter key** — side panel → settings (BYOK, stored encrypted, used only in the service worker).
 3. **Connect a backend** — MCP tab → add `https://mcp.developerz.ai/v1/mcp` (developerz.ai). OAuth on first use.
@@ -101,4 +99,4 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 
 ## Status
 
-Spec + scaffold phase. v0: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+Shipped. The v0 design loop — chat, live-edit, changeset, and ship-or-report — landed as slices S1–S021-H01 via PRs #71–#105; see [the shipped record](docs/roadmap-note.md). v1 is next.
