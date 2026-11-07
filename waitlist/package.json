@@ -11,7 +11,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "test": "vitest run"
+    "test": "bun run lint && bun run typecheck && vitest run"
   },
   "dependencies": {
     "hono": "^4.13.13",

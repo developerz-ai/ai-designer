@@ -30,12 +30,16 @@ pr:
   wait_for_other_bots: [coderabbit]
   # Named so the agent knows which red check is the author's to fix. Re-check against the
   # repo's ruleset and `.github/workflows/` when either changes; this list is not the ruleset.
+  # Waitlist lint/typecheck are STEPS of the single `Waitlist tests` job (waitlist/package.json's
+  # `test` chain), so `Waitlist lint` / `Waitlist typecheck` must never be listed here: they are
+  # check names that could never report, and naming them would block every merge forever.
   required_checks:
     - "Lint"
     - "Typecheck"
     - "Test (unit + integration)"
     - "Build extension"
     - "Test (e2e)"
+    - "Waitlist tests"
   auto_merge: true
   auto_merge_scope: any
   require_review: true
