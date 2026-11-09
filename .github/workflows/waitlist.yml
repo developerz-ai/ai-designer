@@ -1,0 +1,59 @@
+# The waitlist backend is a self-contained sub-project: its own package.json, its own bun.lock,
+# its own toolchain. Root `bun run lint` excludes **/waitlist (biome.json) and ci.yml paths-ignore
+# skips waitlist/** — so this workflow is the ONLY place waitlist lint/typecheck can be enforced.
+# Path-triggered: GitHub does the filtering, so there is no `detect` job to pay for either.
+#
+# ONE job, ONE check name (`Waitlist tests`). Waitlist lint and typecheck run INSIDE this job
+# through waitlist/package.json's `test` chain (`bun run lint && bun run typecheck && vitest run`),
+# which the single Test step below invokes. They are deliberately NOT separate steps or jobs:
+# `Waitlist lint` / `Waitlist typecheck` would be check names that never report, and a second job
+# would mint a check name the external branch-protection ruleset never requires.
+
+name: Waitlist
+
+on:
+  pull_request:
+    paths:
+      - 'waitlist/**'
+      - '.github/workflows/waitlist.yml'
+      - '.github/actions/bun-setup/**'
+  push:
+    branches: [main]
+    paths:
+      - 'waitlist/**'
+      - '.github/workflows/waitlist.yml'
+      - '.github/actions/bun-setup/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  waitlist:
+    name: Waitlist tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          # waitlist/ owns its dependencies and lockfile; skip the root install.
+          install: 'false'
+      - name: Install waitlist dependencies (including dev dependencies)
+        working-directory: waitlist
+        # Bun installs dev dependencies by default; --production is a valueless flag.
+        run: bun install --frozen-lockfile
+      # The one run step that covers everything: `bun run test` inside waitlist/ is
+      # waitlist/package.json's `test` script, which chains lint -> typecheck -> vitest.
+      # A failure in either short-circuits the chain with a nonzero exit, so this job goes
+      # red on a lint or typecheck error without a second job or a second check name.
+      - name: Test
+        working-directory: waitlist
+        run: bun run test --config vitest.config.ts --maxWorkers=2 --reporter=verbose

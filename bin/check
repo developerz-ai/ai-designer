@@ -1,5 +1,78 @@
 #!/usr/bin/env bash
-# one-command check (typecheck + lint + test) — established by dz-runner setup mode. One command; adjust as the repo grows.
+# Local gate — an executable mirror of the CI validation jobs in .github/workflows/ci.yml.
+#
+# The execution is `bun run verify`, and nothing else. That is a contract, not a shortcut:
+#   .dz/maintainer/reviewer.md:10  "The gate is `bin/check` (`bun run verify`)"
+#   scripts/verify.sh              the one place the command set lives: `bun run lint` and
+#                                  `bun run typecheck` concurrently (after `bun run postinstall`,
+#                                  exactly as ci.yml's Typecheck job), then ONE `bun run test`
+#                                  — unit + integration share a single vitest worker pool.
+# This file only wraps that call: it prints the coverage map, keeps the exit status so the
+# verdict still prints when the gate fails, and exits with that status.
+#
+# The mirror is machine-checked, not prose. test/unit/check-pipeline.test.ts parses the job ids,
+# job names and `run:` steps out of ci.yml and fails if a step of Lint / Typecheck / Test (unit +
+# integration) is missing from scripts/verify.sh, if a job is renamed, or if the table below
+# drifts from the workflow. docs/RELEASING.md -> "CI gate" says the same thing in prose.
+#
+# CI-only locally, and why:
+#   Build extension  a release build belongs on a clean runner; `bun run gate` builds here.
+#   Test (e2e)       needs that build plus Playwright Chromium; `bun run gate` runs it here.
+#   actionlint       cannot come from this checkout: it is not a dependency, ci.yml downloads
+#                    the 1.7.12 binary at job time. Probed with `command -v` — run and
+#                    reported when present, reported as skipped when absent, NEVER fatal.
+#                    A gate that aborts on a tool the checkout cannot install is not a gate.
+#
+#   ./bin/check --help   print this header
 set -euo pipefail
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  sed -n '/^[^#]/q; p' "$0"
+  exit 0
+fi
+
 cd "$(dirname "$0")/.."
-bun run verify
+
+printf '\n\033[1mcoverage — one row per job in .github/workflows/ci.yml\033[0m\n'
+cat <<'TABLE'
+  merged   lint        Lint                       bun run verify -> bun run lint
+  merged   typecheck   Typecheck                  bun run verify -> postinstall, bun run typecheck
+  merged   test        Test (unit + integration)  bun run verify -> bun run test (one worker pool)
+  ci-only  build       Build extension            bun run gate   -> release build on a clean runner
+  ci-only  test-e2e    Test (e2e)                 bun run gate   -> needs that build + Chromium
+  ci-only  actionlint  actionlint                 probed below   -> not a dependency; never fatal
+  merged = executed by `bun run verify`     ci-only = reported here, run by CI
+TABLE
+
+# The gate. `if`/`else` rather than a bare call so `set -e` cannot swallow the status before
+# the actionlint report and the verdict below are printed.
+if bun run verify; then
+  status=0
+else
+  status=$?
+fi
+
+# actionlint is advisory: probed, reported, never part of the exit status.
+actionlint_state='skipped — not on PATH (not a dependency of this repo; see the header)'
+if command -v actionlint >/dev/null 2>&1; then
+  if actionlint; then
+    actionlint_state='pass'
+  else
+    actionlint_state='FAILED on the workflow yaml — not fatal here, the CI job "actionlint" owns it'
+  fi
+fi
+printf 'actionlint: %s\n' "$actionlint_state"
+
+# Name no candidate step: scripts/verify.sh prints exactly one `✗` banner for the step that failed,
+# and a verdict that also listed the steps that did NOT fail sent one gate run chasing lint when the
+# failure was a single vitest spec.
+if [ "$status" -ne 0 ]; then
+  printf '\n\033[1;31m✗ gate FAILED (exit %s)\033[0m — the failing step is the ✗ line ' "$status"
+  printf 'scripts/verify.sh printed above\n'
+  exit "$status"
+fi
+
+# The verdict names no command: test/unit/check-pipeline.test.ts reads the EXECUTED lines of this
+# file, so a `bun run <script>` down here would be counted as a step and hide a missing one. Steps
+# live in scripts/verify.sh, in comments and in the coverage table above — never in a command.
+printf '\n\033[1;32m✓ gate clean\033[0m — the three CI validation jobs above mirror it\n'

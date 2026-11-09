@@ -89,3 +89,99 @@ describe('manifest least-privilege invariants', () => {
     expect([...(manifest.host_permissions ?? [])].sort()).toStrictEqual([...expected].sort());
   });
 });
+
+// ---------------------------------------------------------------------------
+// Docs guard — the permissions tables must state the real `scripting` boundary.
+//
+// The manifest grants `scripting` for one thing only: the service worker
+// re-injects the extension's OWN shipped content scripts into tabs it can
+// already access (background.ts `reinjectAllTabs`). A doc row that calls the
+// permission "unused", or that describes it as "inject the content script"
+// without naming the actor, states something false about the granted surface —
+// the drift this guard exists to stop. Parsed as markdown text, same shape as
+// the wxt.config.ts parser above (no doc tooling, no build step).
+// ---------------------------------------------------------------------------
+
+type TableRow = { cells: string[]; line: number };
+
+const DOCS = {
+  wiki: 'docs/wiki/privacy-keys.md',
+  architecture: 'docs/architecture/privacy.md',
+} as const;
+
+/** Rows of the markdown table in the first "…permissions…" section of a doc. */
+function permissionsTableRows(docPath: string): TableRow[] {
+  const src = readFileSync(resolve(__dirname, '../../', docPath), 'utf8');
+  const lines = src.split('\n');
+  const heading = lines.findIndex((line) => /^#{1,6}\s.*permissions/i.test(line));
+  if (heading === -1) return [];
+  const rows: TableRow[] = [];
+  for (const [offset, raw] of lines.slice(heading + 1).entries()) {
+    if (/^#{1,6}\s/.test(raw)) break; // next heading — the table ends here
+    const line = raw.trim();
+    if (!line.startsWith('|')) continue;
+    const cells = line
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) continue; // |---|---|
+    rows.push({ cells, line: heading + 2 + offset });
+  }
+  return rows;
+}
+
+/** "Side panel" / "`sidePanel`" → "sidepanel": the manifest id, case- and punctuation-free. */
+function permissionKey(cell: string): string {
+  return cell.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** The permissions-table row naming a manifest permission, if the doc has one. */
+function rowForPermission(docPath: string, permission: string): TableRow | undefined {
+  return permissionsTableRows(docPath).find(
+    (row) => permissionKey(row.cells[0] ?? '') === permissionKey(permission),
+  );
+}
+
+// Require a prohibition, not merely a mention (e.g. "Allows remote code").
+const remoteCodeProhibition = /\b(?:no remote code|never fetching or running remote code)\b/i;
+
+describe('documentation states the granted surface honestly', () => {
+  for (const docPath of Object.values(DOCS)) {
+    it(`${docPath} documents scripting as service-worker-only reinjection`, () => {
+      const row = rowForPermission(docPath, 'scripting');
+      expect(row, `${docPath} has no permissions-table row for "scripting"`).toBeDefined();
+      const text = (row?.cells ?? []).join(' ');
+      expect(text).toMatch(/re-?inject/i); // the actual use
+      expect(text).toMatch(/service[\s-]?worker/i); // who does it — only the SW holds the permission
+      expect(text).toMatch(/shipped|bundled/i); // the extension's OWN shipped files, never code composed at runtime
+      expect(text).toMatch(remoteCodeProhibition); // and it never fetches or runs any
+      expect(text).not.toMatch(/unused|not used/i); // it IS used — the stale claim
+    });
+
+    it.each(['Allows remote code', 'Fetches and runs remote code', 'Remote code'])(
+      `${docPath} rejects "%s" instead of a remote-code prohibition`,
+      (replacement) => {
+        const row = rowForPermission(docPath, 'scripting');
+        const text = (row?.cells ?? []).join(' ');
+        const mutated = text.replace(
+          /no remote code|never fetching or running remote code/i,
+          replacement,
+        );
+        expect(mutated).not.toBe(text);
+        expect(mutated).not.toMatch(remoteCodeProhibition);
+      },
+    );
+  }
+
+  it('both docs list every permission the manifest grants', () => {
+    for (const docPath of Object.values(DOCS)) {
+      for (const permission of manifest.permissions ?? []) {
+        expect(
+          rowForPermission(docPath, permission),
+          `${docPath} has no permissions-table row for "${permission}"`,
+        ).toBeDefined();
+      }
+    }
+  });
+});

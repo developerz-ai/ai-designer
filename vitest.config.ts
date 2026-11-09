@@ -13,7 +13,8 @@ const envWorkers = Number(process.env.DZ_TEST_WORKERS);
 const localMax = Number.isFinite(envWorkers) && envWorkers > 0 ? envWorkers : 2;
 
 // Unit + integration share one runner; the npm scripts filter by directory
-// (`vitest run unit` / `vitest run integration`) so CI can run them as parallel jobs.
+// (`vitest run unit` / `vitest run integration`) for local iteration — CI runs both
+// directories in one `vitest run` (one worker pool), not as parallel jobs.
 export default defineConfig({
   // Solid compiles JSX to fine-grained reactive calls, not to createElement — without
   // this plugin a mounted component renders nothing and the failure looks like a bug

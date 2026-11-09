@@ -90,6 +90,11 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Build + zip (minified, tree-shaken)
         run: bun run release
+      - name: Validate emitted image worker
+        env:
+          DZ_REQUIRE_IMAGE_WORKER_BUILD: '1'
+          DZ_TEST_WORKERS: '2'
+        run: bun run test test/unit/image-encode-bundling.test.ts --reporter=verbose
       - name: Upload extension artifact
         uses: actions/upload-artifact@v7
         with:

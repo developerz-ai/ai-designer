@@ -61,6 +61,9 @@ export default defineConfig({
     name: '__MSG_extName__',
     description: '__MSG_extDescription__',
     // Side panel is the durable UI surface — survives page navigation.
+    // Source entry: src/entrypoints/sidepanel/index.html; this is the source config path.
+    // WXT generates the emitted path: validate build/chrome-mv3/manifest.json and its
+    // side_panel.default_path target via test/e2e/smoke.spec.ts, not a hardcoded URL.
     side_panel: {
       default_path: 'sidepanel/index.html',
     },
