@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
 import { i18n } from '#i18n';
+import { MCP_BACKEND_PRESETS, type McpBackendPreset } from '@/mcp/presets';
 import type { AuthKind, McpServer } from '@/shared/messages';
 import {
   addServer,
@@ -19,21 +20,10 @@ import type { IconName } from './icon-registry';
 import './McpPanel.scss';
 import { OriginRepoSection } from './OriginRepoSection';
 
-interface BackendPreset {
-  id: string;
-  label: string;
-  url: string;
-  authKind: AuthKind;
-}
-
 // Quick-add presets — the implement backends the agent ships changesets to
 // (docs/idea/mcp.md). A registered server with the same id is skipped rather than
 // duplicated (mcp-add always mints a fresh id, so re-clicking a preset after removal
 // is fine; re-clicking while already connected just no-ops via the `alreadyAdded` guard).
-const DEFAULT_BACKENDS: BackendPreset[] = [
-  { id: 'developerz', label: 'developerz.ai', url: 'https://developerz.ai/mcp', authKind: 'oauth' },
-];
-
 function statusIcon(status: McpServer['status']): IconName {
   switch (status) {
     case 'connected':
@@ -59,11 +49,11 @@ export function McpPanel() {
     void hydrateMcp();
   });
 
-  function isAdded(preset: BackendPreset): boolean {
+  function isAdded(preset: McpBackendPreset): boolean {
     return servers.some((s) => s.url === preset.url);
   }
 
-  async function addPreset(preset: BackendPreset): Promise<void> {
+  async function addPreset(preset: McpBackendPreset): Promise<void> {
     await addServer({ label: preset.label, url: preset.url, authKind: preset.authKind });
   }
 
@@ -85,7 +75,7 @@ export function McpPanel() {
       <p class="dz-mcp__hint">{i18n.t('mcp.hint')}</p>
 
       <section class="dz-mcp__presets">
-        <For each={DEFAULT_BACKENDS}>
+        <For each={MCP_BACKEND_PRESETS}>
           {(preset) => (
             <button
               type="button"
