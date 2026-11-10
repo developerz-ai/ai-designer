@@ -20,11 +20,12 @@ if (typeof window.mountScrollWorld !== 'function') {
 document.getElementById('world-static')?.setAttribute('hidden', '');
 
 const ASSETS = '/world-assets/v1';
+const CHROME_WEB_STORE_URL = 'https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm';
 
 window.mountScrollWorld(mount, {
   brand: { name: 'developerz.ai Designer', href: '/' },
   nav: true,
-  cta: { label: 'Join the waitlist', href: '/#notify' },
+  cta: { label: 'Add to Chrome', href: CHROME_WEB_STORE_URL },
   diveScroll: 1.3,
   connScroll: 0.9,
   sections: [
@@ -90,7 +91,7 @@ window.mountScrollWorld(mount, {
       eyebrow: 'Ship',
       title: 'One click, one real PR.',
       body: 'A changeset goes over MCP; your dev agent edits the source.',
-      cta: { primary: { label: 'Join the waitlist', href: '/#notify' } },
+      cta: { primary: { label: 'Add to Chrome', href: CHROME_WEB_STORE_URL } },
     },
   ],
   connectors: [

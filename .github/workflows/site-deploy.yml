@@ -22,9 +22,8 @@ on:
     branches: [main]
     paths:
       - 'site/**'
-  # Manual publish: first-time bootstrap (nothing under site/** changed since the
-  # DIGITALOCEAN_TOKEN secret landed) and sitekey rebakes (the HCAPTCHA_SITEKEY
-  # repo variable changed but no source did).
+  # Manual publish: first-time bootstrap when no site source has changed since the
+  # DIGITALOCEAN_TOKEN secret landed.
   workflow_dispatch:
 
 concurrency:
@@ -80,12 +79,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # PUBLIC hCaptcha site key (repo variable, not a secret) baked into the
-          # Vite bundle. Fails CLOSED: if this repo variable is unset/empty the build
-          # aborts (hcaptcha-key-guard in site/vite.config.ts) instead of shipping the
-          # always-pass hCaptcha test key. Keep vars.HCAPTCHA_SITEKEY set to the real key.
-          build-args: |
-            VITE_HCAPTCHA_SITEKEY=${{ vars.HCAPTCHA_SITEKEY }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=designer-landing
