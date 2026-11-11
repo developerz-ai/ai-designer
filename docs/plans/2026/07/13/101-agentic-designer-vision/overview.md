@@ -1,7 +1,7 @@
 # Agentic Designer Vision — Onboarding → Chat → Ship/Report
 
 ## Goal
-Turn the scaffold into the product: settings-first onboarding (openai-compatible LLM + custom MCP servers), a readiness dropdown + **Start**, a Leo-style **agentic** chat that copies/debugs sites, and lands work either via MCP handoff or a downloadable MD report — with last-10 conversation history and an optional on-page agent-decision overlay.
+Extend the product with settings-first onboarding (openai-compatible LLM + custom MCP servers), a readiness dropdown + **Start**, a Leo-style **agentic** chat that copies/debugs sites, and work delivery via MCP handoff or a downloadable MD report — with last-10 conversation history and an optional on-page agent-decision overlay.
 
 ## Context
 - **Stack**: Bun + TS strict, WXT + SolidJS + SCSS, AI SDK 7 `ToolLoopAgent` over an **openai-compatible** provider (BYOK), `@ai-sdk/mcp` handoff, Zod at every boundary. Biome. Vitest + Playwright.
