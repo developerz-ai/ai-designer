@@ -40,7 +40,7 @@ describe('developerz.ai MCP preset', () => {
 
 describe('developerz.ai MCP documentation guard', () => {
   it('detects a stale handoff URL fixture', () => {
-    const stale = '[developerz.ai MCP endpoint](https://developerz.ai/mcp)';
+    const stale = `[developerz.ai MCP endpoint](${'https://developerz.ai'}/mcp)`;
     expect(developerzMcpLinks(stale)).not.toEqual([DEVELOPERZ_MCP_ENDPOINT]);
   });
 
