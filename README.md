@@ -44,13 +44,21 @@ The gap: **what you see** (the rendered page) and **what you change** (the sourc
 - **BYOK.** OpenRouter key for the design agent. MCP token for the dev backend. We never resell tokens.
 - **Human in the loop.** "Ship" is a button, not an inference. The agent never auto-merges.
 
-## Quickstart
+## Install
 
-```bash
-bun run local               # install if needed → build → prints the load-unpacked path
-```
+1. **Chrome Web Store — recommended.** Install [developerz.ai Designer](https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm).
+2. **GitHub Release — zip / load unpacked.** Download the Chrome zip from the [latest release](https://github.com/developerz-ai/ai-designer/releases/latest), unzip it, then open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose the unzipped extension directory.
+3. **Source build — contributors.** Install Bun, clone this repository, then run:
 
-Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
+   ```bash
+   bun run local # installs/prepares if needed, builds, and prints the load-unpacked path
+   ```
+
+   Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose `build/chrome-mv3`.
+
+After any installation: add your OpenRouter key in side-panel settings (BYOK; encrypted and used only in the service worker), optionally connect a backend in the MCP tab, then open a page and start designing.
+
+For a source live-reload loop, run `bun install && bun run dev` (WXT dev server, HMR).
 
 | `bun run local` | |
 |--|--|
@@ -59,14 +67,7 @@ Or for a live-reload loop: `bun install && bun run dev` (WXT dev server, HMR).
 | `--check` | run the gate (lint + typecheck + unit + integration) first |
 | `--zip` | also produce the distributable `.zip` |
 
-Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` — generated on the first build and gitignored. Back it up: that key is the extension ID.
-
-Chrome builds also sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` (generated on first build, gitignored — back it up, it defines the extension ID).
-
-1. **Load unpacked** — `chrome://extensions` → Developer mode → Load unpacked → `build/chrome-mv3`.
-2. **Add your OpenRouter key** — side panel → settings (BYOK, stored encrypted, used only in the service worker).
-3. **Connect a backend** — MCP tab → add `https://mcp.developerz.ai/v1/mcp` (developerz.ai). OAuth on first use.
-4. **Open any page**, open the side panel, start designing.
+Chrome source builds sign `build/designer-<version>-chrome-mv3.crx` with `keys/designer.pem` (generated on first build and gitignored). Back it up: it defines the extension ID.
 
 Release build (tree-shaken, minified, optimized CSS/JS):
 
@@ -101,4 +102,6 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 
 ## Status
 
-Spec + scaffold phase. v0: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+**v1.1.0 shipped.** The Chrome extension provides side-panel chat, live DOM/CSS edits with changesets and undo/redo, and user-triggered MCP handoff to developerz.ai for a real code change and PR; it can download a Markdown report when no backend is connected.
+
+**Planned work.** Continue improving the design loop, diagnostics, browser control, and connected-backend workflows; see the [roadmap](docs/idea/roadmap.md).
