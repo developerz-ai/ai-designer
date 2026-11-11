@@ -59,4 +59,6 @@ See [testing.md](testing.md) for the test pyramid and [ui.md](ui.md) for the Sol
 
 ## Status
 
-Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to developerz.ai.
+**v1.1.0 shipped.** The extension provides side-panel chat, live DOM/CSS editing with recorded changesets, and user-triggered MCP handoff to developerz.ai for a real code change and PR. When no backend is connected, Ship downloads a Markdown handoff report instead.
+
+Planned work continues in the [roadmap](roadmap.md).
