@@ -20,7 +20,8 @@ if (typeof window.mountScrollWorld !== 'function') {
 document.getElementById('world-static')?.setAttribute('hidden', '');
 
 const ASSETS = '/world-assets/v1';
-const CHROME_WEB_STORE_URL = 'https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm';
+const CHROME_WEB_STORE_URL =
+  'https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm';
 
 window.mountScrollWorld(mount, {
   brand: { name: 'developerz.ai Designer', href: '/' },
