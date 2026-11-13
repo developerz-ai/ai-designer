@@ -21,13 +21,6 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
-# hCaptcha PUBLIC site key, baked into the bundle at build time (Vite inlines
-# import.meta.env.VITE_*). Passed by site-deploy.yml from the HCAPTCHA_SITEKEY
-# repo variable. Fails CLOSED: an empty/absent value here defines the ENV as an
-# empty string, and the hcaptcha-key-guard in vite.config.ts aborts `bun run build`
-# rather than silently shipping the always-pass hCaptcha test key (#128).
-ARG VITE_HCAPTCHA_SITEKEY=""
-ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 # `build` = `vite build` -> /app/dist
 RUN bun run build
 
