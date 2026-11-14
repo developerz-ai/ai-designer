@@ -3,8 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-// #25 criterion 4: the extension ships NO third-party telemetry/analytics. First-party self-hosted
-// GlitchTip (via @sentry/browser -> glitchtip.infra.developerz.ai) is the ONLY telemetry allowed.
+// #25 criterion 4: the extension ships NO third-party telemetry/analytics. A first-party error
+// client (@sentry/browser) is the ONLY telemetry the dependency graph may carry, and it is off:
+// no build sets its key and the manifest grants no error-tracker host (#212).
 // This guards the dependency graph — the vector by which an analytics SaaS would slip back in — at
 // CI's unit lane; the #25 live-test greps the built bundle for the same hosts as belt-and-braces.
 //
