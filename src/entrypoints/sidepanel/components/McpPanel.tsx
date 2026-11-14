@@ -74,23 +74,25 @@ export function McpPanel() {
     <div class="dz-mcp">
       <p class="dz-mcp__hint">{i18n.t('mcp.hint')}</p>
 
-      <section class="dz-mcp__presets">
-        <For each={MCP_BACKEND_PRESETS}>
-          {(preset) => (
-            <button
-              type="button"
-              class="dz-mcp__preset"
-              disabled={isAdded(preset)}
-              onClick={() => void addPreset(preset)}
-            >
-              <Icon name="mcp" size="sm" />
-              {isAdded(preset)
-                ? i18n.t('mcp.preset.added', { label: preset.label })
-                : i18n.t('mcp.preset.add', { label: preset.label })}
-            </button>
-          )}
-        </For>
-      </section>
+      <Show when={MCP_BACKEND_PRESETS.length > 0}>
+        <section class="dz-mcp__presets">
+          <For each={MCP_BACKEND_PRESETS}>
+            {(preset) => (
+              <button
+                type="button"
+                class="dz-mcp__preset"
+                disabled={isAdded(preset)}
+                onClick={() => void addPreset(preset)}
+              >
+                <Icon name="mcp" size="sm" />
+                {isAdded(preset)
+                  ? i18n.t('mcp.preset.added', { label: preset.label })
+                  : i18n.t('mcp.preset.add', { label: preset.label })}
+              </button>
+            )}
+          </For>
+        </section>
+      </Show>
 
       <Show when={loading()}>
         <p class="dz-mcp__hint">
