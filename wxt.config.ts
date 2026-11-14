@@ -114,7 +114,9 @@ export default defineConfig({
     ].filter((p) => browser === 'chrome' || (p !== 'sidePanel' && p !== 'debugger')),
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
-    host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],
+    // No crash-report host: crash reporting is off (#212), so the extension asks for no grant
+    // to reach an error tracker. test/unit/public-tree.test.ts keeps it that way.
+    host_permissions: ['https://openrouter.ai/*'],
     //
     // `<all_urls>` stays OPTIONAL, not static, and that is load-bearing. Listing it under
     // `host_permissions` puts the extension into Chrome's "broad host access" class, where Chrome

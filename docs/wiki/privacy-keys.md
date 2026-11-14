@@ -32,7 +32,7 @@ Only on explicit **Ship**: the changeset (selectors, before/after CSS, framework
 
 ## Crash reporting
 
-If the extension crashes, an error event (exception class + stack trace only) goes to GlitchTip (developerz.ai's own crash tool, public write-only ingest key baked into the build). Every event is rebuilt from an allowlist before sending — no page text, no prompts, no selectors, no screenshots, no breadcrumbs ride along. No session replay, no performance tracing, no analytics.
+Off. The extension sends no crash reports, error events or analytics anywhere. The crash-report client in `src/shared/sentry.ts` initialises only when a build sets `WXT_SENTRY_DSN`; no build sets it, no key is in the repo, and the manifest asks for no permission to reach an error tracker. No session replay, no performance tracing.
 
 ## Permissions the extension asks for, and why
 
