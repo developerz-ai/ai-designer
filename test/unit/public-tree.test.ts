@@ -46,12 +46,14 @@ const MIN_TRACKED_FILES = 300;
 
 /**
  * The hosts on our own domain a tracked file may name, each public on its own:
- * the product homepage, its www alias, and this extension's own site (`site/`, the waitlist).
+ * the product homepage, its www alias, this extension's own site (`site/`, the waitlist), and the
+ * platform's public MCP endpoint, which the side panel's built-in quick-add preset connects to.
  */
 const PERMITTED_OWN_HOSTS = new Set([
   'developerz.ai',
   'www.developerz.ai',
   'designer.developerz.ai',
+  'mcp.developerz.ai',
 ]);
 
 const OWN_DOMAIN = ['developerz', 'ai'].join('.');
@@ -82,13 +84,6 @@ const HOME_PATH = /(?:^|[^\w.-])\/(?:home|Users)\/[\w.-]+|~\/[\w-]/m;
  * it would fail the platform's commits rather than a change made here. Out of scope per #256.
  */
 const PLATFORM_OWNED = [/^\.dz\//];
-
-/**
- * Exempt from the CI-provider rule ONLY, and not by choice: `.coderabbit.yaml` is owner-gated and
- * is not edited from a code change. It still names the provider; that one line is the open item
- * left on #256, and this exemption goes when the file is changed.
- */
-const CI_PROVIDER_EXEMPT = new Set(['.coderabbit.yaml']);
 
 type Rule = { name: string; applies: (path: string) => boolean; finds: (text: string) => boolean };
 
@@ -124,7 +119,7 @@ const RULES: Rule[] = [
   },
   {
     name: 'private-repository CI provider',
-    applies: (p) => !CI_PROVIDER_EXEMPT.has(p),
+    applies: () => true,
     finds: (t) => t.toLowerCase().includes(PRIVATE_CI),
   },
   { name: 'home-directory path', applies: () => true, finds: (t) => HOME_PATH.test(t) },
@@ -270,10 +265,10 @@ describe('manifest host grants', () => {
 
 describe('the guard is not vacuous', () => {
   const tracker = `https://${TRACKER_HOST}/api/1/`;
-  const gateway = ['mcp', OWN_DOMAIN].join('.');
+  const internal = ['some-service', OWN_DOMAIN].join('.');
 
   it.each([
-    ['internal host on our own domain', `"url": "https://${gateway}/v1/mcp"`],
+    ['internal host on our own domain', `"url": "https://${internal}/v1/mcp"`],
     ['internal-zone host', `see https://grafana.${['infra', OWN_DOMAIN].join('.')}`],
     ['error-tracker host', tracker],
     ['internal setup mode name', `# established by ${SETUP_MODE} setup mode`],
@@ -292,6 +287,7 @@ describe('the guard is not vacuous', () => {
   it('lets the public hosts, a package scope and a dotfile path through', () => {
     expect(forbiddenOwnHosts('https://developerz.ai/docs https://www.developerz.ai')).toBe(0);
     expect(forbiddenOwnHosts('https://designer.developerz.ai/')).toBe(0);
+    expect(forbiddenOwnHosts('https://mcp.developerz.ai/v1/mcp')).toBe(0);
     expect(forbiddenOwnHosts('"@developerz.ai/ui-debugger-mcp"')).toBe(0);
     expect(offenses('fixture.txt', 'config lives in ~/.config/tool')).toEqual([]);
   });
@@ -304,9 +300,8 @@ describe('the guard is not vacuous', () => {
     expect(grantOffenses('manifest.json', ['https://openrouter.ai/*'])).toEqual([]);
   });
 
-  it('keeps the CI-provider exemption to the one owner-gated file', () => {
-    expect([...CI_PROVIDER_EXEMPT]).toEqual(['.coderabbit.yaml']);
-    expect(offenses('.coderabbit.yaml', `runs-on: ${PRIVATE_CI}`)).toEqual([]);
+  it('applies the CI-provider rule to every file, the review config included', () => {
+    expect(offenses('.coderabbit.yaml', `runs-on: ${PRIVATE_CI}`)).toHaveLength(1);
     expect(offenses('.github/workflows/ci.yml', `runs-on: ${PRIVATE_CI}`)).toHaveLength(1);
   });
 });
