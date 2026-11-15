@@ -1,0 +1,60 @@
+# The site is a self-contained sub-project: its own package.json, its own bun.lock,
+# its own toolchain. Root `bun run lint` excludes **/site (biome.json) and ci.yml paths-ignore
+# skips site/** — so this workflow is the ONLY place site lint/typecheck/build can be enforced.
+# Path-triggered: GitHub does the filtering, so there is no `detect` job to pay for either.
+#
+# ONE job, ONE check name (`Site`). Site lint, typecheck, and build run INSIDE this job
+# through site/package.json's build chain, which the steps below invoke. They are deliberately NOT
+# separate steps or jobs: `Site lint` / `Site typecheck` would be check names that never report,
+# and separate jobs would mint check names the external branch-protection ruleset never requires.
+
+name: Site
+
+on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+      - '.github/actions/bun-setup/**'
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/site.yml'
+      - '.github/actions/bun-setup/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  site:
+    name: Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          # site/ owns its dependencies and lockfile; skip the root install.
+          install: 'false'
+      - name: Install site dependencies (including dev dependencies)
+        working-directory: site
+        # Bun installs dev dependencies by default; --production is a valueless flag.
+        run: bun install --frozen-lockfile
+      - name: Lint
+        working-directory: site
+        run: bun run lint
+      - name: Typecheck
+        working-directory: site
+        run: bun run typecheck
+      - name: Build
+        working-directory: site
+        run: bun run build
