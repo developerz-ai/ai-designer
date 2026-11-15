@@ -10,10 +10,10 @@ Related: [RELEASING.md](./RELEASING.md) for how a tag turns into a build.
 | Secret | Store | Where it comes from | Set? |
 |--|--|--|--|
 | `CRX_PRIVATE_KEY` | self-hosted `.crx` | `keys/designer.pem` from the first local build — **ours, not a store's** | ✅ |
-| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload | |
-| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) | |
-| `CWS_CLIENT_SECRET` | Chrome | same OAuth client | |
-| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client | |
+| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload | ✅ since 2026-08-15 |
+| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) | ✅ since 2026-08-15 |
+| `CWS_CLIENT_SECRET` | Chrome | same OAuth client | ✅ since 2026-08-15 |
+| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client | ✅ since 2026-08-15 |
 | `AMO_JWT_ISSUER` | Firefox | AMO Developer Hub → API keys | |
 | `AMO_JWT_SECRET` | Firefox | same page, shown **once** | |
 
@@ -102,25 +102,31 @@ AMO signs the `.xpi` on its side, so there is no key to keep.
 > has been verified on a real Firefox run. Treat AMO publish as blocked on that QA; getting
 > the account and API keys now is still worth it — it reserves the add-on name.
 
-## 4. Hand-over checklist
+## 4. Credential status and recovery checklist
 
-Once the accounts exist, what I need from you is just these, as repo secrets:
+`CRX_PRIVATE_KEY` and all four Chrome Web Store publishing secrets have been configured as
+GitHub Actions secrets since **2026-08-15**. Their values remain write-only: never add them
+to this repository, documentation, issues, or CI logs.
+
+If a Chrome Web Store credential must be rotated or recovered, replace only the affected
+repo secret using the same names:
 
 ```bash
-gh secret set CRX_PRIVATE_KEY < keys/designer.pem   # done
-gh secret set CWS_EXTENSION_ID
-gh secret set CWS_CLIENT_ID
+gh secret set CRX_PRIVATE_KEY < keys/designer.pem   # recovery only
+gh secret set CWS_EXTENSION_ID                      # recover the existing store item ID
+gh secret set CWS_CLIENT_ID                         # rotate/recover OAuth client credentials
 gh secret set CWS_CLIENT_SECRET
-gh secret set CWS_REFRESH_TOKEN
+gh secret set CWS_REFRESH_TOKEN                     # re-run consent when the token is revoked
 gh secret set AMO_JWT_ISSUER     # when Firefox is actually ready
 gh secret set AMO_JWT_SECRET
 ```
 
 The publish step in `.github/workflows/release.yml` is live and **guarded on
-`CWS_EXTENSION_ID` being set**: the moment the four `CWS_*` secrets exist, the next tag
-uploads to the store and auto-publishes. Until then a tag builds, signs, and attaches
-artifacts to a GitHub Release only — which is the right state for manual QA. No workflow
-edit needed when the secrets land.
+`CWS_EXTENSION_ID` being set**. With the configured `CWS_*` secrets, each qualifying tag
+uploads to the existing store item and requests auto-publishing; Chrome Web Store review
+still determines when the version becomes public. Rotate credentials in Google Cloud or the
+Web Store console as appropriate, update the matching GitHub secret, then use the dry run
+below before the next release tag. No workflow edit is needed.
 
 ## 5. Dry-run the upload (before trusting a tag)
 

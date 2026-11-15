@@ -30,7 +30,7 @@ The `Release` workflow (`.github/workflows/release.yml`) then:
 2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
-5. **Publishes to the Chrome Web Store** — only when the `CWS_*` repo secrets are set ([STORE-SETUP.md](STORE-SETUP.md)); without them the step skips and the tag is a GitHub-Release-only build. The store zip is rebuilt with `CWS_UPLOAD=1` (drops the manifest `key`) and uploaded with `--auto-publish`, so a green tag goes straight into store review.
+5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build.
 
 `workflow_dispatch` is also enabled for manual runs.
 
@@ -126,9 +126,10 @@ The store assigns its **own** key, so store uploads must omit the manifest `key`
 bun run zip:store   # CWS_UPLOAD=1 → build/*-chrome.zip with no `key` field
 ```
 
-Publishing is stubbed (commented) in `release.yml`. Enable it once the listing exists and
-these secrets are set: `CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`,
-`CWS_REFRESH_TOKEN`. See [STORE-SETUP.md](./STORE-SETUP.md) for how to obtain each one.
+Publishing is active in `release.yml`: its secret-guarded upload uses the configured
+`CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, and `CWS_REFRESH_TOKEN` secrets
+to upload the store-specific zip with `--auto-publish`. The workflow does not expose their
+values. See [STORE-SETUP.md](./STORE-SETUP.md) for credential rotation and recovery.
 
 ## Firefox Add-ons (AMO)
 
