@@ -70,7 +70,7 @@ reviews:
 
     - path: ".github/workflows/**"
       instructions: |
-        - Runners must be GitHub-hosted `ubuntu-latest` (public repo — org rule: private on Ubicloud, public on GitHub-hosted). Flag any Blacksmith, Ubicloud or self-hosted label.
+        - Runners must be GitHub-hosted `ubuntu-latest` (public repo). Flag any runner label that is not GitHub-hosted, including self-hosted and third-party runner providers.
         - Pin third-party actions by tag.
 
     - path: "test/integration/**"
