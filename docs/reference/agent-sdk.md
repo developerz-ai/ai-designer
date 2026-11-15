@@ -116,7 +116,7 @@ import { createMCPClient } from '@ai-sdk/mcp';
 const client = await createMCPClient({
   transport: {
     type: 'http',                                  // Streamable HTTP — SSE is deprecated
-    url: 'https://mcp.example.com/v1/mcp',
+    url: 'https://mcp.developerz.ai/v1/mcp',
     headers: { Authorization: `Bearer ${token}` }, // or authProvider for OAuth/PKCE
   },
 });
