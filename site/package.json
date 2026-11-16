@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Coming-soon landing page for the developerz.ai Designer extension. Static, dark, matches the developerz.ai frontend language.",
+  "description": "Landing page for the developerz.ai Designer Chrome extension. Static, dark, matches the developerz.ai frontend language.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

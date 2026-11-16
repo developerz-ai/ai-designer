@@ -6,7 +6,7 @@
     <title>developerz.ai Designer, Design in the live page. Ship the real code.</title>
     <meta
       name="description"
-      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP. Coming soon to Chrome."
+      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP."
     />
     <link rel="canonical" href="https://designer.developerz.ai/" />
     <meta name="theme-color" content="#0a0a0f" />
@@ -26,7 +26,7 @@
     <meta name="twitter:title" content="developerz.ai Designer, Design in the live page. Ship the real code." />
     <meta
       name="twitter:description"
-      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP. Coming soon to Chrome."
+      content="Chat with an agent, redesign the live page in real time, then ship the real code via MCP."
     />
     <meta name="twitter:image" content="https://designer.developerz.ai/logo.png" />
 
@@ -85,8 +85,6 @@
       }
     </script>
 
-    <!-- hCaptcha: explicit render so main.ts can apply the build-time site key. -->
-    <script src="https://js.hcaptcha.com/1/api.js?render=explicit" async defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -100,9 +98,9 @@
         </a>
         <nav class="nav__links" aria-label="primary">
           <a class="nav__link" href="#how">How it works</a>
-          <a class="nav__link" href="#notify">Notify me</a>
+          <a class="nav__link" href="https://github.com/developerz-ai/ai-designer" rel="noopener">GitHub</a>
         </nav>
-        <a class="nav__cta" href="#notify">Notify me</a>
+        <a class="nav__cta" href="https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm" rel="noopener">Add to Chrome</a>
       </div>
     </header>
 
@@ -114,7 +112,7 @@
           <div class="hero__copy">
             <p class="eyebrow">
               <span class="eyebrow__dot" aria-hidden="true"></span>
-              Coming soon · Chrome extension
+              Chrome extension
               <img class="eyebrow__chrome" src="/chrome.svg" alt="" width="16" height="16" aria-hidden="true" />
             </p>
             <h1 class="hero__title">
@@ -127,11 +125,11 @@
               the source and opens a reviewable PR.
             </p>
             <div class="hero__cta">
-              <a class="dz-btn dz-btn--primary" href="#notify">
-                Notify me at launch
+              <a class="dz-btn dz-btn--primary" href="https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm" rel="noopener">
+                Add to Chrome
                 <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
               </a>
-              <a class="dz-btn dz-btn--ghost" href="#how">See how it works</a>
+              <a class="dz-btn dz-btn--ghost" href="https://github.com/developerz-ai/ai-designer" rel="noopener">View on GitHub</a>
             </div>
             <p class="hero__fine">BYOK · ephemeral live edits · human-in-the-loop. Nothing ships without you.</p>
           </div>
@@ -213,9 +211,7 @@
       </section>
 
       <!-- ─────────────────────── world tour teaser ─────────────────────── -->
-      <!-- Static poster band into /world (#161): zero JS, and the #notify form
-           contract below stays byte-identical. Ghost button on purpose — the
-           orange primary belongs to the waitlist CTA directly below. -->
+      <!-- Static poster band into /world (#161): zero JS. -->
       <section class="section teaser" id="world-tour">
         <div class="container teaser__inner">
           <p class="eyebrow">The tour</p>
@@ -241,59 +237,6 @@
         </div>
       </section>
 
-      <!-- ─────────────────────── notify / waitlist ─────────────────────── -->
-      <!-- The form contract (IDs + structure) is lifted verbatim from the working
-           landing so main.ts's captcha/count/subscribe handlers bind unchanged;
-           only the surrounding band adopts Direction B's restrained styling. -->
-      <section class="notify section" id="notify">
-        <div class="container container--narrow notify__inner">
-          <p class="eyebrow">Coming soon</p>
-          <h2 class="section__title">Be first to try Designer.</h2>
-          <p class="lead">
-            We’ll email you when Designer hits the Chrome Web Store. No spam, one message at launch.
-          </p>
-
-          <form class="notify__form" id="notify-form" novalidate>
-            <div class="notify__row">
-              <label class="notify__field" for="notify-email">
-                <span class="sr-only">Email address</span>
-                <input
-                  id="notify-email"
-                  type="email"
-                  name="email"
-                  inputmode="email"
-                  autocomplete="email"
-                  placeholder="you@yourteam.dev"
-                  required
-                />
-              </label>
-              <button type="submit" class="dz-btn dz-btn--primary notify__submit">
-                Notify me
-                <svg class="dz-btn__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-              </button>
-            </div>
-
-            <div class="notify__captcha">
-              <!-- Widget is rendered explicitly in main.ts with the build-time site key (VITE_HCAPTCHA_SITEKEY); no static data-sitekey here. -->
-              <div class="h-captcha" id="notify-captcha"></div>
-            </div>
-
-            <div class="notify__consent">
-              <input type="checkbox" id="notify-consent" required />
-              <label for="notify-consent">
-                I agree to receive one email when Designer launches. See the
-                <a href="/privacy.html">Privacy notice</a>.
-              </label>
-            </div>
-          </form>
-
-          <p class="notify__error" id="notify-error" role="alert" hidden></p>
-          <p class="notify__success" id="notify-success" role="status" hidden>Check your email to confirm</p>
-          <p class="notify__count">
-            Join <strong id="waitlist-count">0</strong> developers on the waitlist.
-          </p>
-        </div>
-      </section>
     </main>
 
     <!-- ───────────────────────── footer ───────────────────────── -->
@@ -310,7 +253,7 @@
         <nav class="footer__col" aria-label="product">
           <h4 class="footer__heading">Product</h4>
           <a href="#how">How it works</a>
-          <a href="#notify">Notify me</a>
+          <a href="https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm" rel="noopener">Add to Chrome</a>
           <a href="/world">See it fly</a>
           <a href="https://developerz.ai" rel="noopener">developerz.ai</a>
         </nav>
@@ -323,7 +266,7 @@
         </nav>
       </div>
       <div class="container footer__bottom">
-        <p>&copy; 2026 developerz.ai. Designer is a preview, not yet shipped.</p>
+        <p>&copy; 2026 developerz.ai. Design in the live page. Ship the real code.</p>
         <p class="footer__bot">An agent-driven tool · built by developerz.ai</p>
       </div>
     </footer>
