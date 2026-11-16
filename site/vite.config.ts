@@ -7,7 +7,7 @@ const hcaptchaKey = process.env.VITE_HCAPTCHA_SITEKEY || '';
 if (!hcaptchaKey || hcaptchaKey === '10000000-ffff-ffff-ffff-000000000001') {
   throw new Error(
     `hcaptcha-key-guard: VITE_HCAPTCHA_SITEKEY must be set to a real key (got: ${hcaptchaKey ? 'test-key' : 'empty'}). ` +
-    'This prevents shipping a captcha that always passes.',
+      'This prevents shipping a captcha that always passes.',
   );
 }
 
