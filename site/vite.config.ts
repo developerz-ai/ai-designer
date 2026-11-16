@@ -2,15 +2,13 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
 // hCaptcha's public "always-passes" test sitekey. A production build must NEVER
-// ship this — it disables bot protection on the waitlist form (#128).
+// ship this — it disables bot protection (#128).
 const HCAPTCHA_TEST_KEY = '10000000-ffff-ffff-ffff-000000000001';
 
-// Fail closed at build time: the deploy build (site/Dockerfile) always DEFINES
-// VITE_HCAPTCHA_SITEKEY as an ENV — empty when the HCAPTCHA_SITEKEY repo variable
-// is unset — so a deploy with no real key would otherwise silently fall back to the
-// test key. Abort the build instead. A LOCAL `bun run build` leaves the var
-// UNDEFINED (it never deploys), so it is allowed; the runtime then renders a visible
-// disabled state rather than the test key (see src/main.ts initCaptcha).
+// Fail closed at build time: an EMPTY or always-pass VITE_HCAPTCHA_SITEKEY would
+// silently disable bot protection, so abort the build instead. An UNDEFINED var is
+// allowed — a local `bun run build` cannot deploy, and the runtime then renders a
+// visible disabled state rather than the test key (see src/main.ts initCaptcha).
 function hcaptchaKeyGuard(): Plugin {
   return {
     name: 'hcaptcha-key-guard',
@@ -25,9 +23,8 @@ function hcaptchaKeyGuard(): Plugin {
         const what = key === '' ? 'empty' : 'the hCaptcha test key';
         throw new Error(
           `hcaptcha-key-guard: VITE_HCAPTCHA_SITEKEY is ${what} — refusing to build a ` +
-            'production image with no real hCaptcha key (it would ship the always-pass ' +
-            'test key and disable bot protection on the waitlist form). Set the ' +
-            'HCAPTCHA_SITEKEY repo variable (site-deploy.yml -> Dockerfile ARG).',
+            'bundle with no real hCaptcha key (it would ship the always-pass test key and ' +
+            'disable bot protection). Set VITE_HCAPTCHA_SITEKEY to the real public site key.',
         );
       }
     },
