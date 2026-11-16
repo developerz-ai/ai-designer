@@ -12,11 +12,14 @@ import { describe, expect, it } from 'vitest';
  * tracker's host and the internal service endpoints are not public, and nothing that builds,
  * tests or uses this project needs them.
  *
- * **No internal setup mode and no organisation CI topology.** The name of the setup mode that
- * generated some files, and the CI provider for the organisation's private repositories, are
- * checked for. Both are assembled from parts below, so this file never carries either in one
- * piece. The trade is stated plainly: they are already in this repository's history, and what the
- * guard buys is that the tree stops carrying them again.
+ * **No internal setup mode and no private word.** The name of the setup mode that generated some
+ * files is already public in every sibling repository's history, so it is assembled from parts
+ * below. The private words (the CI provider for the organisation's private repositories, and the
+ * like) are never in this file, whole or in parts: two quoted fragments joined in a public file are
+ * the word to anyone who reads it. They come from the PUBLIC_TREE_PRIVATE_WORDS CI secret (comma-
+ * or newline-separated). A run without it (a fork's PR, Dependabot's, a local run) says it skipped
+ * them; this repository's own CI runs set PUBLIC_TREE_PRIVATE_WORDS_REQUIRED=1, where an empty
+ * secret fails.
  *
  * **No one's machine.** A path under a home directory names a person and lays out their machine;
  * the tree names a file by its repository path and an upstream project by its name. A `~/` path
@@ -67,14 +70,32 @@ const INTERNAL_ZONES = ['infra', 'dev'].map(
   (zone) => new RegExp(`\\.${zone}\\.${escapeRe(OWN_DOMAIN)}\\b`, 'i'),
 );
 
-/** The error tracker's host, assembled from parts. */
-const TRACKER_HOST = ['glitch', 'tip.', 'infra.', OWN_DOMAIN].join('');
-
-/** The setup mode that wrote the generated files, assembled from parts. */
+/** The setup mode that wrote the generated files, assembled from parts (already public). */
 const SETUP_MODE = ['dz', 'runner'].join('-');
 
-/** The CI provider for the organisation's private repositories, assembled from parts. */
-const PRIVATE_CI = ['ubi', 'cloud'].join('');
+const PRIVATE_WORDS_ENV = 'PUBLIC_TREE_PRIVATE_WORDS';
+const REQUIRED_ENV = 'PUBLIC_TREE_PRIVATE_WORDS_REQUIRED';
+
+/** The private words in a secret's value: comma- or newline-separated, case-insensitive. */
+function privateWords(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(/[,\n]/)
+    .map((word) => word.trim().toLowerCase())
+    .filter((word) => word.length > 0);
+}
+
+/** The private words for this run, or an error when the run must check them and has none. */
+function privateWordsForRun(raw: string | undefined, required: boolean): string[] {
+  const words = privateWords(raw);
+  if (words.length === 0 && required) {
+    throw new Error(
+      `${PRIVATE_WORDS_ENV} is empty, and ${REQUIRED_ENV}=1 says this run must check the private words`,
+    );
+  }
+  return words;
+}
+
+const WORDS = privateWordsForRun(process.env[PRIVATE_WORDS_ENV], process.env[REQUIRED_ENV] === '1');
 
 /** A home directory: one under `/home` or `/Users`, or a `~/` path into a plain directory. */
 const HOME_PATH = /(?:^|[^\w.-])\/(?:home|Users)\/[\w.-]+|~\/[\w-]/m;
@@ -85,7 +106,11 @@ const HOME_PATH = /(?:^|[^\w.-])\/(?:home|Users)\/[\w.-]+|~\/[\w-]/m;
  */
 const PLATFORM_OWNED = [/^\.dz\//];
 
-type Rule = { name: string; applies: (path: string) => boolean; finds: (text: string) => boolean };
+type Rule = {
+  name: string;
+  applies: (path: string) => boolean;
+  finds: (text: string, words: readonly string[]) => boolean;
+};
 
 /** The hosts on our own domain in one text that the rule does not permit. */
 function forbiddenOwnHosts(text: string): number {
@@ -108,19 +133,17 @@ const RULES: Rule[] = [
     finds: (t) => INTERNAL_ZONES.some((re) => re.test(t)),
   },
   {
-    name: 'error-tracker host',
-    applies: () => true,
-    finds: (t) => t.toLowerCase().includes(TRACKER_HOST),
-  },
-  {
     name: 'internal setup mode name',
     applies: () => true,
     finds: (t) => t.toLowerCase().includes(SETUP_MODE),
   },
   {
-    name: 'private-repository CI provider',
+    name: 'private word (from the secret)',
     applies: () => true,
-    finds: (t) => t.toLowerCase().includes(PRIVATE_CI),
+    finds: (t, words) => {
+      const lower = t.toLowerCase();
+      return words.some((word) => lower.includes(word));
+    },
   },
   { name: 'home-directory path', applies: () => true, finds: (t) => HOME_PATH.test(t) },
 ];
@@ -156,11 +179,15 @@ function readText(root: string, path: string): string | null {
 }
 
 /** `path — class` for every rule a text breaks. Never the matched value. */
-function offenses(path: string, text: string): string[] {
-  return RULES.filter((r) => r.applies(path) && r.finds(text)).map((r) => `${path} — ${r.name}`);
+function offenses(path: string, text: string, words: readonly string[] = WORDS): string[] {
+  return RULES.filter((r) => r.applies(path) && r.finds(text, words)).map(
+    (r) => `${path} — ${r.name}`,
+  );
 }
 
 describe('the public tree', () => {
+  if (WORDS.length === 0)
+    console.warn(`public-tree: ${PRIVATE_WORDS_ENV} is unset, private words not checked`);
   const root = repoRoot();
   const files = trackedFiles(root);
   let read = 0;
@@ -181,6 +208,9 @@ describe('the public tree', () => {
   });
 
   it('carries no fact about our own infrastructure', () => {
+    console.warn(
+      `public-tree: read ${read} of ${files.length} tracked files, ${WORDS.length} private words`,
+    );
     // A failure lists `file — class` only, so a red CI log never repeats the value.
     expect(found, `${found.length} offending file/class pair(s) in ${read} files read`).toEqual([]);
   });
@@ -264,23 +294,26 @@ describe('manifest host grants', () => {
 // --- each rule fires on the shape it exists to catch ---------------------------------------
 
 describe('the guard is not vacuous', () => {
-  const tracker = `https://${TRACKER_HOST}/api/1/`;
+  const internalZoneHost = ['errors', 'infra', OWN_DOMAIN].join('.');
+  const tracker = `https://${internalZoneHost}/api/1/`;
   const internal = ['some-service', OWN_DOMAIN].join('.');
+  const words = privateWords(' Quimtel ,\n\nzorblax.io\n');
 
   it.each([
     ['internal host on our own domain', `"url": "https://${internal}/v1/mcp"`],
     ['internal-zone host', `see https://grafana.${['infra', OWN_DOMAIN].join('.')}`],
-    ['error-tracker host', tracker],
+    ['internal-zone host', tracker],
     ['internal setup mode name', `# established by ${SETUP_MODE} setup mode`],
-    ['private-repository CI provider', `runs-on: ${PRIVATE_CI}-standard-2`],
+    ['private word (from the secret)', 'runs-on: QUIMTEL-standard-2'],
     ['home-directory path', `see ${['', 'home', 'someone', 'src'].join('/')}`],
   ])('%s fires', (rule, sample) => {
-    expect(offenses('fixture.txt', sample)).toContain(`fixture.txt — ${rule}`);
+    expect(offenses('fixture.txt', sample, words)).toContain(`fixture.txt — ${rule}`);
   });
 
   it('a failure names the file and the class, never the value', () => {
-    for (const line of offenses('fixture.txt', tracker)) {
-      expect(line.toLowerCase()).not.toContain(TRACKER_HOST);
+    for (const line of offenses('fixture.txt', `${tracker} runs-on: quimtel`, words)) {
+      expect(line.toLowerCase()).not.toContain(internalZoneHost);
+      expect(line.toLowerCase()).not.toContain('quimtel');
     }
   });
 
@@ -292,16 +325,59 @@ describe('the guard is not vacuous', () => {
     expect(offenses('fixture.txt', 'config lives in ~/.config/tool')).toEqual([]);
   });
 
-  it('refuses the error-tracker grant in a manifest', () => {
-    const grants = ['https://openrouter.ai/*', `https://${TRACKER_HOST}/*`];
+  it('refuses an internal-zone grant in a manifest', () => {
+    const grants = ['https://openrouter.ai/*', `https://${internalZoneHost}/*`];
     expect(grantOffenses('manifest.json', grants)).toContain(
       'manifest.json — host grant on our own infrastructure',
     );
     expect(grantOffenses('manifest.json', ['https://openrouter.ai/*'])).toEqual([]);
   });
 
-  it('applies the CI-provider rule to every file, the review config included', () => {
-    expect(offenses('.coderabbit.yaml', `runs-on: ${PRIVATE_CI}`)).toHaveLength(1);
-    expect(offenses('.github/workflows/ci.yml', `runs-on: ${PRIVATE_CI}`)).toHaveLength(1);
+  it('applies the private-word rule to every file, the review config included', () => {
+    expect(offenses('.coderabbit.yaml', 'runs-on: quimtel', words)).toHaveLength(1);
+    expect(offenses('.github/workflows/ci.yml', 'runs-on: quimtel', words)).toHaveLength(1);
+    expect(offenses('fixture.txt', 'zorblax-io and quim', words)).toEqual([]);
+  });
+
+  it('reads the private words from the secret, and a required run without them fails', () => {
+    expect(words).toEqual(['quimtel', 'zorblax.io']);
+    expect(privateWords(undefined)).toEqual([]);
+    expect(() => privateWordsForRun(undefined, true)).toThrow(REQUIRED_ENV);
+    expect(() => privateWordsForRun(' , \n', true)).toThrow(REQUIRED_ENV);
+    expect(privateWordsForRun(undefined, false)).toEqual([]);
+    expect(privateWordsForRun('quimtel', true)).toEqual(['quimtel']);
+  });
+});
+
+// --- CI passes the secret to every step that runs this guard ------------------------------
+
+describe('CI wiring', () => {
+  // Deleting, commenting out or weakening either line would switch the private-word check off
+  // with every test still green, so each step's live (uncommented) lines are matched exactly.
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, matched literally
+  const SECRET_LINE = 'PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}';
+  const REQUIRED_LINE =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, matched literally
+    "PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}";
+  const ci = readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8');
+
+  it.each([
+    ['- name: Unit + integration tests\n', 'run: bun run test\n'],
+    [
+      '- name: Validate emitted manifest grants (public-tree guard)\n',
+      'run: bun run test test/unit/public-tree.test.ts',
+    ],
+  ])('%s passes the secret and the required flag', (step, run) => {
+    const start = ci.indexOf(step);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = ci.indexOf(run, start);
+    expect(end).toBeGreaterThan(start);
+    const live = ci
+      .slice(start, end)
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .map((line) => line.trim());
+    expect(live).toContain(SECRET_LINE);
+    expect(live).toContain(REQUIRED_LINE);
   });
 });
