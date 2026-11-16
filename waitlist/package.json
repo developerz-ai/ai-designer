@@ -16,7 +16,7 @@
   "dependencies": {
     "hono": "^4.13.16",
     "nodemailer": "^10.3.1",
-    "postgres": "^3.4.9"
+    "postgres": "^4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
