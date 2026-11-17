@@ -151,8 +151,9 @@ const RULES: Rule[] = [
 function repoRoot(): string {
   const proc = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: REPO_ROOT });
   if (proc.status !== 0) throw new Error(`git rev-parse --show-toplevel exited ${proc.status}`);
-  const toplevel = proc.stdout.toString().trim().replace(/\/+$/, '');
-  if (toplevel !== REPO_ROOT.replace(/\/+$/, '')) {
+  const toplevel = proc.stdout.toString().trim();
+  // git prints `C:/x/y` on Windows while resolve() gives `C:\\x\\y`: compare resolved forms.
+  if (resolve(toplevel) !== resolve(REPO_ROOT)) {
     throw new Error('git answers for another repository: this checkout is nested inside one');
   }
   return toplevel;
@@ -360,6 +361,7 @@ describe('CI wiring', () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, matched literally
     "PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}";
   const ci = readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8');
+  const guardOnly = readFileSync(join(REPO_ROOT, '.github/workflows/public-tree.yml'), 'utf8');
 
   it.each([
     ['- name: Unit + integration tests\n', 'run: bun run test\n'],
@@ -368,6 +370,19 @@ describe('CI wiring', () => {
       'run: bun run test test/unit/public-tree.test.ts',
     ],
   ])('%s passes the secret and the required flag', (step, run) => {
+    expectWired(ci, step, run);
+  });
+
+  it('a docs-only change still runs the guard: its own workflow has no path filter', () => {
+    expect(guardOnly).not.toMatch(/^\s*paths(-ignore)?:/m);
+    expectWired(
+      guardOnly,
+      '- name: Public-tree guard\n',
+      'run: bun run test test/unit/public-tree.test.ts',
+    );
+  });
+
+  function expectWired(ci: string, step: string, run: string): void {
     const start = ci.indexOf(step);
     expect(start).toBeGreaterThanOrEqual(0);
     const end = ci.indexOf(run, start);
@@ -379,5 +394,5 @@ describe('CI wiring', () => {
       .map((line) => line.trim());
     expect(live).toContain(SECRET_LINE);
     expect(live).toContain(REQUIRED_LINE);
-  });
+  }
 });
