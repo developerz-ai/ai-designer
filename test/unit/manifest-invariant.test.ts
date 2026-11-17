@@ -84,8 +84,10 @@ describe('manifest least-privilege invariants', () => {
     expect(manifest.permissions?.includes('<all_urls>')).toBe(false);
   });
 
-  it('has no static broad/grant-all host permission other than the two named endpoints', () => {
-    const expected = ['https://glitchtip.infra.developerz.ai/*', 'https://openrouter.ai/*'];
+  // Crash reporting is off (#212): the error-tracker grant came out of the manifest with it, so
+  // the BYOK model endpoint is the only static host left.
+  it('has no static host permission other than the BYOK model endpoint', () => {
+    const expected = ['https://openrouter.ai/*'];
     expect([...(manifest.host_permissions ?? [])].sort()).toStrictEqual([...expected].sort());
   });
 });

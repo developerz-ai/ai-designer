@@ -19,7 +19,7 @@ env:
 jobs:
   shots:
     name: Render store screenshots
-    # GitHub-hosted runner (org rule: private repos on Ubicloud, public on GitHub-hosted).
+    # GitHub-hosted runner: this repository is public.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

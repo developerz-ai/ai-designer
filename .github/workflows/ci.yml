@@ -32,7 +32,7 @@ env:
 jobs:
   lint:
     name: Lint
-    # GitHub-hosted runner (org rule: private repos on Ubicloud, public on GitHub-hosted).
+    # GitHub-hosted runner: this repository is public.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -72,6 +72,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Unit + integration tests
+        env:
+          PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}
+          # The repository's own runs must check the private words; a fork's PR and Dependabot
+          # get no secrets, so they skip them (the guard says so in the log).
+          PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}
         run: bun run test
 
   build:
@@ -95,6 +100,15 @@ jobs:
           DZ_REQUIRE_IMAGE_WORKER_BUILD: '1'
           DZ_TEST_WORKERS: '2'
         run: bun run test test/unit/image-encode-bundling.test.ts --reporter=verbose
+      - name: Validate emitted manifest grants (public-tree guard)
+        env:
+          DZ_REQUIRE_BUILT_MANIFEST: '1'
+          DZ_TEST_WORKERS: '2'
+          PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}
+          # The repository's own runs must check the private words; a fork's PR and Dependabot
+          # get no secrets, so they skip them (the guard says so in the log).
+          PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}
+        run: bun run test test/unit/public-tree.test.ts --reporter=verbose
       - name: Upload extension artifact
         uses: actions/upload-artifact@v7
         with:

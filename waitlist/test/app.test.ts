@@ -26,7 +26,7 @@ import { signToken } from '../src/token';
 beforeAll(() => {
   process.env.TOKEN_SECRET = 'test-secret-key';
   process.env.CORS_ORIGIN = 'https://designer.developerz.ai';
-  process.env.PUBLIC_BASE = 'https://waitlist.developerz.ai';
+  process.env.PUBLIC_BASE = 'https://waitlist.example.com';
 });
 
 beforeEach(() => {

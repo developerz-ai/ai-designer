@@ -1,7 +1,7 @@
 import type { Transporter } from 'nodemailer';
 import nodemailer from 'nodemailer';
 
-// Outbound mail via Stalwart SMTPS (mx.developerz.ai:465, implicit TLS). The
+// Outbound mail via SMTPS (the host in SMTP_HOST, port 465, implicit TLS). The
 // transport is created lazily; in tests the whole module is mocked so no SMTP
 // connection is ever opened. List-Unsubscribe is set on every message for
 // Gmail/Yahoo one-click unsubscribe.

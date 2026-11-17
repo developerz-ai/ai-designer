@@ -87,7 +87,6 @@ Permissions are pinned to the minimum each feature needs; every retained entry g
 | Grant | Why | How granted |
 |-------|-----|-------------|
 | `https://openrouter.ai/*` | BYOK model endpoint; the service worker calls it directly (CORS-exempt). | Static (`host_permissions`) — service worker only |
-| `https://glitchtip.infra.developerz.ai/*` | Crash ingest (GlitchTip, error events only). | Static (`host_permissions`) — service worker only |
 | `<all_urls>` | Broad page access when the user wants it. | **Opt-in** (`optional_host_permissions`); per-origin, revocable |
 
 MCP connection is opt-in and per-backend; tokens are revocable from the MCP management UI. See [privacy.md](privacy.md) Permissions, [mv3-worlds.md](mv3-worlds.md).
@@ -102,6 +101,7 @@ MCP connection is opt-in and per-backend; tokens are revocable from the MCP mana
   session, `UsageMeter`) so spend stays visible; tokens are the unit because a BYOK endpoint has no
   universal price. Per-turn step/token budgets force-stop a runaway turn (`src/agent/budget.ts`), and
   network/tool errors surface as a chat bubble rather than crashing the service worker (#25).
-- Error telemetry is first-party only: self-hosted GlitchTip via `@sentry/browser`
-  (`src/shared/sentry.ts`, breadcrumbs/events scrubbed) — no third-party analytics ships, guarded by
+- No error telemetry ships: crash reporting is off (`src/shared/sentry.ts` initialises only when a
+  build sets `WXT_SENTRY_DSN`, and none does; the manifest grants no error-tracker host) — no
+  third-party analytics ships either, guarded by
   `test/unit/no-third-party-telemetry.test.ts` (the #25 live-test greps the built bundle too).

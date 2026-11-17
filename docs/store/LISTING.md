@@ -31,7 +31,7 @@ WHAT IT DOES
 • Session history — your last 10 conversations and reports, stored locally
 
 BRING YOUR OWN KEY
-You connect your own OpenAI-compatible model provider (e.g. OpenRouter). Your API key is encrypted and stored only in your browser (chrome.storage.local), used only in the extension's service worker, and never sent anywhere except directly to the provider you configured. No accounts, no usage analytics, no middleman servers. The only thing ever sent to us is an anonymous crash report (error class + stack trace of the extension's own code) with page content scrubbed out by allowlist — see the privacy policy.
+You connect your own OpenAI-compatible model provider (e.g. OpenRouter). Your API key is encrypted and stored only in your browser (chrome.storage.local), used only in the extension's service worker, and never sent anywhere except directly to the provider you configured. No accounts, no usage analytics, no middleman servers. Nothing is ever sent to us, not even crash reports — see the privacy policy.
 
 PRIVACY BY ARCHITECTURE
 Page content is read only when you ask the agent to work on a page, and it is sent only to your configured model provider. Live page edits are never persisted to any server. The only durable outputs are the changeset and report you explicitly export or ship. Full policy: https://github.com/developerz-ai/ai-designer/blob/main/docs/architecture/privacy.md
@@ -45,12 +45,13 @@ AI-assisted live design editing of the current web page: the user chats with an 
 
 **Privacy policy URL:** https://github.com/developerz-ai/ai-designer/blob/main/docs/architecture/privacy.md
 
-**Data usage declarations:** the extension does NOT sell or transfer user data. Page content and chat messages go only to the user's own configured model provider (BYOK) and, when the user explicitly ships, to the MCP backend the user connected. No usage analytics. Anonymous crash reports (error class + extension stack trace only; page content, prompts, selectors and screenshots scrubbed by allowlist before send — `src/shared/sentry.ts`) go to the developer's self-hosted GlitchTip — declare under the error/crash-data category in the data-usage form.
+**Data usage declarations:** the extension does NOT sell or transfer user data. Page content and chat messages go only to the user's own configured model provider (BYOK) and, when the user explicitly ships, to the MCP backend the user connected. No usage analytics, and no crash reporting: the extension sends no error or crash data anywhere (`src/shared/sentry.ts` stays off — no build sets its key — and the manifest grants no error-tracker host). Declare no crash/error-data collection in the data-usage form.
 
 ## Permission justifications
 
 Verified against `wxt.config.ts` (`sidePanel, storage, activeTab, tabs, identity,
-webNavigation, debugger, scripting` + optional `<all_urls>`).
+webNavigation, debugger, scripting`, static host
+`https://openrouter.ai/*`, optional `<all_urls>`). No other host grant.
 
 | Permission | Justification (paste into the dashboard) |
 |--|--|
@@ -63,7 +64,6 @@ webNavigation, debugger, scripting` + optional `<all_urls>`).
 | `webNavigation` | Frame-tree enumeration (`getAllFrames`) so the agent can target a specific iframe, and cross-document commit detection so edits recorded against a page the tab has left are cleared instead of mis-attributed. |
 | `identity` | OAuth 2.0 (PKCE) sign-in to the user's own MCP backend via `launchWebAuthFlow`; tokens stored locally, revocable in the MCP UI. |
 | host `https://openrouter.ai/*` | The BYOK model endpoint the service worker calls directly with the user's own key (CORS-exempt static grant). |
-| host `https://glitchtip.infra.developerz.ai/*` | Self-hosted crash-report ingest (allowlist-scrubbed, no page content). |
 
 ## Graphics
 
