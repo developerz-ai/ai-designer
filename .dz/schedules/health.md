@@ -9,6 +9,13 @@ Daily checkup fired by `schedules: health`: the failures no issue or PR announce
 | the GitHub Release carries the artifacts | `gh release view "$t" --json isDraft,publishedAt,assets` | not a draft, published, at least one `.zip` and one `.crx` |
 | Dependabot is not stuck | `gh pr list --app dependabot --state open --limit 100 --json number,updatedAt,statusCheckRollup` | no PR with failed checks and more than 7 days since `updatedAt` |
 
+## Rows
+
+- `main-green`: the last push run of `ci.yml` on `main` concluded `success` on the `origin/main` tip.
+- `release-build`: the newest `v*` tag's `release.yml` run concluded `success` on that tag's commit.
+- `release-artifacts`: the GitHub Release for that tag is published, not a draft, with a `.zip` and a `.crx` asset.
+- `dependabot-stuck`: no open Dependabot PR has failed checks and more than 7 days since its last update.
+
 ## What to file
 
 For each unhealthy signal, one ask, unless an open issue already carries its exact title
