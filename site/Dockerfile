@@ -9,7 +9,7 @@
 # site/Dockerfile` — keep the two in sync.
 #
 # Runtime contract (infra #870 stack manifest):
-#   - nginxinc/nginx-unprivileged, uid 101, listens on :8080
+#   - ghcr.io/nginx/nginx-unprivileged, uid 101, listens on :8080
 #   - /assets/ hashed bundle cached immutable; unknown routes fall back to
 #     index.html
 
@@ -32,7 +32,7 @@ ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 RUN bun run build
 
 # ---- serve the static bundle (unprivileged nginx, :8080, uid 101) ----
-FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
+FROM ghcr.io/nginx/nginx-unprivileged:1.30.7-alpine@sha256:0c53a1f2890c3526bfd201440f0fd3970e5b78f80630f58284aad0d34b5ec7bd AS runtime
 # Static server config: listen 8080, immutable /assets/, index.html fallback.
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
