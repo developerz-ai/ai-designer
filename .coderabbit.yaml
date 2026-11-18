@@ -79,7 +79,7 @@ reviews:
 
   # Automatic reviews are ON, mirroring the developerz.ai monorepo. CodeRabbit
   # now reviews every PR to main alongside the agent-pipeline gate
-  # (.agent-pipeline.json merge.reviewGate: "ci-only" — CI-green + watchdog
+  # (.dz/pipeline/agent-pipeline.json merge.reviewGate: "ci-only" — CI-green + watchdog
   # deep-review + per-batch human authorization token). Skips WIP/DRAFT titles
   # and drafts. Set enabled: false to fall back to on-demand `@coderabbitai review`.
   auto_review:
