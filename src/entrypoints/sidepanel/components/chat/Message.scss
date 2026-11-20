@@ -9,9 +9,16 @@
   display: flex;
   flex-direction: column;
   gap: tokens.$dz-space-2;
-  // Each turn arrives rather than appearing. 4px and 180ms — enough to read as motion in the
-  // thread, short enough that a fast exchange never feels like it is animating at you.
+  // Each turn arrives rather than appearing.
   animation: dz-rise var(--dz-motion-base) var(--dz-ease);
+
+  // The user's own message gets a bigger entrance than the assistant's. It is the one moment the
+  // panel has to answer "did that send?" — 4px was technically motion and practically invisible,
+  // especially on the send that scrolls the thread at the same time. 10px over 240ms, easing out
+  // so it decelerates into place rather than arriving at speed.
+  &--user {
+    animation: dz-message-in var(--dz-motion-slow) var(--dz-ease-out);
+  }
 
   &--assistant {
     // `stretch`, not merely "no max-width": Thread is a flex column, so an assistant turn that

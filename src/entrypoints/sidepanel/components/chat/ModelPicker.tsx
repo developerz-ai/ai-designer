@@ -3,6 +3,7 @@ import { i18n } from '#i18n';
 import { settings, switchModel } from '../../stores/settings';
 import { dismissOnOutsidePress } from '../dismiss';
 import { Icon } from '../Icon';
+import { createPresence } from '../presence';
 import './ModelPicker.scss';
 
 // Inline model quick-switch, split out of Composer (which owned two unrelated concerns: the
@@ -49,6 +50,9 @@ export function filterModels<T extends { id: string; name: string }>(
 export function ModelPicker() {
   const [open, setOpen] = createSignal(false);
   let rootEl: HTMLDivElement | undefined;
+  // Mounted through the close animation — a bare `<Show>` tears the popover out on the same tick
+  // the state flips, so it opened with a pop and vanished with a cut.
+  const presence = createPresence(open);
   // Roving focus: only the active item is tabbable (`tabindex="-1"` on the rest), which is what
   // `role="menu"` requires — Tab leaves the menu, arrows move within it.
   const [activeIndex, setActiveIndex] = createSignal(0);
@@ -187,14 +191,14 @@ export function ModelPicker() {
 
       {/* Conditionally rendered, never `display: none` — a hidden-but-present menu keeps its
           items in the accessibility tree and in the tab order. */}
-      <Show when={open()}>
+      <Show when={presence.mounted()}>
         {/* The popover wraps the search field AND the menu. The field is deliberately a SIBLING
             of `role="menu"`, not a child: a menu may only own `menuitem*` nodes, so a textbox
             inside one is invalid ARIA. The keydown handler is attached to BOTH interactive
             children rather than to this wrapper: arrows must drive the list whether the cursor
             is in the field or focus has moved onto a row, and a handler on a plain div is a
             static-element interaction. */}
-        <div class="dz-modelpicker__popover">
+        <div class="dz-modelpicker__popover" classList={{ 'is-leaving': presence.leaving() }}>
           {/* A gateway catalogue runs to ~300 entries. Scrolling that is not a way to pick a
               model; typing three characters is. */}
           <div class="dz-modelpicker__search">
