@@ -25,6 +25,138 @@ const read = (rel: string): string =>
 
 const LOCKFILE = 'docs/design/designer/pnpm-lock.yaml';
 
+const MANIFEST = 'docs/design/designer/package.json';
+const NEXT_VERSION = '16.3.8';
+// Registry dist.integrity from https://registry.npmjs.org/<package>/16.3.8.
+// Pin the bytes too: matching version strings alone cannot prevent EINTEGRITY.
+const NEXT_INTEGRITIES = {
+  next: 'sha512-U7QEZaTini6wKrb8A8hqLLqYQyCetegKjCpJOyxk642vWoMoU1x5PyZCJFvgYgiptA8xc5j/9xYlZFO7w9Sjmw==',
+  '@next/env':
+    'sha512-Al9zqHVV7TJv0eFuOU4U7Lvv74PTih4Ch63sk2xCIpSTkE3udFnaOcnzP2lQVymiL7yS9Cj2iClUXlR3EQ5sEw==',
+  '@next/swc-darwin-arm64':
+    'sha512-2JPRMh2nmQG5CiL7cXGL9AGwnPWJQ//cTtAUCT+w511QHk79SYz3LGv/pc5X643B/WEO0rvu3Yww0hqwt3kgeA==',
+  '@next/swc-darwin-x64':
+    'sha512-GZtCCOBKJ4leVIT/Th0llWKhD1ca92lzbQiS5R5ON9QkoiFnilFsebDae1JU2a3HWoKMEmEZWGs1AGLavVM72Q==',
+  '@next/swc-linux-arm64-gnu':
+    'sha512-O659ygeQYqneJ1fBKMpFxIFqYkYswu8IAS1OCKK/4f3ZgJJm1dRz4fVJZRi/kLLWjnBKnebOePA4WNv+sV1pVA==',
+  '@next/swc-linux-arm64-musl':
+    'sha512-dSjKSyWpzxoO1d3DIZZcP4XJcNaKeLmxQMFOiYl5vuBRMmweIqnAhty8tAmRsvTss779cK1FtYnDMj40e4TQlg==',
+  '@next/swc-linux-x64-gnu':
+    'sha512-lbqOuz3RPRcv+o9msNsJw5x4+Y1ZwPTs6vmL6DCf7i0fZfvng/F59wyeDwqHIvV0mK//RBy/jJkZ+nCKsSMXjQ==',
+  '@next/swc-linux-x64-musl':
+    'sha512-+316WswI8ScVgZeUd+1KGaXkHhaYQzCjvH/05TZSpJ8zBizb1a4G7DtO7F12jcBIqMOtsz9ji1t48fmKtzqsGA==',
+  '@next/swc-win32-arm64-msvc':
+    'sha512-ji0gd4kMYUxO+1fJBIbiBVRCjzG/lloiyCccnlebvb1ZJ5qXCPZqYg4Jl1DrrixnWNMKylzgpmMWx0yNDYXlzw==',
+  '@next/swc-win32-x64-msvc':
+    'sha512-WcTlaKt/TWkh5kUjdJcUmB1XgZ+1c6fz4Y9fDHL73YNSdGaUWjceeWrrlwF0nv19iABYWC4iAq1oX1w4Bn0vfg==',
+};
+
+/** Read pnpm's two-space package entries without depending on a YAML parser. */
+function lockEntries(section: string): Map<string, string> {
+  return new Map(
+    [...section.matchAll(/^ {2}'?([^\n]+?)'?:([^\n]*(?:\n(?: {4}[^\n]*|))*)/gm)].map((match) => [
+      match[1] ?? '',
+      match[2] ?? '',
+    ]),
+  );
+}
+
+function nextViolations(manifest: string, lockfile: string): string[] {
+  const violations: string[] = [];
+  const check = (ok: boolean, label: string) => {
+    if (!ok) violations.push(label);
+  };
+  check(JSON.parse(manifest).dependencies?.next === NEXT_VERSION, 'manifest pin');
+  const importer = /^ {6}next:\n {8}specifier: ([^\n]+)\n {8}version: ([^\n]+)/m.exec(
+    lockfile.split('\npackages:')[0] ?? '',
+  );
+  check(importer?.[1] === NEXT_VERSION, 'importer specifier');
+  check(importer?.[2]?.split('(')[0] === NEXT_VERSION, 'importer resolution');
+  const packages = lockEntries(lockfile.split('\npackages:\n')[1]?.split('\nsnapshots:')[0] ?? '');
+  const snapshots = lockEntries(lockfile.split('\nsnapshots:\n')[1] ?? '');
+  const nextSnapshot = snapshots.get(`next@${importer?.[2]}`);
+  check(nextSnapshot !== undefined, 'Next snapshot matches importer');
+  for (const [name, integrity] of Object.entries(NEXT_INTEGRITIES)) {
+    const key = `${name}@${NEXT_VERSION}`;
+    check(packages.get(key)?.includes(`resolution: {integrity: ${integrity}}`) === true, key);
+    if (name === 'next') continue;
+    check(snapshots.has(key), `${name} snapshot`);
+    check(nextSnapshot?.includes(`      '${name}': ${NEXT_VERSION}\n`) === true, `${name} wiring`);
+  }
+  // Includes peer-qualified analytics importer/snapshot keys, not just standalone Next entries.
+  for (const ref of lockfile.matchAll(
+    /(?:\bnext@|@next\/[\w-]+@|(?:next|'@next\/[\w-]+'): )(\d[^\s'():]*)/g,
+  )) {
+    check(ref[1] === NEXT_VERSION, `stale reference: ${ref[0]}`);
+  }
+  const analytics = /'@vercel\/analytics':\n {8}specifier: [^\n]+\n {8}version: ([^\n]+)/.exec(
+    lockfile,
+  )?.[1];
+  check(analytics?.includes(`(next@${importer?.[2]})`) === true, 'analytics peer importer');
+  check(
+    snapshots.get(`@vercel/analytics@${analytics}`)?.includes(`      next: ${importer?.[2]}\n`) ===
+      true,
+    'analytics peer snapshot',
+  );
+  return violations;
+}
+
+describe('designer Next pin and complete lock closure', () => {
+  const manifest = () => read(MANIFEST);
+  const lock = () => read(LOCKFILE);
+
+  it('pins the supplied verified target with registry integrities and matching peers', () => {
+    expect(nextViolations(manifest(), lock())).toEqual([]);
+  });
+
+  it.each(['16.3.0', '16.3.3', '16.3.6'])('rejects %s, even in a consistent old lock', (old) => {
+    expect(
+      nextViolations(
+        manifest().replaceAll(NEXT_VERSION, old),
+        lock().replaceAll(NEXT_VERSION, old),
+      ),
+    ).not.toEqual([]);
+  });
+
+  it.each(['^16.3.8', '~16.3.8', '16.3.3'])('rejects manifest-only drift to %s', (pin) => {
+    expect(nextViolations(manifest().replace(NEXT_VERSION, pin), lock())).toContain('manifest pin');
+  });
+
+  it('rejects every individually stale version reference', () => {
+    const fixed = lock();
+    const refs = [...fixed.matchAll(/16\.3\.8/g)];
+    expect(refs.length).toBeGreaterThan(30);
+    for (const ref of refs) {
+      const mixed = `${fixed.slice(0, ref.index)}16.3.3${fixed.slice(ref.index + NEXT_VERSION.length)}`;
+      expect(nextViolations(manifest(), mixed), mixed).not.toEqual([]);
+    }
+  });
+
+  it('rejects missing package/snapshot entries, wiring and corrupt integrity for every companion', () => {
+    const fixed = lock();
+    for (const [name, integrity] of Object.entries(NEXT_INTEGRITIES)) {
+      expect(
+        nextViolations(manifest(), fixed.replace(integrity, `${integrity.slice(0, -3)}x==`)),
+      ).not.toEqual([]);
+      const lines = fixed.split('\n');
+      const indexes = lines.flatMap((line, index) =>
+        line.startsWith(`  ${name}@${NEXT_VERSION}`) ||
+        line.startsWith(`  '${name}@${NEXT_VERSION}`) ||
+        line === `      '${name}': ${NEXT_VERSION}`
+          ? [index]
+          : [],
+      );
+      expect(indexes.length).toBeGreaterThanOrEqual(2);
+      for (const index of indexes) {
+        expect(
+          nextViolations(manifest(), lines.filter((_, i) => i !== index).join('\n')),
+        ).not.toEqual([]);
+      }
+    }
+    expect(nextViolations(manifest(), '')).not.toEqual([]);
+  });
+});
+
 /** The floor: every fast-uri reference in the designer's lockfile must be at least this version. */
 const MIN_FAST_URI = '3.1.7';
 
