@@ -25,6 +25,138 @@ const read = (rel: string): string =>
 
 const LOCKFILE = 'docs/design/designer/pnpm-lock.yaml';
 
+const MANIFEST = 'docs/design/designer/package.json';
+const NEXT_VERSION = '16.3.8';
+// Registry dist.integrity from https://registry.npmjs.org/<package>/16.3.8.
+// Pin the bytes too: matching version strings alone cannot prevent EINTEGRITY.
+const NEXT_INTEGRITIES = {
+  next: 'sha512-U7QEZaTini6wKrb8A8hqLLqYQyCetegKjCpJOyxk642vWoMoU1x5PyZCJFvgYgiptA8xc5j/9xYlZFO7w9Sjmw==',
+  '@next/env':
+    'sha512-Al9zqHVV7TJv0eFuOU4U7Lvv74PTih4Ch63sk2xCIpSTkE3udFnaOcnzP2lQVymiL7yS9Cj2iClUXlR3EQ5sEw==',
+  '@next/swc-darwin-arm64':
+    'sha512-2JPRMh2nmQG5CiL7cXGL9AGwnPWJQ//cTtAUCT+w511QHk79SYz3LGv/pc5X643B/WEO0rvu3Yww0hqwt3kgeA==',
+  '@next/swc-darwin-x64':
+    'sha512-GZtCCOBKJ4leVIT/Th0llWKhD1ca92lzbQiS5R5ON9QkoiFnilFsebDae1JU2a3HWoKMEmEZWGs1AGLavVM72Q==',
+  '@next/swc-linux-arm64-gnu':
+    'sha512-O659ygeQYqneJ1fBKMpFxIFqYkYswu8IAS1OCKK/4f3ZgJJm1dRz4fVJZRi/kLLWjnBKnebOePA4WNv+sV1pVA==',
+  '@next/swc-linux-arm64-musl':
+    'sha512-dSjKSyWpzxoO1d3DIZZcP4XJcNaKeLmxQMFOiYl5vuBRMmweIqnAhty8tAmRsvTss779cK1FtYnDMj40e4TQlg==',
+  '@next/swc-linux-x64-gnu':
+    'sha512-lbqOuz3RPRcv+o9msNsJw5x4+Y1ZwPTs6vmL6DCf7i0fZfvng/F59wyeDwqHIvV0mK//RBy/jJkZ+nCKsSMXjQ==',
+  '@next/swc-linux-x64-musl':
+    'sha512-+316WswI8ScVgZeUd+1KGaXkHhaYQzCjvH/05TZSpJ8zBizb1a4G7DtO7F12jcBIqMOtsz9ji1t48fmKtzqsGA==',
+  '@next/swc-win32-arm64-msvc':
+    'sha512-ji0gd4kMYUxO+1fJBIbiBVRCjzG/lloiyCccnlebvb1ZJ5qXCPZqYg4Jl1DrrixnWNMKylzgpmMWx0yNDYXlzw==',
+  '@next/swc-win32-x64-msvc':
+    'sha512-WcTlaKt/TWkh5kUjdJcUmB1XgZ+1c6fz4Y9fDHL73YNSdGaUWjceeWrrlwF0nv19iABYWC4iAq1oX1w4Bn0vfg==',
+};
+
+/** Read pnpm's two-space package entries without depending on a YAML parser. */
+function lockEntries(section: string): Map<string, string> {
+  return new Map(
+    [...section.matchAll(/^ {2}'?([^\n]+?)'?:([^\n]*(?:\n(?: {4}[^\n]*|))*)/gm)].map((match) => [
+      match[1] ?? '',
+      match[2] ?? '',
+    ]),
+  );
+}
+
+function nextViolations(manifest: string, lockfile: string): string[] {
+  const violations: string[] = [];
+  const check = (ok: boolean, label: string) => {
+    if (!ok) violations.push(label);
+  };
+  check(JSON.parse(manifest).dependencies?.next === NEXT_VERSION, 'manifest pin');
+  const importer = /^ {6}next:\n {8}specifier: ([^\n]+)\n {8}version: ([^\n]+)/m.exec(
+    lockfile.split('\npackages:')[0] ?? '',
+  );
+  check(importer?.[1] === NEXT_VERSION, 'importer specifier');
+  check(importer?.[2]?.split('(')[0] === NEXT_VERSION, 'importer resolution');
+  const packages = lockEntries(lockfile.split('\npackages:\n')[1]?.split('\nsnapshots:')[0] ?? '');
+  const snapshots = lockEntries(lockfile.split('\nsnapshots:\n')[1] ?? '');
+  const nextSnapshot = snapshots.get(`next@${importer?.[2]}`);
+  check(nextSnapshot !== undefined, 'Next snapshot matches importer');
+  for (const [name, integrity] of Object.entries(NEXT_INTEGRITIES)) {
+    const key = `${name}@${NEXT_VERSION}`;
+    check(packages.get(key)?.includes(`resolution: {integrity: ${integrity}}`) === true, key);
+    if (name === 'next') continue;
+    check(snapshots.has(key), `${name} snapshot`);
+    check(nextSnapshot?.includes(`      '${name}': ${NEXT_VERSION}\n`) === true, `${name} wiring`);
+  }
+  // Includes peer-qualified analytics importer/snapshot keys, not just standalone Next entries.
+  for (const ref of lockfile.matchAll(
+    /(?:\bnext@|@next\/[\w-]+@|(?:next|'@next\/[\w-]+'): )(\d[^\s'():]*)/g,
+  )) {
+    check(ref[1] === NEXT_VERSION, `stale reference: ${ref[0]}`);
+  }
+  const analytics = /'@vercel\/analytics':\n {8}specifier: [^\n]+\n {8}version: ([^\n]+)/.exec(
+    lockfile,
+  )?.[1];
+  check(analytics?.includes(`(next@${importer?.[2]})`) === true, 'analytics peer importer');
+  check(
+    snapshots.get(`@vercel/analytics@${analytics}`)?.includes(`      next: ${importer?.[2]}\n`) ===
+      true,
+    'analytics peer snapshot',
+  );
+  return violations;
+}
+
+describe('designer Next pin and complete lock closure', () => {
+  const manifest = () => read(MANIFEST);
+  const lock = () => read(LOCKFILE);
+
+  it('pins the supplied verified target with registry integrities and matching peers', () => {
+    expect(nextViolations(manifest(), lock())).toEqual([]);
+  });
+
+  it.each(['16.3.0', '16.3.3', '16.3.6'])('rejects %s, even in a consistent old lock', (old) => {
+    expect(
+      nextViolations(
+        manifest().replaceAll(NEXT_VERSION, old),
+        lock().replaceAll(NEXT_VERSION, old),
+      ),
+    ).not.toEqual([]);
+  });
+
+  it.each(['^16.3.8', '~16.3.8', '16.3.3'])('rejects manifest-only drift to %s', (pin) => {
+    expect(nextViolations(manifest().replace(NEXT_VERSION, pin), lock())).toContain('manifest pin');
+  });
+
+  it('rejects every individually stale version reference', () => {
+    const fixed = lock();
+    const refs = [...fixed.matchAll(/16\.3\.8/g)];
+    expect(refs.length).toBeGreaterThan(30);
+    for (const ref of refs) {
+      const mixed = `${fixed.slice(0, ref.index)}16.3.3${fixed.slice(ref.index + NEXT_VERSION.length)}`;
+      expect(nextViolations(manifest(), mixed), mixed).not.toEqual([]);
+    }
+  });
+
+  it('rejects missing package/snapshot entries, wiring and corrupt integrity for every companion', () => {
+    const fixed = lock();
+    for (const [name, integrity] of Object.entries(NEXT_INTEGRITIES)) {
+      expect(
+        nextViolations(manifest(), fixed.replace(integrity, `${integrity.slice(0, -3)}x==`)),
+      ).not.toEqual([]);
+      const lines = fixed.split('\n');
+      const indexes = lines.flatMap((line, index) =>
+        line.startsWith(`  ${name}@${NEXT_VERSION}`) ||
+        line.startsWith(`  '${name}@${NEXT_VERSION}`) ||
+        line === `      '${name}': ${NEXT_VERSION}`
+          ? [index]
+          : [],
+      );
+      expect(indexes.length).toBeGreaterThanOrEqual(2);
+      for (const index of indexes) {
+        expect(
+          nextViolations(manifest(), lines.filter((_, i) => i !== index).join('\n')),
+        ).not.toEqual([]);
+      }
+    }
+    expect(nextViolations(manifest(), '')).not.toEqual([]);
+  });
+});
+
 /** The floor: every fast-uri reference in the designer's lockfile must be at least this version. */
 const MIN_FAST_URI = '3.1.7';
 
@@ -271,7 +403,7 @@ const BODY_SUBTREE = {
   },
 };
 
-function lockEntries(lockfile: string, section: string): Map<string, string> {
+function sectionEntries(lockfile: string, section: string): Map<string, string> {
   const entries = new Map<string, string>();
   let block = '';
   let key = '';
@@ -295,8 +427,8 @@ function lockEntries(lockfile: string, section: string): Map<string, string> {
 
 function bodyParserViolations(lockfile: string): string[] {
   const violations: string[] = [];
-  const packages = lockEntries(lockfile, 'packages');
-  const snapshots = lockEntries(lockfile, 'snapshots');
+  const packages = sectionEntries(lockfile, 'packages');
+  const snapshots = sectionEntries(lockfile, 'snapshots');
   const refs = [...lockfile.matchAll(/^ +body-parser: (\S+)$/gm)].map((ref) => ref[1] ?? '');
   for (const [section, versions] of [
     [
@@ -338,6 +470,56 @@ function bodyParserViolations(lockfile: string): string[] {
         violations.push(`${key}: unresolved ${name}@${version}`);
       }
     }
+  }
+  return violations;
+}
+
+const MIN_ZOD = '4.6.6';
+// Registry dist.integrity: https://registry.npmjs.org/zod/4.6.6
+const ZOD_INTEGRITY =
+  'sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==';
+
+/** Only resolved entries, not peer ranges or zod-to-json-schema's own version. */
+function zodFloorViolations(lockfile: string): string[] {
+  const refs: { section: Section | 'peer'; version: string }[] = [];
+  const violations: string[] = [];
+  let block = '';
+  let packageVersion: string | undefined;
+  let integrity: string | undefined;
+  const finishPackage = () => {
+    if (!packageVersion) return;
+    if (!integrity || (packageVersion === MIN_ZOD && integrity !== ZOD_INTEGRITY)) {
+      violations.push(`incorrect integrity for zod@${packageVersion}`);
+    }
+    packageVersion = undefined;
+    integrity = undefined;
+  };
+  for (const line of lockfile.split('\n')) {
+    const header = TOP_LEVEL_BLOCK.exec(line)?.[1];
+    if (header || /^ {2}\S/.test(line)) finishPackage();
+    if (header) block = header;
+    if (block !== 'packages' && block !== 'snapshots') continue;
+    const key = /^ {2}['"]?zod@([^:('\s]+)(?=[:('"])/.exec(line)?.[1];
+    if (key) {
+      refs.push({ section: block, version: key });
+      if (block === 'packages') packageVersion = key;
+    }
+    if (packageVersion) integrity = INTEGRITY_LINE.exec(line)?.[1] ?? integrity;
+    if (block !== 'snapshots') continue;
+    const dep = /^ {6}zod: ['"]?([^\s('"]+)/.exec(line)?.[1];
+    if (dep) refs.push({ section: 'dependency', version: dep });
+    for (const match of line.matchAll(/\(zod@([^()]+)\)/g)) {
+      refs.push({ section: 'peer', version: match[1] ?? '' });
+    }
+  }
+  finishPackage();
+  for (const ref of refs) {
+    if (!/^\d+\.\d+\.\d+$/.test(ref.version) || !isAtLeast(ref.version, MIN_ZOD)) {
+      violations.push(`${ref.section}: zod ${ref.version} < ${MIN_ZOD}`);
+    }
+  }
+  for (const section of ['packages', 'snapshots', 'dependency', 'peer'] as const) {
+    if (!refs.some((ref) => ref.section === section)) violations.push(`no zod ${section} entry`);
   }
   return violations;
 }
@@ -384,7 +566,7 @@ describe('designer body-parser resolution and registry subtree', () => {
     ),
   )('rejects stale or missing dependency edges for %s', (key, metadata) => {
     for (const [name, version] of Object.entries(metadata.dependencies)) {
-      const snapshot = `  ${key}:\n${lockEntries(fixed, 'snapshots').get(key) ?? ''}`;
+      const snapshot = `  ${key}:\n${sectionEntries(fixed, 'snapshots').get(key) ?? ''}`;
       const stale = fixed.replace(
         snapshot,
         snapshot.replace(`      ${name}: ${version}`, `      ${name}: 0.0.0`),
@@ -394,6 +576,77 @@ describe('designer body-parser resolution and registry subtree', () => {
       const missing = fixed.replaceAll(`  ${name}@${version}:`, `  missing-${name}@${version}:`);
       expect(missing).not.toBe(fixed);
       expect(bodyParserViolations(missing)).toContain(`${key}: unresolved ${name}@${version}`);
+    }
+  });
+});
+
+describe('designer zod resolution floor', () => {
+  it('holds every resolved reference and the registry integrity', () => {
+    expect(zodFloorViolations(read(LOCKFILE))).toEqual([]);
+  });
+
+  it('holds the override in both manifest and lockfile', () => {
+    const manifest = JSON.parse(read('docs/design/designer/package.json'));
+    expect(manifest.pnpm.overrides.zod).toBe(MIN_ZOD);
+    const overrides = read(LOCKFILE).split('overrides:\n')[1]?.split('\n\n')[0];
+    expect(overrides).toContain(`  zod: ${MIN_ZOD}`);
+  });
+
+  const fixed = [
+    'packages:',
+    `  zod@${MIN_ZOD}:`,
+    `    resolution: {integrity: ${ZOD_INTEGRITY}}`,
+    '  zod-to-json-schema@3.25.2:',
+    '    peerDependencies:',
+    '      zod: ^3.25.28 || ^4',
+    'snapshots:',
+    `  zod@${MIN_ZOD}: {}`,
+    `  sdk@1.0.0(zod@${MIN_ZOD}):`,
+    '    dependencies:',
+    `      zod: ${MIN_ZOD}`,
+    `      zod-to-json-schema: 3.25.2(zod@${MIN_ZOD})`,
+  ].join('\n');
+
+  it('accepts resolved versions without confusing peer ranges or similarly named packages', () => {
+    expect(zodFloorViolations(fixed)).toEqual([]);
+    expect(zodFloorViolations(fixed.replaceAll(MIN_ZOD, '4.10.0'))).toEqual([]);
+  });
+
+  it.each([
+    [`  zod@${MIN_ZOD}:\n`, 'packages'],
+    [`  zod@${MIN_ZOD}: {}`, 'snapshots'],
+    [`      zod: ${MIN_ZOD}`, 'dependency'],
+    [`  sdk@1.0.0(zod@${MIN_ZOD}):`, 'peer'],
+    [`      zod-to-json-schema: 3.25.2(zod@${MIN_ZOD})`, 'peer'],
+  ])('rejects an independently stale reference: %s', (line, section) => {
+    const stale = fixed.replace(line, line.replace(MIN_ZOD, '3.25.76'));
+    expect(stale).not.toBe(fixed);
+    expect(zodFloorViolations(stale)).toContain(`${section}: zod 3.25.76 < ${MIN_ZOD}`);
+  });
+
+  it.each(['packages', 'snapshots', 'dependency', 'peer'])(
+    'rejects missing %s entries',
+    (section) => {
+      const without = fixed
+        .split('\n')
+        .filter((line) => {
+          if (section === 'packages') return line !== `  zod@${MIN_ZOD}:`;
+          if (section === 'snapshots') return line !== `  zod@${MIN_ZOD}: {}`;
+          if (section === 'dependency') return line !== `      zod: ${MIN_ZOD}`;
+          return !line.includes('(zod@');
+        })
+        .join('\n');
+      expect(zodFloorViolations(without)).toContain(`no zod ${section} entry`);
+    },
+  );
+
+  it('rejects absent matches, prereleases and missing or mistyped integrity', () => {
+    expect(zodFloorViolations('packages:\nsnapshots:\n')).toHaveLength(4);
+    expect(zodFloorViolations(fixed.replaceAll(MIN_ZOD, '4.6.6-beta.1'))).not.toEqual([]);
+    for (const hash of ['', ZOD_INTEGRITY.replace('4Umz', '4Umx')]) {
+      expect(zodFloorViolations(fixed.replace(ZOD_INTEGRITY, hash))).toContain(
+        `incorrect integrity for zod@${MIN_ZOD}`,
+      );
     }
   });
 });
