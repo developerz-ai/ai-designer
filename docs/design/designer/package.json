@@ -35,6 +35,7 @@
       "shadcn@4.10.0": "patches/shadcn@4.10.0.patch"
     },
     "overrides": {
+      "@modelcontextprotocol/sdk": "1.31.0",
       "hono": "4.12.25",
       "sharp": "0.35.4",
       "zod": "4.6.6"
