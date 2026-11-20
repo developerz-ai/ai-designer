@@ -223,3 +223,102 @@ describe('the guard itself detects what it claims to', () => {
     expect(() => fastUriRefs('packages:\n\n  zod@3.23.8: {}\n')).toThrow(/no fast-uri reference/);
   });
 });
+
+const SDK = '@modelcontextprotocol/sdk';
+const SDK_VERSION = '1.31.0';
+// Verified dist.integrity: https://registry.npmjs.org/@modelcontextprotocol%2fsdk/1.31.0
+const SDK_INTEGRITY =
+  'sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==';
+const SDK_PEER = `${SDK_VERSION}(zod@3.25.76)`;
+const SDK_OVERRIDE = `  '${SDK}': ${SDK_VERSION}`;
+const SDK_PACKAGE = `  '${SDK}@${SDK_VERSION}':`;
+const SDK_SNAPSHOT = `  '${SDK}@${SDK_PEER}':`;
+const SDK_EDGE = `      '${SDK}': ${SDK_PEER}`;
+
+function sdkViolations(manifest: string, lockfile: string): string[] {
+  const violations: string[] = [];
+  const pkg = JSON.parse(manifest);
+  if (pkg.pnpm?.overrides?.[SDK] !== SDK_VERSION) violations.push('manifest override');
+  let section = '';
+  let entry = '';
+  const found = new Set<string>();
+  for (const line of lockfile.split('\n')) {
+    const header = TOP_LEVEL_BLOCK.exec(line)?.[1];
+    if (header) {
+      section = header;
+      entry = '';
+    }
+    if (/^ {2}\S/.test(line)) entry = line;
+    if (section === 'packages' && entry === SDK_PACKAGE) {
+      const integrity = INTEGRITY_LINE.exec(line)?.[1];
+      if (integrity === SDK_INTEGRITY) found.add('integrity');
+    }
+    if (!line.includes(SDK)) continue;
+    if (section === 'overrides' && line === SDK_OVERRIDE) found.add('lock override');
+    else if (section === 'packages' && line === SDK_PACKAGE) found.add('package');
+    else if (section === 'snapshots' && line === SDK_SNAPSHOT) found.add('snapshot');
+    else if (section === 'snapshots' && line === SDK_EDGE) {
+      if (/^ {2}shadcn@/.test(entry)) found.add('shadcn edge');
+    } else violations.push(`unexpected SDK reference: ${line.trim()}`);
+  }
+  for (const required of ['lock override', 'package', 'integrity', 'snapshot', 'shadcn edge']) {
+    if (!found.has(required)) violations.push(`missing SDK ${required}`);
+  }
+  return violations;
+}
+
+describe('the designer pins every SDK resolution to the verified registry package', () => {
+  const manifest = JSON.stringify({ pnpm: { overrides: { [SDK]: SDK_VERSION } } });
+  const fixture = [
+    'overrides:',
+    SDK_OVERRIDE,
+    'packages:',
+    SDK_PACKAGE,
+    `    resolution: {integrity: ${SDK_INTEGRITY}}`,
+    'snapshots:',
+    SDK_SNAPSHOT,
+    '    dependencies:',
+    '      zod: 3.25.76',
+    '  shadcn@4.10.0(@types/node@24.10.4)(typescript@5.7.3):',
+    '    dependencies:',
+    SDK_EDGE,
+    '',
+  ].join('\n');
+
+  it('pins the manifest, lock overrides, package integrity, peer snapshot and shadcn edge', () => {
+    expect(sdkViolations(read('docs/design/designer/package.json'), read(LOCKFILE))).toEqual([]);
+    expect(sdkViolations(manifest, fixture)).toEqual([]);
+  });
+
+  it.each([SDK_OVERRIDE, SDK_PACKAGE, SDK_SNAPSHOT, SDK_EDGE])(
+    'rejects a stale reference or absent reference: %s',
+    (line) => {
+      const stale = fixture.replace(line, line.replace(SDK_VERSION, '1.29.0'));
+      expect(stale).not.toBe(fixture);
+      expect(sdkViolations(manifest, stale).join('\n')).toContain('unexpected SDK reference');
+      expect(sdkViolations(manifest, fixture.replace(`${line}\n`, ''))).not.toEqual([]);
+    },
+  );
+
+  it('rejects stale and missing manifest overrides', () => {
+    expect(sdkViolations(manifest.replace(SDK_VERSION, '1.29.0'), fixture)).toContain(
+      'manifest override',
+    );
+    expect(sdkViolations('{}', fixture)).toContain('manifest override');
+  });
+
+  it('rejects corrupt or missing integrity and an empty lockfile', () => {
+    for (const integrity of [SDK_INTEGRITY.replace('UvTM', 'XvTM'), '']) {
+      expect(sdkViolations(manifest, fixture.replace(SDK_INTEGRITY, integrity))).toContain(
+        'missing SDK integrity',
+      );
+    }
+    expect(sdkViolations(manifest, '')).toHaveLength(5);
+  });
+
+  it('requires the SDK edge to belong to shadcn', () => {
+    expect(sdkViolations(manifest, fixture.replace('  shadcn@', '  unrelated@'))).toContain(
+      'missing SDK shadcn edge',
+    );
+  });
+});
