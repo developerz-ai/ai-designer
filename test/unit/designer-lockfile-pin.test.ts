@@ -356,6 +356,124 @@ describe('the guard itself detects what it claims to', () => {
   });
 });
 
+// Registry dist.integrity and dependency edges from each package's version endpoint at
+// https://registry.npmjs.org/<name>/<version>. Keep these offline: CI must not depend on npm.
+const BODY_PARSER_INTEGRITY =
+  'sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==';
+const BODY_SUBTREE = {
+  'body-parser@2.4.0': {
+    integrity: BODY_PARSER_INTEGRITY,
+    dependencies: {
+      bytes: '3.1.2',
+      'content-type': '2.1.0',
+      debug: '4.4.3',
+      'http-errors': '2.0.1',
+      'iconv-lite': '0.7.3',
+      'on-finished': '2.4.1',
+      qs: '6.16.1',
+      'raw-body': '3.0.2',
+      'type-is': '2.1.0',
+    },
+  },
+  'content-type@2.1.0': {
+    integrity:
+      'sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==',
+    dependencies: {},
+  },
+  'iconv-lite@0.7.3': {
+    integrity:
+      'sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==',
+    dependencies: { 'safer-buffer': '2.1.2' },
+  },
+  'qs@6.16.1': {
+    integrity:
+      'sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==',
+    dependencies: { 'es-define-property': '1.0.1', 'side-channel': '1.1.1' },
+  },
+  'side-channel@1.1.1': {
+    integrity:
+      'sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==',
+    dependencies: {
+      'es-errors': '1.3.0',
+      'object-inspect': '1.13.4',
+      'side-channel-list': '1.0.1',
+      'side-channel-map': '1.0.1',
+      'side-channel-weakmap': '1.0.2',
+    },
+  },
+};
+
+function sectionEntries(lockfile: string, section: string): Map<string, string> {
+  const entries = new Map<string, string>();
+  let block = '';
+  let key = '';
+  for (const line of lockfile.split('\n')) {
+    const header = TOP_LEVEL_BLOCK.exec(line)?.[1];
+    if (header) {
+      block = header;
+      key = '';
+    }
+    if (block !== section) continue;
+    const entry = /^ {2}([^\s]+):(?: \{\})?$/.exec(line)?.[1];
+    if (entry) {
+      key = entry;
+      entries.set(key, '');
+    } else if (key) {
+      entries.set(key, `${entries.get(key)}${line}\n`);
+    }
+  }
+  return entries;
+}
+
+function bodyParserViolations(lockfile: string): string[] {
+  const violations: string[] = [];
+  const packages = sectionEntries(lockfile, 'packages');
+  const snapshots = sectionEntries(lockfile, 'snapshots');
+  const refs = [...lockfile.matchAll(/^ +body-parser: (\S+)$/gm)].map((ref) => ref[1] ?? '');
+  for (const [section, versions] of [
+    [
+      'packages',
+      [...packages.keys()]
+        .filter((key) => key.startsWith('body-parser@'))
+        .map((key) => key.slice(12)),
+    ],
+    [
+      'snapshots',
+      [...snapshots.keys()]
+        .filter((key) => key.startsWith('body-parser@'))
+        .map((key) => key.slice(12)),
+    ],
+    ['dependency', refs],
+  ] as const) {
+    if (versions.length === 0) violations.push(`no body-parser ${section} entry`);
+    for (const version of versions) {
+      if (!/^\d+\.\d+\.\d+$/.test(version) || !isAtLeast(version, '2.4.0')) {
+        violations.push(`${section}: body-parser ${version} < 2.4.0`);
+      }
+      if (!packages.has(`body-parser@${version}`) || !snapshots.has(`body-parser@${version}`)) {
+        violations.push(`unresolved body-parser@${version}`);
+      }
+    }
+  }
+  // A new release requires refreshing the recorded registry metadata, not only the floor.
+  for (const [key, metadata] of Object.entries(BODY_SUBTREE)) {
+    if (!packages.get(key)?.includes(`resolution: {integrity: ${metadata.integrity}}`)) {
+      violations.push(`${key}: registry integrity mismatch or missing package`);
+    }
+    const snapshot = snapshots.get(key);
+    if (snapshot === undefined) violations.push(`${key}: missing snapshot`);
+    for (const [name, version] of Object.entries(metadata.dependencies)) {
+      if (!snapshot?.split('\n').includes(`      ${name}: ${version}`)) {
+        violations.push(`${key}: expected ${name}: ${version}`);
+      }
+      if (!packages.has(`${name}@${version}`) || !snapshots.has(`${name}@${version}`)) {
+        violations.push(`${key}: unresolved ${name}@${version}`);
+      }
+    }
+  }
+  return violations;
+}
+
 const MIN_ZOD = '4.6.6';
 // Registry dist.integrity: https://registry.npmjs.org/zod/4.6.6
 const ZOD_INTEGRITY =
@@ -405,6 +523,62 @@ function zodFloorViolations(lockfile: string): string[] {
   }
   return violations;
 }
+
+describe('designer body-parser resolution and registry subtree', () => {
+  const fixed = read(LOCKFILE);
+
+  it('holds the floor, published integrities, dependency edges and matching entries', () => {
+    expect(bodyParserViolations(fixed)).toEqual([]);
+  });
+
+  it('rejects 2.2.2 in every shape and a single stale dependency ref', () => {
+    const old = fixed
+      .replaceAll('body-parser@2.4.0', 'body-parser@2.2.2')
+      .replaceAll('body-parser: 2.4.0', 'body-parser: 2.2.2');
+    expect(old).not.toBe(fixed);
+    for (const section of ['packages', 'snapshots', 'dependency']) {
+      expect(bodyParserViolations(old)).toContain(`${section}: body-parser 2.2.2 < 2.4.0`);
+    }
+    expect(
+      bodyParserViolations(fixed.replace('body-parser: 2.4.0', 'body-parser: 2.2.2')),
+    ).toContain('dependency: body-parser 2.2.2 < 2.4.0');
+  });
+
+  it.each(['packages', 'snapshots', 'dependency'])('rejects missing %s shapes', (section) => {
+    const missing =
+      section === 'dependency'
+        ? fixed.replace(/^ +body-parser: .*\n/gm, '')
+        : fixed.replace(`${section}:`, `${section}-removed:`);
+    expect(bodyParserViolations(missing)).toContain(`no body-parser ${section} entry`);
+  });
+
+  it.each(Object.entries(BODY_SUBTREE))('rejects wrong integrity for %s', (key, metadata) => {
+    const wrong = fixed.replace(metadata.integrity, 'sha512-wrong');
+    expect(wrong).not.toBe(fixed);
+    expect(bodyParserViolations(wrong)).toContain(
+      `${key}: registry integrity mismatch or missing package`,
+    );
+  });
+
+  it.each(
+    Object.entries(BODY_SUBTREE).filter(
+      ([, metadata]) => Object.keys(metadata.dependencies).length,
+    ),
+  )('rejects stale or missing dependency edges for %s', (key, metadata) => {
+    for (const [name, version] of Object.entries(metadata.dependencies)) {
+      const snapshot = `  ${key}:\n${sectionEntries(fixed, 'snapshots').get(key) ?? ''}`;
+      const stale = fixed.replace(
+        snapshot,
+        snapshot.replace(`      ${name}: ${version}`, `      ${name}: 0.0.0`),
+      );
+      expect(stale).not.toBe(fixed);
+      expect(bodyParserViolations(stale)).toContain(`${key}: expected ${name}: ${version}`);
+      const missing = fixed.replaceAll(`  ${name}@${version}:`, `  missing-${name}@${version}:`);
+      expect(missing).not.toBe(fixed);
+      expect(bodyParserViolations(missing)).toContain(`${key}: unresolved ${name}@${version}`);
+    }
+  });
+});
 
 describe('designer zod resolution floor', () => {
   it('holds every resolved reference and the registry integrity', () => {
