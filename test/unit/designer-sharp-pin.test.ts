@@ -142,10 +142,13 @@ describe('the guard itself detects what it claims to', () => {
   });
 
   it('flags a lock where only the archives drifted, encoder untouched', () => {
-    // The half-migration: the headline version moved, the pinned native set did not.
+    // The half-migration: the headline version moved, the pinned native set did not. Every
+    // violation must name an archive — asserting the POSITIVE, since a negative such as
+    // `not.toContain('sharp@0.35.4 is not')` can never fail here: mutating only libvips leaves every
+    // violation formatted as `@img/sharp-libvips-*@1.3.2 is not ...`, which that string never matches.
     const violations = versionViolations(lockfile.replaceAll(LIBVIPS_VERSION, '1.3.2'));
     expect(violations.length).toBeGreaterThan(0);
-    expect(violations.join('\n')).not.toContain('sharp@0.35.4 is not');
+    expect(violations.every((v) => v.startsWith('@img/sharp-libvips-'))).toBe(true);
   });
 
   it('flags a self-consistent lock that lost the edge from next to the encoder', () => {
