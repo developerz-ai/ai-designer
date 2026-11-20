@@ -223,3 +223,145 @@ describe('the guard itself detects what it claims to', () => {
     expect(() => fastUriRefs('packages:\n\n  zod@3.23.8: {}\n')).toThrow(/no fast-uri reference/);
   });
 });
+
+const SOURCE_MAP_VERSION = '1.2.2';
+// Registry dist.integrity: https://registry.npmjs.org/source-map-js/1.2.2
+const SOURCE_MAP_INTEGRITY =
+  'sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==';
+
+function bunSourceMapViolations(lockfile: string): string[] {
+  // Only resolution tuples, not consumers' compatible dependency ranges. Include nested copies.
+  const entries = [...lockfile.matchAll(/^\s*"(?:[^"\n]+\/)?source-map-js": \[(.+)\],?\s*$/gm)];
+  if (entries.length === 0) return ['missing Bun source-map-js resolution'];
+  return entries.flatMap((entry) => {
+    const tuple = JSON.parse(`[${entry[1]}]`) as unknown[];
+    const violations: string[] = [];
+    if (tuple[0] !== `source-map-js@${SOURCE_MAP_VERSION}`) {
+      violations.push('Bun source-map-js version mismatch');
+    }
+    if (tuple[3] !== SOURCE_MAP_INTEGRITY) {
+      violations.push('Bun source-map-js integrity mismatch');
+    }
+    return violations;
+  });
+}
+
+function pnpmSourceMapViolations(lockfile: string): string[] {
+  const violations: string[] = [];
+  const counts = { packages: 0, snapshots: 0, dependency: 0 };
+  let block = '';
+  let inPackage = false;
+  let integrityFound = false;
+  const finishPackage = () => {
+    if (inPackage && !integrityFound) violations.push('missing source-map-js integrity');
+    inPackage = false;
+    integrityFound = false;
+  };
+  for (const line of lockfile.split('\n')) {
+    const header = TOP_LEVEL_BLOCK.exec(line)?.[1];
+    if (header || /^ {2}\S/.test(line)) finishPackage();
+    if (header) block = header;
+    const key = /^ {2}source-map-js@([^:]+):/.exec(line)?.[1];
+    if (key && (block === 'packages' || block === 'snapshots')) {
+      counts[block] += 1;
+      if (key !== SOURCE_MAP_VERSION) violations.push(`${block}: source-map-js version mismatch`);
+      inPackage = block === 'packages';
+    }
+    const integrity = inPackage ? INTEGRITY_LINE.exec(line)?.[1] : undefined;
+    if (integrity) {
+      integrityFound = true;
+      if (integrity !== SOURCE_MAP_INTEGRITY) violations.push('source-map-js integrity mismatch');
+    }
+    const dep = /^\s+source-map-js: (\S+)\s*$/.exec(line)?.[1];
+    if (dep && block === 'snapshots') {
+      counts.dependency += 1;
+      if (dep !== SOURCE_MAP_VERSION) violations.push('dependency: source-map-js version mismatch');
+    }
+  }
+  finishPackage();
+  for (const section of ['packages', 'snapshots', 'dependency'] as const) {
+    if (counts[section] === 0) violations.push(`missing source-map-js ${section}`);
+  }
+  return violations;
+}
+
+describe('source-map-js resolutions pin the version and registry integrity', () => {
+  const bun = `    "source-map-js": ["source-map-js@${SOURCE_MAP_VERSION}", "", {}, "${SOURCE_MAP_INTEGRITY}"],`;
+  const pnpm = [
+    'packages:',
+    `  source-map-js@${SOURCE_MAP_VERSION}:`,
+    `    resolution: {integrity: ${SOURCE_MAP_INTEGRITY}}`,
+    'snapshots:',
+    `  source-map-js@${SOURCE_MAP_VERSION}: {}`,
+    '  consumer@1.0.0:',
+    '    dependencies:',
+    `      source-map-js: ${SOURCE_MAP_VERSION}`,
+    '  other@1.0.0:',
+    '    dependencies:',
+    `      source-map-js: ${SOURCE_MAP_VERSION}`,
+  ].join('\n');
+
+  it('guards both shipped lockfiles', () => {
+    expect(bunSourceMapViolations(read('bun.lock'))).toEqual([]);
+    expect(pnpmSourceMapViolations(read(LOCKFILE))).toEqual([]);
+  });
+
+  it('accepts fixed fixtures and ignores Bun dependency ranges', () => {
+    const consumer =
+      '    "consumer": ["consumer@1.0.0", "", { "dependencies": { "source-map-js": "^1.2.1" } }, "sha512-other"],';
+    expect(bunSourceMapViolations(`${consumer}\n${bun}`)).toEqual([]);
+    expect(pnpmSourceMapViolations(pnpm)).toEqual([]);
+    expect(bunSourceMapViolations(consumer)).toEqual(['missing Bun source-map-js resolution']);
+  });
+
+  it('rejects old resolutions, including nested Bun copies', () => {
+    expect(bunSourceMapViolations(bun.replace('1.2.2', '1.2.1'))).toEqual([
+      'Bun source-map-js version mismatch',
+    ]);
+    const nested = bun
+      .replace('"source-map-js":', '"consumer/source-map-js":')
+      .replace('1.2.2', '1.2.1');
+    expect(bunSourceMapViolations(`${bun}\n${nested}`)).toHaveLength(1);
+    expect(
+      pnpmSourceMapViolations(pnpm.replaceAll('source-map-js@1.2.2', 'source-map-js@1.2.1')),
+    ).toEqual([
+      'packages: source-map-js version mismatch',
+      'snapshots: source-map-js version mismatch',
+    ]);
+  });
+
+  it('rejects a single stale dependency reference', () => {
+    expect(
+      pnpmSourceMapViolations(pnpm.replace('source-map-js: 1.2.2', 'source-map-js: 1.2.1')),
+    ).toEqual(['dependency: source-map-js version mismatch']);
+  });
+
+  it('rejects absent entries and missing integrity', () => {
+    expect(bunSourceMapViolations('')).toHaveLength(1);
+    expect(pnpmSourceMapViolations('')).toHaveLength(3);
+    for (const line of [
+      '  source-map-js@1.2.2:',
+      '  source-map-js@1.2.2: {}',
+      '      source-map-js: 1.2.2',
+      `    resolution: {integrity: ${SOURCE_MAP_INTEGRITY}}`,
+    ]) {
+      const missing = pnpm
+        .split('\n')
+        .filter((raw) => raw !== line)
+        .join('\n');
+      expect(pnpmSourceMapViolations(missing)).not.toEqual([]);
+    }
+    expect(bunSourceMapViolations(bun.replace(SOURCE_MAP_INTEGRITY, ''))).toEqual([
+      'Bun source-map-js integrity mismatch',
+    ]);
+  });
+
+  it('rejects one-character integrity corruption in each lock format', () => {
+    expect(bunSourceMapViolations(bun.replace('sha512-KGj', 'sha512-XGj'))).toEqual([
+      'Bun source-map-js integrity mismatch',
+    ]);
+    expect(pnpmSourceMapViolations(pnpm.replace('sha512-KGj', 'sha512-XGj'))).toEqual([
+      'source-map-js integrity mismatch',
+    ]);
+  });
+});
