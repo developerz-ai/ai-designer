@@ -417,6 +417,56 @@ function pnpmSourceMapViolations(lockfile: string): string[] {
   return violations;
 }
 
+const MIN_ZOD = '4.6.6';
+// Registry dist.integrity: https://registry.npmjs.org/zod/4.6.6
+const ZOD_INTEGRITY =
+  'sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==';
+
+/** Only resolved entries, not peer ranges or zod-to-json-schema's own version. */
+function zodFloorViolations(lockfile: string): string[] {
+  const refs: { section: Section | 'peer'; version: string }[] = [];
+  const violations: string[] = [];
+  let block = '';
+  let packageVersion: string | undefined;
+  let integrity: string | undefined;
+  const finishPackage = () => {
+    if (!packageVersion) return;
+    if (!integrity || (packageVersion === MIN_ZOD && integrity !== ZOD_INTEGRITY)) {
+      violations.push(`incorrect integrity for zod@${packageVersion}`);
+    }
+    packageVersion = undefined;
+    integrity = undefined;
+  };
+  for (const line of lockfile.split('\n')) {
+    const header = TOP_LEVEL_BLOCK.exec(line)?.[1];
+    if (header || /^ {2}\S/.test(line)) finishPackage();
+    if (header) block = header;
+    if (block !== 'packages' && block !== 'snapshots') continue;
+    const key = /^ {2}['"]?zod@([^:('\s]+)(?=[:('"])/.exec(line)?.[1];
+    if (key) {
+      refs.push({ section: block, version: key });
+      if (block === 'packages') packageVersion = key;
+    }
+    if (packageVersion) integrity = INTEGRITY_LINE.exec(line)?.[1] ?? integrity;
+    if (block !== 'snapshots') continue;
+    const dep = /^ {6}zod: ['"]?([^\s('"]+)/.exec(line)?.[1];
+    if (dep) refs.push({ section: 'dependency', version: dep });
+    for (const match of line.matchAll(/\(zod@([^()]+)\)/g)) {
+      refs.push({ section: 'peer', version: match[1] ?? '' });
+    }
+  }
+  finishPackage();
+  for (const ref of refs) {
+    if (!/^\d+\.\d+\.\d+$/.test(ref.version) || !isAtLeast(ref.version, MIN_ZOD)) {
+      violations.push(`${ref.section}: zod ${ref.version} < ${MIN_ZOD}`);
+    }
+  }
+  for (const section of ['packages', 'snapshots', 'dependency', 'peer'] as const) {
+    if (!refs.some((ref) => ref.section === section)) violations.push(`no zod ${section} entry`);
+  }
+  return violations;
+}
+
 describe('source-map-js resolutions pin the version and registry integrity', () => {
   const bun = `    "source-map-js": ["source-map-js@${SOURCE_MAP_VERSION}", "", {}, "${SOURCE_MAP_INTEGRITY}"],`;
   const pnpm = [
@@ -495,5 +545,76 @@ describe('source-map-js resolutions pin the version and registry integrity', () 
     expect(pnpmSourceMapViolations(pnpm.replace('sha512-KGj', 'sha512-XGj'))).toEqual([
       'source-map-js integrity mismatch',
     ]);
+  });
+});
+
+describe('designer zod resolution floor', () => {
+  it('holds every resolved reference and the registry integrity', () => {
+    expect(zodFloorViolations(read(LOCKFILE))).toEqual([]);
+  });
+
+  it('holds the override in both manifest and lockfile', () => {
+    const manifest = JSON.parse(read('docs/design/designer/package.json'));
+    expect(manifest.pnpm.overrides.zod).toBe(MIN_ZOD);
+    const overrides = read(LOCKFILE).split('overrides:\n')[1]?.split('\n\n')[0];
+    expect(overrides).toContain(`  zod: ${MIN_ZOD}`);
+  });
+
+  const fixed = [
+    'packages:',
+    `  zod@${MIN_ZOD}:`,
+    `    resolution: {integrity: ${ZOD_INTEGRITY}}`,
+    '  zod-to-json-schema@3.25.2:',
+    '    peerDependencies:',
+    '      zod: ^3.25.28 || ^4',
+    'snapshots:',
+    `  zod@${MIN_ZOD}: {}`,
+    `  sdk@1.0.0(zod@${MIN_ZOD}):`,
+    '    dependencies:',
+    `      zod: ${MIN_ZOD}`,
+    `      zod-to-json-schema: 3.25.2(zod@${MIN_ZOD})`,
+  ].join('\n');
+
+  it('accepts resolved versions without confusing peer ranges or similarly named packages', () => {
+    expect(zodFloorViolations(fixed)).toEqual([]);
+    expect(zodFloorViolations(fixed.replaceAll(MIN_ZOD, '4.10.0'))).toEqual([]);
+  });
+
+  it.each([
+    [`  zod@${MIN_ZOD}:\n`, 'packages'],
+    [`  zod@${MIN_ZOD}: {}`, 'snapshots'],
+    [`      zod: ${MIN_ZOD}`, 'dependency'],
+    [`  sdk@1.0.0(zod@${MIN_ZOD}):`, 'peer'],
+    [`      zod-to-json-schema: 3.25.2(zod@${MIN_ZOD})`, 'peer'],
+  ])('rejects an independently stale reference: %s', (line, section) => {
+    const stale = fixed.replace(line, line.replace(MIN_ZOD, '3.25.76'));
+    expect(stale).not.toBe(fixed);
+    expect(zodFloorViolations(stale)).toContain(`${section}: zod 3.25.76 < ${MIN_ZOD}`);
+  });
+
+  it.each(['packages', 'snapshots', 'dependency', 'peer'])(
+    'rejects missing %s entries',
+    (section) => {
+      const without = fixed
+        .split('\n')
+        .filter((line) => {
+          if (section === 'packages') return line !== `  zod@${MIN_ZOD}:`;
+          if (section === 'snapshots') return line !== `  zod@${MIN_ZOD}: {}`;
+          if (section === 'dependency') return line !== `      zod: ${MIN_ZOD}`;
+          return !line.includes('(zod@');
+        })
+        .join('\n');
+      expect(zodFloorViolations(without)).toContain(`no zod ${section} entry`);
+    },
+  );
+
+  it('rejects absent matches, prereleases and missing or mistyped integrity', () => {
+    expect(zodFloorViolations('packages:\nsnapshots:\n')).toHaveLength(4);
+    expect(zodFloorViolations(fixed.replaceAll(MIN_ZOD, '4.6.6-beta.1'))).not.toEqual([]);
+    for (const hash of ['', ZOD_INTEGRITY.replace('4Umz', '4Umx')]) {
+      expect(zodFloorViolations(fixed.replace(ZOD_INTEGRITY, hash))).toContain(
+        `incorrect integrity for zod@${MIN_ZOD}`,
+      );
+    }
   });
 });
