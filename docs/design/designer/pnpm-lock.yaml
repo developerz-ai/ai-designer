@@ -12,7 +12,7 @@ overrides:
 
 patchedDependencies:
   shadcn@4.10.0:
-    hash: 2lqgr5nd55x5iwfwsvw62mbgf4
+    hash: 262d3b41bac78aae52e54821fbc52c0ec81a2da1b1e1d58d4621b363166b8857
     path: patches/shadcn@4.10.0.patch
 
 importers:
@@ -45,7 +45,7 @@ importers:
         version: 19.2.4(react@19.2.4)
       shadcn:
         specifier: 4.10.0
-        version: 4.10.0(patch_hash=2lqgr5nd55x5iwfwsvw62mbgf4)(@types/node@24.10.4)(typescript@5.7.3)
+        version: 4.10.0(patch_hash=262d3b41bac78aae52e54821fbc52c0ec81a2da1b1e1d58d4621b363166b8857)(@types/node@24.10.4)(typescript@5.7.3)
       tailwind-merge:
         specifier: ^3.3.1
         version: 3.4.0
@@ -1826,9 +1826,9 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
-    engines: {node: '>=0.10.0'}
+  source-map-js@1.2.4:
+    resolution: {integrity: sha512-J7ZjMvHd9O1fcT/5V09QWaaSl2BbWx3F6O08spde82Namf9UB0GxRVIPiNbVsdKkoizHiSpTodo3vp2bAy91MA==}
+    engines: {node: '>=6.0.0'}
 
   source-map@0.6.1:
     resolution: {integrity: sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==}
@@ -2568,7 +2568,7 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.32.0
       magic-string: 0.30.21
-      source-map-js: 1.2.1
+      source-map-js: 1.2.4
       tailwindcss: 4.3.3
 
   '@tailwindcss/oxide-android-arm64@4.3.3':
@@ -3490,7 +3490,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.4
 
   powershell-utils@0.1.0: {}
 
@@ -3614,7 +3614,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  shadcn@4.10.0(patch_hash=2lqgr5nd55x5iwfwsvw62mbgf4)(@types/node@24.10.4)(typescript@5.7.3):
+  shadcn@4.10.0(patch_hash=262d3b41bac78aae52e54821fbc52c0ec81a2da1b1e1d58d4621b363166b8857)(@types/node@24.10.4)(typescript@5.7.3):
     dependencies:
       '@babel/core': 7.29.7
       '@babel/parser': 7.29.7
@@ -3739,7 +3739,7 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.4: {}
 
   source-map@0.6.1: {}
 
