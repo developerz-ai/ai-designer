@@ -6,6 +6,7 @@
 |---|---|
 | [`idea/`](idea/README.md) | Why this repository is shaped the way it is: the product idea, the architecture, the principles a change is weighed against. |
 | [`architecture/`](architecture/README.md) | How it is built: components, MV3 worlds, agent loop, changeset, handoff, security, and the ADRs. |
+| [`standards/`](standards/README.md) | Rules every bot code merge follows, including gotcha capture in a steering write. |
 | [`wiki/`](wiki/README.md) | User guide: install, copy and debug modes, ship-or-report, history, privacy and keys. |
 | [`reference/agent-sdk.md`](reference/agent-sdk.md) | AI SDK 7 API reference — `ToolLoopAgent`, OpenRouter, MCP, version gotchas. |
 | [`plans/`](plans/2026/07/13/101-agentic-designer-vision/) | **Superseded** historical plan: its 16 slices shipped as PRs #71–#105 and its tracking fields were never maintained after kickoff (`status.yml`: `superseded`). Kept for the design rationale — not a live roadmap. One directory link; GitHub renders the slice listing. |
