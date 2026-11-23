@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractIdentity } from '@/dom/identity';
+import { extractIdentity, isZeroShadow, normalizeShadow } from '@/dom/identity';
 
 // identity.ts unit: reduce a live DOM to a role-tagged palette + type scale + spacing/radius/shadow
 // rhythm. Pure DOM in (jsdom), typed Identity out — no chrome.*. Fixtures use inline styles so
@@ -100,5 +100,46 @@ describe('extractIdentity — bounds', () => {
     expect(identity.spacing).toEqual([]);
     expect(identity.radius).toEqual([]);
     expect(identity.shadows).toEqual([]);
+  });
+});
+
+// Direct coverage for the jsdom-31 UA-default branches, which jsdom's own computed style never
+// exercises on its own: a regression in the zero-shadow regex, the `none` suffix branch, or the
+// `monospace` skip would otherwise pass locally and only bite on jsdom 31 / a live page.
+describe('normalizeShadow / isZeroShadow', () => {
+  it('drops `none` in any position and collapses whitespace otherwise', () => {
+    expect(normalizeShadow('')).toBeNull();
+    expect(normalizeShadow('none')).toBeNull();
+    // jsdom 31's UA default for an element with no authored shadow.
+    expect(normalizeShadow('currentcolor none')).toBeNull();
+    expect(normalizeShadow('0px 0px 0px 0px   inset')).toBe('0px 0px 0px 0px inset');
+  });
+
+  it('treats a zero shadow as not drawn, and a real one as drawn', () => {
+    // The `0px 0px 0px 0px` UA default jsdom 31 supplies where jsdom 30 left the value empty.
+    expect(isZeroShadow('0px 0px 0px 0px')).toBe(true);
+    expect(isZeroShadow('0 0 0 0')).toBe(true);
+    expect(isZeroShadow('rgba(0, 0, 0, 0) 0px 0px 0px 0px')).toBe(true);
+    expect(isZeroShadow('rgba(0, 0, 0, 0.2) 0px 1px 2px')).toBe(false);
+    expect(isZeroShadow('0px 0px 0px 1px')).toBe(false);
+    expect(isZeroShadow('0px 0px 0px 0px inset')).toBe(false);
+  });
+
+  it('surfaces an authored `font-family: monospace` in a live page (not jsdom)', () => {
+    mount('<code>mono</code>');
+    const style = document.createElement('style');
+    style.textContent = 'code { font-family: monospace }';
+    document.head.appendChild(style);
+    // jsdom's own UA computes exactly `monospace` for every un-authored element, so the skip only
+    // applies when the UA token says jsdom; a real page must keep the authored family.
+    const jsdomWindow = window;
+    expect(extractIdentity(document, jsdomWindow).type.families).toEqual([]);
+
+    const realWindow = Object.create(window) as Window;
+    Object.defineProperty(realWindow, 'navigator', {
+      configurable: true,
+      value: { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120' },
+    });
+    expect(extractIdentity(document, realWindow).type.families).toEqual(['monospace']);
   });
 });

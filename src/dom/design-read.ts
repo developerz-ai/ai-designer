@@ -193,7 +193,7 @@ function typography(elements: Element[], win: Window, doc: Document): Typography
   for (const el of elements) {
     if (!hasDirectText(el)) continue;
     const style = win.getComputedStyle(el);
-    const family = primaryFamily(fontFamilyOf(el, style));
+    const family = primaryFamily(fontFamilyOf(el, style, win));
     if (family) families.set(family, (families.get(family) ?? 0) + 1);
     const size = Math.round(parseFloat(cssProp(style, 'font-size') || ''));
     if (Number.isFinite(size) && size > 0) sizes.add(size);
@@ -210,17 +210,28 @@ function typography(elements: Element[], win: Window, doc: Document): Typography
   };
 }
 
-// jsdom's computed style returns this placeholder (no font cascade) or, since jsdom 31, a
-// concrete UA-default `monospace` for elements with no authored font. Neither is authored design;
-// both are treated as "no value" so the extractor falls back to the inline stack.
+// jsdom's computed style returns this placeholder (no font cascade) or, since jsdom 31, the
+// concrete UA-default `monospace` for an element with no authored font. Neither is authored design
+// in jsdom, so the extractor falls back to the inline stack there.
 const UA_FONT_PLACEHOLDER = 'depends on user agent';
 const UA_FONT_DEFAULT = 'monospace';
 
+// jsdom's UA default font, told apart from an authored `monospace` by the jsdom UA token: only
+// jsdom has no font cascade and computes `monospace` for every un-authored element. A live page's
+// UA default is never `monospace`, so an authored `font-family: monospace` (a `code`/`pre` rule)
+// must survive there instead of being discarded as a UA default.
+function isJsdomFontDefault(computed: string, win: Window): boolean {
+  return computed === UA_FONT_DEFAULT && (win.navigator?.userAgent ?? '').includes('jsdom');
+}
+
 /** The font-family stack for `el`: the computed value in a live page, falling back to the
- *  element's inline value when the computed stack is unavailable (jsdom). */
-function fontFamilyOf(el: Element, style: CSSStyleDeclaration): string {
+ *  element's inline value only when the computed stack is unavailable (jsdom's placeholder or its
+ *  UA-default `monospace`). Shared with `src/dom/identity.ts` so both extractors agree. */
+export function fontFamilyOf(el: Element, style: CSSStyleDeclaration, win: Window): string {
   const computed = cssProp(style, 'font-family');
-  if (computed && computed !== UA_FONT_PLACEHOLDER && computed !== UA_FONT_DEFAULT) return computed;
+  if (computed && computed !== UA_FONT_PLACEHOLDER && !isJsdomFontDefault(computed, win)) {
+    return computed;
+  }
   return (el as Partial<ElementCSSInlineStyle>).style?.getPropertyValue('font-family') ?? '';
 }
 

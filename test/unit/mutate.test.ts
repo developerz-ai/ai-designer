@@ -647,4 +647,16 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
     // it reports the value the model just set, even when the parser dropped it.
     expect(mutation.computed).toEqual({ gap: 'not-a-length', color: 'rgb(1, 2, 3)' });
   });
+
+  // A valid same-value edit (color: red on an already-red element) still LANDS its declaration,
+  // so the raw-input fallback must not fire: `computed` reports the canonical `rgb(255, 0, 0)`,
+  // not the raw `red`. Keying the fallback on the pre-mutation comparison would have stamped `red`
+  // here, because a landed no-op leaves the computed value unchanged.
+  it('setStyle keeps the canonical computed value for a valid same-value edit', () => {
+    mount('<button id="cta" style="color: red">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'red' });
+    expect(mutation.computed.color).toBe('rgb(255, 0, 0)');
+    // No visible change → no styleChanges pair (the ground truth is fallback-free).
+    expect(mutation.styleChanges).toEqual([]);
+  });
 });
