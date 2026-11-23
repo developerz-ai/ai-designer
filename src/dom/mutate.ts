@@ -517,17 +517,23 @@ export function createMutator(doc: Document = document): Mutator {
     const fallback = Object.fromEntries(entries);
     // The model-facing ToolResult readback KEEPS the raw-input fallback (pre-existing: a
     // not-yet-cascaded rule should still report the value the model just set).
-    const computed = readComputed(el, touchedProps, fallback);
+    const computed = readComputed(el, touchedProps);
+    for (const [prop, value] of entries) {
+      // jsdom 31 computes a non-empty UA default (`gap` → `normal`) for an invalid declaration,
+      // so readComputed's empty-only fallback never fires. Restore the documented raw-input
+      // fallback here for props whose computed readback is still the pre-mutation value.
+      if (computed[prop] === preComputed[prop]) computed[prop] = value;
+    }
     // Ground truth must NOT: an invalid declaration is dropped by the CSS parser, and the
     // fallback would stamp the UNAPPLIED raw value into styleChanges as if it took. Read back
-    // fallback-free and drop any pair whose after is empty (the declaration didn't take). A
-    // prop with a non-empty UA default (color, gap→normal) instead records that default — the
-    // honest current value, never the raw input.
+    // fallback-free and drop any pair whose after is empty (the declaration didn't take). Also
+    // drop pairs where the after equals the pre-mutation value: jsdom 31 reports a non-empty UA
+    // default (gap→normal) for an invalid declaration, which is no change at all.
     const applied = readComputed(el, touchedProps);
     const styleChanges: StyleChange[] = [];
     for (const [prop] of entries) {
       const after = applied[prop];
-      if (!after) continue;
+      if (!after || after === preComputed[prop]) continue;
       styleChanges.push({ prop, before: preComputed[prop] ?? null, after });
     }
     return {

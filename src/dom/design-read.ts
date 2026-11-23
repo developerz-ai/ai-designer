@@ -210,15 +210,17 @@ function typography(elements: Element[], win: Window, doc: Document): Typography
   };
 }
 
-// jsdom's computed style returns this placeholder for `font-family` (it doesn't resolve the
-// font cascade); treated as "no value" so the extractor falls back to the inline stack.
+// jsdom's computed style returns this placeholder (no font cascade) or, since jsdom 31, a
+// concrete UA-default `monospace` for elements with no authored font. Neither is authored design;
+// both are treated as "no value" so the extractor falls back to the inline stack.
 const UA_FONT_PLACEHOLDER = 'depends on user agent';
+const UA_FONT_DEFAULT = 'monospace';
 
 /** The font-family stack for `el`: the computed value in a live page, falling back to the
  *  element's inline value when the computed stack is unavailable (jsdom). */
 function fontFamilyOf(el: Element, style: CSSStyleDeclaration): string {
   const computed = cssProp(style, 'font-family');
-  if (computed && computed !== UA_FONT_PLACEHOLDER) return computed;
+  if (computed && computed !== UA_FONT_PLACEHOLDER && computed !== UA_FONT_DEFAULT) return computed;
   return (el as Partial<ElementCSSInlineStyle>).style?.getPropertyValue('font-family') ?? '';
 }
 
