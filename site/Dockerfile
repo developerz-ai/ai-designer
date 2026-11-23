@@ -32,7 +32,7 @@ ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 RUN bun run build
 
 # ---- serve the static bundle (unprivileged nginx, :8080, uid 101) ----
-FROM ghcr.io/nginx/nginx-unprivileged:1.30.7-alpine@sha256:0c53a1f2890c3526bfd201440f0fd3970e5b78f80630f58284aad0d34b5ec7bd AS runtime
+FROM ghcr.io/nginx/nginx-unprivileged:1.31.9-alpine@sha256:60214a103e6f38e953ff957f34b1f2e97a9db801ab2df3821da955d0fe6cadd6 AS runtime
 # Static server config: listen 8080, immutable /assets/, index.html fallback.
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
