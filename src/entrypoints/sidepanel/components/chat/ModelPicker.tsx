@@ -198,7 +198,13 @@ export function ModelPicker() {
             children rather than to this wrapper: arrows must drive the list whether the cursor
             is in the field or focus has moved onto a row, and a handler on a plain div is a
             static-element interaction. */}
-        <div class="dz-modelpicker__popover" classList={{ 'is-leaving': presence.leaving() }}>
+        <div
+          class="dz-modelpicker__popover"
+          classList={{ 'is-leaving': presence.leaving() }}
+          // Out of the tab order while it animates away: Tab right after a close would otherwise
+          // land in the search field of a menu that is already gone.
+          inert={presence.leaving()}
+        >
           {/* A gateway catalogue runs to ~300 entries. Scrolling that is not a way to pick a
               model; typing three characters is. */}
           <div class="dz-modelpicker__search">

@@ -1,5 +1,12 @@
+import { render, screen } from '@solidjs/testing-library';
+import { mergeProps } from 'solid-js';
+import { createStore } from 'solid-js/store';
 import { describe, expect, it } from 'vitest';
-import { filterMentions, mentionQuery } from '@/entrypoints/sidepanel/components/chat/MentionMenu';
+import {
+  filterMentions,
+  MentionMenu,
+  mentionQuery,
+} from '@/entrypoints/sidepanel/components/chat/MentionMenu';
 import { foldRecent } from '@/entrypoints/sidepanel/stores/focus';
 import type { StableSelector } from '@/shared/messages';
 
@@ -67,5 +74,25 @@ describe('foldRecent', () => {
     expect(foldRecent([], many)).toHaveLength(8);
     // Newest first: the last one folded in leads.
     expect(foldRecent([], many)[0]?.value).toBe('#e11');
+  });
+});
+
+describe('MentionMenu exit', () => {
+  // Composer closes the menu the moment the query stops matching. If the rows followed the live
+  // filter, the listbox would unmount on zero rows before `.is-leaving` could animate it out.
+  it('keeps the last rows mounted while leaving, even when the query no longer matches', () => {
+    const [props, setProps] = createStore({
+      items: [sel('.hero > h1'), sel('.cta')],
+      query: 'her',
+      active: 0,
+      leaving: false,
+    });
+    render(() => MentionMenu(mergeProps(props, { onPick: () => {} })));
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+
+    setProps({ query: 'herox', leaving: true });
+
+    expect(screen.getByRole('listbox')).toHaveClass('is-leaving');
+    expect(screen.getAllByRole('option')).toHaveLength(1);
   });
 });

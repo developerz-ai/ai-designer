@@ -201,6 +201,25 @@ describe('ModelPicker', () => {
     expect(mocked.switchModel).not.toHaveBeenCalled();
   });
 
+  // The popover outlives the close by the length of its exit animation. Tab from the trigger in
+  // that window would walk into the search field of a menu that is already gone, so the leaving
+  // subtree is `inert`. jsdom has neither sequential focus navigation nor the `inert` IDL
+  // attribute, so what is asserted is the property Solid sets (Chrome reflects it to `[inert]`).
+  it('takes the leaving popover out of the tab order until it unmounts', async () => {
+    mocked.__setSettings({ models: MODELS, model: null });
+    render(() => <ModelPicker />);
+    fireEvent.click(trigger());
+    const popover = screen.getByRole('menu').closest<HTMLElement>('.dz-modelpicker__popover');
+    expect(popover?.inert).toBeFalsy();
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.keyDown(trigger(), { key: 'Tab' });
+
+    expect(popover?.inert).toBe(true);
+    expect(popover?.contains(document.activeElement)).toBe(false);
+    await vi.waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
   it('opens on ArrowDown from the trigger', () => {
     mocked.__setSettings({ models: MODELS, model: null });
     render(() => <ModelPicker />);

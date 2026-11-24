@@ -99,7 +99,11 @@ export function ShipBar() {
           {/* Opens UPWARD. The ship bar is docked directly above the composer, so a downward
               menu covers the input the user is about to type into. */}
           <Show when={sendPresence.mounted()}>
-            <ul class="dz-shipbar__menu" classList={{ 'is-leaving': sendPresence.leaving() }}>
+            <ul
+              class="dz-shipbar__menu"
+              classList={{ 'is-leaving': sendPresence.leaving() }}
+              inert={sendPresence.leaving()}
+            >
               <li class="dz-shipbar__menuTitle">{i18n.t('ship.sendTo')}</li>
               <For each={connected()}>
                 {(s) => (

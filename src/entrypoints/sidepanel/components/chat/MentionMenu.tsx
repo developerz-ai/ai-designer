@@ -54,7 +54,13 @@ export interface MentionMenuProps {
 }
 
 export function MentionMenu(props: MentionMenuProps) {
-  const shown = createMemo(() => filterMentions(props.items, props.query));
+  // Frozen while leaving: the menu closes BECAUSE the query stopped matching (or was taken), so
+  // the live filter is empty or the full list by then, and the exit animation would play on a
+  // blank or jumped menu — or not at all, since `<Show>` below unmounts on zero rows.
+  const shown = createMemo<StableSelector[]>(
+    (prev) => (props.leaving ? prev : filterMentions(props.items, props.query)),
+    [],
+  );
 
   return (
     <Show when={shown().length > 0}>

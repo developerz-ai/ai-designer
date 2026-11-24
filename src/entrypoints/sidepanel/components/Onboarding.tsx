@@ -130,6 +130,9 @@ export function Onboarding(props: OnboardingProps) {
   return (
     <div
       class="dz-onboarding"
+      classList={{ 'is-leaving': props.leaving }}
+      // Inert while it fades: a dismissed modal must stop trapping focus and taking clicks.
+      inert={props.leaving}
       data-testid="first-run-onboarding"
       role="dialog"
       aria-modal="true"

@@ -159,8 +159,10 @@ $_elevations: (
 // unshipped-work count, on/off switches.
 @mixin button-primary($height: t.$dz-control-md, $radius: t.$dz-radius) {
   @include _button-base($height, $radius);
+
   padding: 0 t.$dz-space-5;
   background: var(--dz-solid);
+
   // A transparent border, not `none`: it holds the same box as the ghost button beside it, so a
   // primary/secondary pair lines up on the baseline instead of the primary sitting 2px shorter.
   border: t.$dz-border-width solid transparent;
@@ -182,6 +184,7 @@ $_elevations: (
 // height, same radius, same padding rhythm; only the value inverts.
 @mixin button-ghost($height: t.$dz-control-md, $radius: t.$dz-radius, $border: true) {
   @include _button-base($height, $radius);
+
   padding: 0 t.$dz-space-5;
   background: var(--dz-elev-card);
   color: var(--dz-fg);
