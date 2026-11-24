@@ -66,9 +66,9 @@ $dz-fg-muted: $dz-muted; // captions, meta, placeholders (5.9:1 on the page bg)
 // container, and legal for the same reason: it only ever outlines a control that
 // already carries visible text or an icon. `strong` is for the case WCAG 1.4.11
 // actually governs — a boundary that is a control's ONLY visual affordance — and
-// clears 3:1 against base, card AND hover (4.03 / 3.70 / 3.32).
+// clears 3:1 against base, card AND hover (3.90 / 3.58 / 3.25).
 $dz-border-subtle: $dz-border;
-$dz-border-strong: #6e6e75;
+$dz-border-strong: #74747b;
 // Hairline width as a token so the "no raw px" rule holds for the ~20 `1px solid`
 // literals too, and so there is one place to revisit if a fractional rem border ever
 // renders unevenly at non-integer device pixel ratios.

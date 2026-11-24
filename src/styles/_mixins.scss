@@ -146,17 +146,8 @@ $_elevations: (
 
 // The primary action — Ship, Save, Start designing.
 //
-// ACCENTED, NOT FILLED. A solid #f97316 slab is the loudest thing a 360px dark panel can
-// contain, and there is one on nearly every screen: at that density the accent stops being a
-// signal and becomes the background noise you have to look past to read the page you are
-// editing. The panel's whole job is to not compete with that page.
-//
-// So the brand is stated in three quiet channels instead of one loud one — a 10% wash, a 60%
-// edge, and the accent as TEXT (6:1 on the resulting surface, comfortably AA). It still reads
-// unmistakably as the primary control next to a ghost button (transparent, neutral text), and it
-// is still recognisably ours. The saturated accent survives where it is small and load-bearing:
-// the streaming caret, the element-reference indices and their on-page rectangles, the
-// unshipped-work count, on/off switches.
+// Near-white fill with dark text distinguishes the primary action from the neutral ghost.
+// Accent stays reserved for small semantic marks and status controls.
 @mixin button-primary($height: t.$dz-control-md, $radius: t.$dz-radius) {
   @include _button-base($height, $radius);
 

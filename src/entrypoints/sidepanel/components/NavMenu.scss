@@ -80,6 +80,8 @@
     max-width: calc(100vw - #{tokens.$dz-space-4});
     inset-inline-end: auto;
     inset-block-end: auto;
+    flex-direction: column;
+    pointer-events: none;
 
     // Enter AND exit, with no JS at all. `display` is a discrete property, so a popover normally
     // snaps between `none` and `flex` and any transition on it is skipped — which is why this
@@ -99,7 +101,7 @@
 
     &:popover-open {
       display: flex;
-      flex-direction: column;
+      pointer-events: auto;
       opacity: 1;
       transform: none;
       transition:

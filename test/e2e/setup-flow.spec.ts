@@ -1,4 +1,4 @@
-import type { BrowserContext } from '@playwright/test';
+import type { BrowserContext, Locator } from '@playwright/test';
 import { expect, openRoom, stubAuthProbe, test } from './fixtures';
 
 // E2E: the whole first-run path a new user walks — install → the panel tells you setup is needed
@@ -36,24 +36,7 @@ async function stubProvider(context: BrowserContext): Promise<void> {
   await stubAuthProbe(context, BASE_URL);
 }
 
-test('the header row is neutral: no brand image, and the Start toggle is an outlined ghost', async ({
-  context,
-  openExtensionPage,
-}) => {
-  await stubProvider(context);
-  const page = await openExtensionPage('sidepanel.html');
-  await page.setViewportSize({ width: PANEL_WIDTH, height: 800 });
-
-  // The readiness pill is the header's ONE coloured element. The brand logo used to sit beside
-  // it as a second warm block, so the pill stopped reading as the status.
-  await expect(page.locator('.dz-app__header')).toBeVisible();
-  await expect(page.locator('.dz-app__header img')).toHaveCount(0);
-
-  // The Start/Stop toggle is a neutral outlined ghost in BOTH states: a card fill and
-  // the neutral hairline, never the accent.
-  const toggle = page.locator('.dz-readiness__toggle');
-  await expect(toggle).toBeVisible();
-
+async function expectNeutralToggle(toggle: Locator): Promise<void> {
   const toggleStyle = await toggle.evaluate((el) => {
     const style = getComputedStyle(el);
     // Resolve a token to the colour the browser actually paints, so the assertion names the
@@ -79,6 +62,22 @@ test('the header row is neutral: no brand image, and the Start toggle is an outl
   expect(toggleStyle.background).not.toBe(toggleStyle.accent);
   expect(toggleStyle.border).toBe(toggleStyle.neutralBorder);
   expect(toggleStyle.border).not.toBe(toggleStyle.accent);
+}
+
+test('the header row is neutral: no brand image, and the Start toggle is an outlined ghost', async ({
+  context,
+  openExtensionPage,
+}) => {
+  await stubProvider(context);
+  const page = await openExtensionPage('sidepanel.html');
+  await page.setViewportSize({ width: PANEL_WIDTH, height: 800 });
+
+  await expect(page.locator('.dz-app__header')).toBeVisible();
+  await expect(page.locator('.dz-app__header img')).toHaveCount(0);
+  const toggle = page.locator('.dz-readiness__toggle');
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveText('Start');
+  await expectNeutralToggle(toggle);
 });
 
 test('the pre-Start CTA shows its whole label at the panel width, and the wordmark is not cut off', async ({
@@ -168,6 +167,7 @@ test('install -> "set up provider" -> configure -> "start designing" -> the conv
   // 5. The session is live and the composer is there — one continuous path from install.
   await expect(page.getByPlaceholder('Tell the agent what to change…')).toBeVisible();
   await expect(page.locator('.dz-readiness__toggle')).toHaveText('Stop');
+  await expectNeutralToggle(page.locator('.dz-readiness__toggle'));
 });
 
 test('a configured-but-not-started panel offers Start from the chat surface itself', async ({

@@ -205,11 +205,7 @@
     font-size: tokens.$dz-font-xs;
     white-space: nowrap;
 
-    // The card's primary action — accented, not filled, matching `button-primary`. It used to be
-    // a solid slab described as "the card's one loud element"; over a scrim, on the very first
-    // screen a new user sees, that set the expectation that orange means "big block of colour".
-    // The card's primary action, in the same near-white language as every other primary in the
-    // panel — one shape for "press this", whatever screen it is on.
+    // Match button-primary: near-white fill, dark text, and a transparent border.
     &.is-primary {
       background: var(--dz-solid);
       border-color: transparent;

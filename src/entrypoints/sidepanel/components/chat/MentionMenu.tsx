@@ -73,6 +73,7 @@ export function MentionMenu(props: MentionMenuProps) {
       <div
         class="dz-mention"
         classList={{ 'is-leaving': props.leaving }}
+        inert={props.leaving}
         id="dz-mention-list"
         role="listbox"
         aria-label={i18n.t('mention.ariaLabel')}

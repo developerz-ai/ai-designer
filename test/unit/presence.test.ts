@@ -85,9 +85,10 @@ describe('createPresence', () => {
       return d;
     });
 
+    const pending = vi.getTimerCount();
+    expect(pending).toBeGreaterThan(0);
     dispose();
-    // Firing against a disposed scope is the leak this guards; advancing must not throw.
-    expect(() => vi.advanceTimersByTime(500)).not.toThrow();
+    expect(vi.getTimerCount()).toBe(pending - 1);
     vi.useRealTimers();
   });
 });

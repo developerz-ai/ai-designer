@@ -32,20 +32,12 @@ export interface Presence {
  */
 export function createPresence(open: () => boolean, exitMs: number = EXIT_MS): Presence {
   const [leaving, setLeaving] = createSignal(false);
+  const [mounted, setMounted] = createSignal(open());
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wasOpen = open();
 
-  // `createComputed`, NOT `createEffect`, and the distinction is load-bearing in both directions:
-  //
-  //  • A render effect runs AFTER the pure computations, so `<Show when={mounted()}>` would
-  //    re-evaluate on the close with `leaving` still false, unmount the node, and only then have
-  //    the effect flip `leaving` — remounting it for 140ms. The menu visibly blinked out and
-  //    back before finally going. A computed writes during the same propagation, so `mounted`
-  //    never reads a torn state.
-  //  • Only the CLOSE direction is stateful at all: `mounted` derives straight from `open`, so
-  //    opening mounts in the same pass. Routing that through a signal cost a tick, and
-  //    ModelPicker's open-focus effect then ran against a popover that did not exist yet and
-  //    dropped focus on `<body>`. Its unit test caught that one.
+  // Keep mounted state independent of the source: a derived open memo can notify a Show before
+  // this computation observes the close, otherwise removing the node before leaving is set.
   createComputed(() => {
     const isOpen = open();
     if (isOpen === wasOpen) return;
@@ -55,15 +47,19 @@ export function createPresence(open: () => boolean, exitMs: number = EXIT_MS): P
       // Re-opening during the exit window cancels it, or the node unmounts out from under a menu
       // the user has just re-triggered.
       setLeaving(false);
+      setMounted(true);
       return;
     }
     setLeaving(true);
-    timer = setTimeout(() => setLeaving(false), exitMs);
+    timer = setTimeout(() => {
+      setMounted(false);
+      setLeaving(false);
+    }, exitMs);
   });
 
   // Unmounting the OWNER mid-exit (switching surfaces while a menu closes) would otherwise leave
   // the timer to fire against a disposed scope.
   onCleanup(() => clearTimeout(timer));
 
-  return { mounted: () => open() || leaving(), leaving };
+  return { mounted, leaving };
 }
