@@ -49,7 +49,7 @@ test('the header row is neutral: no brand image, and the Start toggle is an outl
   await expect(page.locator('.dz-app__header')).toBeVisible();
   await expect(page.locator('.dz-app__header img')).toHaveCount(0);
 
-  // The Start/Stop toggle is a neutral outlined ghost in BOTH states: a transparent fill and
+  // The Start/Stop toggle is a neutral outlined ghost in BOTH states: a card fill and
   // the neutral hairline, never the accent.
   const toggle = page.locator('.dz-readiness__toggle');
   await expect(toggle).toBeVisible();
@@ -70,11 +70,13 @@ test('the header row is neutral: no brand image, and the Start toggle is an outl
       background: style.backgroundColor,
       border: style.borderTopColor,
       accent: resolve('--dz-accent'),
+      card: resolve('--dz-elev-card'),
       neutralBorder: resolve('--dz-border-strong'),
     };
   });
 
-  expect(toggleStyle.background).toBe('rgba(0, 0, 0, 0)');
+  expect(toggleStyle.background).toBe(toggleStyle.card);
+  expect(toggleStyle.background).not.toBe(toggleStyle.accent);
   expect(toggleStyle.border).toBe(toggleStyle.neutralBorder);
   expect(toggleStyle.border).not.toBe(toggleStyle.accent);
 });
