@@ -21,6 +21,7 @@ import {
   type DeviceChrome,
 } from '@/agent/device-driver';
 import { restoreDevice, runResponsiveCapture, runSetDevice } from '@/agent/device-emulation';
+import { diagnose } from '@/agent/diagnostics';
 import { createEditShots, RECORDED_MUTATION_TYPES, screenshotChars } from '@/agent/edit-shots';
 import {
   EmulationRegistry,
@@ -62,6 +63,8 @@ import { errorLogEntry, logEntryFor, mergeLogs, renderTurnLog } from '@/agent/tu
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { AUTO_RECORDED_INTENT } from '@/changeset/fold-mutations';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
+import { createPendingDiagnostics } from '@/changeset/pending-diagnostics';
+import { createPendingDiagnosticsPersister } from '@/changeset/pending-diagnostics-persist';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { createPendingMutationsPersister } from '@/changeset/pending-persist';
 import { toMarkdown } from '@/changeset/report-md';
@@ -95,6 +98,7 @@ import {
 } from '@/mcp/store';
 import { clearToolGrants, getToolGrants, setToolGrant } from '@/mcp/tool-grants';
 import { emptyChangeset } from '@/shared/changeset';
+import type { CollectorSignal } from '@/shared/diagnostics';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -339,6 +343,27 @@ export default defineBackground(() => {
       for (const [tabId, snapshot] of all) pendingMutations.seed(tabId, snapshot);
     })
     .catch(() => {});
+
+  // #6 diagnostics buffer: content-script `diagnostics-signal` (CollectorSignal) per tab. Real-time
+  // diagnostics evidence captured while the SW is starting/evicted stays in this FIFO until the
+  // turn drains it at turn start / before report build (content.message handler below). Mirrored
+  // to chrome.storage.session (`pendingDiagnostics:<tabId>`, beside pendingMutations) so signals
+  // survive SW eviction/restart, and re-seeded on wake via `pendingDiagnosticsReady`.
+  const pendingDiagnosticsPersister = createPendingDiagnosticsPersister();
+  const pendingDiagnostics = createPendingDiagnostics({
+    onChange: (tabId, snapshot, kind) => pendingDiagnosticsPersister.save(tabId, snapshot, kind),
+  });
+  const pendingDiagnosticsReady = pendingDiagnosticsPersister
+    .loadAll()
+    .then((all) => {
+      for (const [tabId, snapshot] of all) pendingDiagnostics.seed(tabId, snapshot);
+    })
+    .catch(() => {});
+
+  // #6: one tab -> the signals drained at THIS turn's start. `makeReport` consumes them into the
+  // diagnostics ReportInput; the entry dies with the turn (deleted in the turn-done chain below),
+  // so a later turn re-drains fresh.
+  const turnDiagnostics = new Map<number, CollectorSignal[]>();
 
   // #148 item 1: per-edit before/after screenshot auto-capture. The BEFORE slot arms ahead of the
   // first unrecorded mutation (the turn's content dispatch, below); `recordEdit`'s drain consumes
@@ -846,10 +871,23 @@ export default defineBackground(() => {
     // never what it was FOR, nor which parts of a broad request are still outstanding; a full-page
     // overhaul rarely finishes inside one session, so "what remains" is load-bearing for the reader.
     const ask = historyStore.get(changeset.sessionId)?.title;
+    // #6: diagnostics signals drained at this tab's turn start (buffered across SW startup/eviction),
+    // folded into the diagnostics ReportInput so Ship / download-report / send-report carries the
+    // real-time page evidence instead of observing nothing until an explicit `diagnose` DomTool pull.
+    const tabDiagnostics = turnDiagnostics.get(tab.id) ?? [];
+    turnDiagnostics.delete(tab.id);
     const makeReport = (): Promise<Report> =>
       authorReport(
         { model, generate: reportGenerate },
-        { changeset, identity, mode: opts.mode, ...(ask ? { ask } : {}) },
+        {
+          changeset,
+          identity,
+          mode: opts.mode,
+          ...(tabDiagnostics?.length > 0
+            ? { diagnostics: diagnose(tabDiagnostics, changeset.url, new Date().toISOString()) }
+            : {}),
+          ...(ask ? { ask } : {}),
+        },
       );
 
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
@@ -1289,6 +1327,13 @@ export default defineBackground(() => {
           // Running cumulative session spend: seeded from the session's prior total, advanced in
           // `.then()`, and surfaced to the panel's usage meter on `turn-done` (#25).
           let sessionUsage = session.usage;
+          // #6: drain this tab's buffered diagnostics signals INTO the turn's evidence BEFORE the
+          // turn runs. Real-time signals the collector streamed since page load — including ones
+          // that arrived while the SW was starting or evicted — survive here instead of being
+          // dropped; `makeReport` below folds them into diagnostics ReportInput (via `diagnose`),
+          // so a debug turn never observes an empty page.
+          const drainedDiagnostics = pendingDiagnostics.drain(tabId);
+          turnDiagnostics.set(tabId, drainedDiagnostics.signals);
           const turnDone = runTurn({
             tabId,
             messages: cacheable ? annotatePriorThreadTail(threadForModel) : threadForModel,
@@ -2377,6 +2422,19 @@ export default defineBackground(() => {
       const { event } = parsed.data;
       if (senderTabId !== undefined) {
         void pendingReady.then(() => pendingMutations.append(senderTabId, event));
+      }
+    }
+
+    // #6 diagnostics-signal: content script pushes one CollectorSignal per page signal the
+    // collector saw. Buffer per tab (FIFO, capped) — the SW drops nothing this way, and the turn
+    // drains them into its diagnostics evidence at turn start / before report build, so real-time
+    // signals captured during SW startup/eviction survive instead of being lost. relayToPanel
+    // returns null here: nothing goes to the panel from this listener.
+    if (parsed.data.type === 'diagnostics-signal') {
+      const senderTabId = sender.tab?.id;
+      const { signal } = parsed.data;
+      if (senderTabId !== undefined) {
+        void pendingDiagnosticsReady.then(() => pendingDiagnostics.append(senderTabId, signal));
       }
     }
 
