@@ -48,11 +48,19 @@ export interface MentionMenuProps {
   query: string;
   /** Index of the row Enter would take. Owned by Composer, which also owns the arrow keys. */
   active: number;
+  /** True while the menu is animating out — Composer keeps it mounted for that window. */
+  leaving?: boolean;
   onPick: (sel: StableSelector) => void;
 }
 
 export function MentionMenu(props: MentionMenuProps) {
-  const shown = createMemo(() => filterMentions(props.items, props.query));
+  // Frozen while leaving: the menu closes BECAUSE the query stopped matching (or was taken), so
+  // the live filter is empty or the full list by then, and the exit animation would play on a
+  // blank or jumped menu — or not at all, since `<Show>` below unmounts on zero rows.
+  const shown = createMemo<StableSelector[]>(
+    (prev) => (props.leaving ? prev : filterMentions(props.items, props.query)),
+    [],
+  );
 
   return (
     <Show when={shown().length > 0}>
@@ -64,6 +72,8 @@ export function MentionMenu(props: MentionMenuProps) {
           gives the row two conflicting semantics. */}
       <div
         class="dz-mention"
+        classList={{ 'is-leaving': props.leaving }}
+        inert={props.leaving}
         id="dz-mention-list"
         role="listbox"
         aria-label={i18n.t('mention.ariaLabel')}

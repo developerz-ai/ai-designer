@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { filterMentions, mentionQuery } from '@/entrypoints/sidepanel/components/chat/MentionMenu';
+import { fireEvent, render, screen } from '@solidjs/testing-library';
+import { mergeProps } from 'solid-js';
+import { createStore } from 'solid-js/store';
+import { describe, expect, it, vi } from 'vitest';
+import { Composer } from '@/entrypoints/sidepanel/components/chat/Composer';
+import {
+  filterMentions,
+  MentionMenu,
+  mentionQuery,
+} from '@/entrypoints/sidepanel/components/chat/MentionMenu';
 import { foldRecent } from '@/entrypoints/sidepanel/stores/focus';
 import type { StableSelector } from '@/shared/messages';
+
+vi.mock('@/entrypoints/sidepanel/stores/focus', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recentReferences: () => [{ value: '#cta', strategy: 'id', fragile: false }],
+}));
 
 // #175 — `@` in the composer. The three pure pieces: when a mention is open, what it matches, and
 // what the menu has to offer. All of them are decisions the UI cannot be trusted to re-derive.
@@ -67,5 +80,44 @@ describe('foldRecent', () => {
     expect(foldRecent([], many)).toHaveLength(8);
     // Newest first: the last one folded in leads.
     expect(foldRecent([], many)[0]?.value).toBe('#e11');
+  });
+});
+
+describe('MentionMenu exit', () => {
+  it('keeps the same composer listbox inert until the exit timer elapses', () => {
+    render(() => Composer());
+    const input = screen.getByRole('textbox');
+    fireEvent.input(input, { target: { value: '@', selectionStart: 1, selectionEnd: 1 } });
+    const list = screen.getByRole('listbox');
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(input, { key: 'Escape' });
+      expect(list).toBeInTheDocument();
+      expect(list).toHaveClass('is-leaving');
+      expect(list).toHaveProperty('inert', true);
+      expect(input).not.toHaveAttribute('role', 'combobox');
+      vi.advanceTimersByTime(140);
+      expect(list).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  // Composer closes the menu the moment the query stops matching. If the rows followed the live
+  // filter, the listbox would unmount on zero rows before `.is-leaving` could animate it out.
+  it('keeps the last rows mounted while leaving, even when the query no longer matches', () => {
+    const [props, setProps] = createStore({
+      items: [sel('.hero > h1'), sel('.cta')],
+      query: 'her',
+      active: 0,
+      leaving: false,
+    });
+    render(() => MentionMenu(mergeProps(props, { onPick: () => {} })));
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+
+    setProps({ query: 'herox', leaving: true });
+
+    expect(screen.getByRole('listbox')).toHaveClass('is-leaving');
+    expect(screen.getByRole('listbox')).toHaveProperty('inert', true);
+    expect(screen.getAllByRole('option')).toHaveLength(1);
   });
 });

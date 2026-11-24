@@ -78,6 +78,8 @@ const STEP_ICON: Record<OnboardingStepId, IconName> = {
 };
 
 export interface OnboardingProps {
+  /** True while the guide is animating out — App keeps it mounted for that window. */
+  leaving?: boolean;
   onNavigate: (tab: DeepLinkTab) => void;
 }
 
@@ -128,6 +130,9 @@ export function Onboarding(props: OnboardingProps) {
   return (
     <div
       class="dz-onboarding"
+      classList={{ 'is-leaving': props.leaving }}
+      // Inert while it fades: a dismissed modal must stop trapping focus and taking clicks.
+      inert={props.leaving}
       data-testid="first-run-onboarding"
       role="dialog"
       aria-modal="true"
