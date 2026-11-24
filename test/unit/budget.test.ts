@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUDGET_WARN_FRACTION,
   type BudgetLimits,
+  budgetForPreset,
   budgetNotice,
   budgetReason,
   DEFAULT_BUDGET,
@@ -19,6 +21,7 @@ const LIMITS: BudgetLimits = {
   maxVisionCalls: 2,
   maxWaitCalls: 2,
   maxNavCalls: 2,
+  contextWindow: 128_000,
 };
 const step = (input?: number, output?: number): StepUsageLike => ({
   usage: { inputTokens: input, outputTokens: output },
@@ -200,5 +203,170 @@ describe('TurnBudget', () => {
       });
       expect(budget.exhausted).toBe(false); // guard spend never trips the turn-level stop
     });
+  });
+});
+
+// --- the one-shot mid-turn warning ------------------------------------------------------------
+//
+// THE DEFECT: the HN "make the page more modern" turn spent its entire 200k ceiling on 21 read
+// calls across 3 steps and was force-stopped having changed NOTHING. The model was not exercising
+// bad judgement — it announced an audit-first plan and executed it faithfully — it simply never
+// learned that the plan had become unaffordable, because nothing in the loop ever told it what it
+// had spent. "Stop and summarize" only ever arrived as a fait accompli.
+
+describe('TurnBudget.warning', () => {
+  const limits: BudgetLimits = { ...DEFAULT_BUDGET, maxTokens: 1000 };
+
+  it('stays silent below the warn threshold', () => {
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 500, outputTokens: 0 }); // 50% — still plenty of room
+    expect(budget.warning()).toBeNull();
+  });
+
+  it('fires once spend crosses the threshold, and names the spend', () => {
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 700, outputTokens: 0 });
+    const warning = budget.warning();
+    expect(warning).not.toBeNull();
+    expect(warning).toContain('70%');
+    // It must tell the model what to DO, not merely that it is spending.
+    expect(warning).toContain('Stop surveying');
+    // And why acting beats reading: only changes survive a stop.
+    expect(warning).toContain('what you have CHANGED survives');
+  });
+
+  it('fires EXACTLY once, however far the spend goes afterwards', () => {
+    // One-shot is load-bearing, not an optimisation: the warning is injected into the live
+    // transcript, so re-emitting it every step would rewrite the prompt prefix every step and
+    // invalidate the whole prompt cache each time. Firing once is a single invalidation.
+    const budget = new TurnBudget(limits);
+    budget.record({ inputTokens: 700, outputTokens: 0 });
+    expect(budget.warning()).not.toBeNull();
+    budget.record({ inputTokens: 200, outputTokens: 0 });
+    expect(budget.warning()).toBeNull();
+    budget.record({ inputTokens: 500, outputTokens: 0 });
+    expect(budget.warning()).toBeNull();
+  });
+
+  it('leaves real room to act — it is not a death notice', () => {
+    // Warning at 0.8 or 0.9 would arrive too late to change the outcome, which is the entire point
+    // of warning at all. At 0.6 roughly 40% of the ceiling remains.
+    expect(BUDGET_WARN_FRACTION).toBeLessThanOrEqual(0.7);
+    expect(BUDGET_WARN_FRACTION).toBeGreaterThan(0.4);
+  });
+});
+
+// --- budgetForPreset: the Settings tiers -------------------------------------------------------
+//
+// The user-facing budget presets (Settings → ProviderConfig.budgetPreset). `standard`/`high`/
+// `max` are opt-in COST CONTROLS at ~1×/3×/10×; `unlimited` — the SHIPPED DEFAULT — has no
+// ceilings at all (every field Infinity; the Stop button is the only guard). No tier ever
+// carries `contextWindow`: capacity is detected per model, never chosen by a cost tier.
+
+describe('budgetForPreset', () => {
+  it('standard is exactly the DEFAULT_BUDGET ceilings (one source, no drift)', () => {
+    expect(budgetForPreset('standard')).toEqual({
+      maxSteps: 24,
+      maxTokens: 200_000,
+      maxVisionCalls: 6,
+      maxWaitCalls: 10,
+      maxNavCalls: 8,
+    });
+    const { contextWindow: _cw, ...defaults } = DEFAULT_BUDGET;
+    expect(budgetForPreset('standard')).toEqual(defaults);
+  });
+
+  it('high is the ~3× tier', () => {
+    expect(budgetForPreset('high')).toEqual({
+      maxSteps: 48,
+      maxTokens: 600_000,
+      maxVisionCalls: 12,
+      maxWaitCalls: 20,
+      maxNavCalls: 16,
+    });
+  });
+
+  it('max is the ~10× tier', () => {
+    expect(budgetForPreset('max')).toEqual({
+      maxSteps: 96,
+      maxTokens: 2_000_000,
+      maxVisionCalls: 24,
+      maxWaitCalls: 40,
+      maxNavCalls: 24,
+    });
+  });
+
+  it('unlimited has NO ceilings — every field is Infinity', () => {
+    expect(budgetForPreset('unlimited')).toEqual({
+      maxSteps: Number.POSITIVE_INFINITY,
+      maxTokens: Number.POSITIVE_INFINITY,
+      maxVisionCalls: Number.POSITIVE_INFINITY,
+      maxWaitCalls: Number.POSITIVE_INFINITY,
+      maxNavCalls: Number.POSITIVE_INFINITY,
+    });
+  });
+
+  it('never touches contextWindow — no tier returns the key at all', () => {
+    for (const preset of ['standard', 'high', 'max', 'unlimited'] as const) {
+      expect('contextWindow' in budgetForPreset(preset)).toBe(false);
+    }
+  });
+
+  it('returns a fresh object per call — a caller mutating its limits cannot corrupt the table', () => {
+    const a = budgetForPreset('high');
+    (a as { maxTokens: number }).maxTokens = 1;
+    expect(budgetForPreset('high').maxTokens).toBe(600_000);
+  });
+});
+
+// --- unlimited: Infinity flows cleanly through every budget read -------------------------------
+//
+// The unlimited tier is implemented as Infinity ceilings rather than a "no budget" branch, so
+// every existing comparison must stay exact: finite >= Infinity is false (never a stop), and
+// Infinity * BUDGET_WARN_FRACTION is Infinity (never a warning) — no NaN anywhere.
+
+describe('unlimited preset semantics', () => {
+  const unlimited = (): TurnBudget =>
+    new TurnBudget({ ...budgetForPreset('unlimited'), contextWindow: 128_000 });
+
+  it('budgetReason never fires, whatever the spend', () => {
+    const usage = {
+      steps: 10_000,
+      tokens: 50_000_000,
+      visionCalls: 0,
+      waitCalls: 0,
+      navCalls: 0,
+    };
+    expect(budgetReason(usage, { ...DEFAULT_BUDGET, ...budgetForPreset('unlimited') })).toBeNull();
+  });
+
+  it('the one-shot warning NEVER fires — no "[Budget: …%]" nudge ever reaches an unlimited turn', () => {
+    const budget = unlimited();
+    // Spend far past every capped tier's ceiling, across many steps.
+    for (let i = 0; i < 200; i += 1) budget.record({ inputTokens: 1_000_000, outputTokens: 500 });
+    expect(budget.warning()).toBeNull(); // not once …
+    budget.record({ inputTokens: 9_000_000 });
+    expect(budget.warning()).toBeNull(); // … and not later either
+    expect(budget.exhausted).toBe(false);
+    expect(budget.reason).toBeNull();
+    expect(budget.notice()).toBeNull();
+  });
+
+  it('the per-tool guards always admit the call', () => {
+    const budget = unlimited();
+    for (let i = 0; i < 100; i += 1) {
+      expect(budget.spendVision()).toBe(true);
+      expect(budget.spendWait()).toBe(true);
+      expect(budget.spendNav()).toBe(true);
+    }
+    expect(budget.usage.visionCalls).toBe(100); // still COUNTED — the turn log stays honest
+  });
+
+  it('usage stays real finite numbers — the turn-log spend line renders actual figures', () => {
+    const budget = unlimited();
+    budget.record({ inputTokens: 123, outputTokens: 45 });
+    expect(budget.usage.tokens).toBe(168);
+    expect(Number.isFinite(budget.usage.tokens)).toBe(true);
+    expect(budget.usage.tokens.toLocaleString('en-US')).toBe('168');
   });
 });

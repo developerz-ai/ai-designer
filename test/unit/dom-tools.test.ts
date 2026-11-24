@@ -80,11 +80,12 @@ describe('createDomTools: derivation is 1:1 with the DomTool schemas', () => {
 // reassemble and dispatch to the content script.
 const CASES = [
   { tool: 'query', input: { selector: '#hero' }, msg: { type: 'query', selector: '#hero' } },
-  {
-    tool: 'getStyles',
-    input: { selector: '#hero' },
-    msg: { type: 'getStyles', selector: '#hero' },
-  },
+  // `getStyles` is deliberately NOT in this table any more. Every other tool here is a pure
+  // pass-through — reassemble the DomTool, dispatch, return the ToolResult verbatim — and that is
+  // exactly what this table asserts. `getStyles` now takes `selectors[]` and fans out to one bus
+  // message per selector, merging the results into a keyed map, so it cannot return a dispatch
+  // result verbatim by construction. Its reassembly, fan-out, tab/frame threading and abort-signal
+  // threading are covered in `test/unit/getstyles-multi.test.ts`.
   {
     tool: 'screenshot',
     input: { selector: '.card' },
@@ -126,21 +127,20 @@ const CASES = [
 ] as const;
 
 describe('createDomTools: execute round-trips to the content script', () => {
-  it.each(CASES)('$tool reassembles a valid DomTool and dispatches it', async ({
-    tool,
-    input,
-    msg,
-  }) => {
-    // The expected message is itself a valid DomTool (guards the reconstruction).
-    expect(DomTool.safeParse(msg).success).toBe(true);
+  it.each(CASES)(
+    '$tool reassembles a valid DomTool and dispatches it',
+    async ({ tool, input, msg }) => {
+      // The expected message is itself a valid DomTool (guards the reconstruction).
+      expect(DomTool.safeParse(msg).success).toBe(true);
 
-    const { calls, tools } = harness();
-    const signal = new AbortController().signal;
-    const returned = await callExecute(tools[tool].execute, input, signal);
+      const { calls, tools } = harness();
+      const signal = new AbortController().signal;
+      const returned = await callExecute(tools[tool].execute, input, signal);
 
-    const call = only(calls);
-    expect(call.msg).toEqual(msg); // correct `type` re-attached + fields forwarded
-    expect(call.signal).toBe(signal); // abort signal threaded to the bus
-    expect(returned).toBe(RESULT); // execute returns the content script's ToolResult verbatim
-  });
+      const call = only(calls);
+      expect(call.msg).toEqual(msg); // correct `type` re-attached + fields forwarded
+      expect(call.signal).toBe(signal); // abort signal threaded to the bus
+      expect(returned).toBe(RESULT); // execute returns the content script's ToolResult verbatim
+    },
+  );
 });

@@ -1,10 +1,25 @@
 import { detectFrameworkHints } from '@/dom/framework-hints';
-import { attrDenyReason, type ElementMutation, type Mutator, SHEET_ID } from '@/dom/mutate';
+import {
+  attrDenyReason,
+  type ElementMutation,
+  type Mutator,
+  type PageMutation,
+  SHEET_ID,
+} from '@/dom/mutate';
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
-import type { RecordExtras, Recorder } from '@/dom/recorder';
+import type { RecordExtras, Recorder, RecorderEmit } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
+import { applyStructuralBulk, bulkError, resolveTargets } from '@/dom/structural-bulk';
 import type { StructuralChange } from '@/shared/changeset';
-import type { BatchResult, DomTool, StableSelector, ToolResult } from '@/shared/messages';
+import type {
+  BatchResult,
+  BulkStructuralInput,
+  BulkStructuralResult,
+  DomTool,
+  InjectCssResult,
+  StableSelector,
+  ToolResult,
+} from '@/shared/messages';
 
 // Synchronous DOM-tool executor — the content script's dispatch core. Routes a validated DomTool
 // to the reversible mutators (src/dom/mutate.ts) + readers (src/dom/read.ts), recording every
@@ -17,14 +32,24 @@ import type { BatchResult, DomTool, StableSelector, ToolResult } from '@/shared/
 // content entrypoint stays a thin wire). See src/agent/tools/dom.ts + docs/idea/live-edit.md.
 
 /** Every DomTool the executor resolves synchronously in the content world — everything except
- *  `screenshot` (async SW capture) and `diagnostics` (collector/scan, no selector). */
-export type SyncDomTool = Exclude<DomTool, { type: 'screenshot' } | { type: 'diagnostics' }>;
+ *  `screenshot` (async SW capture), `diagnostics` (collector/scan, no selector) and `pageOp`
+ *  (its MAIN-world members are an async bridge round-trip — src/dom/page-ops). */
+export type SyncDomTool = Exclude<
+  DomTool,
+  { type: 'screenshot' } | { type: 'diagnostics' } | { type: 'pageOp' }
+>;
 
 export interface DomExecutorDeps {
   mutator: Mutator;
   recorder: Recorder;
   /** The page document. Defaults to the live `document`; tests pass a jsdom one. */
   doc?: Document;
+  /** Sink for content-originated events that are NOT element mutations. Today that is exactly
+   *  `stylesheet-recorded` (`injectCss`): a page-level sheet has no element target, so it cannot
+   *  ride the recorder's `MutationEvent` path — which requires a selector — yet it is the single
+   *  most shippable thing a session produces and must reach the changeset. Optional so existing
+   *  callers and tests construct an executor unchanged. */
+  emit?: RecorderEmit;
 }
 
 export interface DomExecutor {
@@ -78,6 +103,12 @@ function ownChromeReason(el: Element): string | null {
 // extension's own chrome ({@link ownChromeReason}). `body` stays legal as an insert/move
 // DESTINATION ('beforeend' a banner at page bottom is a normal design action); it is refused only
 // as the element being moved/removed.
+//
+// WIRING NOTE for the restructuring ops (src/dom/mutate.ts `wrapNode`/`unwrapNode`/
+// `replaceSubtree`, built ahead of their bus schemas): each one is a 'target' for this guard, and
+// `wrapNode`'s RANGE form must guard BOTH ends — a range whose end is `<body>` absorbs the page
+// just as surely as a range whose start is. The bulk form (src/dom/structural-bulk.ts) takes this
+// same function as its `guard`, so the policy stays in one place rather than being re-derived.
 function structuralTargetReason(el: Element, role: 'target' | 'ref'): string | null {
   const own = ownChromeReason(el);
   if (own) return own;
@@ -90,8 +121,50 @@ function structuralTargetReason(el: Element, role: 'target' | 'ref'): string | n
 
 // The guard every CONTENT mutation (setStyle / setText / setAttr / add|removeClass) runs: our own
 // chrome first, then the op's own check.
+// A wrapper element's OWN markup — its opening tag and attributes, children stripped. The
+// changeset records what the wrapper IS, not the page content that ended up inside it (which the
+// rest of the record already describes); a full serialization would duplicate the whole subtree
+// into the durable Edit and into every later step of the transcript.
+function wrapperMarkup(html: string): string {
+  const openTag = /^\s*<[^>]*>/.exec(html);
+  return openTag ? openTag[0].trim() : html.slice(0, 200);
+}
+
 function contentGuard(extra?: (el: Element) => string | null) {
   return (el: Element): string | null => ownChromeReason(el) ?? extra?.(el) ?? null;
+}
+
+// A malformed bulk call — `wrap`/`replace` without markup, `removeAttr` without a name — is a
+// refusal the model fixes in one step. The schema keeps `html`/`name` optional (a
+// discriminatedUnion member must stay a plain object), so the executor owns the check.
+function bulkParamReason(tool: BulkStructuralInput): string | null {
+  if ((tool.action === 'wrap' || tool.action === 'replace') && !tool.html)
+    return `bulkStructural \`${tool.action}\` needs \`html\`: the markup to apply to every target.`;
+  if (tool.action === 'removeAttr' && !tool.name)
+    return 'bulkStructural `removeAttr` needs `name`: the attribute to strip from every target.';
+  return null;
+}
+
+// The recorded structural delta per bulk action — the SAME shapes the single-target cases record,
+// so the changeset cannot tell a bulk-applied edit from N single calls. That sameness is the
+// point: bulk is transport, the durable record stays per-element. `removeAttr` records none — its
+// attribute delta (`attrChange`, `after: null`) already describes it, exactly as the single case.
+function bulkStructuralChange(
+  action: BulkStructuralInput['action'],
+  mutation: ElementMutation,
+): StructuralChange | undefined {
+  switch (action) {
+    case 'remove':
+      return { op: 'remove' };
+    case 'unwrap':
+      return { op: 'unwrap', html: wrapperMarkup(mutation.before) };
+    case 'wrap':
+      return { op: 'wrap', html: wrapperMarkup(mutation.after) };
+    case 'replace':
+      return { op: 'replace', html: mutation.after, replacedHtml: mutation.before };
+    case 'removeAttr':
+      return undefined;
+  }
 }
 
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
@@ -111,6 +184,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       mutation: ElementMutation;
       stable: StableSelector;
     }) => StructuralChange,
+    intent?: string,
   ): ToolResult {
     const el = queryOne(doc, selector);
     if (!el) return notFound(selector);
@@ -126,16 +200,19 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       return refused(err instanceof Error ? err.message : String(err));
     }
     const stable = pickUnique(el, doc);
-    recorder.record(stable, mutation, extras(el, structural?.({ el, mutation, stable })));
+    recorder.record(stable, mutation, extras(el, structural?.({ el, mutation, stable }), intent));
     return ok(mutation.computed, stable);
   }
 
   // The RecordExtras every element-targeting record shares (#9): the target's framework hints,
-  // plus the structural delta when the op has one.
-  function extras(el: Element, structural?: StructuralChange): RecordExtras {
+  // plus the structural delta when the op has one, plus the caller's INTENT — the WHY, taken
+  // straight from the tool input so the durable Edit says what the change was for instead of
+  // "Auto-recorded agent edit (no recordEdit call)".
+  function extras(el: Element, structural?: StructuralChange, intent?: string): RecordExtras {
     return {
       frameworkHints: detectFrameworkHints(el),
       ...(structural ? { structural } : {}),
+      ...(intent ? { intent } : {}),
     };
   }
 
@@ -147,6 +224,29 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       .map((r) => `#${r.index} (${r.type})`)
       .join(', ');
     return `${data.applied} of ${data.results.length} applied; failed: ${bad}. Re-check those selectors — the applied ops are already live and must not be re-sent.`;
+  }
+
+  // The one mutator call a bulk action fans out to each target. Bound AFTER `bulkParamReason`
+  // has run, so the op-specific fields are real locals rather than per-element assertions.
+  function bulkApply(tool: BulkStructuralInput): (el: Element) => ElementMutation {
+    switch (tool.action) {
+      case 'remove':
+        return (el) => mutator.removeNode(el);
+      case 'unwrap':
+        return (el) => mutator.unwrapNode(el);
+      case 'wrap': {
+        const html = tool.html ?? '';
+        return (el) => mutator.wrapNode(el, html);
+      }
+      case 'replace': {
+        const html = tool.html ?? '';
+        return (el) => mutator.replaceSubtree(el, html);
+      }
+      case 'removeAttr': {
+        const name = tool.name ?? '';
+        return (el) => mutator.removeAttr(el, name);
+      }
+    }
   }
 
   // Resolve `selector` to a single element and project it through a pure reader.
@@ -166,12 +266,20 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       case 'a11ySnapshot':
         return read(tool.selector, (el) => a11ySnapshot(el));
       case 'setStyle':
-        return mutate(tool.selector, (el) => mutator.setStyle(el, tool.props), contentGuard());
+        return mutate(
+          tool.selector,
+          (el) => mutator.setStyle(el, tool.props),
+          contentGuard(),
+          undefined,
+          tool.intent,
+        );
       case 'setText':
         return mutate(
           tool.selector,
           (el) => mutator.setText(el, tool.value),
           contentGuard(leafOnly),
+          undefined,
+          tool.intent,
         );
       case 'setAttr': {
         // Security deny-list (on* / src / javascript:) — refuse before touching the DOM so the
@@ -182,12 +290,26 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           tool.selector,
           (el) => mutator.setAttr(el, tool.name, tool.value),
           contentGuard(),
+          undefined,
+          tool.intent,
         );
       }
       case 'addClass':
-        return mutate(tool.selector, (el) => mutator.addClass(el, tool.name), contentGuard());
+        return mutate(
+          tool.selector,
+          (el) => mutator.addClass(el, tool.name),
+          contentGuard(),
+          undefined,
+          tool.intent,
+        );
       case 'removeClass':
-        return mutate(tool.selector, (el) => mutator.removeClass(el, tool.name), contentGuard());
+        return mutate(
+          tool.selector,
+          (el) => mutator.removeClass(el, tool.name),
+          contentGuard(),
+          undefined,
+          tool.intent,
+        );
       // One round-trip, many mutations (#173). Each op goes through the SAME `exec` path it would
       // have taken alone — same guards, same deny-list, same recorder entry — so undo/redo
       // granularity is per-op and unchanged: a batch is a transport optimization, never a
@@ -233,6 +355,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
             position: tool.position,
             refSelector: stable,
           }),
+          tool.intent,
         );
       case 'moveNode': {
         // Two resolutions: the element to move and the reference anchor — the single-selector
@@ -252,7 +375,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           // The event target is the MOVED element; the structural delta's refSelector identifies
           // the anchor it moved relative to (its own stable selector, not the raw tool string).
           recorder.record(stable, mutation, {
-            ...extras(el),
+            ...extras(el, undefined, tool.intent),
             structural: {
               op: 'move',
               refSelector: pickUnique(ref, doc),
@@ -278,11 +401,182 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const stable = pickUnique(el, doc);
         try {
           const mutation = mutator.removeNode(el);
-          recorder.record(stable, mutation, { ...extras(el), structural: { op: 'remove' } });
+          recorder.record(stable, mutation, {
+            ...extras(el, undefined, tool.intent),
+            structural: { op: 'remove' },
+          });
           return ok(mutation.computed, stable);
         } catch (err) {
           return refused(err instanceof Error ? err.message : String(err));
         }
+      }
+      case 'removeAttr':
+        // Not a `setAttr` with an empty value: `href=""` is a live link to the current page and
+        // `alt=""` means "decorative", so emptying is a different edit from removing. The recorder
+        // reuses `kind: 'setAttr'` with `attrChange.after = null` — the branch `AttrChange`
+        // documented from the start and that nothing had ever produced.
+        return mutate(
+          tool.selector,
+          (el) => mutator.removeAttr(el, tool.name),
+          contentGuard(),
+          undefined,
+          tool.intent,
+        );
+      // --- restructuring (#overhaul) -----------------------------------------------------------
+      // Each is its own kind because each is its own INVERSE. A `wrapNode` recorded as an
+      // `insertNode` would undo by deleting the wrapper and orphaning everything it wrapped.
+      case 'wrapNode': {
+        // Up to two resolutions (range start + end), so the single-selector `mutate()` helper
+        // can't express it. BOTH ends are guarded: a range whose END is <body> absorbs the page
+        // just as surely as one whose start is.
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const elReason = structuralTargetReason(el, 'target');
+        if (elReason) return refused(elReason);
+        let endEl: Element | undefined;
+        if (tool.endSelector !== undefined) {
+          const found = queryOne(doc, tool.endSelector);
+          if (!found) return notFound(tool.endSelector);
+          const endReason = structuralTargetReason(found, 'target');
+          if (endReason) return refused(endReason);
+          endEl = found;
+        }
+        // The stable selector is taken BEFORE the wrap: afterwards the element sits one level
+        // deeper, so a path selector computed now describes where the agent found it, which is
+        // what a reader mapping this back to source needs.
+        const stable = pickUnique(el, doc);
+        const endStable = endEl ? pickUnique(endEl, doc) : undefined;
+        try {
+          const mutation = mutator.wrapNode(el, tool.html, endEl);
+          recorder.record(stable, mutation, {
+            ...extras(el, undefined, tool.intent),
+            structural: {
+              op: 'wrap',
+              // The SANITIZED wrapper as it actually landed, tag + attributes only (its children
+              // are the wrapped page content, which the changeset already describes elsewhere).
+              html: wrapperMarkup(mutation.after),
+              ...(endStable ? { endSelector: endStable } : {}),
+            },
+          });
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'unwrapNode': {
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const reason = structuralTargetReason(el, 'target');
+        if (reason) return refused(reason);
+        // Same rule as removeNode: the selector is computed BEFORE the wrapper leaves the tree.
+        const stable = pickUnique(el, doc);
+        try {
+          const mutation = mutator.unwrapNode(el);
+          recorder.record(stable, mutation, {
+            ...extras(el, undefined, tool.intent),
+            structural: { op: 'unwrap', html: wrapperMarkup(mutation.before) },
+          });
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'replaceNode': {
+        const el = queryOne(doc, tool.selector);
+        if (!el) return notFound(tool.selector);
+        const reason = structuralTargetReason(el, 'target');
+        if (reason) return refused(reason);
+        const stable = pickUnique(el, doc);
+        try {
+          const mutation = mutator.replaceSubtree(el, tool.html);
+          recorder.record(stable, mutation, {
+            ...extras(el, undefined, tool.intent),
+            // Both halves: what it became AND what it was, so the record is a delta a reviewer can
+            // reason about rather than a one-way write.
+            structural: { op: 'replace', html: mutation.after, replacedHtml: mutation.before },
+          });
+          return ok(mutation.computed, stable);
+        } catch (err) {
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+      }
+      // One structural operation, many targets (#184). The safety properties live in
+      // src/dom/structural-bulk.ts and are preserved by construction here: resolution happens
+      // exactly ONCE (`resolveTargets` — over MAX_BULK_TARGETS it resolves nothing and the
+      // refusal says why), the applier takes the resolved array and cannot re-query, and each
+      // target is re-checked for connectedness at its own turn so a target an earlier target
+      // contained reads as SKIPPED, never as applied. Every applied mutation is recorded as its
+      // OWN edit: undo granularity stays per-element — a bulk call is a transport + resolution
+      // optimization, never a transaction.
+      case 'bulkStructural': {
+        const missing = bulkParamReason(tool);
+        if (missing) return refused(missing);
+        const { targets, note } = resolveTargets(doc, tool.selector);
+        if (note) return refused(note);
+        if (targets.length === 0) return notFound(tool.selector);
+        // `removeAttr` is the family's one property-level member — own-chrome guard only,
+        // exactly like its single-target case. The rest carry structural blast radius.
+        const guard =
+          tool.action === 'removeAttr'
+            ? contentGuard()
+            : (el: Element) => structuralTargetReason(el, 'target');
+        // Stable selectors come out of `describe`, which the applier calls at each target's own
+        // turn BEFORE mutating it — the same pre-mutation rule removeNode/unwrapNode follow, and
+        // the only moment a to-be-removed node's selector can be computed at all.
+        const stables = new Map<Element, StableSelector>();
+        const outcome = applyStructuralBulk(targets, bulkApply(tool), {
+          describe: (el) => {
+            const stable = pickUnique(el, doc);
+            stables.set(el, stable);
+            return stable.value;
+          },
+          guard,
+        });
+        for (const { element, mutation } of outcome.mutations) {
+          const stable = stables.get(element);
+          if (!stable) continue; // unreachable: describe runs before apply for every target
+          recorder.record(
+            stable,
+            mutation,
+            extras(element, bulkStructuralChange(tool.action, mutation), tool.intent),
+          );
+        }
+        const data: BulkStructuralResult = {
+          applied: outcome.applied,
+          failed: outcome.failed,
+          results: outcome.results.map((r) => ({ ...r })),
+        };
+        // Same all-or-nothing `ok` as `batch`: a partially-applied bulk must never read as
+        // success, but the per-target detail rides along either way.
+        return outcome.failed === 0
+          ? ok(data)
+          : { type: 'tool-result', ok: false, data, error: bulkError(outcome) };
+      }
+      case 'injectCss': {
+        // Page-level: no element target, so this does NOT go through the recorder (a
+        // `MutationEvent` requires a selector). It emits `stylesheet-recorded` instead, which the
+        // SW folds into `Changeset.stylesheets` — the shape a full-page overhaul actually ships.
+        let mutation: PageMutation<{ bytes: number; id: string; replaced: boolean }>;
+        try {
+          mutation = mutator.injectCss(tool.css, tool.id);
+        } catch (err) {
+          // The CSS policy refusal (@import / remote url() / legacy script channels) — a message
+          // the agent can act on, never a throw out of the turn.
+          return refused(err instanceof Error ? err.message : String(err));
+        }
+        deps.emit?.({
+          type: 'stylesheet-recorded',
+          sheet: {
+            id: mutation.computed.id,
+            css: tool.css,
+            ...(tool.intent ? { intent: tool.intent } : {}),
+          },
+        });
+        const data: InjectCssResult = {
+          bytes: mutation.computed.bytes,
+          replaced: mutation.computed.replaced,
+        };
+        return ok(data);
       }
       case 'undo': {
         try {

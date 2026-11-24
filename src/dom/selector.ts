@@ -46,6 +46,38 @@ function isGeneratedId(id: string): boolean {
   return id.split(/[-_]/).some((segment) => HASH_SEGMENT.test(segment));
 }
 
+// A RECORD-KEY id — an id whose distinguishing part is a long run of digits: `49299222` (a Hacker
+// News story id), `up_49299222`, `score_49299222`, `product-123456`. It is not GENERATED (so it is
+// still the best handle for THIS page load, and #165 F5's rule that suppressing a working id costs
+// a positional path still holds) — but it names one database row, so it will not exist on the next
+// page load and a downstream dev-agent cannot map it to anything in source.
+//
+// The distinction from `isGeneratedId`: generated ids are suppressed as candidates; volatile ids
+// are KEPT and flagged `fragile`. Threshold is a 4-digit run, which is past page-structure numbering
+// (`col-2`, `step-3`, `h1`) and into identifier territory.
+const DIGIT_RUN_SEGMENT = /^\d{4,}$/;
+
+export function isVolatileId(id: string): boolean {
+  return id.split(/[-_]/).some((segment) => DIGIT_RUN_SEGMENT.test(segment));
+}
+
+// Classes we never build a selector from: framework-generated (css-modules hash, styled/emotion,
+// Svelte scope) and our own marker classes. Everything else is an author-written NAME — the single
+// best source-mapping handle a class-free-id page still offers, and the candidate this engine was
+// missing entirely (a class-bearing element fell straight through to an nth-of-type chain).
+const GENERATED_CLASS = /^(?:css-|sc-|svelte-|emotion-|jsx-|_)|^[a-z]+_[A-Za-z0-9]{5,}$/;
+
+function isGeneratedClass(name: string): boolean {
+  if (GENERATED_CLASS.test(name)) return true;
+  return name.split(/[-_]/).some((segment) => HASH_SEGMENT.test(segment));
+}
+
+// Tags that name a page REGION rather than a box. When one of these uniquely resolves it is a real
+// structural anchor — `body`, `main`, `header` map to something a developer can find — so it is not
+// flagged fragile. Any other uniquely-resolving bare tag is still emitted (a one-step selector beats
+// a four-deep nth-of-type chain) but stays flagged: its uniqueness is incidental to this page state.
+const LANDMARK_TAGS = new Set(['html', 'body', 'main', 'header', 'footer', 'nav', 'aside', 'form']);
+
 // Separates two shadow-boundary segments in a `shadow`-strategy value. Always spaced, so it never
 // collides with the css-path child combinator (` > `) nor with an unspaced `>>>` inside a quoted
 // attribute value — `split`/`join` on this exact literal are round-trip safe.
@@ -54,6 +86,26 @@ export const SHADOW_COMBINATOR = ' >>> ';
 function attr(el: ElementLike, name: string): string | null {
   const v = el.getAttribute(name);
   return v && v.trim() !== '' ? v : null;
+}
+
+/** How many of an element's classes become candidates. A utility-CSS page carries dozens; the
+ *  first few author-written ones are the identifying ones and the rest are noise the model pays
+ *  for on every step. */
+const MAX_CLASS_CANDIDATES = 3;
+
+/** The element's author-written class names (generated/hashed ones dropped), bounded. Reads the
+ *  attribute rather than `classList` so it works on the minimal {@link ElementLike} fakes and on
+ *  SVG elements (whose `className` is an `SVGAnimatedString`, not a string). */
+function classNames(el: ElementLike): string[] {
+  const raw = attr(el, 'class');
+  if (!raw) return [];
+  const names: string[] = [];
+  for (const name of raw.split(/\s+/)) {
+    if (name === '' || isGeneratedClass(name)) continue;
+    names.push(name);
+    if (names.length === MAX_CLASS_CANDIDATES) break;
+  }
+  return names;
 }
 
 /**
@@ -73,13 +125,32 @@ function localCandidates(el: ElementLike, scope?: ParentNode): StableSelector[] 
   }
 
   if (el.id && !isGeneratedId(el.id)) {
-    candidates.push(make(`#${cssEscape(el.id)}`, 'id'));
+    // A record-key id (`#49299222`) still RESOLVES today, so it stays the ranked winner over a
+    // positional chain — but it is flagged fragile: it names one database row and is gone on the
+    // next page load. Flagging is the whole point; the changeset is supposed to map to SOURCE.
+    candidates.push(make(`#${cssEscape(el.id)}`, 'id', isVolatileId(el.id)));
   }
 
   const role = attr(el, 'role');
   const label = attr(el, 'aria-label');
   if (role && label) {
     candidates.push(make(`${tag}[role=${cssValue(role)}][aria-label=${cssValue(label)}]`, 'aria'));
+  }
+
+  // Author-written class names — the rung the ladder was missing. On a legacy table page with no
+  // data attributes and database-key ids (Hacker News), `table.itemlist` / `td.subtext` is the
+  // ONLY thing in the markup a developer can grep for. Emitted `css-path` (the SelectorStrategy
+  // enum lives in src/shared/changeset.ts and has no `class` member — see the report), non-fragile
+  // only when `scope` proves it resolves to exactly this element.
+  for (const cls of classNames(el)) {
+    const value = `${tag}.${cssEscape(cls)}`;
+    candidates.push(make(value, 'css-path', !anchors(scope, value, el)));
+  }
+
+  // A bare tag that uniquely resolves — `body`, `main`, the page's only `<form>`. One step beats
+  // `html > body:nth-of-type(1)`, which is what this engine used to emit for `<body>`.
+  if (scope && anchors(scope, tag, el)) {
+    candidates.push(make(tag, 'css-path', !LANDMARK_TAGS.has(tag)));
   }
 
   // Structural fallback (always present, fragile). Text content can't be matched by
@@ -312,8 +383,9 @@ function cssPath(el: ElementLike, scope?: ParentNode, anchor = true): string {
   let isTarget = true;
   while (cur) {
     const tag = cur.tagName.toLowerCase();
-    if (anchor && !isTarget && cur.id && !isGeneratedId(cur.id) && idAnchors(scope, cur)) {
-      segments.unshift(`#${cssEscape(cur.id)}`);
+    const stop = anchor && !isTarget ? anchorFor(cur, scope) : null;
+    if (stop) {
+      segments.unshift(stop);
       break;
     }
     const parent: ElementLike | null | undefined = cur.parentElement;
@@ -374,16 +446,39 @@ export function resolveXPath(root: ParentNode, value: string): Element | null {
   }
 }
 
-// Whether `el`'s id can anchor a css-path within `scope`: it must select `el` and nothing else.
-// No scope (the pure element-like path) trusts the id, preserving the historical behavior.
-function idAnchors(scope: ParentNode | undefined, el: ElementLike): boolean {
-  if (!scope) return true;
-  try {
-    const hits = scope.querySelectorAll(`#${cssEscape(el.id)}`);
-    return hits.length === 1 && hits[0] === (el as unknown as Element);
-  } catch {
-    return false;
+/**
+ * The selector an ANCESTOR contributes as a css-path anchor, or `null` when it offers none — the
+ * climb then continues past it emitting another `nth-of-type` step.
+ *
+ * Ranked id -> class -> landmark tag. Extending this past `id` is what turns Hacker News'
+ * `#hnmain > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(1) > table:nth-of-type(1) >
+ * tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2)` into
+ * `table.itemlist > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2)`: a shallower path
+ * hung off a NAME a developer can grep for, instead of eight positional steps from the page root.
+ * Every anchor is uniqueness-checked within `scope` (#165 F6). Without a scope only the id anchors,
+ * trusted as before (the pure {@link resolveSelector} path takes no document).
+ */
+function anchorFor(el: ElementLike, scope: ParentNode | undefined): string | null {
+  if (el.id && !isGeneratedId(el.id)) {
+    const value = `#${cssEscape(el.id)}`;
+    if (!scope || anchors(scope, value, el)) return value;
   }
+  if (!scope) return null;
+  const tag = el.tagName.toLowerCase();
+  for (const cls of classNames(el)) {
+    const value = `${tag}.${cssEscape(cls)}`;
+    if (anchors(scope, value, el)) return value;
+  }
+  return LANDMARK_TAGS.has(tag) && anchors(scope, tag, el) ? tag : null;
+}
+
+// Whether `value` selects `el` and nothing else within `scope`. Without a scope there is no
+// document to ask, so the answer is "unproven" — `false` everywhere except the id anchor, which
+// keeps its historical trust (see `anchorFor`) because the pure `resolveSelector` path has always
+// worked that way and a suppressed id costs a positional path (#165 F5/F6).
+function anchors(scope: ParentNode | undefined, value: string, el: ElementLike): boolean {
+  if (!scope) return false;
+  return resolvesToExactly(scope, value, el as unknown as Element);
 }
 
 function nthOfType(el: ElementLike): number {

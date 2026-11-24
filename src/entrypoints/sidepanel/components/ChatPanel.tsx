@@ -13,8 +13,11 @@ import { hydrate } from '../stores/settings';
 import './ChatPanel.scss';
 import { Composer } from './chat/Composer';
 import { EmptyState } from './chat/EmptyState';
+import { NewConversation } from './chat/NewConversation';
 import type { Suggestion } from './chat/SuggestionChips';
 import { Thread } from './chat/Thread';
+import { DebugLogCopy } from './DebugLogCopy';
+import { DebugLogView } from './DebugLogView';
 import { ShipBar } from './ShipBar';
 import { TaskTimeline } from './TaskTimeline';
 import { UsageMeter } from './UsageMeter';
@@ -58,13 +61,29 @@ export function ChatPanel() {
   return (
     <div class="dz-chat">
       <Show when={hasThread()} fallback={<EmptyState onSelectSuggestion={selectSuggestion} />}>
+        {/* The chat's only chrome: a slim toolbar over the thread. Only rendered once a thread
+            exists — with an empty transcript there is nothing to start fresh FROM. */}
+        <div class="dz-chat__toolbar">
+          <NewConversation />
+        </div>
         <Thread messages={messages()} />
         <TaskTimeline />
         <ShipBar />
         <UsageMeter usage={usage()} />
       </Show>
 
-      <Show when={error()}>{(msg) => <p class="dz-chat__error">{msg()}</p>}</Show>
+      {/* The debug-log buttons ride WITH the failure they explain: the moment something goes wrong
+          is the moment a trace is worth copying (or reading), and the Settings→About instances are
+          three clicks away from a user staring at this notice. */}
+      <Show when={error()}>
+        {(msg) => (
+          <p class="dz-chat__error">
+            {msg()}
+            <DebugLogCopy />
+            <DebugLogView />
+          </p>
+        )}
+      </Show>
 
       <Composer />
     </div>

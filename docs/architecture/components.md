@@ -17,7 +17,7 @@ flowchart TB
 
     page[(Target Page DOM<br/>+ page's own JS globals)]
     llm["Model provider<br/>any OpenAI-compatible endpoint (BYOK)"]
-    mcp["MCP Backend<br/>ai-dev / developerz.ai / GitHub / custom"]
+    mcp["MCP Backend<br/>developerz.ai / GitHub / custom"]
 
     user <-->|interacts| sp
     sp <-->|typed messages| sw

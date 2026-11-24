@@ -1,0 +1,95 @@
+@use '../../../../styles/tokens' as tokens;
+@use '../../../../styles/mixins' as mixins;
+
+// A file capsule, NOT the accent-tinted capsule an element reference uses. The distinction is the
+// point: `.dz-context-chip` is orange because it stands for something highlighted on the page,
+// and an attachment has no on-page counterpart to match. A neutral surface with a thumbnail (or a
+// document glyph) reads as "a file came with this message", which is exactly what it is.
+//
+// Two lines inside a 360px panel: name on top, dimensions/size under it. The name truncates; the
+// chip never widens the composer.
+.dz-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: tokens.rem(6);
+  max-width: 100%;
+  padding: tokens.rem(3);
+  padding-right: tokens.rem(2);
+  background: var(--dz-elev-hover);
+  border: tokens.$dz-border-width solid var(--dz-border-subtle);
+  border-radius: tokens.$dz-radius-sm;
+  animation: dz-chip-in var(--dz-motion-base) var(--dz-ease);
+
+  // A cut paste is the one thing about an attachment that can mislead later — the model was not
+  // shown the tail. Amber hairline, the same signal `.dz-context-chip--fragile` uses for the same
+  // class of "this is fine but know about it" fact.
+  &--truncated {
+    border-color: var(--dz-warn-line);
+  }
+
+  // Square, cropped, and drawn from the attachment's own data: URL. `object-fit: cover` so a wide
+  // desktop mockup and a tall phone mockup are the same size in the row.
+  &__thumb {
+    flex: none;
+    width: tokens.$dz-control-sm;
+    height: tokens.$dz-control-sm;
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    object-fit: cover;
+  }
+
+  // The text attachment's stand-in for a thumbnail — same box, so a mixed tray keeps one baseline.
+  &__glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: tokens.$dz-control-sm;
+    height: tokens.$dz-control-sm;
+    background: var(--dz-elev-inset);
+    border-radius: tokens.$dz-radius-xs;
+    color: var(--dz-fg-muted);
+  }
+
+  &__body {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: tokens.rem(1);
+  }
+
+  &__name {
+    @include mixins.truncate;
+    max-width: tokens.rem(132);
+    color: var(--dz-fg);
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-medium;
+    line-height: tokens.$dz-leading-snug;
+  }
+
+  &__detail {
+    @include mixins.truncate;
+    max-width: tokens.rem(132);
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-xs;
+    line-height: tokens.$dz-leading-snug;
+
+    .dz-attachment-chip--truncated & {
+      color: var(--dz-status-warning);
+    }
+  }
+
+  // Same geometry as ContextChip's dismiss, and for the same reason: an 18px button with the
+  // default 44px hit area overhangs 13px per side and would swallow the chip beside it. 28px
+  // overhangs exactly the chip's inner gap and still clears WCAG 2.5.8 AA (24px).
+  &__dismiss {
+    @include mixins.icon-button(tokens.rem(18), var(--dz-radius-pill), false, 'muted');
+    @include mixins.hit-target(tokens.$dz-control-sm);
+    font-size: tokens.$dz-font-xs;
+
+    &:hover {
+      background-color: var(--dz-wash-active);
+      color: var(--dz-fg);
+    }
+  }
+}

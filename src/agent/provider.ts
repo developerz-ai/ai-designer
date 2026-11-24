@@ -7,7 +7,15 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from './config-store';
 
-export type ModelInfo = { id: string; name: string };
+export type ModelInfo = {
+  id: string;
+  name: string;
+  /** The model's context window in tokens, when the endpoint reports one. OPTIONAL and it must
+   *  stay optional: a plain OpenAI-compatible `/models` response is only required to carry `id`,
+   *  and a gateway that omits the field must still list its models. Consumers fall back visibly
+   *  (`budget.ts` `DEFAULT_CONTEXT_WINDOW`) rather than guessing per-model. */
+  contextWindow?: number;
+};
 
 // Outcome of an auth/reachability probe. `ok:false` with an `error` is a definitive
 // rejection (e.g. 401); `ok:false` with no `error` is not-yet-valid — the endpoint was
@@ -125,9 +133,62 @@ export async function validateProvider(endpoint: ProviderEndpoint): Promise<Vali
 export async function listModels(endpoint: ProviderEndpoint): Promise<ModelInfo[]> {
   const res = await fetch(modelsUrl(endpoint.baseURL), { headers: authHeaders(endpoint.apiKey) });
   if (!res.ok) throw new Error(`Provider /models responded ${res.status}`);
-  const body = (await res.json()) as { data?: Array<{ id?: unknown; name?: unknown }> };
+  const body = (await res.json()) as { data?: unknown };
   const data = Array.isArray(body.data) ? body.data : [];
   return data
-    .filter((m): m is { id: string; name?: unknown } => typeof m.id === 'string')
-    .map((m) => ({ id: m.id, name: typeof m.name === 'string' ? m.name : m.id }));
+    .filter((m): m is Record<string, unknown> => typeof m === 'object' && m !== null)
+    .filter((m): m is Record<string, unknown> & { id: string } => typeof m.id === 'string')
+    .map((m) => {
+      const contextWindow = contextWindowOf(m);
+      return {
+        id: m.id,
+        name: typeof m.name === 'string' ? m.name : m.id,
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+      };
+    });
+}
+
+/** Every spelling of "context window" seen across OpenAI-compatible endpoints, in preference
+ *  order. There is no standard field: OpenRouter uses `context_length` (and repeats it under
+ *  `top_provider`, which can differ per routed provider and is the more accurate figure when
+ *  present), llama.cpp-style servers use `context_window` or `n_ctx`, and several gateways mirror
+ *  OpenAI and report nothing at all. Read tolerantly; never fail the listing over it. */
+function contextWindowOf(model: Record<string, unknown>): number | undefined {
+  const top = model.top_provider;
+  const nested =
+    typeof top === 'object' && top !== null
+      ? (top as Record<string, unknown>).context_length
+      : undefined;
+  for (const candidate of [
+    nested,
+    model.context_length,
+    model.context_window,
+    model.max_context_length,
+    model.n_ctx,
+  ]) {
+    // A finite positive integer only — a provider reporting 0, null, "8192" or NaN yields
+    // "unknown", which falls back visibly, rather than a window of 0 that would compact forever.
+    if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The context window for ONE model id, or `undefined` when the endpoint doesn't say. Best-effort by
+ * construction: a `/models` request that fails, times out, or omits the field resolves to
+ * `undefined` rather than throwing, because this runs on the Save-provider path and a gateway
+ * without a model catalogue must still be usable.
+ */
+export async function resolveContextWindow(
+  endpoint: ProviderEndpoint,
+  modelId: string,
+): Promise<number | undefined> {
+  try {
+    const models = await listModels(endpoint);
+    return models.find((m) => m.id === modelId)?.contextWindow;
+  } catch {
+    return undefined;
+  }
 }

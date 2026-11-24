@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -64,5 +64,44 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "css": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    },
+    "assist": {
+      "enabled": false
+    }
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
+  },
+  "yaml": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "usePlaywrightValidDescribeCallback": "off"
+          }
+        }
+      }
+    }
+  ]
 }

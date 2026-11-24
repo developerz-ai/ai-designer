@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, openRoom, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test, toolCallFunction } from './fixtures';
 
 // E2E: the #17/#20 panel surface, driven against a loaded, real Chromium.
 //   (a) the per-backend enable/disable switch on an MCP server row (#17) — the toggle flips the
@@ -78,7 +78,8 @@ function toolCallStream(toolCallId: string, name: string, args: unknown): string
           index: 0,
           id: toolCallId,
           type: 'function',
-          function: { name, arguments: JSON.stringify(args) },
+          // Routed onto the resource that owns `name` (see fixtures) — the surface is grouped.
+          function: toolCallFunction(name, args),
         },
       ],
     }) +
@@ -131,9 +132,33 @@ function stubProvider(
 // --- MCP backend stubs (mirrors mcp.spec.ts + handoff.spec.ts) --------------
 
 // Minimal MCP backend: initialize/tools-list only (test a connects, never calls a tool).
-async function stubMcpServer(context: BrowserContext, url: string, tools: string[]): Promise<void> {
-  await context.route(url, async (route) => {
+async function stubMcpServer(
+  context: BrowserContext,
+  url: string,
+  tools: string[],
+  opts: { cors?: boolean } = {},
+): Promise<void> {
+  // A backend on an origin the manifest does not grant answers the extension under CORS, as a
+  // real cross-origin server would: a preflight, and an allow-origin header on every reply.
+  const cors: Record<string, string> = opts.cors
+    ? {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': '*',
+        'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+        'access-control-expose-headers': '*',
+      }
+    : {};
+  await context.route(url, async (rawRoute) => {
+    const route = {
+      request: () => rawRoute.request(),
+      fulfill: (r: Parameters<typeof rawRoute.fulfill>[0] = {}) =>
+        rawRoute.fulfill({ ...r, headers: { ...cors, ...(r.headers ?? {}) } }),
+    };
     const req = route.request();
+    if (opts.cors && req.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, body: '' });
+      return;
+    }
     if (req.method() === 'GET') {
       await route.fulfill({ status: 405, body: '' });
       return;
@@ -429,15 +454,33 @@ test('MCP add #157: a server on a non-openrouter origin adds + connects end to e
 }) => {
   // #157 regressed silently because every add-server e2e used the openrouter.ai origin — the one
   // host the manifest statically grants — so chrome.permissions.request was never reached. This
-  // broadens that to a SECOND statically-granted origin (glitchtip.infra.developerz.ai, also in
-  // host_permissions) and asserts the full add -> connect -> tools-discovered flow on it.
+  // drives the full add -> connect -> tools-discovered flow on an origin the manifest does NOT
+  // grant (a reserved example domain, answered by the stub under CORS).
   //
-  // The native chrome.permissions.request prompt for a NOT-yet-granted host is undrivable under
-  // Playwright (see settings.spec.ts's documented carve-out), so the panel-side gesture path that
-  // is the actual #157 fix is locked by test/unit/mcp-panel-store.test.ts, not by this spec.
-  const url = 'https://glitchtip.infra.developerz.ai/e2e-mcp-157/mcp';
-  await stubMcpServer(context, url, ['task', 'kb']);
+  // The native chrome.permissions.request prompt for a not-yet-granted host is undrivable under
+  // Playwright (see settings.spec.ts's documented carve-out), so the permission API is stubbed to
+  // answer "granted" for this one origin, in the panel and in the service worker alike. The
+  // panel-side gesture path that is the actual #157 fix is locked by
+  // test/unit/mcp-panel-store.test.ts, not by this spec.
+  const url = 'https://mcp.example.com/e2e-mcp-157/mcp';
+  const pattern = 'https://mcp.example.com/*';
+  await stubMcpServer(context, url, ['task', 'kb'], { cors: true });
   const page = await openExtensionPage('sidepanel.html');
+
+  const grantFor = (origin: string) => {
+    const covered = (p?: chrome.permissions.Permissions) =>
+      (p?.origins ?? []).length > 0 && (p?.origins ?? []).every((o) => o === origin);
+    const contains = chrome.permissions.contains.bind(chrome.permissions);
+    const request = chrome.permissions.request.bind(chrome.permissions);
+    chrome.permissions.contains = ((p: chrome.permissions.Permissions) =>
+      covered(p) ? Promise.resolve(true) : contains(p)) as typeof chrome.permissions.contains;
+    chrome.permissions.request = ((p: chrome.permissions.Permissions) =>
+      covered(p) ? Promise.resolve(true) : request(p)) as typeof chrome.permissions.request;
+  };
+  await page.evaluate(grantFor, pattern);
+  let sw = context.serviceWorkers()[0];
+  if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+  await sw.evaluate(grantFor, pattern);
 
   await addMcpServer(page, 'Non-OR MCP', url);
   const item = page.locator('.dz-mcp__item', { hasText: 'Non-OR MCP' });

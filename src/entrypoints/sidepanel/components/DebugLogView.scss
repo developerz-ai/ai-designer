@@ -1,0 +1,148 @@
+@use '../../../styles/tokens' as tokens;
+@use '../../../styles/mixins' as mixins;
+
+// The trigger is deliberately shaped like `.dz-debug-log` — the two are siblings in both mount
+// points (the About column and the chat error row), and one acting differently from the other
+// would read as two unrelated features.
+.dz-debug-view__trigger {
+  display: flex;
+  align-items: center;
+  gap: tokens.$dz-space-2;
+  width: 100%;
+  padding: tokens.$dz-space-2 tokens.rem(2);
+  border: 0;
+  border-radius: tokens.$dz-radius-sm;
+  background: none;
+  color: var(--dz-fg-body);
+  font: inherit;
+  font-size: tokens.$dz-font-md;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dz-motion-fast) var(--dz-ease),
+    color var(--dz-motion-fast) var(--dz-ease);
+
+  span {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dz-icon {
+    flex: none;
+    color: var(--dz-fg-muted);
+  }
+
+  &:hover {
+    background: var(--dz-wash-hover);
+    color: var(--dz-fg-strong);
+  }
+}
+
+// Overlay chrome mirrors AuthDialog (backdrop + card), sized for READING: near-full panel width
+// and a real height, because the payload is a log, not a form.
+.dz-debug-view__backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dz-debug-view__backdrop-dismiss {
+  position: absolute;
+  inset: 0;
+  background: var(--dz-scrim);
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+.dz-debug-view {
+  @include mixins.card('card', tokens.$dz-space-4, tokens.$dz-radius-xl);
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: tokens.$dz-space-3;
+  width: calc(100% - #{tokens.$dz-space-4} * 2);
+  max-height: calc(100% - #{tokens.$dz-space-6} * 2);
+  box-shadow: var(--dz-shadow-lg);
+  outline: none;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    flex: none;
+    color: var(--dz-fg-strong);
+    font-size: tokens.$dz-font-md;
+    font-weight: tokens.$dz-weight-semibold;
+  }
+
+  &__count {
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    font-weight: tokens.$dz-weight-regular;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-1;
+    margin-left: auto;
+  }
+
+  &__action {
+    @include mixins.button-ghost(tokens.$dz-control-sm, tokens.$dz-radius-sm, false);
+
+    padding: 0 tokens.$dz-space-2;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+
+    &:not(:disabled):hover {
+      color: var(--dz-fg-strong);
+    }
+
+    &[data-state='failed'] {
+      color: var(--dz-danger);
+    }
+  }
+
+  &__close {
+    @include mixins.icon-button(tokens.$dz-control-sm, tokens.$dz-radius-sm);
+  }
+
+  // The log itself: monospace, selectable, and the ONE scrolling region of the dialog. Long
+  // provider errors wrap (`pre-wrap`) so a 600-char line never forces a horizontal pan at 360px.
+  &__log {
+    @include mixins.mono(tokens.$dz-font-sm);
+    @include mixins.scroll-area('y');
+    @include mixins.surface('inset', 'strong', tokens.$dz-radius);
+
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: tokens.$dz-space-3;
+    color: var(--dz-fg-body);
+    line-height: tokens.$dz-leading-snug;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  &__hint {
+    display: flex;
+    align-items: center;
+    gap: tokens.$dz-space-2;
+    margin: 0;
+    padding: tokens.$dz-space-3 0;
+    color: var(--dz-fg-muted);
+    font-size: tokens.$dz-font-sm;
+    line-height: tokens.$dz-leading-snug;
+
+    &.is-error {
+      color: var(--dz-status-error);
+    }
+  }
+}

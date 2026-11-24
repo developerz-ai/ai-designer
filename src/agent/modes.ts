@@ -82,7 +82,12 @@ export function resolveMode(
 
 // --- prompt addenda + tool emphasis ----------------------------------------
 
-const COPY_ADDENDUM = `**This turn is a copy/design task.** Read the reference's identity first —
+/** How every per-turn mode addendum BEGINS. Exported so `thread-view.ts`'s `userAsk` can strip
+ *  the addendum back off a persisted user message (it rides the message tail, see
+ *  `ModeGuidance.turnAddendum`) without re-typing the literal. */
+export const TURN_ADDENDUM_PREFIX = '**This turn is a ';
+
+const COPY_ADDENDUM = `${TURN_ADDENDUM_PREFIX}copy/design task.** Read the reference's identity first —
 call \`extractIdentity\` on it (role-tagged palette + type scale + spacing/radius/shadow rhythm),
 browsing it in a background tab (\`browse\`) when it's a live site — before touching the user's page.
 Then **apply that identity's palette and type to the user's page**: reuse its color roles and font
@@ -96,7 +101,7 @@ user's page at the same breakpoints and match how the reference's layout adapts,
 look. When you \`recordEdit\` a change made under emulation, set \`breakpoint\` to the device. Don't just
 imitate — call out what you improved and why.`;
 
-const DEBUG_ADDENDUM = `**This turn is a debug task.** Start diagnostics immediately: \`diagnostics\`
+const DEBUG_ADDENDUM = `${TURN_ADDENDUM_PREFIX}debug task.** Start diagnostics immediately: \`diagnostics\`
 (\`drain\` for buffered runtime/network signals, \`scan\` for a fresh a11y/layout pass) before you
 touch anything. Then observe → hypothesize → reproduce (drive the page) → capture (screenshot /
 console / network) → confirm → root-cause → fix. Navigate *with* the user, don't seize their tab.

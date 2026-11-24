@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: 1.3.14
+  BUN_VERSION: 1.4.4
 
 jobs:
   site:
@@ -33,10 +33,11 @@ jobs:
     # the hCaptcha fail-closed guard so a future weakening can't silently reship the
     # always-pass test key (#128).
     name: Site (landing)
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # GitHub-hosted runner: this repository is public.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}

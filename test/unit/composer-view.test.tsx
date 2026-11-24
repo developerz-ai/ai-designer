@@ -51,6 +51,7 @@ vi.mock('@/entrypoints/sidepanel/stores/focus', async () => {
     removeReference: vi.fn(),
     startPicker: vi.fn(async () => {}),
     stopPicker: vi.fn(async () => {}),
+    disarmPicker: vi.fn(async () => {}),
     clearFocus: vi.fn(),
     __setSelector: setSelector,
     __setPickerActive: setPickerActive,
@@ -75,6 +76,8 @@ const chat = chatStore as unknown as {
 };
 const focus = focusStore as unknown as {
   startPicker: Mock;
+  disarmPicker: Mock;
+  stopPicker: Mock;
   __setSelector: Setter<StableSelector | null>;
   __setPickerActive: Setter<boolean>;
 };
@@ -106,6 +109,8 @@ beforeEach(() => {
   chat.send.mockClear();
   chat.stopTurn.mockClear();
   focus.startPicker.mockClear();
+  focus.disarmPicker.mockClear();
+  focus.stopPicker.mockClear();
 });
 
 describe('Composer — accessible names', () => {
@@ -152,6 +157,32 @@ describe('Composer — accessible names', () => {
 
     focus.__setPickerActive(true);
     expect(attach()).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  // The bug this guards: the control RENDERED as a toggle (`aria-pressed` + `.is-active` both
+  // track `pickerActive()`) while only ever arming, so pressing it again re-armed an already
+  // armed picker. `aria-pressed="true"` on something that cannot be un-pressed is a defect for a
+  // pointer user and a lie to a screen reader.
+  it('disarms the picker when pressed while armed, and re-arms when pressed again', () => {
+    render(() => <Composer />);
+    const attach = () =>
+      screen.getByRole('button', { name: 'Pick an element to attach as context' });
+
+    fireEvent.click(attach());
+    expect(focus.startPicker).toHaveBeenCalledOnce();
+
+    focus.__setPickerActive(true);
+    fireEvent.click(attach());
+
+    expect(focus.disarmPicker).toHaveBeenCalledOnce();
+    expect(focus.startPicker).toHaveBeenCalledOnce(); // NOT re-armed
+    // `stopPicker` is "Clear" — disarming must not delete the elements already attached.
+    expect(focus.stopPicker).not.toHaveBeenCalled();
+
+    focus.__setPickerActive(false);
+    expect(attach()).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(attach());
+    expect(focus.startPicker).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -209,7 +240,15 @@ describe('Composer — send dispatch', () => {
     type('make it pop');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(chat.send).toHaveBeenCalledExactlyOnceWith('make it pop', undefined, undefined);
+    // The 4th argument is the draft's attachments (#composer-attachments) — `undefined` here,
+    // and asserted rather than ignored so an accidental empty array (which is NOT the same
+    // message on the bus) cannot slip through.
+    expect(chat.send).toHaveBeenCalledExactlyOnceWith(
+      'make it pop',
+      undefined,
+      undefined,
+      undefined,
+    );
   });
 
   // C11 — the product's signature bug: "click an element, say make this bigger" used to reach
@@ -221,7 +260,12 @@ describe('Composer — send dispatch', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(chat.send).toHaveBeenCalledExactlyOnceWith('make this bigger', undefined, PICKED);
+    expect(chat.send).toHaveBeenCalledExactlyOnceWith(
+      'make this bigger',
+      undefined,
+      PICKED,
+      undefined,
+    );
   });
 
   it('sends on Enter and clears the draft', () => {
@@ -229,7 +273,7 @@ describe('Composer — send dispatch', () => {
     type('ship it');
     fireEvent.keyDown(input(), { key: 'Enter' });
 
-    expect(chat.send).toHaveBeenCalledExactlyOnceWith('ship it', undefined, undefined);
+    expect(chat.send).toHaveBeenCalledExactlyOnceWith('ship it', undefined, undefined, undefined);
     expect(input()).toHaveValue('');
   });
 

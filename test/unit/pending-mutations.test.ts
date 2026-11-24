@@ -836,3 +836,113 @@ describe('foldMutationEvents: ground truth wins per family', () => {
     expect(spillover).toEqual([]);
   });
 });
+
+describe('createPendingMutations: onChange mirror + seed (#148 item 3)', () => {
+  type Report = {
+    tabId: number;
+    snapshot: { events: readonly MutationEvent[]; dropped: number } | null;
+    kind: string;
+  };
+  const observed = () => {
+    const reports: Report[] = [];
+    const buffer = createPendingMutations({
+      cap: 3,
+      onChange: (tabId, snapshot, kind) => reports.push({ tabId, snapshot, kind }),
+    });
+    return { reports, buffer };
+  };
+
+  it('reports append with the new snapshot (dropped folded in past the cap)', () => {
+    const { reports, buffer } = observed();
+    buffer.append(TAB, ev('setStyle', '#a'));
+    expect(reports).toEqual([
+      { tabId: TAB, snapshot: { events: [expect.any(Object)], dropped: 0 }, kind: 'append' },
+    ]);
+    for (const v of ['#b', '#c', '#d']) buffer.append(TAB, ev('setStyle', v));
+    const last = reports.at(-1);
+    expect(last?.snapshot?.events).toHaveLength(3);
+    expect(last?.snapshot?.dropped).toBe(1);
+  });
+
+  it('reports drain with the remaining state, null when the tab empties, and skips pure no-ops', () => {
+    const { reports, buffer } = observed();
+    buffer.drain(TAB); // empty buffer, zero counter — a pure no-op must not report
+    expect(reports).toEqual([]);
+    buffer.append(TAB, ev('setStyle', '#a'));
+    buffer.append(TAB, ev('setStyle', '#b'));
+    reports.length = 0;
+    buffer.drain(TAB, '#a');
+    expect(reports).toEqual([
+      { tabId: TAB, snapshot: { events: [expect.any(Object)], dropped: 0 }, kind: 'drain' },
+    ]);
+    buffer.drain(TAB, '#b');
+    expect(reports.at(-1)).toEqual({ tabId: TAB, snapshot: null, kind: 'drain' });
+  });
+
+  it('reports a counter-only drain (nonzero dropped reset by a no-match call)', () => {
+    const { reports, buffer } = observed();
+    for (const v of ['#a', '#b', '#c', '#d']) buffer.append(TAB, ev('setStyle', v)); // 1 dropped
+    reports.length = 0;
+    buffer.drain(TAB, '#zzz-no-match-and-implausible');
+    expect(reports).toEqual([
+      {
+        tabId: TAB,
+        snapshot: {
+          events: [expect.any(Object), expect.any(Object), expect.any(Object)],
+          dropped: 0,
+        },
+        kind: 'drain',
+      },
+    ]);
+  });
+
+  it('reports remove only on a hit, clear only when something was tracked', () => {
+    const { reports, buffer } = observed();
+    const miss = ev('setStyle', '#ghost');
+    expect(buffer.remove(TAB, miss)).toBe(false);
+    buffer.clear(TAB);
+    expect(reports).toEqual([]);
+    const hit = ev('setStyle', '#a');
+    buffer.append(TAB, hit);
+    reports.length = 0;
+    expect(buffer.remove(TAB, hit)).toBe(true);
+    expect(reports).toEqual([{ tabId: TAB, snapshot: null, kind: 'remove' }]);
+    buffer.append(TAB, ev('setStyle', '#b'));
+    reports.length = 0;
+    buffer.clear(TAB);
+    expect(reports).toEqual([{ tabId: TAB, snapshot: null, kind: 'clear' }]);
+  });
+
+  it('seed restores an untouched tab (trimmed to cap), never a live one, and never reports', () => {
+    const { reports, buffer } = observed();
+    buffer.seed(TAB, {
+      events: [
+        ev('setStyle', '#a'),
+        ev('setStyle', '#b'),
+        ev('setStyle', '#c'),
+        ev('setStyle', '#d'),
+      ],
+      dropped: 2,
+    });
+    expect(reports).toEqual([]); // hydration mirrors what the persister already holds
+    expect(buffer.peekGroups(TAB).flatMap((g) => g.events)).toHaveLength(3); // cap 3
+    expect(buffer.droppedCount(TAB)).toBe(2);
+
+    const live = createPendingMutations({ cap: 3 });
+    live.append(TAB, ev('setStyle', '#live'));
+    live.seed(TAB, { events: [ev('setStyle', '#stale')], dropped: 5 });
+    const groups = live.peekGroups(TAB);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.selector.value).toBe('#live'); // live events beat the mirror
+    expect(live.droppedCount(TAB)).toBe(0);
+  });
+
+  it('a seeded buffer drains exactly like a live one (the resumed-turn path)', () => {
+    const buffer = createPendingMutations();
+    buffer.seed(TAB, { events: [ev('setStyle', '#cta'), ev('setText', '#cta')], dropped: 0 });
+    const { events, rescued } = buffer.drain(TAB, '#cta');
+    expect(events).toHaveLength(2);
+    expect(rescued).toBe(false);
+    expect(buffer.peekGroups(TAB)).toEqual([]);
+  });
+});

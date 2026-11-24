@@ -29,6 +29,20 @@ export interface SessionToolDeps {
    *  `src/changeset/pending-mutations.ts`). Absent ⇒ no recorder fold (the model's Edit stands
    *  as-is) — unit tests and non-tab contexts inject nothing. */
   readonly drainRecorderEvents?: (selectorValue: string) => DrainRecorderResult;
+  /** Capture the turn tab's before/after screenshot pair for the edit being recorded (#148 —
+   *  `src/agent/edit-shots.ts` consumes the armed BEFORE slot + captures the AFTER). Called only
+   *  when the drain returned ground-truth events and the model attached no screenshots of its
+   *  own. BEST-EFFORT BY CONTRACT: `undefined` (or a rejection, tolerated defensively) attaches
+   *  nothing — a failed capture must never fail the edit. Absent ⇒ no auto-capture. */
+  readonly captureEditScreenshots?: () => Promise<EditScreenshots | undefined>;
+}
+
+/** The screenshot pair the capture port yields — `Edit.screenshots`' shape, declared structurally
+ *  so this module stays decoupled from the capture implementation (same rule as
+ *  {@link DrainRecorderResult}). */
+export interface EditScreenshots {
+  readonly before?: string;
+  readonly after?: string;
 }
 
 /** One drain of the tab's recorder buffer — the shape `PendingMutations.drain` returns (#9
@@ -62,7 +76,7 @@ const result = (data: unknown): ToolResult => ({ type: 'tool-result', ok: true, 
  * inert until the user approves it in the loop.
  */
 export function createSessionTools(deps: SessionToolDeps) {
-  const { store, persist, emit, drainRecorderEvents } = deps;
+  const { store, persist, emit, drainRecorderEvents, captureEditScreenshots } = deps;
 
   return {
     recordEdit: tool({
@@ -100,13 +114,25 @@ export function createSessionTools(deps: SessionToolDeps) {
         const dropped = drained?.dropped ?? 0;
         const { folded, spillover } =
           events.length > 0 ? foldMutationEvents(edit, events) : { folded: edit, spillover: [] };
+        // #148 auto-capture: one before/after pair per recorded Edit, only when the drain proved
+        // real mutations happened (a prose-only record has nothing to illustrate) and the model
+        // didn't attach its own shots (an explicit pair is the model's judgment — keep it).
+        // Best-effort: any failure records the edit exactly as before.
+        let screenshots: EditScreenshots | undefined;
+        if (events.length > 0 && !edit.screenshots && captureEditScreenshots) {
+          screenshots = await captureEditScreenshots().catch(() => undefined);
+        }
+        const illustrated =
+          screenshots && (screenshots.before !== undefined || screenshots.after !== undefined)
+            ? { ...folded, screenshots }
+            : folded;
         const recorded =
           dropped > 0
             ? {
-                ...folded,
-                intent: `${folded.intent} (+${dropped} earlier events dropped at buffer cap)`,
+                ...illustrated,
+                intent: `${illustrated.intent} (+${dropped} earlier events dropped at buffer cap)`,
               }
-            : folded;
+            : illustrated;
         store.record(recorded);
         for (const extra of spillover) store.record(extra);
         await persist(store.current);

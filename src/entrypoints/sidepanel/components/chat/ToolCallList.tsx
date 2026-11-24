@@ -86,12 +86,32 @@ export function toolCallStatusLabel(outcome: ToolCallOutcome): string {
 /** The calls that stay on screen while the run is COLLAPSED: whatever is in flight, plus every
  *  failure. A plain "12 actions ⌄" that hides the one call currently running (and the one that
  *  just failed) buys tidiness by hiding the only two rows anybody wants — so the collapse keeps
- *  them and folds away the eleven successful ones instead. Pure: unit-testable without Solid. */
+ *  them and folds away the eleven successful ones instead. Pure: unit-testable without Solid.
+ *
+ *  Not what a collapsed run renders on its own — see `collapsedCalls`. On a run that simply
+ *  succeeded this returns `[]`, which is correct as a filter and was a bug as a render list. */
 export function pinnedCalls(calls: ToolCallView[], streaming = false): ToolCallView[] {
   return calls.filter((call) => {
     const outcome = toolCallOutcome(call, streaming);
     return outcome === 'running' || outcome === 'failed';
   });
+}
+
+/** What a COLLAPSED run actually renders: the pinned rows, or — when nothing is running and
+ *  nothing failed — the LAST call. A group that HAS calls never renders zero rows.
+ *
+ *  The bug: the list rendered `pinnedCalls` directly while collapsed. Every outcome of a
+ *  successful run settles to `done`, so the filter returned `[]` the instant the run finished and
+ *  the group emptied itself while the user was reading it — a real report of "3 actions:
+ *  pageFacts, describe, screenshot" and "then disappears", leaving a turn whose prose was one
+ *  line looking like nothing had happened at all. The collapse itself is right (6–12 calls
+ *  expanded push the answer off the top of the thread); going blank was not. Keeping the last
+ *  call means the group always shows what it just did. Pure for the same reason as above. */
+export function collapsedCalls(calls: ToolCallView[], streaming = false): ToolCallView[] {
+  const pinned = pinnedCalls(calls, streaming);
+  if (pinned.length > 0) return pinned;
+  const last = calls.at(-1);
+  return last ? [last] : [];
 }
 
 /** Glyph for the group header: what the run as a whole is doing. Spinner while anything is in
@@ -115,8 +135,14 @@ export function ToolCallList(props: ToolCallListProps) {
   const [open, setOpen] = createSignal(false);
 
   const streaming = () => props.streaming ?? false;
+  const glyph = createMemo(() => runGlyph(props.calls, streaming()));
   const failed = createMemo(() => failedCount(props.calls, streaming()));
-  const visible = createMemo(() => (open() ? props.calls : pinnedCalls(props.calls, streaming())));
+  // Collapsed renders `collapsedCalls`, never `pinnedCalls`: the fold hides the boring rows, it
+  // does not hide the whole run. A settled successful run filtered every row away and the group
+  // went blank under the reader (see `collapsedCalls`).
+  const visible = createMemo(() =>
+    open() ? props.calls : collapsedCalls(props.calls, streaming()),
+  );
 
   return (
     <Show when={props.calls.length > 0}>
@@ -128,10 +154,10 @@ export function ToolCallList(props: ToolCallListProps) {
           onClick={() => setOpen((v) => !v)}
         >
           <Icon
-            name={runGlyph(props.calls, streaming())}
+            name={glyph()}
             size="sm"
-            spin={runGlyph(props.calls, streaming()) === 'spinner'}
-            class={`dz-tool-call-list__glyph is-${runGlyph(props.calls, streaming())}`}
+            spin={glyph() === 'spinner'}
+            class={`dz-tool-call-list__glyph is-${glyph()}`}
           />
           <span class="dz-tool-call-list__count">
             {i18n.t('toolRun.actions', props.calls.length)}
@@ -139,6 +165,9 @@ export function ToolCallList(props: ToolCallListProps) {
           <Show when={failed() > 0}>
             <span class="dz-tool-call-list__failed">· {i18n.t('toolRun.failed', failed())}</span>
           </Show>
+          {/* No "· last: screenshot" on the header: the collapsed body already keeps that exact
+              call as a row, and naming it twice in one two-line group re-adds the noise this pass
+              is cutting. */}
           <Icon
             name="chevronDown"
             size="sm"

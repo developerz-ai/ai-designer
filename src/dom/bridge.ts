@@ -44,9 +44,15 @@ function defaultNonce(): string {
 // --- client (content world) ----------------------------------------------
 
 export interface Bridge {
-  /** Call a read-only MAIN-world method; resolves with its raw `result` (the caller validates the
-   *  shape), rejects on an `ok:false` reply or a timeout (a missing / slow MAIN world). */
-  request(method: BridgeMethod): Promise<unknown>;
+  /** Call a MAIN-world method; resolves with its raw `result` (the caller validates the shape),
+   *  rejects on an `ok:false` reply or a timeout (a missing / slow MAIN world).
+   *
+   *  `params` rides alongside the method name for the parameterized methods (the page-operations
+   *  library, src/dom/page-ops). It is deliberately typed `unknown`: the ISOLATED side validated it
+   *  against the real schema before calling, and the MAIN side re-guards structurally, because the
+   *  MAIN world is the page's own and cannot be trusted to validate anything on our behalf. Must be
+   *  structured-cloneable — it crosses a `postMessage`. */
+  request(method: BridgeMethod, params?: unknown): Promise<unknown>;
   /** Remove the listener + reject any in-flight request (page teardown / tests). */
   dispose(): void;
 }
@@ -97,7 +103,7 @@ export function createBridge(options: BridgeClientOptions = {}): Bridge {
   };
   win.addEventListener('message', onMessage);
 
-  const request = (method: BridgeMethod): Promise<unknown> =>
+  const request = (method: BridgeMethod, params?: unknown): Promise<unknown> =>
     new Promise<unknown>((resolve, reject) => {
       const nonce = nextNonce();
       const timer = setTimer(() => {
@@ -105,7 +111,18 @@ export function createBridge(options: BridgeClientOptions = {}): Bridge {
         reject(new Error(`Bridge request timed out: ${method}`));
       }, timeoutMs);
       pending.set(nonce, { resolve, reject, timer });
-      const message: BridgeRequest = { source: BRIDGE_SOURCE, dir: 'req', nonce, method };
+      // `params` is an ADDITIONAL key on the wire, not part of `BridgeRequest`: that schema lives in
+      // src/shared and is not ours to change. Zod strips unknown keys rather than rejecting, so an
+      // envelope carrying params still validates on both ends today, and the server reads the field
+      // off the raw event data. When the shared schema gains `params`, this cast goes away and
+      // nothing else changes. See the report.
+      const message: BridgeRequest & { params?: unknown } = {
+        source: BRIDGE_SOURCE,
+        dir: 'req',
+        nonce,
+        method,
+        ...(params !== undefined ? { params } : {}),
+      };
       win.postMessage(message, targetOriginFor(win));
     });
 
@@ -123,8 +140,13 @@ export function createBridge(options: BridgeClientOptions = {}): Bridge {
 
 // --- server (MAIN world) --------------------------------------------------
 
-/** A read-only handler for one bridge method — returns the (non-secret) payload, sync or async. */
-export type BridgeHandler = () => unknown;
+/** A handler for one bridge method — returns the (non-secret) payload, sync or async.
+ *
+ *  `params` is whatever the client sent, UNVALIDATED. The handler owns its own structural guard
+ *  (see `isMainOp` in src/dom/page-main-ops.ts): the MAIN world runs inside the page, so a schema
+ *  check here is theatre — the page could replace the validator. The authoritative validation is on
+ *  the isolated side, before the call and again on the result. */
+export type BridgeHandler = (params: unknown) => unknown;
 
 export type BridgeHandlers = Partial<Record<BridgeMethod, BridgeHandler>>;
 
@@ -157,6 +179,9 @@ export function serveBridge(
     const parsed = BridgeRequest.safeParse(event.data);
     if (!parsed.success) return; // not a bridge request / our own `res` echo — ignore
     const { method, nonce } = parsed.data;
+    // Read `params` off the RAW message: `BridgeRequest` does not declare it (see the client), and
+    // Zod's parse would have stripped it from `parsed.data`.
+    const params = (event.data as { params?: unknown } | null)?.params;
     const handler = handlers[method];
     if (!handler) {
       reply(nonce, { ok: false, error: `Unknown bridge method: ${method}` });
@@ -165,7 +190,7 @@ export function serveBridge(
     // A handler may be sync or async and runs against the untrusted page — never let it throw into
     // the page's message loop; surface any failure as an `ok:false` reply the client rejects on.
     void Promise.resolve()
-      .then(() => handler())
+      .then(() => handler(params))
       .then((result) => reply(nonce, { ok: true, result }))
       .catch((error: unknown) => reply(nonce, { ok: false, error: String(error) }));
   };

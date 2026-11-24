@@ -1,6 +1,6 @@
 # Reference — Agent SDK (Vercel AI SDK 7 + OpenAI-compatible providers + MCP)
 
-The design agent runs on the **Vercel AI SDK** (`ai` v7) in the MV3 service worker, talks to models via any **OpenAI-compatible provider** (BYOK), and mounts **MCP** backend tools (ai-dev) for handoff. This doc pins the *current* API — the SDK renamed core pieces across v4→v5→v6→v7, so old examples mislead.
+The design agent runs on the **Vercel AI SDK** (`ai` v7) in the MV3 service worker, talks to models via any **OpenAI-compatible provider** (BYOK), and mounts **MCP** backend tools (developerz.ai) for handoff. This doc pins the *current* API — the SDK renamed core pieces across v4→v5→v6→v7, so old examples mislead.
 
 Cross-refs: [docs/idea/agent.md](../idea/agent.md) (loop + tool catalog), [docs/idea/mcp.md](../idea/mcp.md) (backends + auth), [docs/idea/handoff.md](../idea/handoff.md).
 
@@ -106,7 +106,7 @@ const setStyle = tool({
 - `handoff` and destructive structural tools are gated by the agent's **`toolApproval`** setting → the SDK pauses for the user's **Ship** click (human-in-the-loop). The agent never ships on its own (see [principles.md](../idea/principles.md)). In v7 approval is declared on the agent / `streamText` call, **not** as `needsApproval` on `tool()` — that property is deprecated.
 - Static tools (no `execute`) stop the loop — useful for a terminal `proposeChangeset` step.
 
-## MCP backend tools (ai-dev)
+## MCP backend tools (developerz.ai)
 
 At handoff (and optionally for design-time read tools), open an MCP client to the configured backend and merge its tools into the agent's `ToolSet`.
 
@@ -116,7 +116,7 @@ import { createMCPClient } from '@ai-sdk/mcp';
 const client = await createMCPClient({
   transport: {
     type: 'http',                                  // Streamable HTTP — SSE is deprecated
-    url: 'https://ai-dev.miamibeachstart.com/mcp',
+    url: 'https://mcp.developerz.ai/v1/mcp',
     headers: { Authorization: `Bearer ${token}` }, // or authProvider for OAuth/PKCE
   },
 });

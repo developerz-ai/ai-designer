@@ -1,3 +1,6 @@
+// FIRST import, deliberately: it must run before any `src/shared` schema module is
+// evaluated. See src/dom/zod-jitless.ts.
+import '@/dom/zod-jitless';
 import { defineContentScript } from '#imports';
 import { createBridge } from '@/dom/bridge';
 import { createChartReader } from '@/dom/charts';
@@ -11,6 +14,7 @@ import { createInteractor } from '@/dom/interact';
 import { createMutator } from '@/dom/mutate';
 import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
+import { createPageOps, MainOpReply } from '@/dom/page-ops/index';
 import { createPicker } from '@/dom/picker';
 import { createRouteObserver, waitForQuiescence } from '@/dom/quiescence';
 import {
@@ -114,7 +118,10 @@ export default defineContentScript({
 
     const mutator = createMutator();
     const recorder = createRecorder(emit);
-    const executor = createDomExecutor({ mutator, recorder });
+    // `emit` is handed to the executor as well as the recorder: `injectCss` is a PAGE-level op
+    // with no element target, so it cannot ride the recorder's MutationEvent path (which requires
+    // a selector) and emits `stylesheet-recorded` directly.
+    const executor = createDomExecutor({ mutator, recorder, emit });
     const interactor = createInteractor();
     const picker = createPicker(emit);
     // Alt+click pins whatever you clicked as the agent's context, with no mode to enter first
@@ -149,6 +156,36 @@ export default defineContentScript({
     const bridge = createBridge();
     disposers.push(() => bridge.dispose());
     const pageFacts = createPageFacts({ bridge });
+    // The page-operations library: derived layout, motion control, form state and the page's own
+    // design system, answered here; the MAIN-world members (framework internals, page globals) go
+    // over the same bridge. Nothing here executes agent-authored JS — the model picks an op name
+    // and the code that runs is code we bundled (src/dom/page-ops, src/dom/page-main-ops).
+    const pageOps = createPageOps({
+      doc: document,
+      win: window,
+      main: async (op) => {
+        try {
+          const raw = await bridge.request('page-op', op);
+          // The MAIN world is the page's own and cannot be trusted to validate on our behalf, so
+          // the authoritative check is HERE, on the way back.
+          const parsed = MainOpReply.safeParse(raw);
+          if (!parsed.success) {
+            return {
+              type: 'tool-result',
+              ok: false,
+              error: 'Malformed reply from the page world.',
+            };
+          }
+          return parsed.data.ok
+            ? { type: 'tool-result', ok: true, data: parsed.data.data }
+            : { type: 'tool-result', ok: false, error: parsed.data.error };
+        } catch (err) {
+          // A missing or slow MAIN world (no bridge in this frame, a page that tore it down) is a
+          // clean typed error the agent can react to, never a crash.
+          return { type: 'tool-result', ok: false, error: String(err) };
+        }
+      },
+    });
     const chartReader = createChartReader({ bridge });
     const widgetDriver = createWidgetDriver();
 
@@ -305,6 +342,9 @@ export default defineContentScript({
     function handleTool(tool: DomTool): Promise<ToolResult> {
       if (tool.type === 'screenshot') return screenshot(tool.selector);
       if (tool.type === 'diagnostics') return Promise.resolve(runDiagnostics(tool.action));
+      // `pageOp` is async: its MAIN-world members are a bridge round-trip, so it cannot go through
+      // the synchronous executor (src/dom/page-ops).
+      if (tool.type === 'pageOp') return pageOps.run(tool.op);
       return Promise.resolve(executor.exec(tool));
     }
 

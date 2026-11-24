@@ -59,6 +59,11 @@ function isConsistent(edit: Edit, event: MutationEvent): boolean {
     case 'insertNode':
     case 'moveNode':
     case 'removeNode':
+    // The restructuring kinds behave identically here: each is ONE structural op on the edit, and
+    // an edit carries at most one, so consistency is "does this edit have a structural family".
+    case 'wrapNode':
+    case 'unwrapNode':
+    case 'replaceNode':
       return edit.structural !== undefined;
   }
 }
@@ -152,8 +157,12 @@ export function stripEventFromEdit(edit: Edit, event: MutationEvent): Edit | nul
     }
     case 'insertNode':
     case 'moveNode':
-    case 'removeNode': {
-      // One edit carries ONE structural op — reverting it voids the whole family.
+    case 'removeNode':
+    case 'wrapNode':
+    case 'unwrapNode':
+    case 'replaceNode': {
+      // One edit carries ONE structural op — reverting it voids the whole family. True of the
+      // restructuring kinds too: a reverted `wrapNode` leaves no partial wrap to record.
       const { structural: _structural, ...stripped } = edit;
       return finalize(stripped);
     }
@@ -216,7 +225,10 @@ function dropEventFromEdit(edit: Edit, event: MutationEvent): Edit | null {
     }
     case 'insertNode':
     case 'moveNode':
-    case 'removeNode': {
+    case 'removeNode':
+    case 'wrapNode':
+    case 'unwrapNode':
+    case 'replaceNode': {
       const { structural: _structural, ...stripped } = edit;
       return finalize(stripped);
     }

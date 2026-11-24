@@ -30,8 +30,12 @@ The `Release` workflow (`.github/workflows/release.yml`) then:
 2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
+5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build.
 
 `workflow_dispatch` is also enabled for manual runs.
+
+Store listing content (description, screenshots, permission justifications) lives in
+[store/LISTING.md](store/LISTING.md); regenerate the screenshots with `bun run store:shots`.
 
 ## The optimized build
 
@@ -47,7 +51,47 @@ Dev builds (`bun run dev`) skip minification for fast HMR.
 
 ## CI gate
 
-Every push/PR runs `.github/workflows/ci.yml` first: `lint`, `typecheck`, `test-unit`, `test-integration`, `build` (all parallel except `build`, which needs the rest green), plus `actionlint`. A tag won't produce a usable release if these are red — fix main first.
+`.github/workflows/ci.yml` is the source of truth. It defines six jobs, and this is the whole gate:
+
+| Job | Runs | Needs |
+|--|--|--|
+| `Lint` | `bun run lint` | — |
+| `Typecheck` | `bun run postinstall` → `bun run typecheck` | — |
+| `Test (unit + integration)` | `bun run test` — ONE job, one vitest pool over unit + integration | — |
+| `Build extension` | `bun run release`, then the emitted image-worker check; uploads `extension-zip` | `Lint`, `Typecheck` |
+| `Test (e2e)` | `bun run build` → Playwright Chromium → `bun run test:e2e` | `Lint`, `Typecheck` |
+| `actionlint` | downloads actionlint 1.7.12, lints the workflows | — |
+
+This section used to name the unit suite and the integration suite as separate CI jobs, all of them
+parallel except `build`. That was wrong on both counts. The two were merged into the single
+`Test (unit + integration)` job — one `vitest run` shares a worker pool across the whole suite where
+two invocations each paid full startup — and `build` and `Test (e2e)` both gate on `Lint` and
+`Typecheck`. The workflow was right; this doc was stale. Fix main first: a tag won't produce a
+usable release while these are red.
+
+### Locally: `./bin/check`
+
+`./bin/check` is the executable mirror of the three validation jobs. The steps are `bun run verify`
+(`scripts/verify.sh`): `bun run postinstall`, then `bun run lint` and `bun run typecheck`
+concurrently, then ONE `bun run test` — followed by the advisory actionlint probe below, which is
+reported but never part of the exit status.
+
+- **Mirrored** — `Lint`, `Typecheck`, `Test (unit + integration)`. Same commands, same scope as CI.
+- **CI-only** — `Build extension` and `Test (e2e)`. `bun run gate` runs part of each locally:
+  `bun run build` then `bun run test:e2e` (`scripts/verify.sh:89-94`) — never `bun run release`,
+  so no `.zip` and no `.crx` land in `build/`. Three steps of those jobs stay CI-only: the zip,
+  the emitted image-worker check (`DZ_REQUIRE_IMAGE_WORKER_BUILD=1 bun run test
+  test/unit/image-encode-bundling.test.ts`) and the `extension-zip` upload. The gate reports the
+  job rather than claiming to reproduce it.
+- **CI-only** — `actionlint`. It is not a dependency of this repo (CI downloads the binary at job
+  time), so `bin/check` probes `PATH`: it runs and reports actionlint when present, reports it
+  skipped when absent, and never makes its absence fatal. A tool the checkout cannot install must
+  not fail the gate.
+
+`test/unit/check-pipeline.test.ts` enforces the mirror, so it cannot drift into prose: it parses the
+jobs and `run:` steps out of `ci.yml` and fails if a step of a mirrored job is missing from
+`scripts/verify.sh`, if a job is renamed, or if `bin/check`'s coverage table stops naming a job.
+Change `ci.yml` and the gate in the same commit.
 
 ## Signing key + extension ID
 
@@ -82,9 +126,10 @@ The store assigns its **own** key, so store uploads must omit the manifest `key`
 bun run zip:store   # CWS_UPLOAD=1 → build/*-chrome.zip with no `key` field
 ```
 
-Publishing is stubbed (commented) in `release.yml`. Enable it once the listing exists and
-these secrets are set: `CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`,
-`CWS_REFRESH_TOKEN`. See [STORE-SETUP.md](./STORE-SETUP.md) for how to obtain each one.
+Publishing is active in `release.yml`: its secret-guarded upload uses the configured
+`CWS_EXTENSION_ID`, `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, and `CWS_REFRESH_TOKEN` secrets
+to upload the store-specific zip with `--auto-publish`. The workflow does not expose their
+values. See [STORE-SETUP.md](./STORE-SETUP.md) for credential rotation and recovery.
 
 ## Firefox Add-ons (AMO)
 

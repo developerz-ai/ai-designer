@@ -50,11 +50,20 @@ export default defineConfig({
     ...(browser === 'chrome' && CRX_PUBLIC_KEY && !process.env.CWS_UPLOAD
       ? { key: CRX_PUBLIC_KEY }
       : {}),
+    // Firefox: a stable add-on ID (#180) — without it AMO cannot pin the listing and every
+    // signed upload would mint a new identity. Chrome ignores the block; gate it anyway so
+    // the CWS upload carries nothing AMO-shaped.
+    ...(browser === 'firefox'
+      ? { browser_specific_settings: { gecko: { id: 'designer@developerz.ai' } } }
+      : {}),
     // Localized via src/locales/en.yml (top-level flat keys → generated _locales messages).
     default_locale: 'en',
     name: '__MSG_extName__',
     description: '__MSG_extDescription__',
     // Side panel is the durable UI surface — survives page navigation.
+    // Source entry: src/entrypoints/sidepanel/index.html; this is the source config path.
+    // WXT generates the emitted path: validate build/chrome-mv3/manifest.json and its
+    // side_panel.default_path target via test/e2e/smoke.spec.ts, not a hardcoded URL.
     side_panel: {
       default_path: 'sidepanel/index.html',
     },
@@ -102,10 +111,12 @@ export default defineConfig({
       'webNavigation',
       'debugger',
       'scripting',
-    ].filter((p) => browser === 'chrome' || p !== 'sidePanel'),
+    ].filter((p) => browser === 'chrome' || (p !== 'sidePanel' && p !== 'debugger')),
     // OpenRouter is the BYOK model endpoint; the service worker calls it directly,
     // so it needs a static host grant (CORS-exempt). Page hosts stay opt-in below.
-    host_permissions: ['https://openrouter.ai/*', 'https://glitchtip.infra.developerz.ai/*'],
+    // No crash-report host: crash reporting is off (#212), so the extension asks for no grant
+    // to reach an error tracker. test/unit/public-tree.test.ts keeps it that way.
+    host_permissions: ['https://openrouter.ai/*'],
     //
     // `<all_urls>` stays OPTIONAL, not static, and that is load-bearing. Listing it under
     // `host_permissions` puts the extension into Chrome's "broad host access" class, where Chrome
@@ -128,6 +139,16 @@ export default defineConfig({
     },
   }),
   vite: () => ({
+    // `wxt prepare`/`wxt dev` import every entrypoint through vite-node. When the wxt CLI
+    // runs under Bun (Windows dev boxes without Node — Bun's .exe shims execute node-shebang
+    // bins with Bun itself), vite-node externalizes zod and native-imports it. Bun exposes
+    // `__esModule` on EVERY ESM namespace object, so vite-node's interopModule() mistakes
+    // zod's `default` export (the `z` namespace re-export) for a transpiled-CJS module and
+    // swaps the real namespace for it — which has no `z`, so `import { z } from 'zod'`
+    // arrives undefined and prepare dies in src/shared/attachments.ts. Inlining zod keeps it
+    // on vite-node's own evaluator (no native-import interop). SSR options never reach the
+    // extension build (client-only), and the cost on Node runners is one processed dep.
+    ssr: { noExternal: ['zod'] },
     build: {
       target: 'esnext',
       minify: 'esbuild',

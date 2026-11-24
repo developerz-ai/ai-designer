@@ -284,22 +284,66 @@ describe('selection', () => {
     expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
   });
 
-  it('a plain click resets a prior multi-selection', () => {
-    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+  // An ARMED picker accumulates on plain clicks. This test asserted the opposite until a user
+  // reported that attaching several elements was impossible: the shift chord that accumulated was
+  // undiscoverable, and an unmodified click DELETED a selection they had already built. Both halves
+  // of that are fixed here; shift-click still works and is still the way to toggle.
+  it('a plain click ADDS to the selection rather than resetting it', () => {
+    document.body.innerHTML =
+      '<button id="a">A</button><button id="b">B</button><button id="c">C</button>';
     const { picker, msgs } = spawn();
     picker.start();
 
-    click(byId('a'), { shiftKey: true });
-    click(byId('b')); // plain click clears multi, focuses b
+    click(byId('a')); // first click pins — reference 1
+    click(byId('b')); // plain click ADDS
+    click(byId('c')); // and again
 
-    expect(msgs.at(-1)).toMatchObject({ type: 'element-picked' });
-    expect(values(msgs).at(-1)).toEqual([]);
-    // The multi-selection is gone, but the PIN is now outlined as box 1 — it is a reference the
-    // panel shows as chip 1, and leaving it undrawn was what made every badge disagree with the
-    // chips. Exactly one box: b's.
+    expect(values(msgs).at(-1)).toEqual(['#b', '#c']);
+    // Three boxes: the pin as 1, the additions as 2 and 3.
     const boxes = shadow().querySelectorAll('.dz-box');
-    expect(boxes).toHaveLength(1);
-    expect(boxes[0]?.querySelector('.dz-idx')?.textContent).toBe('1 · button#b');
+    expect(boxes).toHaveLength(3);
+    expect(boxes[0]?.querySelector('.dz-idx')?.textContent).toBe('1 · button#a');
+  });
+
+  it('a plain click on an already-attached element toggles it off', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker } = spawn();
+    picker.start();
+
+    click(byId('a')); // pin
+    click(byId('b')); // add
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(2);
+
+    click(byId('b')); // same element again -> detached
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
+  it('a plain click on the PIN changes nothing — it is already reference 1', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker, msgs } = spawn();
+    picker.start();
+
+    click(byId('a'));
+    const after = msgs.length;
+    click(byId('a'));
+    // Routing the pin through the multi set would list the same element twice.
+    expect(msgs).toHaveLength(after);
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
+  it('does NOT accumulate on a quick pick — Alt+click stays a one-shot gesture', () => {
+    document.body.innerHTML = '<button id="a">A</button><button id="b">B</button>';
+    const { picker, msgs } = spawn();
+    // Quick pick, NOT `start()`: the gesture happens on a page the user is reading, with no armed
+    // picker, which is exactly the `active === false` branch the accumulate rule must not touch.
+    picker.enableQuickPick();
+
+    click(byId('a'), { altKey: true });
+    click(byId('b'), { altKey: true });
+
+    // Each is its own single pick, and neither leaves a persistent selection behind.
+    expect(msgs.filter((m) => m.type === 'element-picked')).toHaveLength(2);
+    expect(values(msgs).at(-1) ?? []).toEqual([]);
   });
 
   it('reflow prunes a disconnected multi-selected target and re-emits the selector set', () => {

@@ -32,7 +32,7 @@ Only on explicit **Ship**: the changeset (selectors, before/after CSS, framework
 
 ## Crash reporting
 
-If the extension crashes, an error event (exception class + stack trace only) goes to GlitchTip (developerz.ai's own crash tool, public write-only ingest key baked into the build). Every event is rebuilt from an allowlist before sending — no page text, no prompts, no selectors, no screenshots, no breadcrumbs ride along. No session replay, no performance tracing, no analytics.
+Off. The extension sends no crash reports, error events or analytics anywhere. The crash-report client in `src/shared/sentry.ts` initialises only when a build sets `WXT_SENTRY_DSN`; no build sets it, no key is in the repo, and the manifest asks for no permission to reach an error tracker. No session replay, no performance tracing.
 
 ## Permissions the extension asks for, and why
 
@@ -40,7 +40,7 @@ If the extension crashes, an error event (exception class + stack trace only) go
 |------------|-----|
 | Side panel | The UI surface — stays open across page navigation |
 | Storage | Encrypted keys + MCP connections (`local`); the in-progress turn/changeset (`session`) |
-| Scripting | Currently unused — the content script is registered statically in the manifest; slated for the least-privilege review (#23) |
+| Scripting | The service worker re-injects the extension's own shipped content scripts into http(s) tabs that were already open at install/update, and again on every worker boot — never fetching or running remote code. Tabs it cannot reach are skipped |
 | Active tab | Only touches a page after you've explicitly interacted with the extension |
 | Tabs | Screenshot capture, tracking which tab is being edited |
 | Identity | The OAuth (PKCE) consent window when you connect an MCP backend — tokens stay in the service worker |

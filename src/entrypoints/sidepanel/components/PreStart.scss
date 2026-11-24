@@ -48,11 +48,21 @@
     line-height: tokens.$dz-leading-body;
   }
 
+  // The one action on this screen. Reference metrics (the pre-Start card's "Open settings",
+  // docs/design/designer/app/app.tsx:1896): a 32px pill, a 6px gap, 14px of side padding, a
+  // 13px/1.4/600 label and the sliders glyph in front. `button-primary` now carries that
+  // label voice (13px, 1.4 leading, 600 — see _mixins.scss), so this rule owns only what
+  // the mixin cannot: the geometry, and the one-line contract.
   &__cta {
     @include mixins.button-primary(tokens.$dz-control-md, var(--dz-radius-pill));
     gap: tokens.rem(6);
     margin-top: tokens.$dz-space-2;
     padding: 0 tokens.$dz-space-5;
-    font-weight: tokens.$dz-weight-semibold;
+    // One line, always. The pill is a fixed 32px, so a label that WRAPS is a label that is
+    // CLIPPED — "Set up" on the first line, "provider" cut off by the pill's edge. The
+    // button is a flex item of a centred column, so it sizes to its content and cannot
+    // squeeze the label; `nowrap` is what keeps the whole string on one line at the 360px
+    // panel width.
+    white-space: nowrap;
   }
 }

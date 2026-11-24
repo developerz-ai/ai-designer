@@ -4,7 +4,7 @@ Chrome extension. **Talk to an agent, redesign the live page in real time, then 
 
 Pitch: **Design in the page. Ship the real code.**
 
-You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([developerz.ai](https://developerz.ai/mcp)) that makes the real code change and opens a PR.
+You open any site — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, the agent distills the visual changes into a structured spec and hands it off over **MCP** to a dev-agent backend ([developerz.ai MCP endpoint](https://mcp.developerz.ai/v1/mcp)) that makes the real code change and opens a PR.
 
 Two surfaces, one extension: a **chat** (design conversation) and **MCP management** (where the work actually lands).
 
@@ -35,7 +35,7 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
               └─► changeset (selectors, styles, screenshots, intent)
                      │ MCP
                      ▼
-              ai-dev / developerz.ai ─► real code edit ─► PR ─► CI
+              developerz.ai ─► real code edit ─► PR ─► CI
 ```
 
 - **Design loop.** In-browser agent edits the real DOM/CSS. Nothing persists — it's a sandbox over the page you're looking at.
@@ -51,7 +51,7 @@ You ─chat─► Agent ─DOM tools─► live page (ephemeral)
 | UI | [SolidJS](https://www.solidjs.com/) — chat + MCP panel, prebuilt static bundle |
 | Agent | [Vercel AI SDK](https://github.com/vercel/ai) loop in the extension, BYOK |
 | Inference | [OpenRouter](https://openrouter.ai/docs) — model-agnostic |
-| Handoff | [MCP](https://modelcontextprotocol.io/) → [ai-dev](https://ai-dev.miamibeachstart.com/mcp) / developerz.ai |
+| Handoff | [MCP](https://modelcontextprotocol.io/) → [developerz.ai](https://developerz.ai) |
 | Build | [Bun](https://bun.sh/) + TypeScript + [WXT](https://wxt.dev/) (or CRXJS) |
 | Tests | [Vitest](https://vitest.dev/) unit + integration, Playwright E2E on a loaded extension |
 
@@ -59,4 +59,6 @@ See [testing.md](testing.md) for the test pyramid and [ui.md](ui.md) for the Sol
 
 ## Status
 
-Spec phase. No code yet. v0 target: live-edit + chat, no handoff. v1: full MCP handoff to ai-dev.
+**v1.1.0 shipped.** The extension provides side-panel chat, live DOM/CSS editing with recorded changesets, and user-triggered MCP handoff to developerz.ai for a real code change and PR. When no backend is connected, Ship downloads a Markdown handoff report instead.
+
+Planned work continues in the [roadmap](roadmap.md).

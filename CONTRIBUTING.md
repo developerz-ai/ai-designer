@@ -13,7 +13,7 @@ Load the extension:
 
 1. `chrome://extensions` → enable **Developer mode**.
 2. **Load unpacked** → select `build/chrome-mv3`.
-3. Open the side panel, add your **OpenRouter** key (BYOK, stored locally), connect an MCP backend (ai-dev).
+3. Open the side panel, add your **OpenRouter** key (BYOK, stored locally), connect an MCP backend (developerz.ai).
 
 `just` users: `just dev`, `just verify`, `just build` (see `justfile`).
 
@@ -51,6 +51,6 @@ Full detail: `CLAUDE.md`, `docs/architecture/`, `.claude/skills/`.
 ## Commits & PRs
 
 - Conventional-ish: `feat:`, `fix:`, `docs:`, `chore:`, `test:`.
-- PR must be green (CI runs lint, typecheck, unit, integration, build in parallel on Blacksmith 2vcpu).
+- PR must be green (CI runs lint, typecheck, unit, integration, build in parallel on GitHub-hosted `ubuntu-latest`).
 - Keep PRs small + SRP. Never commit keys/tokens — BYOK.
 - Never force-push shared branches.

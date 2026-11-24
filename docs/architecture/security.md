@@ -67,7 +67,7 @@ Permissions are pinned to the minimum each feature needs; every retained entry g
 
 - `activeTab` is the only static host-grant permission — the content script runs against the user's current tab on explicit action, never via a blanket grant.
 - `<all_urls>` is **opt-in only**, declared in `optional_host_permissions` and granted per-origin on demand. There is no static broad host grant.
-- `scripting` was **removed** — zero `chrome.scripting.*` references remain in `src/`; the content script is auto-injected via the manifest, not programmatically.
+- `scripting` is retained for **service-worker-only reinjection** of manifest-declared shipped files into accessible existing HTTP(S) tabs on install/update and worker boot. It adds no host grant and permits no remote code; inaccessible tabs are skipped best-effort.
 
 ### Retained permissions
 
@@ -80,13 +80,13 @@ Permissions are pinned to the minimum each feature needs; every retained entry g
 | `identity` | `chrome.identity.{launchWebAuthFlow,getRedirectURL}` — OAuth 2.0 PKCE for MCP backends; tokens never touch the page. | Service worker |
 | `webNavigation` | `chrome.webNavigation.getAllFrames` — frame-tree enumeration so the agent can target a specific iframe. | Service worker |
 | `debugger` | `chrome.debugger.*` (attach / sendCommand / detach) — CDP `Emulation.setDeviceMetricsOverride` for true device emulation. | Service worker |
+| `scripting` | `chrome.scripting.executeScript` — reinject manifest-declared shipped files into accessible existing HTTP(S) tabs on install/update and worker boot (including unpacked reloads). Uses each declaration's execution world; no remote code or additional host access. | Service worker |
 
 ### Host permissions
 
 | Grant | Why | How granted |
 |-------|-----|-------------|
 | `https://openrouter.ai/*` | BYOK model endpoint; the service worker calls it directly (CORS-exempt). | Static (`host_permissions`) — service worker only |
-| `https://glitchtip.infra.developerz.ai/*` | Crash ingest (GlitchTip, error events only). | Static (`host_permissions`) — service worker only |
 | `<all_urls>` | Broad page access when the user wants it. | **Opt-in** (`optional_host_permissions`); per-origin, revocable |
 
 MCP connection is opt-in and per-backend; tokens are revocable from the MCP management UI. See [privacy.md](privacy.md) Permissions, [mv3-worlds.md](mv3-worlds.md).
@@ -101,6 +101,7 @@ MCP connection is opt-in and per-backend; tokens are revocable from the MCP mana
   session, `UsageMeter`) so spend stays visible; tokens are the unit because a BYOK endpoint has no
   universal price. Per-turn step/token budgets force-stop a runaway turn (`src/agent/budget.ts`), and
   network/tool errors surface as a chat bubble rather than crashing the service worker (#25).
-- Error telemetry is first-party only: self-hosted GlitchTip via `@sentry/browser`
-  (`src/shared/sentry.ts`, breadcrumbs/events scrubbed) — no third-party analytics ships, guarded by
+- No error telemetry ships: crash reporting is off (`src/shared/sentry.ts` initialises only when a
+  build sets `WXT_SENTRY_DSN`, and none does; the manifest grants no error-tracker host) — no
+  third-party analytics ships either, guarded by
   `test/unit/no-third-party-telemetry.test.ts` (the #25 live-test greps the built bundle too).

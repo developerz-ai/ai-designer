@@ -70,7 +70,7 @@ reviews:
 
     - path: ".github/workflows/**"
       instructions: |
-        - Runners must be blacksmith-2vcpu-ubuntu-2404 unless a job genuinely needs more.
+        - Runners must be GitHub-hosted `ubuntu-latest` (public repo). Flag any runner label that is not GitHub-hosted, including self-hosted and third-party runner providers.
         - Pin third-party actions by tag.
 
     - path: "test/integration/**"
@@ -79,7 +79,7 @@ reviews:
 
   # Automatic reviews are ON, mirroring the developerz.ai monorepo. CodeRabbit
   # now reviews every PR to main alongside the agent-pipeline gate
-  # (.agent-pipeline.json merge.reviewGate: "ci-only" — CI-green + watchdog
+  # (.dz/pipeline/agent-pipeline.json merge.reviewGate: "ci-only" — CI-green + watchdog
   # deep-review + per-batch human authorization token). Skips WIP/DRAFT titles
   # and drafts. Set enabled: false to fall back to on-demand `@coderabbitai review`.
   auto_review:

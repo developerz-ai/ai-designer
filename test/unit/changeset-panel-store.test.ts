@@ -16,6 +16,7 @@ const changesetA: Changeset = {
   createdAt: '2026-07-14T00:00:00.000Z',
   sessionId: '11111111-1111-4111-8111-111111111111',
   edits: [],
+  stylesheets: [],
 };
 
 describe('reduceChangeset', () => {

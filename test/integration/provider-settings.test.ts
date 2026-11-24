@@ -2,6 +2,7 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { budgetForPreset } from '@/agent/budget';
 import {
   getProviderConfig,
   hasProviderKey,
@@ -12,6 +13,7 @@ import { encryptSecret } from '@/agent/key-store';
 import { MISSING_KEY_ERROR, validateProvider } from '@/agent/provider';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import {
+  DEFAULT_BUDGET_PRESET,
   GetProviderResult,
   type PanelToSw,
   PanelToSw as PanelToSwSchema,
@@ -80,10 +82,13 @@ async function handleSaveProvider(config: PanelToSw & { type: 'save-provider' })
 }
 
 // Mirrors background.ts's `case 'get-provider'` — apiKey is stripped before it ever
-// reaches the schema, not merely omitted by the schema.
+// reaches the schema, not merely omitted by the schema. `budgetPreset` rides the echo
+// (Settings hydrates the saved tier from it); absent on a pre-preset config.
 async function handleGetProvider() {
   const cfg = await getProviderConfig();
-  const config = cfg ? { baseURL: cfg.baseURL, model: cfg.model, label: cfg.label } : undefined;
+  const config = cfg
+    ? { baseURL: cfg.baseURL, model: cfg.model, label: cfg.label, budgetPreset: cfg.budgetPreset }
+    : undefined;
   return GetProviderResult.parse({ ok: true, config, hasKey: await hasProviderKey() });
 }
 
@@ -286,5 +291,58 @@ describe('integration: legacy OpenRouter install migrates before any settings RP
     expect(getResult.config).toEqual({ baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' });
     const all = await chrome.storage.local.get(null);
     expect(Object.keys(all)).not.toContain('openrouter-key'); // still retired, just not applied
+  });
+});
+
+// The user-configurable turn budget rides the same config record end to end: the preset is
+// panel-chosen, crosses the bus inside `save-provider`, persists plaintext beside `model`, and
+// echoes back on `get-provider` for Settings to hydrate. The preset → ceilings mapping itself is
+// exercised where the turn consumes it (test/unit/budget.test.ts + test/integration/
+// agent-loop.test.ts); here we prove PERSISTENCE + the back-compat default resolution that
+// background.ts's user-message case applies (`cfg.budgetPreset ?? DEFAULT_BUDGET_PRESET`).
+describe('integration: the budget preset persists with the provider config', () => {
+  it('round-trips save-provider(budgetPreset) -> storage -> get-provider', async () => {
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    stubModelsEndpoint();
+
+    const inbound = PanelToSwSchema.parse({
+      type: 'save-provider',
+      config: {
+        baseURL: OPENROUTER_BASE_URL,
+        apiKey: 'sk-or-v1-budget',
+        model: 'moonshotai/kimi-k3',
+        budgetPreset: 'high',
+      },
+    });
+    if (inbound.type !== 'save-provider') throw new Error('unreachable');
+    await handleSaveProvider(inbound);
+
+    // Persisted plaintext beside the model (not in the key-store — a tier name is not a secret).
+    expect((await getProviderConfig())?.budgetPreset).toBe('high');
+    // …and echoed to the panel so Settings hydrates the saved tier.
+    expect((await handleGetProvider()).config?.budgetPreset).toBe('high');
+  });
+
+  it('accepts a pre-preset config without the field, resolving it to the unlimited default', async () => {
+    installChromeFakes({ grantedOrigins: ['https://openrouter.ai/*'] });
+    stubModelsEndpoint();
+
+    // A config exactly as an old install persisted it — no budgetPreset field anywhere.
+    await handleSaveProvider({
+      type: 'save-provider',
+      config: { baseURL: OPENROUTER_BASE_URL, apiKey: 'sk-old', model: 'openrouter/auto' },
+    });
+
+    const cfg = await getProviderConfig();
+    expect(cfg).not.toBeNull();
+    expect(cfg?.budgetPreset).toBeUndefined(); // stored without the field, still validates
+
+    // The exact resolution background.ts applies when it builds the turn's limits: absent ⇒
+    // the shipped default ('unlimited') ⇒ no ceilings — every cap is Infinity, and the detected
+    // context window is NOT part of what the preset supplies.
+    const limits = budgetForPreset(cfg?.budgetPreset ?? DEFAULT_BUDGET_PRESET);
+    expect(limits.maxTokens).toBe(Number.POSITIVE_INFINITY);
+    expect(limits.maxSteps).toBe(Number.POSITIVE_INFINITY);
+    expect('contextWindow' in limits).toBe(false);
   });
 });

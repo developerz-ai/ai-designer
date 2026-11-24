@@ -85,6 +85,11 @@ const REGISTRY = {
   add: [p('M8 3.5v9M3.5 8h9')],
   back: [p('M12.5 8H3.5M3.5 8 7.1 4.4M3.5 8l3.6 3.6')],
   eye: [p('M1.8 8S4.4 4 8 4s6.2 4 6.2 4-2.6 4-6.2 4-6.2-4-6.2-4Z'), c(8, 8, 1.9)],
+  // The composer's "attach an image" affordance. A framed picture, NOT a paperclip: the button
+  // next to it is the element picker's crosshair, and two generic "attach" glyphs side by side
+  // would say nothing about which one takes a file. `report` (a page with text lines) stays the
+  // glyph for a text attachment, so the two kinds are recognisable apart in the tray.
+  image: [rect(2, 3, 12, 10, 1.5), c(5.9, 6.3, 1.1), p('M2.4 11.7 6 8.4l2.2 2 2.4-2.6 3 3.3')],
   undo: [p('M5.6 4 2.6 7l3 3'), p('M2.6 7h5.6a3.4 3.4 0 1 1 0 6.8H5.6')],
   redo: [p('M10.4 4 13.4 7l-3 3'), p('M13.4 7H7.8a3.4 3.4 0 1 0 0 6.8h2.6')],
   repo: [

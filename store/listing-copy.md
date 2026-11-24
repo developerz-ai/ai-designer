@@ -19,7 +19,7 @@ Chat with an agent in the side panel. It edits the page you're on — styles,
 text, attributes, classes, whole nodes — live in front of you. Every accepted
 edit lands in a reviewable changeset with before/after values, stable
 selectors, and framework hints. Undo anything. When it looks right, hit Ship:
-the changeset goes over MCP to your ai-dev backend, which makes the real code
+the changeset goes over MCP to your developerz.ai backend, which makes the real code
 change and opens the PR. No MCP backend? You get a Markdown report to paste
 into any coding agent instead.
 
@@ -29,7 +29,7 @@ WHAT IT DOES
   text — never brittle nth-child chains)
 - Diff review: every edit with before/after values, undo/redo, curation
 - Screenshots, responsive breakpoints, and design-token reads for the agent
-- Ship over MCP to ai-dev/developerz.ai, or download a Markdown report
+- Ship over MCP to developerz.ai, or download a Markdown report
 
 PRIVACY BY DESIGN
 - BYOK: your own model key, stored encrypted in your browser, never resold

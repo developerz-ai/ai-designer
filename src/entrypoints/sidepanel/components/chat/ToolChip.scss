@@ -4,10 +4,14 @@
 // One tool call as a quiet card — the counter-grammar to the unboxed prose it sits
 // under, which is what lets a reader skip a whole run at a glance or drop into it.
 //
-// The row is a fixed grammar, left to right: status glyph · mono tool name · kind badge
-// · truncated summary · chevron (only when there is a selector to reveal). Everything
-// except the summary is intrinsically sized, so the summary is the single part that
-// absorbs the 360px width — nothing else can push the row wide.
+// The row is a fixed grammar, left to right: status glyph · mono tool name · truncated
+// summary · chevron (only when there is a selector to reveal). Everything except the
+// summary is intrinsically sized, so the summary is the single part that absorbs the
+// 360px width — nothing else can push the row wide.
+//
+// What the row does NOT spend width on: the kind ("read"/"act"/"info"). It reads the
+// same on nearly every row of a run, so it bought no distinction and cost the tool name
+// its prominence. It stays in the markup, hidden — see `&__kind` below.
 .dz-tool-chip {
   @include mixins.surface('card', true, tokens.$dz-radius-sm);
   overflow: hidden;
@@ -56,17 +60,13 @@
     color: var(--dz-fg);
   }
 
-  // read / act / info. An inset well rather than a coloured badge — the kind is
-  // metadata, and three more hues down a twelve-row list is noise. Lowercase, because
-  // uppercasing a three-letter word at 11px costs legibility and buys nothing.
+  // read / act / info — announced, not displayed. As a visible inset badge it repeated
+  // on every row of a run without ever changing what the reader would do, and a user
+  // reading a settled run saw "screenshot info done" where only "screenshot" carried
+  // information. Hidden rather than deleted: colour and glyph alone are not a
+  // distinction (WCAG 1.4.1), so the word stays in the accessibility tree.
   &__kind {
-    flex: none;
-    padding: tokens.rem(1) tokens.$dz-space-1;
-    background: var(--dz-elev-inset);
-    border-radius: tokens.$dz-radius-xs;
-    color: var(--dz-fg-muted);
-    font-size: tokens.$dz-font-xs;
-    line-height: tokens.$dz-leading-snug;
+    @include mixins.visually-hidden;
   }
 
   &__summary {

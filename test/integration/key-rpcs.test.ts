@@ -78,13 +78,15 @@ const handlers = {
     if (valid) await setOpenRouterKey(msg.text);
     return SaveKeyResult.parse({ ok: true, valid, error });
   },
-  // `case 'set-model'`
+  // `case 'set-model'` — carries `budgetPreset` over (a per-USER cost choice, not per-model
+  // metadata), while `contextWindow` deliberately resets (it IS per-model).
   async setModel(msg: PanelToSw & { type: 'set-model' }) {
     const cfg = await getProviderConfig();
     await saveProviderConfig({
       baseURL: cfg?.baseURL ?? OPENROUTER_BASE_URL,
       label: cfg?.label,
       model: msg.model,
+      budgetPreset: cfg?.budgetPreset,
     });
     return OkResult.parse({ ok: true });
   },
@@ -197,6 +199,21 @@ describe('integration: list-models / set-model through the real provider + confi
     expect(result.models?.map((m) => m.id)).toContain('openrouter/auto');
     // The saved model is now the active config's model.
     expect((await getProviderConfig())?.model).toBe('openrouter/auto');
+  });
+
+  it('set-model preserves the saved budget preset — a model quick-switch never resets the tier', async () => {
+    stubModelsFetch();
+    await saveProviderConfig({
+      baseURL: OPENROUTER_BASE_URL,
+      model: 'openrouter/auto',
+      budgetPreset: 'max',
+    });
+
+    await handlers.setModel({ type: 'set-model', model: 'anthropic/claude-3.5-sonnet' });
+
+    const cfg = await getProviderConfig();
+    expect(cfg?.model).toBe('anthropic/claude-3.5-sonnet');
+    expect(cfg?.budgetPreset).toBe('max');
   });
 
   it('surfaces a non-2xx /models as an error from list-models', async () => {

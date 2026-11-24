@@ -1,0 +1,54 @@
+@use '../../../styles/tokens' as tokens;
+
+// Deliberately shaped like `.dz-about__link`, not like a form button: it lives in that same column
+// beside "Report an issue", and a filled button there would read as the section's primary action
+// when the links around it are the point. Same row metrics, same resting colour — it is a sibling
+// that happens to act instead of navigate.
+.dz-debug-log {
+  display: flex;
+  align-items: center;
+  gap: tokens.$dz-space-2;
+  width: 100%;
+  padding: tokens.$dz-space-2 tokens.rem(2);
+  border: 0;
+  border-radius: tokens.$dz-radius-sm;
+  background: none;
+  color: var(--dz-fg-body);
+  font: inherit;
+  font-size: tokens.$dz-font-md;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dz-motion-fast) var(--dz-ease),
+    color var(--dz-motion-fast) var(--dz-ease);
+
+  span {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dz-icon {
+    flex: none;
+    color: var(--dz-fg-muted);
+  }
+
+  &:hover:not(:disabled) {
+    background: var(--dz-wash-hover);
+    color: var(--dz-fg-strong);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+
+  // Confirmation reads on the label itself. Success is intentionally quiet — the copy worked, that
+  // is not news; a failure is, because it means the paste the user is about to make would be empty.
+  &[data-state='copied'] {
+    color: var(--dz-fg-strong);
+  }
+
+  &[data-state='failed'] {
+    color: var(--dz-danger);
+  }
+}

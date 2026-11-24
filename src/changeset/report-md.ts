@@ -14,6 +14,8 @@
 // `renderResponsiveFindings` / `renderResponsiveShots` are the pieces it calls for the per-breakpoint
 // responsive section.
 
+import { renderChangeset, renderStylesheet } from '@/changeset/changeset-md';
+import type { Changeset } from '@/shared/changeset';
 import type {
   CheckResponsiveResult,
   IdentityColor,
@@ -159,7 +161,7 @@ export function renderResponsiveShots(shots: readonly ResponsiveShot[]): string 
  * before/after screenshots. Every section is omitted when its list is empty, so a sparse report
  * never renders a bare heading. Deterministic (same `Report`, same Markdown) — the golden-file unit.
  */
-export function toMarkdown(report: Report): string {
+export function toMarkdown(report: Report, changeset?: Changeset): string {
   const sections: string[] = ['# Design review'];
 
   const summary = report.summary.trim();
@@ -174,6 +176,11 @@ export function toMarkdown(report: Report): string {
     bulletSection('Pros', report.pros),
     bulletSection('Cons', report.cons),
     bulletSection('Recommendations', report.recommendations),
+    // The edits themselves — the half of the brief that is mechanically true rather than
+    // model-authored, and the half a coding agent can apply. Placed after the prose (which frames
+    // the intent) and before the references. Absent when the caller ships prose only.
+    changeset ? renderStylesheet(changeset) : '',
+    changeset ? renderChangeset(changeset) : '',
     linkSection(report.links),
     imageSection(report.images),
   ]) {

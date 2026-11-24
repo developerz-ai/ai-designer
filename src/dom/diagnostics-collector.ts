@@ -97,6 +97,7 @@ export function createDiagnosticsCollector(opts: CollectorOptions = {}): Collect
 
   const push = (signal: CollectorSignal): void => {
     if (disposed) return;
+    if (isOwnSignal(signal)) return; // our own noise is never a finding about the user's page
     buffer.push(signal);
     if (buffer.length > maxBuffer) buffer.splice(0, buffer.length - maxBuffer); // evict oldest
     try {
@@ -141,6 +142,38 @@ export function createDiagnosticsCollector(opts: CollectorOptions = {}): Collect
       }
     },
   };
+}
+
+// --- own-noise filter -----------------------------------------------------
+
+// Extension URL schemes. Anything a signal attributes to one of these came from US, not from the
+// page under review.
+const OWN_ORIGIN = /(?:chrome|moz|safari-web)-extension:\/\//i;
+
+/**
+ * Whether a signal describes the EXTENSION rather than the page. The collector hooks the isolated
+ * world's `console` + `window` — which is our own world — so an uncaught throw anywhere in
+ * `src/dom` or the content entrypoint arrives as an `error` event carrying a
+ * `chrome-extension://…/content-scripts/content.js` filename, and would be handed to the agent as
+ * a finding about the user's site. The agent would then dutifully report our bug as their bug.
+ *
+ * Checked on `source`/`stack`/`url` (where a real attribution lives) and on console text (an
+ * extension URL in the message body is the same tell). Deliberately NOT a name/prefix match on our
+ * own log strings: a page is free to print anything, and the URL scheme is the only attribution a
+ * page cannot forge into or out of.
+ */
+export function isOwnSignal(signal: CollectorSignal): boolean {
+  const fields: unknown[] =
+    signal.kind === 'exception'
+      ? [signal.source, signal.stack, signal.message]
+      : signal.kind === 'network'
+        ? [signal.url]
+        : signal.kind === 'console'
+          ? [signal.text]
+          : signal.kind === 'rejection'
+            ? [signal.reason]
+            : [];
+  return fields.some((f) => typeof f === 'string' && OWN_ORIGIN.test(f));
 }
 
 // --- signal shaping (pure) ------------------------------------------------

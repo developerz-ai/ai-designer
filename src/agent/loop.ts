@@ -11,6 +11,7 @@
 
 import {
   type Instructions,
+  InvalidResponseDataError,
   isStepCount,
   type LanguageModel,
   ToolLoopAgent,
@@ -23,7 +24,7 @@ import type {
   SwToPanel,
   ToolResult,
 } from '@/shared/messages';
-import { classifyTool } from '@/shared/overlay-step';
+import { classifyTool, operationOf } from '@/shared/overlay-step';
 import {
   type BudgetLimits,
   type BudgetReason,
@@ -32,7 +33,7 @@ import {
   usageOf,
 } from './budget';
 import type { ChatMessage } from './session';
-import { pruneInFlightImages } from './thread-compact';
+import { capInFlightResults, compactToWindow, pruneInFlightImages } from './thread-compact';
 import { createInvalidToolFallback, createRepairToolCall } from './tool-repair';
 import { type BrowseDispatch, createBrowseTool } from './tools/browse';
 import { type ComplexSiteDispatch, createComplexSiteTools } from './tools/complex-site';
@@ -40,14 +41,43 @@ import { createDescribeTools, type DescribeToolDeps } from './tools/describe';
 import { createDomTools, type DomDispatch } from './tools/dom';
 import { createIdentityTool, type IdentityDispatch } from './tools/identity';
 import { createInteractTools, type InteractDeps } from './tools/interact';
+import { providerSafeToolSet } from './tools/provider-schema';
+import { createResourceTools, type NamedTools } from './tools/resources';
 import { createResponsiveTools, type ResponsiveToolDeps } from './tools/responsive';
 import { createTabsTools, type TabsToolDeps } from './tools/tabs';
 import { createVisionTools, type VisionToolDeps } from './tools/vision';
+import { evictStaleVision } from './vision-evict';
 
 // Shown alongside a screenshot fed back to the model, so it reads the image as its own result
 // to judge and refine — the vision self-correction loop (docs/architecture/agent-loop.md).
 const SCREENSHOT_HINT =
   'Screenshot of the current result. Inspect it and refine if it does not yet match the intent.';
+
+/**
+ * Shown when a turn ran to a natural finish having produced NOTHING — no prose, no tool call.
+ *
+ * This is the half of "the model returned no output" the AI SDK does not raise
+ * `AI_NoOutputGeneratedError` for. That error fires only when the stream carried no completed step
+ * at all; an OpenAI-compatible gateway that answers `200` and then closes still yields a finish
+ * chunk, so a step IS recorded and `streamText` reports a clean, empty finish. Three real gateway
+ * replies land here — an empty `text/event-stream` body, a JSON error object served under the
+ * event-stream content type, and a chunk carrying `choices: []` — and all three are how such a
+ * gateway says "that model id resolved to no provider" without an HTTP error to trip the SDK's
+ * retry. Left unnamed, the turn returned `done` with an empty reply and the panel showed the agent
+ * shrugging: a config bug wearing the costume of a lazy model.
+ */
+export const EMPTY_TURN_ERROR =
+  'The model returned nothing — no reply and no tool calls. That usually means the model id is ' +
+  'not available on this provider, or the provider dropped the request. Check the model in ' +
+  'Settings, then try again.';
+
+/** The `@ai-sdk/openai-compatible` refusal for a stream that closed with no finish reason. */
+function isUnfinishedStream(error: unknown): boolean {
+  return (
+    InvalidResponseDataError.isInstance(error) &&
+    error.message === 'Response stream ended without a finish reason.'
+  );
+}
 
 /** How the agent turn ended. `budget` = force-stopped on the step/token ceiling; `aborted` =
  *  the caller's signal fired (user Stop / superseded turn); `error` = the run threw. */
@@ -158,7 +188,35 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
     // `pruneInFlightImages` rewrites each aged-out image exactly ONCE and is otherwise
     // identity-stable — so the prompt prefix (what OpenAI-compatible caching keys on) changes
     // only at a real aging event, not on every step.
-    prepareStep: ({ messages }) => ({ messages: pruneInFlightImages(messages) }),
+    // …and the TEXT half, which is the one that actually killed the HN turn. `TOOL_TEXT_CAP`
+    // bounded a result only when the turn was PERSISTED — one moment too late. An `a11ySnapshot`
+    // has no aggregate ceiling of its own (`src/dom/read.ts`: depth 12 × 60 children per node,
+    // measured at ~22k chars on a Hacker-News-shaped page), and every step re-sends the whole
+    // transcript, so one such read is re-billed on every remaining step: cost quadratic in result
+    // size. `capInFlightResults` clips each oversized result ONCE, with a marker that names how to
+    // get the rest, and is identity-stable otherwise — same prefix-cache property as the image
+    // pruning it composes with.
+    // …and the one-shot budget warning. The observed failure was not that the model lacked good
+    // judgement — it announced an audit-first plan and executed it faithfully — but that nothing
+    // ever told it the plan had become unaffordable, so "stop and summarize" arrived only as a
+    // fait accompli with zero edits made. `TurnBudget.warning()` returns the nudge exactly once,
+    // when spend crosses `BUDGET_WARN_FRACTION`, leaving room to still act.
+    // …and, as a LAST resort, proportional compaction against the model's real context window.
+    // Order here is cheapest-and-least-lossy first, deliberately: pruning old screenshots and
+    // clipping oversized results both keep every turn intact and preserve the cached prefix, so
+    // they run first and usually suffice. `compactToWindow` fires only if the transcript is still
+    // approaching the window, and it costs a prefix invalidation (see its own doc comment) — the
+    // right trade against a hard context-overflow error, but not one to pay a step early.
+    prepareStep: ({ messages }) => {
+      // `evictStaleVision` first (step-age: a lone screenshot from 3+ steps back becomes a stub
+      // even when the set-count window never fills), then the set-count and text caps as before.
+      const trimmed = capInFlightResults(pruneInFlightImages(evictStaleVision(messages)));
+      const fitted = compactToWindow(trimmed, budget.limits.contextWindow);
+      const warning = budget.warning();
+      return {
+        messages: warning ? [...fitted, { role: 'user', content: warning }] : fitted,
+      };
+    },
     // Broken tool calls (empty/unknown name, schema-invalid input) are rewritten to the
     // `invalidTool` fallback instead of failing the step — the model reads the error result and
     // retries (see `tool-repair.ts`; live failure: `AI_NoSuchToolError` on an empty name).
@@ -198,6 +256,9 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
 
   let text = '';
   let stop: TurnStop = 'done';
+  // Did the model ask for ANY tool this turn? Half of the "the turn produced nothing" test below
+  // — a turn that only edited the page and never narrated is a real turn, not an empty reply.
+  let sawToolCall = false;
   // Accumulated per COMPLETED step (the SDK builds `step.response.messages` at each
   // finish-step), so every exit path below — throw, abort, budget stop, natural finish —
   // returns whatever tool activity actually happened. Never read from the result's settled
@@ -234,10 +295,20 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           }
           break;
         case 'tool-call': {
-          // `selector`/`kind` (slice 09): feeds the future panel tool chip and, when the on-page
-          // overlay is opted in, background.ts's `forwardOverlayStep` mirror to content.
+          sawToolCall = true;
+          // `selector`/`kind` (slice 09): feeds the panel tool chip and, when the on-page overlay
+          // is opted in, background.ts's `forwardOverlayStep` mirror to content.
+          //
+          // REPORT THE OPERATION, NOT THE RESOURCE. Since the surface was grouped
+          // (`tools/resources.ts`), `part.toolName` is `edit`/`inspect`/`interact` — a fact about
+          // how we packaged the tools, not about what the agent is doing. Emitting it would have
+          // turned every chip in the panel, every overlay card and every history record into a
+          // uniform "edit", losing the one thing they exist to show. The operation is the name the
+          // user has always seen, and it stays stable regardless of future regrouping — same
+          // reasoning as `overlay-step.ts` classifying on `op` rather than a tool-name list.
+          const operation = operationOf(part.input, part.toolName) ?? part.toolName;
           const { selector, kind } = classifyTool(part.toolName, part.input);
-          emit({ type: 'tool-call', tool: part.toolName, selector, kind, id: part.toolCallId });
+          emit({ type: 'tool-call', tool: operation, selector, kind, id: part.toolCallId });
           break;
         }
         // The OUTCOME half of the chip (#165 S8). `tool-call` above fires when the model REQUESTS
@@ -252,7 +323,10 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           if (part.preliminary) break;
           emit({
             type: 'tool-result',
-            tool: part.toolName,
+            // The OPERATION, matching the `tool-call` above — the panel correlates the two halves
+            // of a chip by `toolCallId`, but a mismatched name would still read wrong anywhere the
+            // id is missing (an older thread, a rehydrated view).
+            tool: operationOf(part.input, part.toolName) ?? part.toolName,
             id: part.toolCallId,
             ...toolOutcome(part.output),
           });
@@ -261,7 +335,7 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
         case 'tool-error':
           emit({
             type: 'tool-result',
-            tool: part.toolName,
+            tool: operationOf(part.input, part.toolName) ?? part.toolName,
             id: part.toolCallId,
             ok: false,
             error: boundedError(errorText(part.error)),
@@ -272,7 +346,17 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
           break;
         case 'error':
           stop = 'error';
-          emit({ type: 'error', message: errorText(part.error) });
+          emit({
+            type: 'error',
+            // An empty reply now reaches here instead of the clean finish the guard below reads:
+            // the provider reports the missing finish reason as a stream error. Nothing arrived,
+            // so it is the same failure with the same actionable message; once output arrived,
+            // the SDK's own words correctly name a truncated reply.
+            message:
+              !sawToolCall && text.trim() === '' && isUnfinishedStream(part.error)
+                ? EMPTY_TURN_ERROR
+                : errorText(part.error),
+          });
           break;
         default:
           break;
@@ -306,6 +390,15 @@ export async function runTurn(args: RunTurnArgs): Promise<TurnOutcome> {
       text += chunk;
       emit({ type: 'token', text: chunk });
     }
+  }
+
+  // A natural finish that produced nothing is a FAILURE, not a quiet success — see
+  // {@link EMPTY_TURN_ERROR}. Gated on `stop === 'done'` so it can only ever describe a turn the
+  // model ended on its own: an abort (`aborted`), a ceiling (`budget`, relabeled above) and a
+  // stream error (`error`) each already carry their own reason, and none of them reaches here.
+  if (stop === 'done' && !sawToolCall && text.trim() === '') {
+    stop = 'error';
+    emit({ type: 'error', message: EMPTY_TURN_ERROR });
   }
 
   return {
@@ -396,12 +489,28 @@ function buildTools(dispatch: DomDispatch, budget: TurnBudget, deps: ToolDeps): 
     ? { ...captureBase, toModelOutput: responsiveCaptureToModelOutput }
     : undefined;
 
-  return {
+  const perVerb: ToolSet = {
     ...merged,
     ...(screenshot ? { screenshot } : {}),
     ...(responsiveCapture ? { responsiveCapture } : {}),
     ...(deps.tools ?? {}),
   };
+
+  // GROUP THE MODEL-FACING SURFACE. Everything above is built exactly as it always was — the
+  // per-verb tools are now the ROUTING LAYER, and `createResourceTools` presents them to the model
+  // as four resources (`inspect`/`edit`/`interact`/`session`) discriminated on `op`. Anything it
+  // does not claim passes through as its own tool, which is what keeps `handoff` (the Ship approval
+  // gate keys on that exact NAME — see `toolApproval` above), `invalidTool` (the repair channel)
+  // and every MCP backend tool reachable and unchanged.
+  //
+  // THEN MAKE EVERY SCHEMA PORTABLE. `providerSafeToolSet` is applied to the whole set, not just the
+  // resources, because "OpenAI-compatible" is a wire format and not a JSON Schema dialect: each
+  // provider validates `function.parameters` its own way and rejects the ENTIRE REQUEST — every tool
+  // with it — when one schema offends. MCP backend tools are the case that makes this set-wide: their
+  // schemas come from third-party servers, so they are exactly where `$ref`, untyped fields and
+  // nullable-as-`anyOf` appear, and BYOK means the endpoint policing them is the user's choice.
+  // Validators are preserved per tool, so this changes only what providers are TOLD.
+  return providerSafeToolSet(createResourceTools(perVerb as unknown as NamedTools)) as ToolSet;
 }
 
 // The ToolResult a guarded call returns once its per-tool budget is exhausted — the model reacts
@@ -555,13 +664,60 @@ export function errorText(err: unknown): string {
   if (isAuthError(err)) {
     return `${AUTH_ERROR_HINT} (provider said: ${err.message})`;
   }
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  // Two classes get re-worded because their raw text sends the reader to the wrong place. Both are
+  // about the TOOL surface, which is the one thing a user has no way to reason about: the provider is
+  // describing our request, in its own vocabulary, about a payload the user never wrote.
+  if (raw && isToolSchemaError(raw)) return `${SCHEMA_ERROR_HINT} (provider said: ${raw})`;
+  if (raw && isNoToolSupportError(raw)) return `${NO_TOOLS_HINT} (provider said: ${raw})`;
+  if (raw) return raw;
   return 'The agent hit an unexpected error.';
 }
 
 const AUTH_ERROR_HINT =
   'Your provider rejected the request as unauthenticated — check the API key in Settings.';
+
+// A schema rejection is OUR bug, and saying so is the useful thing. Nothing in Settings fixes
+// "tools.function.parameters is not a valid moonshot flavored json schema", so a message that only
+// forwards it leaves the user auditing a config that was never wrong. Providers police
+// `function.parameters` with their own validators and disagree (see src/agent/tools/provider-schema.
+// ts); when one rejects us the report has to reach us, so this names the log that carries the detail.
+const SCHEMA_ERROR_HINT =
+  'This build sent tool definitions your provider will not accept — a bug in Designer, not in your ' +
+  'setup. Copy the debug log (Settings → About) and report it.';
+
+// Distinct from the above and NOT our bug: plenty of models cannot call tools at all, which the whole
+// design loop depends on. The fix is a different model, so the message says that rather than
+// implying something is broken.
+const NO_TOOLS_HINT =
+  'This model does not support tool calling, which the design loop needs — pick a different model ' +
+  'in Settings.';
+
+/** A provider refusing our TOOL SCHEMA. Matched on the message because there is nothing structural
+ *  to match: every provider spells it differently ("tools.function.parameters.type is required",
+ *  "not a valid moonshot flavored json schema", "invalid schema for function"). Deliberately narrow —
+ *  it must name the tool payload, not merely contain the word "schema", or a model's own complaint
+ *  about a tool ARGUMENT would be mislabelled as an extension bug. */
+function isToolSchemaError(message: string): boolean {
+  const m = message.toLowerCase();
+  // BOTH signals are required, and that conjunction is the narrowness. `function` earns its place
+  // because providers name the offending tool that way ("Invalid schema for function inspect") with
+  // no mention of "tool" at all; it stays safe only because the schema half must hold too —
+  // "invalid function call arguments" names a function but no schema, and is left alone.
+  const aboutTools = m.includes('tool') || m.includes('function');
+  const aboutSchema =
+    m.includes('parameters') || m.includes('json schema') || m.includes('invalid schema');
+  return aboutTools && aboutSchema;
+}
+
+/** A model that cannot do function calling at all. */
+function isNoToolSupportError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    (m.includes('tool') || m.includes('function call')) &&
+    (m.includes('not support') || m.includes("doesn't support") || m.includes('unsupported'))
+  );
+}
 
 /** A 401/403 from the model call. Read structurally (`statusCode`) rather than via
  *  `APICallError.isInstance`, so a provider that surfaces the same thing through a plain Error

@@ -525,7 +525,25 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     e.stopPropagation();
     e.stopImmediatePropagation();
     if (e.shiftKey) toggleMulti(t);
-    else pickSingle(t);
+    // AN ARMED PICKER IS A MULTI-ATTACH MODE. Once something is pinned, a plain click ADDS the next
+    // element instead of replacing the pin — click A, B, C and you have three references.
+    //
+    // It used to replace, with shift-click as the only way to accumulate, and that failed users in
+    // both directions: the shift chord is undiscoverable (nothing on screen says it exists), so
+    // "attach several elements" read as impossible; and a plain click after building a shift set
+    // silently DELETED the whole set, because `pickSingle` clears `selected`. Losing work to an
+    // unmodified click is the worse half of that.
+    //
+    // Clicking an element that is already attached toggles it off, so this is membership, not an
+    // append-only list. The pin itself is exempt: it is reference 1 and lives outside `selected`, so
+    // routing it through `toggleMulti` would list the same element twice — it is detached from its
+    // chip instead.
+    //
+    // Gated on `active`, which keeps QUICK PICK (Alt+click, `active === false`) the one-shot gesture
+    // it is designed to be: a pick on a page the user is reading, not an accumulating selection.
+    else if (active && pinned) {
+      if (t !== pinned) toggleMulti(t);
+    } else pickSingle(t);
   };
 
   // Cancelling `click` alone is not enough to keep the picker read-only (#165 F3): a

@@ -23,7 +23,7 @@ See [principles.md](../idea/principles.md), [security.md](security.md) Privacy p
 | OpenRouter API key | `chrome.storage.local` as AES-GCM-256 ciphertext; non-extractable wrapping key in IndexedDB | Decrypted in the service worker only, for the OpenRouter call | Persistent until the user clears it (`clearOpenRouterKey`). Per [security.md](security.md) Key custody, `src/agent/key-store.ts`. |
 | MCP token (OAuth/PAT) | `chrome.storage.local`, encrypted | Service worker only, for the user's chosen MCP backend | Persistent until revoked/cleared. |
 | Current turn + changeset | `chrome.storage.session` | Stays in the extension; ships to the user's MCP backend only on explicit Ship | Tab/session. Per [changeset.md](changeset.md) Lifecycle. |
-| Crash event (class + stack trace, NO page content) | Built in-browser, scrubbed before send | GlitchTip only (developerz.ai infra); public write-only DSN | Per GlitchTip retention. Per `src/shared/sentry.ts`. |
+| Crash events | Not collected — crash reporting is off | Nowhere: no build sets a crash-report key, and the manifest grants no error-tracker host | None. Per `src/shared/sentry.ts`, `wxt.config.ts`. |
 | Site DOM/CSS edits | Applied in the content script only | Nowhere — never persisted to the site, never sent anywhere | Ephemeral: gone on reload. Per [principles.md](../idea/principles.md), [changeset.md](changeset.md). |
 
 ## Key custody
@@ -41,7 +41,11 @@ Page content goes to the user's chosen OpenRouter model and the user's chosen MC
 
 ## Crash reporting
 
-GlitchTip, error events only. Public write-only DSN baked in the bundle (`src/shared/sentry.ts`). ALLOWLIST scrubbing (`scrubEvent`) rebuilds each event from a fixed set of non-page fields and drops breadcrumbs, exception free-form messages, page text, prompts, selectors, screenshots, `extra` / `contexts` / `request` / attachments. No Sentry Session Replay, no performance tracing — GlitchTip supports neither, and enabling Replay in an all_urls content script would record every page. See [security.md](security.md).
+Off. The extension sends no crash reports, error events, or telemetry of any kind.
+
+- `initSentry` (`src/shared/sentry.ts`) returns without initialising unless the build sets `WXT_SENTRY_DSN`. No build sets it, and the key is never committed.
+- The manifest requests no host permission for an error tracker (`wxt.config.ts`); `test/unit/public-tree.test.ts` fails if one is added back.
+- The scrubbing code (`scrubEvent`, `scrubBreadcrumb`) stays in the tree for a future opt-in build. Turning crash reporting on is a separate, published decision: it would change this page, the store listing and the manifest together.
 
 ## Permissions
 
@@ -49,11 +53,13 @@ GlitchTip, error events only. Public write-only DSN baked in the bundle (`src/sh
 |------------|-----|
 | `sidePanel` | Durable UI surface; survives page navigation. |
 | `storage` | `chrome.storage.local` (encrypted keys, MCP connections) + `chrome.storage.session` (turn, changeset). |
-| `scripting` | Inject the content script for DOM tools. |
 | `activeTab` | Page access only on explicit user gesture. |
 | `tabs` | Capture screenshots; track the active tab for edits. |
+| `identity` | OAuth (PKCE) consent window when you connect an MCP backend; tokens stay in the service worker. |
+| `webNavigation` | Enumerating a page's frames so tools can address iframes. |
+| `debugger` | Device emulation for responsive checks (`setDevice`) — triggers Chrome's "started debugging" banner while active. |
+| `scripting` | `chrome.scripting.executeScript` — the service worker re-injects the extension's own shipped content scripts into existing http(s) tabs it can already access, on install/update and every worker boot. No remote code, no added host grant. |
 | `host_permissions: https://openrouter.ai/*` | BYOK model endpoint; SW-only, CORS-exempt. |
-| `host_permissions: https://glitchtip.infra.developerz.ai/*` | Crash ingest; SW-only, CORS-exempt. |
 | `optional_host_permissions: <all_urls>` | Granted per-site, on demand. User can scope to one origin. Revocable. |
 
 See [security.md](security.md) Least privilege, `wxt.config.ts`.
@@ -63,7 +69,7 @@ See [security.md](security.md) Least privilege, `wxt.config.ts`.
 - No first-party server in v0/v1.
 - No proxying or reselling of tokens — BYOK.
 - No third-party telemetry of page contents.
-- No Session Replay, performance tracing, or analytics.
+- No crash reporting, Session Replay, performance tracing, or analytics.
 - No remote code, no `eval` — Solid prebuilt to static JS, MV3 CSP.
 - Live edits never persist to the site.
 - No auto-ship, no auto-merge.

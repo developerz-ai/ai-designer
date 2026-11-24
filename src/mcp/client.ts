@@ -239,7 +239,11 @@ export function createConnection(
     if (!clientPromise) {
       clientPromise = (async () => {
         const headers = await resolveHeaders(spec);
-        return connect({ transport: { type: 'http', url: spec.url, headers } });
+        // A wrapper, not `globalThis.fetch` itself: the SDK defaults to storing the native fetch
+        // and calling it as `this.fetchFn(...)`, which throws Illegal invocation. Sentry's
+        // fetch wrapper hid this for as long as Sentry was initialised.
+        const fetch: typeof globalThis.fetch = (input, init) => globalThis.fetch(input, init);
+        return connect({ transport: { type: 'http', url: spec.url, headers, fetch } });
       })().catch((err) => {
         clientPromise = null;
         throw err;

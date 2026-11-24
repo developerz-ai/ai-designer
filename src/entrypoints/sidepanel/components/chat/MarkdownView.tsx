@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch } from 'solid-js';
+import { createMemo, For, Index, Match, Show, Switch } from 'solid-js';
 import type { MdBlock, MdInline } from './markdown';
 import { parseMarkdown } from './markdown';
 import './MarkdownView.scss';
@@ -11,9 +11,14 @@ export interface MarkdownViewProps {
 }
 
 export function MarkdownView(props: MarkdownViewProps) {
+  // Parsed ONCE per text change and rendered position-keyed. `<For each={parseMarkdown(...)}>`
+  // re-parsed on every access and handed <For> a fresh object per block, so a streaming reply
+  // disposed and rebuilt its ENTIRE rendered DOM on every token. Streaming only grows the last
+  // block and appends new ones, so position keying is exact (same reason Thread.tsx uses Index).
+  const blocks = createMemo(() => parseMarkdown(props.text));
   return (
     <div class="dz-markdown">
-      <For each={parseMarkdown(props.text)}>{(block) => <Block block={block} />}</For>
+      <Index each={blocks()}>{(block) => <Block block={block()} />}</Index>
     </div>
   );
 }

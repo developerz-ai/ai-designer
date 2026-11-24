@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test';
-import { expect, openRoom, stubAuthProbe, test } from './fixtures';
+import { expect, openRoom, stubAuthProbe, test, toolCallFunction } from './fixtures';
 
 // E2E: the slice-13 browser-control + vision tools driven against a loaded, real Chromium — the
 // one thing jsdom (test/unit, test/integration) can't prove: that content.ts's real
@@ -79,7 +79,8 @@ function toolCallStream(toolCallId: string, name: string, args: unknown): string
           index: 0,
           id: toolCallId,
           type: 'function',
-          function: { name, arguments: JSON.stringify(args) },
+          // Routed onto the resource that owns `name` (see fixtures) — the surface is grouped.
+          function: toolCallFunction(name, args),
         },
       ],
     }) +

@@ -10,10 +10,10 @@ Related: [RELEASING.md](./RELEASING.md) for how a tag turns into a build.
 | Secret | Store | Where it comes from | Set? |
 |--|--|--|--|
 | `CRX_PRIVATE_KEY` | self-hosted `.crx` | `keys/designer.pem` from the first local build — **ours, not a store's** | ✅ |
-| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload | |
-| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) | |
-| `CWS_CLIENT_SECRET` | Chrome | same OAuth client | |
-| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client | |
+| `CWS_EXTENSION_ID` | Chrome | the item's ID, after the first manual upload | ✅ since 2026-08-15 |
+| `CWS_CLIENT_ID` | Chrome | Google Cloud OAuth client (Desktop app) | ✅ since 2026-08-15 |
+| `CWS_CLIENT_SECRET` | Chrome | same OAuth client | ✅ since 2026-08-15 |
+| `CWS_REFRESH_TOKEN` | Chrome | one-time consent flow against that client | ✅ since 2026-08-15 |
 | `AMO_JWT_ISSUER` | Firefox | AMO Developer Hub → API keys | |
 | `AMO_JWT_SECRET` | Firefox | same page, shown **once** | |
 
@@ -93,25 +93,76 @@ AMO signs the `.xpi` on its side, so there is no key to keep.
 > | `chrome.debugger` (25 sites) — device emulation | does not exist |
 > | `chrome.identity.launchWebAuthFlow` (9 sites) — MCP OAuth | exists, different redirect host |
 >
-> The manifest also has no `browser_specific_settings.gecko.id`, so AMO cannot pin a stable
-> add-on ID. Treat Firefox as its own piece of work: port the panel to `sidebarAction`,
-> drop or feature-gate the debugger tools, add the gecko ID. Getting the AMO account and
-> API keys now is still worth it — it reserves the add-on name.
+> Two of the gaps closed in #180: the toolbar button now toggles the sidebar (a
+> `browserAction.onClicked` → `sidebarAction.toggle()` handler, registered only where
+> `chrome.sidePanel` is absent), and the manifest carries
+> `browser_specific_settings.gecko.id: designer@developerz.ai` so AMO can pin a stable
+> add-on ID. What remains before listing: the `chrome.debugger` tool family (screenshots,
+> device emulation, responsive scan, visual inspect) has no Firefox fallback, and nothing
+> has been verified on a real Firefox run. Treat AMO publish as blocked on that QA; getting
+> the account and API keys now is still worth it — it reserves the add-on name.
 
-## 4. Hand-over checklist
+## 4. Credential status and recovery checklist
 
-Once the accounts exist, what I need from you is just these, as repo secrets:
+`CRX_PRIVATE_KEY` and all four Chrome Web Store publishing secrets have been configured as
+GitHub Actions secrets since **2026-08-15**. Their values remain write-only: never add them
+to this repository, documentation, issues, or CI logs.
+
+If a Chrome Web Store credential must be rotated or recovered, replace only the affected
+repo secret using the same names:
 
 ```bash
-gh secret set CRX_PRIVATE_KEY < keys/designer.pem   # done
-gh secret set CWS_EXTENSION_ID
-gh secret set CWS_CLIENT_ID
+gh secret set CRX_PRIVATE_KEY < keys/designer.pem   # recovery only
+gh secret set CWS_EXTENSION_ID                      # recover the existing store item ID
+gh secret set CWS_CLIENT_ID                         # rotate/recover OAuth client credentials
 gh secret set CWS_CLIENT_SECRET
-gh secret set CWS_REFRESH_TOKEN
+gh secret set CWS_REFRESH_TOKEN                     # re-run consent when the token is revoked
 gh secret set AMO_JWT_ISSUER     # when Firefox is actually ready
 gh secret set AMO_JWT_SECRET
 ```
 
-Then uncomment the publish step in `.github/workflows/release.yml` and a tag ships to the
-store. Until then a tag builds, signs, and attaches artifacts to a GitHub Release only —
-which is the right state for manual QA.
+The publish step in `.github/workflows/release.yml` is live and **guarded on
+`CWS_EXTENSION_ID` being set**. With the configured `CWS_*` secrets, each qualifying tag
+uploads to the existing store item and requests auto-publishing; Chrome Web Store review
+still determines when the version becomes public. Rotate credentials in Google Cloud or the
+Web Store console as appropriate, update the matching GitHub secret, then use the dry run
+below before the next release tag. No workflow edit is needed.
+
+## 5. Dry-run the upload (before trusting a tag)
+
+Validates the credentials and the zip against the real Web Store API **without
+publishing** — the upload lands as a draft you can discard in the dev console:
+
+```bash
+bun run zip:store
+bunx chrome-webstore-upload-cli@3 upload \
+  --source build/*-chrome.zip \
+  --extension-id "$CWS_EXTENSION_ID" \
+  --client-id "$CWS_CLIENT_ID" \
+  --client-secret "$CWS_CLIENT_SECRET" \
+  --refresh-token "$CWS_REFRESH_TOKEN"
+```
+
+No `--auto-publish` = upload only. Check the item shows the new version as a draft in the
+[dev console](https://chrome.google.com/webstore/devconsole), then discard or submit it by
+hand. Two failure modes worth knowing: `invalid_grant` = the refresh token died (consent
+screen left in *Testing*, or token unused for six months) — re-run the consent flow;
+`ITEM_NOT_UPDATABLE` = the item is stuck in a pending review, wait it out.
+
+## 6. Rollback / unpublish
+
+The Web Store has **no downgrade**: versions only go up, and a published bad version stays
+until something higher replaces it.
+
+- **Bad version live** → fix, bump, tag again. That IS the rollback path: re-tag the last
+  good code as a higher version (`git checkout v1.4.0 && git tag v1.4.2 && git push origin
+  v1.4.2`). Review time applies (usually hours, `debugger` items can take longer).
+- **Stop the bleeding now** → dev console → the item → **Unpublish**. Takes the listing
+  down for new installs within ~hours; existing installs keep working and keep the
+  last-synced version. Republishing later needs no new review if the version didn't change.
+- **Catastrophic (leaked secret in a shipped bundle)** → unpublish, rotate the secret, and
+  remember installed copies still hold the old bundle — rotation server-side is the only
+  real kill switch. (BYOK means the only repo-side secrets in scope are the publish
+  credentials themselves — rotate in Google Cloud console.)
+- A submitted-but-pending version can be **cancelled** from the dev console without
+  affecting the live one.

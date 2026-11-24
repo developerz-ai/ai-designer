@@ -17,6 +17,66 @@ export { SHEET_ID };
  *  rule even for anonymous elements. The recorder (slice 05) ignores this attribute. */
 export const MARKER_ATTR = 'data-dz-designer';
 
+/** Names an `injectCss` sheet so a re-injection REPLACES it instead of stacking another one. */
+export const SHEET_ATTR = 'data-dz-designer-css';
+
+/** Sheet ids are ours to constrain — the attribute selector that finds a sheet must not be
+ *  escapable. Everything outside `[A-Za-z0-9_-]` is dropped rather than escaped: an id is a label,
+ *  and a label that needs escaping is a label that is trying to be something else. */
+function cssIdent(id: string): string {
+  const cleaned = id.replace(/[^A-Za-z0-9_-]/g, '');
+  return cleaned === '' ? 'default' : cleaned.slice(0, 64);
+}
+
+// Page-wide CSS is a WIDER grant than per-element `setStyle`, and this is where that widening is
+// enforced. Two channels make raw CSS dangerous, and neither has any place in a design edit:
+//
+//   `@import`  — pulls a remote stylesheet into the page's own world. That is remote code loading
+//                by any reasonable reading of the CLAUDE.md rule, and it is how a "just use this
+//                font" instruction turns into a third-party request on the user's real session.
+//   remote `url()` — the classic CSS exfiltration channel: a selector that matches only when some
+//                attribute has a given value, paired with a background image, leaks that value to
+//                whoever owns the host. Same-document `url(#fragment)` and inline `url(data:image/…)`
+//                carry no request, so both stay allowed.
+//
+// Two dead-but-free additions: `expression()` (legacy IE) and `-moz-binding` / `behavior:` (XBL /
+// HTC), each of which executed script from a stylesheet in its day.
+//
+// REFUSED, not stripped: silently rewriting a designer's stylesheet leaves them debugging CSS they
+// did not write. The agent gets a message it can act on.
+const CSS_AT_IMPORT = /@import\b/i;
+const CSS_BINDING = /(?:-moz-binding|behavior)\s*:/i;
+const CSS_EXPRESSION = /\bexpression\s*\(/i;
+// `url(` up to its closing paren, quotes optional. Captured so the value can be classified.
+const CSS_URL = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+
+/** A human-readable reason page-wide CSS is refused, or `null` when it is safe to inject. */
+export function cssDenyReason(css: string): string | null {
+  if (CSS_AT_IMPORT.test(css)) {
+    return 'Refused: @import loads a remote stylesheet into the page. Inline the rules instead, and use locally available fonts.';
+  }
+  if (CSS_BINDING.test(css)) {
+    return 'Refused: `behavior` / `-moz-binding` attach executable bindings to a stylesheet.';
+  }
+  if (CSS_EXPRESSION.test(css)) {
+    return 'Refused: `expression()` evaluates script from a stylesheet.';
+  }
+  CSS_URL.lastIndex = 0;
+  for (const match of css.matchAll(CSS_URL)) {
+    const value = (match[2] ?? '').trim();
+    // Same rule the fragment sanitizer applies to SVG href: normalize away every char at or below
+    // U+0020 first, because the URL parser ignores them and `ht\ttps:` still fetches.
+    const normalized = Array.from(value, (c) => (c.charCodeAt(0) > 0x20 ? c : ''))
+      .join('')
+      .toLowerCase();
+    if (normalized === '' || normalized.startsWith('#') || normalized.startsWith('data:image/')) {
+      continue;
+    }
+    return `Refused: url(${value}) would load a remote resource from the page. Only same-document url(#id) and inline data:image/ are allowed.`;
+  }
+  return null;
+}
+
 export interface Reversible {
   /** Restore the exact prior state. Called LIFO with the recorder's undo log. */
   undo(): void;
@@ -58,6 +118,7 @@ export interface Mutator {
   setStyle(el: Element, props: Record<string, string>): ElementMutation<Record<string, string>>;
   setText(el: Element, value: string): ElementMutation<string>;
   setAttr(el: Element, name: string, value: string): ElementMutation<string>;
+  removeAttr(el: Element, name: string): ElementMutation<string | null>;
   addClass(el: Element, name: string): ElementMutation<string>;
   removeClass(el: Element, name: string): ElementMutation<string>;
   insertNode(
@@ -71,7 +132,17 @@ export interface Mutator {
     position?: InsertPosition,
   ): ElementMutation<{ moved: boolean }>;
   removeNode(el: Element): ElementMutation<{ removed: boolean }>;
-  injectCss(css: string): PageMutation<{ bytes: number }>;
+  wrapNode(
+    target: Element,
+    html: string,
+    endTarget?: Element,
+  ): ElementMutation<{ html: string; wrapped: number }>;
+  unwrapNode(el: Element): ElementMutation<{ unwrapped: number }>;
+  replaceSubtree(el: Element, html: string): ElementMutation<{ html: string }>;
+  injectCss(
+    css: string,
+    id?: string,
+  ): PageMutation<{ bytes: number; id: string; replaced: boolean }>;
   setViewport(size: { width: number; height?: number }): PageMutation<{
     width: number;
     height: number | null;
@@ -197,6 +268,86 @@ function sanitizeFragment(frag: DocumentFragment): void {
 }
 
 const DROPPED_TAGS_SELECT = [...DROPPED_TAGS].join(',');
+
+/** Cap on how many sibling nodes one `wrapNode` may absorb. A range is one parent's children, so
+ *  this is generous (a 30-story list is ~60 nodes counting whitespace); it exists so a selector
+ *  mistake cannot move an entire document into one wrapper in a single un-reviewable step. */
+export const MAX_WRAP_RANGE = 500;
+
+/**
+ * The ordered node run from `target` to `endTarget` INCLUSIVE — every child node, not just the
+ * elements. Whitespace and text between the elements travel with the range, because a range that
+ * leaves its own whitespace behind is not the range the caller pointed at.
+ *
+ * Throws when the two are not siblings or `endTarget` precedes `target`: a silent reinterpretation
+ * of a bad range would move the wrong markup while the user watches.
+ */
+function siblingRange(target: Element, endTarget: Element): Node[] {
+  if (target.parentNode === null) throw new Error('Cannot wrap a detached element.');
+  if (endTarget.parentNode !== target.parentNode) {
+    throw new Error('wrapNode: the range start and end must be siblings (same parent element).');
+  }
+  const nodes: Node[] = [];
+  let cur: Node | null = target;
+  while (cur) {
+    nodes.push(cur);
+    if (cur === endTarget) return nodes;
+    if (nodes.length > MAX_WRAP_RANGE) {
+      throw new Error(`wrapNode: range exceeds ${MAX_WRAP_RANGE} nodes; narrow it.`);
+    }
+    cur = cur.nextSibling;
+  }
+  throw new Error('wrapNode: the range end comes before the range start in document order.');
+}
+
+/**
+ * The single wrapper ELEMENT `html` describes, after sanitization. Whitespace-only text at the top
+ * level is tolerated (authored markup is usually indented) and dropped; anything else is refused,
+ * because "wrap these in two containers" has no meaning and picking one silently would be a guess.
+ */
+function singleWrapper(doc: Document, html: string): Element {
+  const nodes = nodesFromHtml(doc, html).filter(
+    (n) => n.nodeType === 1 || (n.textContent ?? '').trim() !== '',
+  );
+  const [first] = nodes;
+  if (nodes.length !== 1 || !(first instanceof Element)) {
+    throw new Error(
+      'wrapNode: `html` must describe exactly one wrapper element (e.g. `<section class="stories"></section>`).',
+    );
+  }
+  return first;
+}
+
+/**
+ * Where the wrapped nodes go inside the wrapper: its DEEPEST SINGLE element — so
+ * `<section class="stories"><ul></ul></section>` puts the wrapped rows inside the `<ul>`, which is
+ * what the author of that markup meant. The descent stops the moment a level is ambiguous (more
+ * than one child element, or text content of its own), because past that point there is no single
+ * obviously-intended slot and guessing would silently bury content.
+ */
+function wrapperSlot(wrapper: Element): Element {
+  let slot = wrapper;
+  for (;;) {
+    const onlyChild = slot.children.length === 1 ? slot.children[0] : null;
+    const ownText = Array.from(slot.childNodes).some(
+      (n) => n.nodeType === 3 && (n.textContent ?? '').trim() !== '',
+    );
+    if (!onlyChild || ownText) return slot;
+    slot = onlyChild;
+  }
+}
+
+/**
+ * Whether a restore can safely proceed: the original parent is still in the document and the
+ * anchor it will insert before is still that parent's child.
+ *
+ * The same churn honesty `moveNode`/`removeNode` already apply. A blind `insertBefore` either
+ * throws `NotFoundError` or — worse, when the anchor sits inside a DETACHED parent — "succeeds"
+ * into an invisible tree and looks like a real revert.
+ */
+function anchorIntact(parent: Node, anchor: Node | null): boolean {
+  return parent.isConnected && (anchor === null || anchor.parentNode === parent);
+}
 
 function serialize(node: Node): string {
   return node instanceof Element ? node.outerHTML : (node.textContent ?? '');
@@ -449,6 +600,38 @@ export function createMutator(doc: Document = document): Mutator {
     };
   }
 
+  /**
+   * Remove an attribute — the missing counterpart to {@link setAttr}. `AttrChange.after` is
+   * declared nullable in src/shared/changeset.ts precisely to mean "the attribute was removed",
+   * and until now NO producer could emit that: the agent could set `hidden`, `disabled`,
+   * `aria-hidden`, `colspan`, `width` but never take one away, so half the legacy-markup design
+   * moves (drop a presentational `width="85%"`, drop an `align`, un-hide a node) were unreachable.
+   *
+   * Reuses `kind: 'setAttr'` with `attrChange.after = null` rather than inventing a kind — that is
+   * the exact shape the durable Edit already models, so the fold and the report need no change.
+   * Removing an attribute that is already absent is a no-op: it emits no `attrChange` (same
+   * real-delta rule as add/removeClass) so the fold never has to cancel a phantom back out.
+   */
+  function removeAttr(el: Element, name: string): ElementMutation<string | null> {
+    // The marker is our private overrides handle; dropping it orphans the element's rule in the
+    // sheet while `overrides` still holds it. Same refusal as setAttr's, from the same policy.
+    if (name.trim().toLowerCase() === MARKER_ATTR) {
+      throw new Error(`Refused: "${name}" is reserved for the editor's internal style overrides.`);
+    }
+    const prev = el.getAttribute(name); // null = already absent, so there is nothing to record
+    if (prev !== null) el.removeAttribute(name);
+    return {
+      kind: 'setAttr',
+      computed: null,
+      before: JSON.stringify({ [name]: prev }),
+      after: JSON.stringify({ [name]: null }),
+      ...(prev !== null ? { attrChange: { name, before: prev, after: null } } : {}),
+      undo() {
+        if (prev !== null) el.setAttribute(name, prev);
+      },
+    };
+  }
+
   function addClass(el: Element, name: string): ElementMutation<string> {
     const before = classAttr(el);
     const added = !el.classList.contains(name); // undo must not strip a pre-existing class
@@ -565,15 +748,187 @@ export function createMutator(doc: Document = document): Mutator {
     };
   }
 
-  function injectCss(css: string): PageMutation<{ bytes: number }> {
-    const style = doc.createElement('style');
-    style.className = 'dz-designer-injected';
-    style.textContent = css;
-    (doc.head ?? doc.documentElement).appendChild(style);
+  /**
+   * Inject (or REPLACE) one page-wide stylesheet — the primitive a full-page overhaul is written
+   * in. Where {@link setStyle} pins one rule per element behind a generated marker attribute,
+   * this writes CSS the way a developer writes it: real selectors, custom properties on `:root`,
+   * media queries. That is also what makes it shippable — the changeset carries a stylesheet a
+   * reviewer can read, instead of a pile of computed-value diffs keyed to nth-of-type chains.
+   *
+   * `id` NAMES the sheet, and a second call with the same id REPLACES its text rather than
+   * stacking another `<style>` on top. An overhaul is iterative; ten accumulated sheets with
+   * escalating specificity is a trap, and it makes "what is the current design?" unanswerable.
+   * Undo restores the previous text for that id, or removes the element when there was none.
+   *
+   * The CSS is policy-checked first ({@link cssDenyReason}) and REFUSED, never silently stripped:
+   * a designer's stylesheet quietly altered under them is worse than an error they can read.
+   */
+  /**
+   * Wrap an element — or a RANGE of consecutive siblings — in one agent-authored container. The
+   * overhaul move: a legacy `<table>` row group becomes `<section class="stories">…</section>`,
+   * a run of `<div>`s becomes a `<ul>`, a bare heading and its paragraph become an `<article>`.
+   *
+   * ONE mutation, not an insert composed with a move. Composing them is what gets the range case
+   * wrong: the second op is written against anchors the first op just changed, and the two undo
+   * entries unwind independently, so a single `undo` leaves a half-built wrapper on the page.
+   * Here the wrapper goes in at the range's exact position and the whole run moves into it under
+   * one `undo()` that restores the EXACT prior sibling order — the nodes are re-inserted in their
+   * original sequence before the anchor that followed the range, never appended and hoped for.
+   *
+   * The children land in the wrapper's DEEPEST SINGLE element, so
+   * `<section class="stories"><ul></ul></section>` puts them inside the `<ul>` — see
+   * {@link wrapperSlot}, which stops descending the moment a level is ambiguous.
+   */
+  function wrapNode(
+    target: Element,
+    html: string,
+    endTarget?: Element,
+  ): ElementMutation<{ html: string; wrapped: number }> {
+    const parent = target.parentNode;
+    if (!parent) throw new Error('Cannot wrap a detached element.');
+    const nodes = endTarget ? siblingRange(target, endTarget) : [target];
+    // Captured BEFORE anything moves: the node that followed the range is where undo puts it back.
+    const anchor = nodes[nodes.length - 1]?.nextSibling ?? null;
+    const before = nodes.map(serialize).join('');
+
+    const wrapper = singleWrapper(doc, html);
+    const slot = wrapperSlot(wrapper);
+    parent.insertBefore(wrapper, target);
+    for (const node of nodes) slot.appendChild(node);
+
+    const after = wrapper.outerHTML;
+    const count = nodes.filter((n) => n.nodeType === 1).length;
     return {
-      computed: { bytes: css.length },
+      kind: 'wrapNode',
+      computed: { html: after, wrapped: count },
+      before,
+      after,
       undo() {
-        style.remove();
+        if (!anchorIntact(parent, anchor)) {
+          throw new Error(
+            'Cannot undo wrapNode: the original location changed since the mutation (page updated).',
+          );
+        }
+        // Original sequence, restored before the original anchor — order is reconstructed, not
+        // approximated. Then the (now empty) wrapper goes.
+        for (const node of nodes) parent.insertBefore(node, anchor);
+        wrapper.remove();
+      },
+    };
+  }
+
+  /**
+   * Drop a wrapper and leave its children exactly where they were — the inverse of
+   * {@link wrapNode}, and the primitive that dismantles legacy nesting (the `<div>` inside a
+   * `<div>` inside a `<center>` that three redesigns left behind).
+   *
+   * Node identity is retained for every child AND for the wrapper itself, so undo restores
+   * listeners and state, not a re-parsed copy.
+   */
+  function unwrapNode(el: Element): ElementMutation<{ unwrapped: number }> {
+    const parent = el.parentNode;
+    if (!parent) throw new Error('Cannot unwrap a detached element.');
+    const children = Array.from(el.childNodes);
+    const anchor = el.nextSibling;
+    const before = serialize(el);
+
+    for (const child of children) parent.insertBefore(child, el);
+    parent.removeChild(el);
+
+    return {
+      kind: 'unwrapNode',
+      computed: { unwrapped: children.filter((n) => n.nodeType === 1).length },
+      before,
+      after: children.map(serialize).join(''),
+      undo() {
+        if (!anchorIntact(parent, anchor)) {
+          throw new Error(
+            'Cannot undo unwrapNode: the original location changed since the mutation (page updated).',
+          );
+        }
+        // Put the wrapper back at its own position first (the children currently sit before
+        // `anchor`, so inserting there lands it immediately after them), then draw them back in —
+        // which moves them out of the parent and restores the original nesting and order.
+        parent.insertBefore(el, anchor);
+        for (const child of children) el.appendChild(child);
+      },
+    };
+  }
+
+  /**
+   * Replace an element and its whole subtree with new markup, as ONE reversible mutation.
+   * The `<table>`-to-`<section><ul>` move.
+   *
+   * Deliberately not a `removeNode` composed with an `insertNode`. Those are two undo entries: a
+   * single `undo` would restore the old subtree while the replacement is still on the page, or
+   * remove the replacement and leave a hole — and the insert's anchor is the node the remove just
+   * detached. Here the outgoing element is clipboard-retained (node identity, listeners and state
+   * intact) and one `undo()` swaps it back for the replacement in a single step.
+   */
+  function replaceSubtree(el: Element, html: string): ElementMutation<{ html: string }> {
+    const parent = el.parentNode;
+    if (!parent) throw new Error('Cannot replace a detached element.');
+    const nodes = nodesFromHtml(doc, html);
+    if (nodes.length === 0) {
+      // A replacement that sanitizes down to nothing is a removal, and `removeNode` records that
+      // truthfully. Silently deleting the subtree here would be an unreviewable surprise.
+      throw new Error(
+        'replaceSubtree: `html` produced no content after sanitization; use removeNode to delete an element.',
+      );
+    }
+    const before = serialize(el);
+    const anchor = el.nextSibling;
+
+    const frag = doc.createDocumentFragment();
+    for (const node of nodes) frag.appendChild(node);
+    parent.insertBefore(frag, el);
+    parent.removeChild(el);
+
+    const after = nodes.map(serialize).join('');
+    return {
+      kind: 'replaceNode',
+      computed: { html: after },
+      before,
+      after,
+      undo() {
+        if (!anchorIntact(parent, anchor)) {
+          throw new Error(
+            'Cannot undo replaceSubtree: the original location changed since the mutation (page updated).',
+          );
+        }
+        parent.insertBefore(el, anchor);
+        for (const node of nodes) node.parentNode?.removeChild(node);
+      },
+    };
+  }
+
+  function injectCss(
+    css: string,
+    id = 'default',
+  ): PageMutation<{ bytes: number; id: string; replaced: boolean }> {
+    const denied = cssDenyReason(css);
+    if (denied) throw new Error(denied);
+
+    const existing = doc.querySelector(`style[${SHEET_ATTR}="${cssIdent(id)}"]`);
+    const style = existing instanceof HTMLStyleElement ? existing : doc.createElement('style');
+    const priorText: string | null =
+      existing instanceof HTMLStyleElement ? style.textContent : null;
+
+    style.textContent = css;
+    if (!existing) {
+      style.className = 'dz-designer-injected';
+      style.setAttribute(SHEET_ATTR, id);
+      // Last child of <head>, so page CSS loses ties on equal specificity without us reaching for
+      // `!important` on every declaration the way the per-element override sheet has to.
+      (doc.head ?? doc.documentElement).appendChild(style);
+    }
+    return {
+      // `replaced` lets the model tell "I refined my design system" from "I added a second one" —
+      // the distinction that makes iterate-and-refine legible in the changeset.
+      computed: { bytes: css.length, id, replaced: priorText !== null },
+      undo() {
+        if (priorText === null) style.remove();
+        else style.textContent = priorText;
       },
     };
   }
@@ -602,11 +957,15 @@ export function createMutator(doc: Document = document): Mutator {
     setStyle,
     setText,
     setAttr,
+    removeAttr,
     addClass,
     removeClass,
     insertNode,
     moveNode,
     removeNode,
+    wrapNode,
+    unwrapNode,
+    replaceSubtree,
     injectCss,
     setViewport,
   };

@@ -14,6 +14,11 @@
 
 import type { StableSelector } from '@/shared/messages';
 
+/** How every grounding line this module builds BEGINS. Exported so `thread-view.ts`'s `userAsk`
+ *  can strip the line back off a persisted user message without re-typing the literal — a drifted
+ *  copy would silently re-attribute the SW's scaffolding to the user. */
+export const FOCUS_CONTEXT_PREFIX = '[The user has ';
+
 // Enough for the model to target the element and to judge how much to trust the selector; the
 // picker's own fragility scoring is the reason `fragile` is worth carrying through.
 function describe(selector: StableSelector): string {
@@ -57,10 +62,10 @@ export function focusContextLine(
     const exact = xpath
       ? ` Its exact node is \`${xpath}\` — pass that as the selector if the CSS one is ambiguous.`
       : '';
-    return `[The user has an element selected on the page. "this"/"it" refers to ${describe(picked[0] as StableSelector)}.${exact}]`;
+    return `${FOCUS_CONTEXT_PREFIX}an element selected on the page. "this"/"it" refers to ${describe(picked[0] as StableSelector)}.${exact}]`;
   }
   const list = picked.map((s) => describe(s)).join(', ');
-  return `[The user has ${picked.length} elements selected on the page. "this"/"these"/"them" refers to: ${list}.]`;
+  return `${FOCUS_CONTEXT_PREFIX}${picked.length} elements selected on the page. "this"/"these"/"them" refers to: ${list}.]`;
 }
 
 /**

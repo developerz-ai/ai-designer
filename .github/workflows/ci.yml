@@ -27,15 +27,16 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: 1.3.14
+  BUN_VERSION: 1.4.4
 
 jobs:
   lint:
     name: Lint
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # GitHub-hosted runner: this repository is public.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -44,10 +45,10 @@ jobs:
 
   typecheck:
     name: Typecheck
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -63,19 +64,24 @@ jobs:
     # `vitest run` shares one worker pool across every spec, which costs roughly half the
     # vCPU-seconds for about the same wall clock. 4 vCPU because the suite is jsdom-bound:
     # the step from 4 to 8 bought ~14s and cost 2x.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Unit + integration tests
+        env:
+          PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}
+          # The repository's own runs must check the private words; a fork's PR and Dependabot
+          # get no secrets, so they skip them (the guard says so in the log).
+          PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}
         run: bun run test
 
   build:
     name: Build extension
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint, typecheck]
     # Gated on the two CHEAPEST jobs only (~20s each), never on the test jobs. The old
@@ -83,12 +89,26 @@ jobs:
     # the critical path before this job's setup began; dropping the gate entirely was the
     # other extreme and burned a full build + e2e on every lint-red PR.
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Build + zip (minified, tree-shaken)
         run: bun run release
+      - name: Validate emitted image worker
+        env:
+          DZ_REQUIRE_IMAGE_WORKER_BUILD: '1'
+          DZ_TEST_WORKERS: '2'
+        run: bun run test test/unit/image-encode-bundling.test.ts --reporter=verbose
+      - name: Validate emitted manifest grants (public-tree guard)
+        env:
+          DZ_REQUIRE_BUILT_MANIFEST: '1'
+          DZ_TEST_WORKERS: '2'
+          PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}
+          # The repository's own runs must check the private words; a fork's PR and Dependabot
+          # get no secrets, so they skip them (the guard says so in the log).
+          PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}
+        run: bun run test test/unit/public-tree.test.ts --reporter=verbose
       - name: Upload extension artifact
         uses: actions/upload-artifact@v7
         with:
@@ -104,11 +124,11 @@ jobs:
     # the Chromium install — both serial no matter how many Playwright workers run. Keep it on
     # the small runner; if you ever need e2e faster, cut the serial prologue (reuse the build
     # artifact from the `build` job), don't add cores.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [lint, typecheck]
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -142,10 +162,10 @@ jobs:
 
   actionlint:
     name: actionlint
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Install actionlint
         # Direct binary download. The npm-based actions run `npm install` in the
         # repo root, which fails on Bun's workspace:* protocol.

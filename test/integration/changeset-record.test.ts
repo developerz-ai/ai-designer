@@ -128,8 +128,16 @@ function makeSw() {
   // per user-message turn); the getters below always hand out the current turn's instances.
   let store: ChangesetStore;
   let tools: ReturnType<typeof createSessionTools>;
+  // The turn's resolved tab.url (background.ts's `tabUrl` closure alias) — the last fallback of
+  // both URL-guard comparisons when no commit was ever seen for the tab.
+  let turnTabUrl = URL;
   // background.ts's named `persistChangeset` closure (persister snapshot + SessionStore mirror).
+  // #148 item 2, mid-turn committed-URL guard: an agent nav mid-turn wipes both mirrors for the
+  // NEW document while the turn's store still holds the OLD one's edits — refuse to write a
+  // record whose URL no longer matches the committed URL (same comparison chain as turn start).
   const persistChangeset = (): void => {
+    const committed = persistedCommitted.get(TAB_ID) ?? lastCommitted.get(TAB_ID) ?? turnTabUrl;
+    if (store.current.url !== committed) return;
     const snapshot = store.snapshot();
     persister.save(snapshot);
     sessionMirror.changeset = snapshot.changeset;
@@ -145,6 +153,7 @@ function makeSw() {
   // FIRST (#9 review round 4 — it survives the SW eviction the in-memory map doesn't), then the
   // in-memory stamp; the live tabUrl is only the fallback when no commit was ever seen.
   const bootTurn = (tabUrl: string): void => {
+    turnTabUrl = tabUrl;
     const priorState = persister.load();
     const prior = priorState?.changeset ?? sessionMirror.changeset;
     const stale =
@@ -1291,5 +1300,60 @@ describe('#9 review round 5: a retract preserves the redo tail (preserveRedo end
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.persister.load()?.redoStack).toEqual([]);
     expect(sw.sessionMirror.changeset.edits[0]?.selector.value).toBe('#nav');
+  });
+});
+
+describe('#148 item 2: mid-turn navigation — the in-flight store’s re-persist is refused', () => {
+  const edit = (intent: string, value = '#cta'): Edit => ({
+    intent,
+    selector: { value, strategy: 'id', fragile: false },
+    changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+    attrs: [],
+    classes: [],
+    frameworkHints: [],
+  });
+
+  it('after an agent nav wipes the mirrors, the turn’s later persists cannot resurrect old-URL edits', async () => {
+    const sw = makeSw();
+    await runTool(sw.tools.recordEdit.execute, edit('Make the CTA blue'));
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+
+    // The agent's own `navigate` mid-turn: onCommitted wipes both mirrors for the NEW document
+    // (agentNavTabs keeps the turn ALIVE — no abort, so the harness's turnInFlight stays set).
+    await sw.navClear({ frameId: 0, transitionType: 'link', url: 'http://localhost:3000/other' });
+    expect(sw.persister.load()).toBeUndefined();
+    expect(sw.sessionMirror.changeset.edits).toEqual([]);
+
+    // The still-running turn records again: the store (old URL) accepts it — the tool result
+    // must stay ok (the refusal is silent by design) — but NEITHER mirror takes the write.
+    const res = await runTool(sw.tools.recordEdit.execute, edit('Late edit on a dead document'));
+    expect(res.ok).toBe(true);
+    expect(sw.store.current.edits).toHaveLength(2); // in-memory only
+    expect(sw.persister.load()).toBeUndefined(); // the wipe stands
+    expect(sw.sessionMirror.changeset.edits).toEqual([]); // the reseed stands
+
+    // The turn-end auto-finalize takes the same guarded path: leftovers fold into the store,
+    // and the mirrors still refuse the old-URL record.
+    sw.pending.append(
+      TAB_ID,
+      recorderEventOf('addClass', '#cta', { classChange: { name: 'late', op: 'add' } }),
+    );
+    sw.finalizeTurn();
+    expect(sw.store.current.edits).toHaveLength(3);
+    expect(sw.persister.load()).toBeUndefined();
+    expect(sw.sessionMirror.changeset.edits).toEqual([]);
+  });
+
+  it('the NEXT turn re-seeds empty for the committed URL and persists normally again', async () => {
+    const sw = makeSw();
+    await runTool(sw.tools.recordEdit.execute, edit('Make the CTA blue'));
+    await sw.navClear({ frameId: 0, transitionType: 'link', url: 'http://localhost:3000/other' });
+    sw.endTurn();
+
+    sw.bootTurn('http://localhost:3000/other');
+    await runTool(sw.tools.recordEdit.execute, edit('Fresh edit on the new page', '#hero'));
+    expect(sw.persister.load()?.changeset.url).toBe('http://localhost:3000/other');
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+    expect(sw.sessionMirror.changeset.edits[0]?.selector.value).toBe('#hero');
   });
 });

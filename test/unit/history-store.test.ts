@@ -222,7 +222,7 @@ describe('boundMessages: size-bounding', () => {
     const long: ChatMessage = { role: 'assistant', content: 'x'.repeat(10_000) };
     const [bounded] = boundMessages([long]);
     expect(typeof bounded?.content).toBe('string');
-    expect((bounded?.content as string).length).toBeLessThan(10_000);
+    expect((bounded?.content as string | undefined)?.length).toBeLessThan(10_000);
   });
 
   it('replaces BARE-base64 image payloads (what the loop’s toModelOutput produces) with the placeholder, not a 4k truncation (#168)', () => {

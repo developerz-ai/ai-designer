@@ -70,7 +70,9 @@
     @include mixins.visually-hidden;
   }
 
-  // "⋯ Editing the page…" — the only thing on screen between hitting send and the first token.
+  // "⋯ Reading the page…" — the only thing on screen between hitting send and the first token, and
+  // the text changes as the turn moves (`turn-phase.ts`), so this line must stay comfortable with a
+  // varying string: no fixed width, no truncation.
   &__working {
     display: flex;
     align-items: center;
@@ -102,6 +104,25 @@
     span:nth-child(3) {
       animation-delay: 0.4s;
     }
+  }
+
+  // What the turn was sent with. Right-aligned like the bubble it sits in, and wrapping rather
+  // than scrolling — a sent turn is history, so it must never grow its own scroll region inside
+  // the thread's.
+  &__attachments {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: tokens.rem(6);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__attachment {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
   }
 
   &__text {

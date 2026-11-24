@@ -15,6 +15,7 @@ import type {
   ScreenshotInput,
   ToolResult,
 } from '@/shared/messages';
+import { imageFilePart } from './image-part';
 
 /** Screenshot the region to inspect, returning a PNG (`ToolResult.data` = base64/data-URL) or an
  *  error result. Injected so the module stays chrome-free; the SW backs it with its capture path. */
@@ -92,7 +93,7 @@ export async function runInspect(
           role: 'user',
           content: [
             { type: 'text', text: inspectPrompt(input.question) },
-            { type: 'image', image: shot.data },
+            imageFilePart(shot.data),
           ],
         },
       ],
@@ -166,10 +167,7 @@ export async function runDescribeScene(
       messages: [
         {
           role: 'user',
-          content: [
-            { type: 'text', text: describeScenePrompt() },
-            { type: 'image', image: shot.data },
-          ],
+          content: [{ type: 'text', text: describeScenePrompt() }, imageFilePart(shot.data)],
         },
       ],
     }));

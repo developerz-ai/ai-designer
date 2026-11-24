@@ -107,7 +107,7 @@ describe('mcp store actions', () => {
     // dispatches mcp-add (not the other way round — the grant can't ride the bus to the SW).
     expect(requestPermission).toHaveBeenCalledWith({ origins: ['https://b.example.com/*'] });
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect((sendMessage.mock.calls[0]?.[0] as PanelToSw).type).toBe('mcp-add');
+    expect((sendMessage.mock.calls[0]?.[0] as PanelToSw | undefined)?.type).toBe('mcp-add');
     expect(store.servers.some((s) => s.id === 'b')).toBe(true);
   });
 

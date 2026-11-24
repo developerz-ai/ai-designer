@@ -67,6 +67,28 @@ describe('createConnection', () => {
     expect(() => createConnection({ id: 'a', url: '' })).toThrow(/url/);
   });
 
+  it('hands the transport a fetch that survives being called as a method', async () => {
+    const { connect } = fakeFactory();
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });
+    await conn.tools();
+
+    const transport = connect.mock.calls[0]?.[0].transport as unknown as {
+      fetch: typeof globalThis.fetch;
+    };
+    const native = vi.fn(function (this: unknown) {
+      // The native fetch throws Illegal invocation on any `this` other than the global.
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return Promise.resolve(new Response());
+    });
+    vi.stubGlobal('fetch', native);
+    try {
+      await Reflect.apply(transport.fetch, { fetchFn: transport.fetch }, ['https://x/mcp']);
+      expect(native).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('opens lazily — nothing connects until tools() is called', async () => {
     const { connect } = fakeFactory();
     const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp' }, { connect });

@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Assemble an accepted changeset and dispatch the implementation handoff over MCP to ai-dev / developerz.ai. Use when touching src/mcp, the ship flow in src/entrypoints/background.ts, or when the task mentions handoff, shipping a design, MCP task creation, or turning edits into a PR.
+description: Assemble an accepted changeset and dispatch the implementation handoff over MCP to developerz.ai. Use when touching src/mcp, the ship flow in src/entrypoints/background.ts, or when the task mentions handoff, shipping a design, MCP task creation, or turning edits into a PR.
 ---
 
 Ship turns a `Changeset` into a real code task. Runs in the **service worker** (owns keys + MCP clients). See `docs/idea/handoff.md`, `docs/idea/mcp.md`, `docs/architecture/handoff.md`.

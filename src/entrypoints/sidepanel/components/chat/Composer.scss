@@ -31,6 +31,21 @@
     &--picking {
       border-color: var(--dz-accent);
     }
+
+    // A file is over the composer. Dashed, so it is unmistakably a different state from the
+    // picker's solid accent edge above — the two can even be true at once.
+    &--dropping {
+      background: var(--dz-accent-fill);
+      border-style: dashed;
+      border-color: var(--dz-accent);
+    }
+  }
+
+  // Driven by the toolbar button beside it, which is the accessible control. `display: none`
+  // rather than a visually-hidden input: a hidden-but-focusable input is a phantom tab stop with
+  // no name, and `.click()` opens the picker either way.
+  &__file {
+    display: none;
   }
 
   // The textarea's accessible name — a placeholder is not one, since it disappears the moment

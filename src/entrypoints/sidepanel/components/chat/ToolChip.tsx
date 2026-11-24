@@ -4,7 +4,7 @@ import { Icon } from '../Icon';
 import type { IconName } from '../icon-registry';
 import './ToolChip.scss';
 
-// One tool call as a dev-legible, expandable chip — name + kind badge, selector on expand
+// One tool call as a dev-legible, expandable chip — name, selector on expand
 // (CLAUDE.md "SolidJS + SRP": presentational only, no business logic). The chat stream (11) only
 // carries `tool`/`selector`/`kind` per call today (`stores/chat.ts` `ToolCallEntry`) — a single
 // event fired once the tool has run, not a call/result pair — so `status` defaults to `'done'`;
@@ -44,7 +44,11 @@ export function toolChipStatusIcon(status: ToolChipStatus): IconName {
   return STATUS_ICON[status];
 }
 
-/** The badge text for a given kind, or `undefined` when the call carries none. */
+/** The badge text for a given kind, or `undefined` when the call carries none.
+ *
+ *  Still real words even though the badge no longer shows on screen (ToolChip.scss hides it):
+ *  this is what assistive tech reads for the row's kind, and dropping the text would leave the
+ *  distinction carried by nothing at all. */
 export function toolChipKindLabel(kind?: 'read' | 'act' | 'info'): string | undefined {
   return kind ? KIND_LABEL[kind] : undefined;
 }
@@ -76,6 +80,11 @@ export function ToolChip(props: ToolChipProps) {
           class="dz-tool-chip__status"
         />
         <code class="dz-tool-chip__name">{props.tool}</code>
+        {/* Kind rides in the markup but not on the screen (visually-hidden in ToolChip.scss).
+            "read"/"act"/"info" repeated down every row of a twelve-call run told the reader
+            nothing they could act on and crowded the one thing that identifies the row — the
+            tool name — into the middle of a wall of small print. Deleting it outright was not
+            an option: it is the row's only textual kind, and a screen reader would lose it. */}
         <Show when={props.kind}>
           {(kind) => <span class="dz-tool-chip__kind">{toolChipKindLabel(kind())}</span>}
         </Show>

@@ -9,12 +9,12 @@
 # site/Dockerfile` — keep the two in sync.
 #
 # Runtime contract (infra #870 stack manifest):
-#   - nginxinc/nginx-unprivileged, uid 101, listens on :8080
+#   - ghcr.io/nginx/nginx-unprivileged, uid 101, listens on :8080
 #   - /assets/ hashed bundle cached immutable; unknown routes fall back to
 #     index.html
 
 # ---- build the static site ----
-FROM oven/bun:1.3.14-slim AS build
+FROM oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4 AS build
 WORKDIR /app
 
 # Lockfile first for a cache-friendly, frozen install; then the sources.
@@ -22,17 +22,17 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY . .
 # hCaptcha PUBLIC site key, baked into the bundle at build time (Vite inlines
-# import.meta.env.VITE_*). Passed by site-deploy.yml from the HCAPTCHA_SITEKEY
-# repo variable. Fails CLOSED: an empty/absent value here defines the ENV as an
-# empty string, and the hcaptcha-key-guard in vite.config.ts aborts `bun run build`
-# rather than silently shipping the always-pass hCaptcha test key (#128).
+# import.meta.env.VITE_*). site-deploy.yml passes it from the HCAPTCHA_SITEKEY
+# repo variable. Always DEFINE it: an unset repo variable then reaches the
+# hcaptcha-key-guard in vite.config.ts as an empty string and aborts the build,
+# instead of shipping an image with no key (#128).
 ARG VITE_HCAPTCHA_SITEKEY=""
 ENV VITE_HCAPTCHA_SITEKEY=${VITE_HCAPTCHA_SITEKEY}
 # `build` = `vite build` -> /app/dist
 RUN bun run build
 
 # ---- serve the static bundle (unprivileged nginx, :8080, uid 101) ----
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+FROM ghcr.io/nginx/nginx-unprivileged:1.31.9-alpine@sha256:60214a103e6f38e953ff957f34b1f2e97a9db801ab2df3821da955d0fe6cadd6 AS runtime
 # Static server config: listen 8080, immutable /assets/, index.html fallback.
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

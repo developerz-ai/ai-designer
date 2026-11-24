@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   A11yResult,
   A11ySnapshotInput,
+  BudgetPreset,
   CaptureRequest,
   CaptureResult,
   CheckResponsiveInput,
@@ -10,6 +11,7 @@ import {
   ControlTool,
   Conversation,
   ConversationSummary,
+  DEFAULT_BUDGET_PRESET,
   DomTool,
   FrameInfo,
   FramesInput,
@@ -93,6 +95,21 @@ describe('message schemas', () => {
 
   it('rejects setStyle without props', () => {
     const r = DomTool.safeParse({ type: 'setStyle', selector: '#x' });
+    expect(r.success).toBe(false);
+  });
+
+  it('parses a bulkStructural DOM tool (#184) — the union member and the executor land together', () => {
+    const r = DomTool.safeParse({
+      type: 'bulkStructural',
+      selector: 'tr.spacer',
+      action: 'remove',
+      intent: 'Strip the 12 spacer rows in one call',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects bulkStructural with an action outside the vocabulary', () => {
+    const r = DomTool.safeParse({ type: 'bulkStructural', selector: '.x', action: 'explode' });
     expect(r.success).toBe(false);
   });
 });
@@ -249,6 +266,29 @@ describe('provider config message schemas (openai-compatible BYOK)', () => {
     // A stray apiKey on the config is stripped by the omit schema, not echoed to the panel.
     const parsed = GetProviderResult.parse({ ok: true, config: { ...cfg }, hasKey: true });
     expect(parsed.config && 'apiKey' in parsed.config).toBe(false);
+  });
+
+  it('budgetPreset is ADDITIVE: a pre-preset config without the field still validates', () => {
+    // Exactly the shape every install persisted before the field existed — must keep parsing,
+    // and every reader resolves the absence to DEFAULT_BUDGET_PRESET ('unlimited').
+    const old = ProviderConfig.parse(cfg);
+    expect(old.budgetPreset).toBeUndefined();
+    expect(old.budgetPreset ?? DEFAULT_BUDGET_PRESET).toBe('unlimited');
+  });
+
+  it('accepts every budget tier and rejects an unknown one', () => {
+    for (const budgetPreset of ['standard', 'high', 'max', 'unlimited'] as const) {
+      expect(ProviderConfig.safeParse({ ...cfg, budgetPreset }).success).toBe(true);
+      expect(BudgetPreset.safeParse(budgetPreset).success).toBe(true);
+    }
+    expect(ProviderConfig.safeParse({ ...cfg, budgetPreset: 'infinite' }).success).toBe(false);
+    // …and the tier rides the get-provider echo to the panel (non-secret, unlike apiKey).
+    const parsed = GetProviderResult.parse({
+      ok: true,
+      config: { baseURL: cfg.baseURL, model: cfg.model, budgetPreset: 'max' },
+      hasKey: true,
+    });
+    expect(parsed.config?.budgetPreset).toBe('max');
   });
 });
 
@@ -647,6 +687,37 @@ describe('turn attribution on the SwToPanel stream (#168)', () => {
     expect(SwToPanel.safeParse({ type: 'turn-done', usage: { steps: 0, tokens: 0 } }).success).toBe(
       true,
     );
+  });
+
+  it('accepts a turn-stamped edit-recorded/changeset push AND a legacy unstamped one', () => {
+    const edit = { intent: 'lift the CTA', selector };
+    // Turn-path pushes stamp the turn that recorded the edit…
+    expect(
+      SwToPanel.safeParse({ type: 'edit-recorded', edit, tabId: 7, turnId: 't1' }).success,
+    ).toBe(true);
+    // …curation pushes (and pre-stamp emitters) stay valid without one.
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit, tabId: 7 }).success).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit }).success).toBe(true);
+    const changeset = {
+      url: 'https://example.com',
+      createdAt: new Date().toISOString(),
+      sessionId: '123e4567-e89b-42d3-a456-426614174000',
+      edits: [],
+    };
+    expect(
+      SwToPanel.safeParse({ type: 'changeset', changeset, tabId: 7, turnId: 't1' }).success,
+    ).toBe(true);
+    expect(SwToPanel.safeParse({ type: 'changeset', changeset, tabId: 7 }).success).toBe(true);
+    // A malformed stamp is still rejected — additive never means unchecked.
+    expect(SwToPanel.safeParse({ type: 'edit-recorded', edit, turnId: 42 }).success).toBe(false);
+  });
+
+  it('thread-get and debug-log-get accept an optional conversation tabId (additive)', () => {
+    expect(PanelToSw.safeParse({ type: 'thread-get' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'thread-get', tabId: 7 }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'thread-get', tabId: 'x' }).success).toBe(false);
+    expect(PanelToSw.safeParse({ type: 'debug-log-get' }).success).toBe(true);
+    expect(PanelToSw.safeParse({ type: 'debug-log-get', tabId: 7 }).success).toBe(true);
   });
 
   it('parses the user-message ack with and without the turnId it now names', () => {
@@ -1186,9 +1257,23 @@ describe('Conversation / history schemas (slice 08)', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects a message that fails modelMessageSchema (unknown role)', () => {
-    const r = Conversation.safeParse({ ...base, messages: [{ role: 'narrator', content: 'x' }] });
-    expect(r.success).toBe(false);
+  it('bounds messages STRUCTURALLY here — deep validation moved to the service worker', () => {
+    // `Conversation.messages` used to be `z.array(modelMessageSchema)`, which forced this module —
+    // imported at RUNTIME by `src/dom/bridge.ts`, and through it by the MAIN-world injected script —
+    // to pull the entire `ai` SDK into every frame of every page (and with it Zod's `new Function`
+    // JIT probe, which strict-CSP sites report as TrustedScript violations). The bus now carries the
+    // ModelMessage TYPE with a cheap structural guard, and `agent/history-store.ts` runs the real
+    // `modelMessageSchema` over each entry on rehydrate — see `shared-import-graph.test.ts`, which
+    // fails if the value import ever comes back.
+    expect(
+      Conversation.safeParse({ ...base, messages: [{ role: 'narrator', content: 'x' }] }).success,
+    ).toBe(true);
+    // Non-objects are still refused, and the COUNT is still bounded.
+    expect(Conversation.safeParse({ ...base, messages: ['nope'] }).success).toBe(false);
+    expect(
+      Conversation.safeParse({ ...base, messages: new Array(HISTORY_MAX_MESSAGES + 1).fill({}) })
+        .success,
+    ).toBe(false);
   });
 
   it('ConversationSummary drops messages/report in favor of counts', () => {

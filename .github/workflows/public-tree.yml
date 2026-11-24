@@ -1,0 +1,38 @@
+name: Public tree
+
+# The public-tree guard on EVERY change. ci.yml skips docs-only, site and waitlist changes,
+# and those are exactly the files most likely to name an internal host or a private word, so
+# this workflow carries no path filter. It runs the guard alone, in well under a minute.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  guard:
+    name: Public-tree guard
+    # GitHub-hosted runner: this repository is public.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Public-tree guard
+        env:
+          PUBLIC_TREE_PRIVATE_WORDS: ${{ secrets.PUBLIC_TREE_PRIVATE_WORDS }}
+          # The repository's own runs must check the private words; a fork's PR and Dependabot
+          # get no secrets, so they skip them (the guard says so in the log).
+          PUBLIC_TREE_PRIVATE_WORDS_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' && '1' || '' }}
+        run: bun run test test/unit/public-tree.test.ts --reporter=verbose

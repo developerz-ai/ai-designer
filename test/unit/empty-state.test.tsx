@@ -18,6 +18,10 @@ describe('EmptyState', () => {
     }
   });
 
+  // A tap SENDS (`ChatPanel.selectSuggestion` → `sendMessage`), so the row must hand over the
+  // suggestion it is showing — the full object, prompt and pinned mode included. The visible
+  // label is a summary ("Check it on mobile"); sending that instead of the prompt would send the
+  // agent a title with no instruction in it.
   it('dispatches the whole suggestion object for the row clicked', () => {
     const onSelectSuggestion = vi.fn();
     render(() => <EmptyState onSelectSuggestion={onSelectSuggestion} />);
@@ -25,6 +29,11 @@ describe('EmptyState', () => {
     SUGGESTIONS.forEach((s, i) => {
       fireEvent.click(screen.getByRole('button', { name: s.label }));
       expect(onSelectSuggestion).toHaveBeenNthCalledWith(i + 1, s);
+
+      const sent = onSelectSuggestion.mock.calls[i]?.[0] as typeof s;
+      expect(sent.prompt).toBe(s.prompt);
+      expect(sent.prompt).not.toBe(s.label);
+      expect(sent.mode).toBe(s.mode);
     });
     expect(onSelectSuggestion).toHaveBeenCalledTimes(SUGGESTIONS.length);
   });
