@@ -21,6 +21,7 @@ import {
   type DeviceChrome,
 } from '@/agent/device-driver';
 import { restoreDevice, runResponsiveCapture, runSetDevice } from '@/agent/device-emulation';
+import { diagnose } from '@/agent/diagnostics';
 import { createEditShots, RECORDED_MUTATION_TYPES, screenshotChars } from '@/agent/edit-shots';
 import {
   EmulationRegistry,
@@ -62,6 +63,8 @@ import { errorLogEntry, logEntryFor, mergeLogs, renderTurnLog } from '@/agent/tu
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { AUTO_RECORDED_INTENT } from '@/changeset/fold-mutations';
 import { applyChangesetOp, type ChangesetOp, readChangeset } from '@/changeset/panel-ops';
+import { createPendingDiagnostics } from '@/changeset/pending-diagnostics';
+import { createPendingDiagnosticsPersister } from '@/changeset/pending-diagnostics-persist';
 import { createPendingMutations, foldMutationEvents } from '@/changeset/pending-mutations';
 import { createPendingMutationsPersister } from '@/changeset/pending-persist';
 import { toMarkdown } from '@/changeset/report-md';
@@ -339,6 +342,25 @@ export default defineBackground(() => {
       for (const [tabId, snapshot] of all) pendingMutations.seed(tabId, snapshot);
     })
     .catch(() => {});
+
+  // #6 diagnostics buffer: content-script `diagnostics-signal` (CollectorSignal) per tab. Real-time
+  // diagnostics evidence captured while the SW is starting/evicted stays in this FIFO until the
+  // turn drains it at turn start / before report build (content.message handler below). Mirrored
+  // to chrome.storage.session (`pendingDiagnostics:<tabId>`, beside pendingMutations) so signals
+  // survive SW eviction/restart, and re-seeded on wake via `pendingDiagnosticsReady`.
+  const pendingDiagnosticsPersister = createPendingDiagnosticsPersister();
+  const pendingDiagnostics = createPendingDiagnostics({
+    onChange: (tabId, snapshot, kind) => pendingDiagnosticsPersister.save(tabId, snapshot, kind),
+  });
+  const pendingDiagnosticsReady = pendingDiagnosticsPersister
+    .loadAll()
+    .then((all) => {
+      for (const [tabId, snapshot] of all) pendingDiagnostics.seed(tabId, snapshot);
+    })
+    .catch(() => {});
+
+  const diagnosticsGeneration = new Map<number, number>();
+  const diagnosticsDocument = new Map<number, string>();
 
   // #148 item 1: per-edit before/after screenshot auto-capture. The BEFORE slot arms ahead of the
   // first unrecorded mutation (the turn's content dispatch, below); `recordEdit`'s drain consumes
@@ -819,6 +841,7 @@ export default defineBackground(() => {
     if (tab?.id === undefined || !tab.url) {
       return { ok: false, error: 'Open a web page to design first.' };
     }
+    const reportGeneration = diagnosticsGeneration.get(tab.id);
     const cfg = await getProviderConfig();
     if (!cfg) return { ok: false, error: 'Add a model provider in Settings first.' };
     // The brief is model-authored, so a keyless hosted provider fails this route too — name it
@@ -846,11 +869,41 @@ export default defineBackground(() => {
     // never what it was FOR, nor which parts of a broad request are still outstanding; a full-page
     // overhaul rarely finishes inside one session, so "what remains" is load-bearing for the reader.
     const ask = historyStore.get(changeset.sessionId)?.title;
-    const makeReport = (): Promise<Report> =>
-      authorReport(
+    const reportTabId = tab.id;
+    let reportedDiagnostics: ReturnType<typeof pendingDiagnostics.peekGroups> = [];
+    const makeReport = async (): Promise<Report> => {
+      await pendingDiagnosticsReady;
+      const generation = diagnosticsGeneration.get(reportTabId);
+      if (generation !== reportGeneration) {
+        throw new Error('The page navigated while generating the report. Please retry.');
+      }
+      reportedDiagnostics = pendingDiagnostics.peekGroups(reportTabId);
+      const tabDiagnostics = reportedDiagnostics.flatMap((group) => group.signals);
+      const report = await authorReport(
         { model, generate: reportGenerate },
-        { changeset, identity, mode: opts.mode, ...(ask ? { ask } : {}) },
+        {
+          changeset,
+          identity,
+          mode: opts.mode,
+          ...(tabDiagnostics?.length > 0
+            ? { diagnostics: diagnose(tabDiagnostics, changeset.url, new Date().toISOString()) }
+            : {}),
+          ...(ask ? { ask } : {}),
+        },
       );
+      if (diagnosticsGeneration.get(reportTabId) !== generation) {
+        throw new Error('The page navigated while generating the report. Please retry.');
+      }
+      return report;
+    };
+    const acknowledgeReport = (): void => {
+      if (diagnosticsGeneration.get(reportTabId) === reportGeneration) {
+        pendingDiagnostics.removeReported(
+          reportTabId,
+          reportedDiagnostics.flatMap((group) => group.signals),
+        );
+      }
+    };
 
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
     if (opts.downloadOnly) {
@@ -860,6 +913,7 @@ export default defineBackground(() => {
       // one — best-effort (`setReport` throws for an id `appendTurn` never created, e.g. a report
       // requested before any turn ran; that's not this RPC's failure to surface).
       await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
+      acknowledgeReport();
       return {
         ok: true,
         routed: 'report',
@@ -893,6 +947,7 @@ export default defineBackground(() => {
       const report = await makeReport();
       const markdown = toMarkdown(report, changeset);
       await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
+      acknowledgeReport();
       return {
         ok: true,
         routed: 'report',
@@ -930,8 +985,16 @@ export default defineBackground(() => {
     const backend = createTaskBackend(
       taskExecutor(toolset[route.backend.taskToolName], route.backend.taskToolName),
     );
+    let accepted = 0;
     void ship(source, target, {
-      backend,
+      backend: {
+        ...backend,
+        async create(args, signal) {
+          const handle = await backend.create(args, signal);
+          if (++accepted === taskCount && opts.source === 'report') acknowledgeReport();
+          return handle;
+        },
+      },
       onStatus: (update) => {
         postToPanel({ type: 'task-status', ...update });
         // Update-on-ship (slice 08): the PR a task opens lands as a `prUrl` on a later status
@@ -2380,6 +2443,26 @@ export default defineBackground(() => {
       }
     }
 
+    // #6 diagnostics-signal: content script pushes one CollectorSignal per page signal the
+    // collector saw. Buffer per tab (FIFO, capped) — the SW drops nothing this way, and the turn
+    // drains them into its diagnostics evidence at turn start / before report build, so real-time
+    // signals captured during SW startup/eviction survive instead of being lost. relayToPanel
+    // returns null here: nothing goes to the panel from this listener.
+    if (parsed.data.type === 'diagnostics-signal') {
+      const senderTabId = sender.tab?.id;
+      const { signal } = parsed.data;
+      if (senderTabId !== undefined && sender.frameId === 0) {
+        const generation = diagnosticsGeneration.get(senderTabId);
+        const documentId = sender.documentId;
+        void pendingDiagnosticsReady.then(() => {
+          if (diagnosticsGeneration.get(senderTabId) !== generation) return;
+          const currentDocument = diagnosticsDocument.get(senderTabId);
+          if (currentDocument && documentId && currentDocument !== documentId) return;
+          pendingDiagnostics.append(senderTabId, signal);
+        });
+      }
+    }
+
     // #9 undo phantom: the content recorder REVERTED a mutation (successful `undo()`) — its
     // buffered event must leave the pending buffer, else the turn-end auto-finalize (or a
     // later recordEdit) would fold a change that no longer exists on the page into the
@@ -2426,6 +2509,10 @@ export default defineBackground(() => {
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
     const { tabId, url } = details;
+    diagnosticsGeneration.set(tabId, (diagnosticsGeneration.get(tabId) ?? 0) + 1);
+    if (details.documentId) diagnosticsDocument.set(tabId, details.documentId);
+    else diagnosticsDocument.delete(tabId);
+    void pendingDiagnosticsReady.then(() => pendingDiagnostics.clear(tabId));
     // Stamp BEFORE the reload early-return: this listener is the document-identity authority
     // the turn-start URL guard compares against (all transitionTypes, reload included — a
     // reload re-commits the same document). Same-document navigations (hash, pushState) never
@@ -2533,6 +2620,9 @@ export default defineBackground(() => {
   // Same for the document-identity stamp (both copies): a recycled id must not compare against
   // the dead tab's committed URL.
   chrome.tabs.onRemoved.addListener((tabId) => {
+    diagnosticsGeneration.set(tabId, (diagnosticsGeneration.get(tabId) ?? 0) + 1);
+    diagnosticsDocument.delete(tabId);
+    void pendingDiagnosticsReady.then(() => pendingDiagnostics.clear(tabId));
     // Same `pendingReady` gate as nav-clear: the clear also deletes the persisted mirror key,
     // so a recycled tab id can't inherit a dead tab's ground truth across an eviction either.
     void pendingReady.then(() => {
