@@ -12,7 +12,7 @@ vi.mock('@/agent/provider', async (importOriginal) => ({
   createProvider: () => ({}),
   keyMissing: () => false,
 }));
-const mocks = vi.hoisted(() => ({ author: vi.fn(), route: vi.fn() }));
+const mocks = vi.hoisted(() => ({ author: vi.fn(), route: vi.fn(), execute: vi.fn() }));
 vi.mock('../../src/agent/report', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/agent/report')>()),
   generateReport: mocks.author,
@@ -28,7 +28,7 @@ vi.mock('@/mcp/manager', () => ({
       return [];
     }
     async toolsForShip() {
-      return { test__task: { execute: async () => ({}) } };
+      return { test__task: { execute: mocks.execute } };
     }
   },
 }));
@@ -174,20 +174,25 @@ it('isolates hydrated diagnostics across navigation and preserves them through f
   expect(ship.error).toBeUndefined();
   expect(ship).toMatchObject({ ok: true, routed: 'tasks', taskCount: 1 });
   expect(mocks.author).toHaveBeenCalledTimes(1);
+  mocks.execute.mockRejectedValueOnce(new Error('create rejected'));
+  const reportShip = await rpc({ type: 'ship', source: 'report' });
+  expect(reportShip).toMatchObject({ ok: true, routed: 'tasks' });
+  await vi.waitFor(() => expect(mocks.execute).toHaveBeenCalled());
+  await vi.waitFor(() => expect(mocks.author).toHaveBeenCalledTimes(2));
   const retried = await rpc({ type: 'download-report' });
   expect(retried.ok).toBe(true);
-  expect(JSON.stringify(mocks.author.mock.calls[1]?.[1])).toContain('new queued');
+  expect(JSON.stringify(mocks.author.mock.calls[2]?.[1])).toContain('new queued');
   signal('during report', 'new');
   const authorGate = deferred<typeof draft>();
   mocks.author.mockReturnValueOnce(authorGate.promise);
   const running = rpc({ type: 'download-report' });
-  await vi.waitFor(() => expect(mocks.author).toHaveBeenCalledTimes(3));
+  await vi.waitFor(() => expect(mocks.author).toHaveBeenCalledTimes(4));
   commit('next');
   authorGate.resolve(draft);
   expect((await running).ok).toBe(false);
   signal('next page', 'next');
   await rpc({ type: 'download-report' });
-  const input = mocks.author.mock.calls[3]?.[1] as ReportInput;
+  const input = mocks.author.mock.calls[4]?.[1] as ReportInput;
   expect(JSON.stringify(input)).toContain('next page');
   expect(JSON.stringify(input)).not.toContain('during report');
   for (const listener of removed) listener(7);

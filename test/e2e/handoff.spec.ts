@@ -388,7 +388,7 @@ test.describe('handoff: ship + send-report', () => {
     await configureProvider(panel);
     await connectMcpServer(panel, 'Acme Dev', devUrl);
     await openRoom(panel, 'Chat');
-    const sw = await serviceWorker(context);
+    let sw = await serviceWorker(context);
     await sw.evaluate(() =>
       chrome.storage.local.set({ 'mcp:origin-repo': { 'openrouter.ai': 'acme/storefront' } }),
     );
@@ -429,9 +429,14 @@ test.describe('handoff: ship + send-report', () => {
     await sendUserMessage(panel, 'Record an edit on the new page', 'copy');
     await expect.poll(() => streamRequests.length).toBe(4);
     await emit('page-two-retry-signal');
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('ServiceWorker.enable');
+    await cdp.send('ServiceWorker.stopAllWorkers');
     const failed = await panel.evaluate(() =>
       chrome.runtime.sendMessage({ type: 'download-report' }),
     );
+    sw = await serviceWorker(context);
+    await cdp.detach();
     expect(failed.ok).toBe(false);
     expect(JSON.stringify(reportRequests[0])).toContain('page-two-retry-signal');
     expect(JSON.stringify(reportRequests[0])).not.toContain('page-one-private-signal');

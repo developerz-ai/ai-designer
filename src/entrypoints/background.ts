@@ -982,12 +982,19 @@ export default defineBackground(() => {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
 
-    if (opts.source === 'report') acknowledgeReport();
     const backend = createTaskBackend(
       taskExecutor(toolset[route.backend.taskToolName], route.backend.taskToolName),
     );
+    let accepted = 0;
     void ship(source, target, {
-      backend,
+      backend: {
+        ...backend,
+        async create(args, signal) {
+          const handle = await backend.create(args, signal);
+          if (++accepted === taskCount && opts.source === 'report') acknowledgeReport();
+          return handle;
+        },
+      },
       onStatus: (update) => {
         postToPanel({ type: 'task-status', ...update });
         // Update-on-ship (slice 08): the PR a task opens lands as a `prUrl` on a later status
