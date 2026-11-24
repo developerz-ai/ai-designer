@@ -98,7 +98,6 @@ import {
 } from '@/mcp/store';
 import { clearToolGrants, getToolGrants, setToolGrant } from '@/mcp/tool-grants';
 import { emptyChangeset } from '@/shared/changeset';
-import type { CollectorSignal } from '@/shared/diagnostics';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -360,10 +359,8 @@ export default defineBackground(() => {
     })
     .catch(() => {});
 
-  // #6: one tab -> the signals drained at THIS turn's start. `makeReport` consumes them into the
-  // diagnostics ReportInput; the entry dies with the turn (deleted in the turn-done chain below),
-  // so a later turn re-drains fresh.
-  const turnDiagnostics = new Map<number, CollectorSignal[]>();
+  const diagnosticsGeneration = new Map<number, number>();
+  const diagnosticsDocument = new Map<number, string>();
 
   // #148 item 1: per-edit before/after screenshot auto-capture. The BEFORE slot arms ahead of the
   // first unrecorded mutation (the turn's content dispatch, below); `recordEdit`'s drain consumes
@@ -844,6 +841,7 @@ export default defineBackground(() => {
     if (tab?.id === undefined || !tab.url) {
       return { ok: false, error: 'Open a web page to design first.' };
     }
+    const reportGeneration = diagnosticsGeneration.get(tab.id);
     const cfg = await getProviderConfig();
     if (!cfg) return { ok: false, error: 'Add a model provider in Settings first.' };
     // The brief is model-authored, so a keyless hosted provider fails this route too — name it
@@ -871,13 +869,17 @@ export default defineBackground(() => {
     // never what it was FOR, nor which parts of a broad request are still outstanding; a full-page
     // overhaul rarely finishes inside one session, so "what remains" is load-bearing for the reader.
     const ask = historyStore.get(changeset.sessionId)?.title;
-    // #6: diagnostics signals drained at this tab's turn start (buffered across SW startup/eviction),
-    // folded into the diagnostics ReportInput so Ship / download-report / send-report carries the
-    // real-time page evidence instead of observing nothing until an explicit `diagnose` DomTool pull.
-    const tabDiagnostics = turnDiagnostics.get(tab.id) ?? [];
-    turnDiagnostics.delete(tab.id);
-    const makeReport = (): Promise<Report> =>
-      authorReport(
+    const reportTabId = tab.id;
+    let reportedDiagnostics: ReturnType<typeof pendingDiagnostics.peekGroups> = [];
+    const makeReport = async (): Promise<Report> => {
+      await pendingDiagnosticsReady;
+      const generation = diagnosticsGeneration.get(reportTabId);
+      if (generation !== reportGeneration) {
+        throw new Error('The page navigated while generating the report. Please retry.');
+      }
+      reportedDiagnostics = pendingDiagnostics.peekGroups(reportTabId);
+      const tabDiagnostics = reportedDiagnostics.flatMap((group) => group.signals);
+      const report = await authorReport(
         { model, generate: reportGenerate },
         {
           changeset,
@@ -889,6 +891,19 @@ export default defineBackground(() => {
           ...(ask ? { ask } : {}),
         },
       );
+      if (diagnosticsGeneration.get(reportTabId) !== generation) {
+        throw new Error('The page navigated while generating the report. Please retry.');
+      }
+      return report;
+    };
+    const acknowledgeReport = (): void => {
+      if (diagnosticsGeneration.get(reportTabId) === reportGeneration) {
+        pendingDiagnostics.removeReported(
+          reportTabId,
+          reportedDiagnostics.flatMap((group) => group.signals),
+        );
+      }
+    };
 
     // "Download report" / "make a report" never dispatches — author the brief and return its Markdown.
     if (opts.downloadOnly) {
@@ -898,6 +913,7 @@ export default defineBackground(() => {
       // one — best-effort (`setReport` throws for an id `appendTurn` never created, e.g. a report
       // requested before any turn ran; that's not this RPC's failure to surface).
       await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
+      acknowledgeReport();
       return {
         ok: true,
         routed: 'report',
@@ -931,6 +947,7 @@ export default defineBackground(() => {
       const report = await makeReport();
       const markdown = toMarkdown(report, changeset);
       await historyStore.setReport(changeset.sessionId, markdown).catch(() => {});
+      acknowledgeReport();
       return {
         ok: true,
         routed: 'report',
@@ -965,6 +982,7 @@ export default defineBackground(() => {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
 
+    if (opts.source === 'report') acknowledgeReport();
     const backend = createTaskBackend(
       taskExecutor(toolset[route.backend.taskToolName], route.backend.taskToolName),
     );
@@ -1327,13 +1345,6 @@ export default defineBackground(() => {
           // Running cumulative session spend: seeded from the session's prior total, advanced in
           // `.then()`, and surfaced to the panel's usage meter on `turn-done` (#25).
           let sessionUsage = session.usage;
-          // #6: drain this tab's buffered diagnostics signals INTO the turn's evidence BEFORE the
-          // turn runs. Real-time signals the collector streamed since page load — including ones
-          // that arrived while the SW was starting or evicted — survive here instead of being
-          // dropped; `makeReport` below folds them into diagnostics ReportInput (via `diagnose`),
-          // so a debug turn never observes an empty page.
-          const drainedDiagnostics = pendingDiagnostics.drain(tabId);
-          turnDiagnostics.set(tabId, drainedDiagnostics.signals);
           const turnDone = runTurn({
             tabId,
             messages: cacheable ? annotatePriorThreadTail(threadForModel) : threadForModel,
@@ -2433,8 +2444,15 @@ export default defineBackground(() => {
     if (parsed.data.type === 'diagnostics-signal') {
       const senderTabId = sender.tab?.id;
       const { signal } = parsed.data;
-      if (senderTabId !== undefined) {
-        void pendingDiagnosticsReady.then(() => pendingDiagnostics.append(senderTabId, signal));
+      if (senderTabId !== undefined && sender.frameId === 0) {
+        const generation = diagnosticsGeneration.get(senderTabId);
+        const documentId = sender.documentId;
+        void pendingDiagnosticsReady.then(() => {
+          if (diagnosticsGeneration.get(senderTabId) !== generation) return;
+          const currentDocument = diagnosticsDocument.get(senderTabId);
+          if (currentDocument && documentId && currentDocument !== documentId) return;
+          pendingDiagnostics.append(senderTabId, signal);
+        });
       }
     }
 
@@ -2484,6 +2502,10 @@ export default defineBackground(() => {
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
     const { tabId, url } = details;
+    diagnosticsGeneration.set(tabId, (diagnosticsGeneration.get(tabId) ?? 0) + 1);
+    if (details.documentId) diagnosticsDocument.set(tabId, details.documentId);
+    else diagnosticsDocument.delete(tabId);
+    void pendingDiagnosticsReady.then(() => pendingDiagnostics.clear(tabId));
     // Stamp BEFORE the reload early-return: this listener is the document-identity authority
     // the turn-start URL guard compares against (all transitionTypes, reload included — a
     // reload re-commits the same document). Same-document navigations (hash, pushState) never
@@ -2591,6 +2613,9 @@ export default defineBackground(() => {
   // Same for the document-identity stamp (both copies): a recycled id must not compare against
   // the dead tab's committed URL.
   chrome.tabs.onRemoved.addListener((tabId) => {
+    diagnosticsGeneration.set(tabId, (diagnosticsGeneration.get(tabId) ?? 0) + 1);
+    diagnosticsDocument.delete(tabId);
+    void pendingDiagnosticsReady.then(() => pendingDiagnostics.clear(tabId));
     // Same `pendingReady` gate as nav-clear: the clear also deletes the persisted mirror key,
     // so a recycled tab id can't inherit a dead tab's ground truth across an eviction either.
     void pendingReady.then(() => {

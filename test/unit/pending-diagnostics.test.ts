@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createPendingDiagnostics,
   type PendingDiagnosticsSnapshot,
 } from '@/changeset/pending-diagnostics';
+import { createPendingDiagnosticsPersister } from '@/changeset/pending-diagnostics-persist';
+import type { SessionStorageArea } from '@/changeset/store';
 import type { CollectorSignal } from '@/shared/diagnostics';
 
 // pending-diagnostics.ts unit: the SW's per-tab FIFO buffer of collector diagnostics signals.
@@ -28,11 +30,52 @@ const networkSig = (url: string, ts: number): CollectorSignal => ({
 });
 
 describe('createPendingDiagnostics', () => {
+  it('persists real buffered signals across instances and removes them on drain', async () => {
+    vi.useFakeTimers();
+    try {
+      const data: Record<string, unknown> = {};
+      const area: SessionStorageArea = {
+        get: async () => ({ ...data }),
+        set: async (items) => {
+          Object.assign(data, items);
+        },
+        remove: async (key) => {
+          for (const item of Array.isArray(key) ? key : [key]) delete data[item];
+        },
+      };
+      const persister = createPendingDiagnosticsPersister(area, 10);
+      const source = createPendingDiagnostics({ cap: 1, onChange: persister.save });
+      source.append(7, consoleSig('dropped', 1));
+      source.append(7, networkSig('https://a/x', 2));
+      await vi.advanceTimersByTimeAsync(10);
+      const freshPersister = createPendingDiagnosticsPersister(area, 10);
+      const restored = createPendingDiagnostics({ onChange: freshPersister.save });
+      const snapshot = (await freshPersister.loadAll()).get(7);
+      expect(snapshot).toEqual({ signals: [networkSig('https://a/x', 2)], dropped: 1 });
+      if (!snapshot) throw new Error('missing snapshot');
+      restored.seed(7, snapshot);
+      expect(restored.drain(7)).toEqual(snapshot);
+      expect((await freshPersister.loadAll()).has(7)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('drain of an empty tab returns empty and a zero drop count', () => {
     const buf = createPendingDiagnostics();
     expect(buf.drain(1)).toEqual({ signals: [], dropped: 0 });
     expect(buf.droppedCount(1)).toBe(0);
     expect(buf.peekGroups(1)).toEqual([]);
+  });
+
+  it('removes only reported signals, retaining those appended during report generation', () => {
+    const buf = createPendingDiagnostics();
+    const first = consoleSig('first', 1);
+    const later = consoleSig('later', 2);
+    buf.append(1, first);
+    const report = buf.peekGroups(1).flatMap((group) => group.signals);
+    buf.append(1, later);
+    buf.removeReported(1, report);
+    expect(buf.drain(1).signals).toEqual([later]);
   });
 
   it('append buffers per tab and drain returns them in arrival order, then resets', () => {
@@ -127,7 +170,7 @@ describe('createPendingDiagnostics', () => {
     expect(reports.length).toBe(beforeClear);
   });
 
-  it('the storage mirror round-trips: seed restores a snapshot into an untouched tab, drops included', () => {
+  it('seed restores a snapshot into an untouched tab, drops included', () => {
     const source = createPendingDiagnostics({ cap: 50 });
     source.append(7, consoleSig('one', 1));
     source.append(7, networkSig('https://a/x', 2));

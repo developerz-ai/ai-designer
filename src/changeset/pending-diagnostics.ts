@@ -52,6 +52,8 @@ export interface PendingDiagnostics {
   append(tabId: number, signal: CollectorSignal): void;
   /** Remove and return ALL buffered signals for a tab, resetting its cap-drop counter. */
   drain(tabId: number): DrainDiagnosticsResult;
+  /** Remove only signals included in a successful report. */
+  removeReported(tabId: number, signals: readonly CollectorSignal[]): void;
   /** Forget everything buffered for a tab (turn finalized / page navigated / tab closed) —
    *  including its drop counter. */
   clear(tabId: number): void;
@@ -128,6 +130,18 @@ export function createPendingDiagnostics(
       buffers.delete(tabId);
       report(tabId, 'drain');
       return { signals: [...buf], dropped: droppedSoFar };
+    },
+
+    removeReported(tabId, signals) {
+      const buf = buffers.get(tabId);
+      if (!buf || signals.length === 0) return;
+      const reported = new Set(signals);
+      const remaining = buf.filter((signal) => !reported.has(signal));
+      if (remaining.length === buf.length) return;
+      if (remaining.length) buffers.set(tabId, remaining);
+      else buffers.delete(tabId);
+      dropped.delete(tabId);
+      report(tabId, 'drain');
     },
 
     clear(tabId) {

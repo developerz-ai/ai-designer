@@ -98,6 +98,7 @@ function stubProvider(
   context: BrowserContext,
   turns: string[],
   reportDraft: Record<string, unknown>,
+  reportFailures = 0,
 ): { streamRequests: ChatRequestBody[]; reportRequests: ChatRequestBody[] } {
   const streamRequests: ChatRequestBody[] = [];
   const reportRequests: ChatRequestBody[] = [];
@@ -114,6 +115,14 @@ function stubProvider(
       return;
     }
     reportRequests.push(body);
+    if (reportRequests.length <= reportFailures) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: '{"error":{"message":"report deliberately failed"}}',
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -356,6 +365,93 @@ function taskStatusEvents(page: Page): Promise<
 }
 
 test.describe('handoff: ship + send-report', () => {
+  test('diagnostics follow the document and survive failed reports and changeset shipping', async ({
+    context,
+    openExtensionPage,
+  }) => {
+    await stubModels(context);
+    await stubFixtures(context, { own: OWN_PAGE, next: OWN_PAGE });
+    const { streamRequests, reportRequests } = stubProvider(
+      context,
+      [
+        toolCallStream('call-record', 'recordEdit', RECORD_EDIT_ARGS),
+        textStream('Recorded the edit.'),
+        toolCallStream('call-record-next', 'recordEdit', RECORD_EDIT_ARGS),
+        textStream('Recorded the new page edit.'),
+      ],
+      REPORT_DRAFT,
+      1,
+    );
+    const devUrl = `${FIXTURE_PREFIX}mcp-dev`;
+    stubTaskServer(context, devUrl);
+    const panel = await openExtensionPage('sidepanel.html');
+    await configureProvider(panel);
+    await connectMcpServer(panel, 'Acme Dev', devUrl);
+    await openRoom(panel, 'Chat');
+    const sw = await serviceWorker(context);
+    await sw.evaluate(() =>
+      chrome.storage.local.set({ 'mcp:origin-repo': { 'openrouter.ai': 'acme/storefront' } }),
+    );
+    const page = await context.newPage();
+    await page.goto(`${FIXTURE_PREFIX}own`);
+    await page.bringToFront();
+    await sendUserMessage(panel, 'Record an edit', 'copy');
+    await expect.poll(() => streamRequests.length).toBe(2);
+    const tabId = await sw.evaluate(
+      async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id,
+    );
+    expect(tabId).toBeDefined();
+    const pending = async () =>
+      sw.evaluate(async (id) => chrome.storage.session.get(`pendingDiagnostics:${id}`), tabId);
+    const emit = async (text: string) => {
+      await sw.evaluate(
+        async ({ id, message }) => {
+          if (id === undefined) throw new Error('No page tab');
+          await chrome.scripting.executeScript({
+            target: { tabId: id },
+            world: 'ISOLATED',
+            func: (value: string) => console.error(value),
+            args: [message],
+          });
+        },
+        { id: tabId, message: text },
+      );
+      await expect
+        .poll(async () => JSON.stringify(await pending()), { timeout: 10_000 })
+        .toContain(text);
+    };
+    await emit('page-one-private-signal');
+    await page.goto(`${FIXTURE_PREFIX}next`);
+    await page.bringToFront();
+    await expect
+      .poll(async () => JSON.stringify(await pending()), { timeout: 10_000 })
+      .not.toContain('page-one-private-signal');
+    await sendUserMessage(panel, 'Record an edit on the new page', 'copy');
+    await expect.poll(() => streamRequests.length).toBe(4);
+    await emit('page-two-retry-signal');
+    const failed = await panel.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'download-report' }),
+    );
+    expect(failed.ok).toBe(false);
+    expect(JSON.stringify(reportRequests[0])).toContain('page-two-retry-signal');
+    expect(JSON.stringify(reportRequests[0])).not.toContain('page-one-private-signal');
+    const shipped = await panel.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'ship', source: 'changeset' }),
+    );
+    expect(shipped.error).toBeUndefined();
+    expect(shipped).toMatchObject({ ok: true, routed: 'tasks' });
+    expect(reportRequests).toHaveLength(1);
+    const retried = await panel.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'download-report' }),
+    );
+    expect(retried.ok).toBe(true);
+    expect(JSON.stringify(reportRequests[1])).toContain('page-two-retry-signal');
+    expect(JSON.stringify(reportRequests[1])).not.toContain('page-one-private-signal');
+    await expect
+      .poll(async () => JSON.stringify(await pending()), { timeout: 10_000 })
+      .not.toContain('page-two-retry-signal');
+  });
+
   test('ship dispatches one task per problem to a mock MCP backend, each tracked to a PR link; send-report routes to the named backend', async ({
     context,
     openExtensionPage,
