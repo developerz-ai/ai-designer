@@ -182,7 +182,7 @@ describe('planTasks', () => {
     });
 
     // Re-planning the same session reuses the key: a retried or double Ship is one task at the
-    // backend, not two that age held on a key (background.ts:855-857).
+    // backend, not two that age held on a key (see docs/standards/hold-idempotency.md).
     const first = planTasks(source(sessionId), target);
     const second = planTasks(source(sessionId), target);
     expect(first).toHaveLength(1);
@@ -286,43 +286,75 @@ describe('ship', () => {
 
   it('sends the session idempotency key on EVERY task(create) dispatch, stably across retries', async () => {
     const sessionId = 'a3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
-    const source: ShipSource = {
-      kind: 'report',
-      report: report(),
-      changeset: changeset({ sessionId }),
-      multiTask: true,
-    };
-    const backend = fakeBackend();
-    await ship(source, target, { backend });
+    // All three Ship routes must carry the key: a bare changeset, an unsplit report with an
+    // attached changeset, and a multi-task report fan-out. Dropping the top-level key on any
+    // one of them reopens the double-Ship duplicate-task bug.
+    const sources: Array<{ name: string; source: ShipSource; expected: number }> = [
+      {
+        name: 'bare changeset',
+        source: { kind: 'changeset', changeset: changeset({ sessionId }) },
+        expected: 1,
+      },
+      {
+        name: 'unsplit report',
+        source: { kind: 'report', report: report(), changeset: changeset({ sessionId }) },
+        expected: 1,
+      },
+      {
+        name: 'multi-task report',
+        source: {
+          kind: 'report',
+          report: report(),
+          changeset: changeset({ sessionId }),
+          multiTask: true,
+        },
+        expected: 2,
+      },
+    ];
 
-    const calls = vi.mocked(backend.create).mock.calls.map(([args]) => args);
-    expect(calls).toHaveLength(2);
-    for (const args of calls) {
-      expect(args.action).toBe('create');
-      expect(args.spec.idempotencyKey).toBe(sessionId);
-      expect(args.idempotencyKey).toBe(sessionId);
+    for (const { name, source, expected } of sources) {
+      const backend = fakeBackend();
+      await ship(source, target, { backend });
+      const calls = vi.mocked(backend.create).mock.calls.map(([args]) => args);
+      expect(calls, name).toHaveLength(expected);
+      for (const args of calls) {
+        expect(args.action, name).toBe('create');
+        expect(args.spec.idempotencyKey, name).toBe(sessionId);
+        expect(args.idempotencyKey, name).toBe(sessionId);
+      }
+
+      // A re-dispatch of the same session reuses the key; a different session does not.
+      await ship(source, target, { backend });
+      const retried = vi
+        .mocked(backend.create)
+        .mock.calls.slice(expected)
+        .map(([args]) => args);
+      expect(
+        retried.map((a) => a.idempotencyKey),
+        name,
+      ).toEqual(Array(expected).fill(sessionId));
+
+      const differentSessionId = 'b3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
+      const otherBackend = fakeBackend();
+      const otherSource: ShipSource = {
+        ...source,
+        changeset: changeset({ sessionId: differentSessionId }),
+      };
+      await ship(otherSource, target, { backend: otherBackend });
+      const other = vi.mocked(otherBackend.create).mock.calls.map(([args]) => args);
+      expect(
+        other.map((a) => a.idempotencyKey),
+        name,
+      ).toEqual(Array(expected).fill(differentSessionId));
+      expect(
+        other.map((a) => a.spec.idempotencyKey),
+        name,
+      ).toEqual(Array(expected).fill(differentSessionId));
+      expect(
+        other.every((a) => a.idempotencyKey !== sessionId),
+        name,
+      ).toBe(true);
     }
-
-    // A re-dispatch of the same session reuses the key; a different session does not.
-    await ship(source, target, { backend });
-    const retried = vi
-      .mocked(backend.create)
-      .mock.calls.slice(2)
-      .map(([args]) => args);
-    expect(retried.map((a) => a.idempotencyKey)).toEqual([sessionId, sessionId]);
-
-    const differentSessionId = 'b3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
-    const otherBackend = fakeBackend();
-    await ship({ ...source, changeset: changeset({ sessionId: differentSessionId }) }, target, {
-      backend: otherBackend,
-    });
-    const other = vi.mocked(otherBackend.create).mock.calls.map(([args]) => args);
-    expect(other.map((a) => a.idempotencyKey)).toEqual([differentSessionId, differentSessionId]);
-    expect(other.map((a) => a.spec.idempotencyKey)).toEqual([
-      differentSessionId,
-      differentSessionId,
-    ]);
-    expect(other.every((a) => a.idempotencyKey !== sessionId)).toBe(true);
   });
 
   it('dispatches a keyless create when the report carries no changeset', async () => {
