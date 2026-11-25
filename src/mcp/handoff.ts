@@ -72,6 +72,12 @@ export function resolveRepo(url: string, map: OriginRepoMap): string | null {
  *  paste-ready Markdown review; `problem` names the one focused issue a multi-task split addresses. */
 export interface TaskSpecPayload {
   readonly source: typeof HANDOFF_SOURCE;
+  /** The changeset's `sessionId`, when the ship carries one. `dispatchTask` ALSO sends
+   *  this as a top-level `task(create)` argument, so a backend that dedupes on the create
+   *  arguments sees the same stable session key. Stable across a retry or double Ship,
+   *  so no second task opens and ages held on a key. A report with no changeset has no
+   *  session identity and dispatches without a key. */
+  readonly idempotencyKey?: string;
   readonly url: string;
   /** The session's recorded edits — always present (may be empty for a diagnostics-only report). */
   readonly edits: readonly Edit[];
@@ -168,6 +174,7 @@ function changesetSpec(
     title: title ? clampTitle(title) : titleFromEdits(changeset),
     spec: {
       source: HANDOFF_SOURCE,
+      idempotencyKey: changeset.sessionId,
       url: changeset.url,
       edits: changeset.edits,
       ...(branch ? { branch } : {}),
@@ -196,6 +203,7 @@ function reportSpec(
     title: title ? clampTitle(title) : problem ? clampTitle(problem) : titleFromSummary(report),
     spec: {
       source: HANDOFF_SOURCE,
+      ...(changeset ? { idempotencyKey: changeset.sessionId } : {}),
       url,
       edits,
       brief: toMarkdown(report, changeset),
@@ -260,9 +268,12 @@ export interface TaskBackend {
   ): Promise<TaskStatus>;
 }
 
-/** The exact arguments of a `task(action:'create')` call. */
+/** The exact arguments of a `task(action:'create')` call. `spec.idempotencyKey` is
+ *  threaded at the top level too, so a backend that dedupes on the create arguments
+ *  (rather than inside `spec`) sees the same stable session key. */
 export interface TaskCreateArgs extends TaskSpec {
   readonly action: 'create';
+  readonly idempotencyKey?: string;
 }
 
 /** One status update as Ship surfaces it — the underlying {@link TaskStatus} plus which task (of a
@@ -338,7 +349,14 @@ async function dispatchTask(
   // Retained across the try so a watch-phase failure still reports the id the create returned.
   let taskId = '';
   try {
-    const handle = await deps.backend.create({ action: 'create', ...spec }, deps.signal);
+    const handle = await deps.backend.create(
+      {
+        action: 'create',
+        ...spec,
+        ...(spec.spec.idempotencyKey ? { idempotencyKey: spec.spec.idempotencyKey } : {}),
+      },
+      deps.signal,
+    );
     taskId = handle.id;
     if (handle.status) emit(handle.status, taskId);
     const final = await deps.backend.watch(taskId, (status) => emit(status, taskId), deps.signal);

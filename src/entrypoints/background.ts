@@ -852,9 +852,9 @@ export default defineBackground(() => {
     // turn's `appendTurn` keyed history under — minting a fresh random id here would target a
     // history entry that never existed (`setReport` throws, swallowed → the brief goes unrecorded).
     // A session-less tab (report before any turn) still gets a stable id via `ensure`.
-    // NOT an idempotency key, despite what this comment used to claim (#165 S10): `sessionId`
-    // appears nowhere under `src/mcp/`, and the dispatched task spec carries no idempotency key at
-    // all — a double Ship opens two tasks. Adding one needs the ai-dev side too; deferred in #165.
+    // `sessionId` IS the handoff idempotency key: `src/mcp/handoff.ts` threads it into every
+    // dispatched `task(create)` spec and create args, so a retry or double Ship reuses the key
+    // instead of opening a second task held on a key.
     const session = await sessions.ensure(tab.id, tab.url, crypto.randomUUID());
     const changeset = session.changeset;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
@@ -1280,8 +1280,9 @@ export default defineBackground(() => {
                   ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
                     // L6): history is keyed by it, so minting a fresh id here forked the history
                     // conversation on every cross-document nav (and could evict an older one).
-                    // Safe to carry over — it is NOT an idempotency key (#165 S10). Edits are
-                    // still wiped; only the history/thread identity survives the nav.
+                    // Safe to carry over: it is also the handoff idempotency key, so keeping it
+                    // lets a Ship after the nav reuse the same task. Edits are still wiped; only
+                    // the history/thread identity survives the nav.
                     emptyChangeset(tabUrl, new Date().toISOString(), session.changeset.sessionId)
                   : priorChangeset,
                 { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
@@ -2500,8 +2501,9 @@ export default defineBackground(() => {
   // falls back to it when no persister record exists). The mirror is re-seeded EMPTY for the new
   // URL, KEEPING the session's conversation id (#168 L6): the session — thread, usage — survives
   // the nav, and history is keyed by that id, so minting a fresh one forked the history
-  // conversation per nav (and could evict an older one). Safe to keep — it is NOT an idempotency
-  // key (#165 S10). Only edits are wiped. `webNavigation` is already a manifest
+  // conversation per nav (and could evict an older one). Safe to keep: it is also the handoff
+  // idempotency key, so a later Ship reuses the same task. Only edits are wiped. `webNavigation`
+  // is already a manifest
   // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
   // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
   // is the same URL, so per docs/architecture/changeset.md the live edits die but the recorded
