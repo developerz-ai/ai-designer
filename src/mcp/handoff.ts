@@ -72,6 +72,10 @@ export function resolveRepo(url: string, map: OriginRepoMap): string | null {
  *  paste-ready Markdown review; `problem` names the one focused issue a multi-task split addresses. */
 export interface TaskSpecPayload {
   readonly source: typeof HANDOFF_SOURCE;
+  /** The session ID for a single task, or a session-derived per-position key for a fan-out.
+   *  `dispatchTask` also sends it at the top level. Retries of the same report reuse the keys;
+   *  reports without a changeset dispatch without a key. */
+  readonly idempotencyKey?: string;
   readonly url: string;
   /** The session's recorded edits — always present (may be empty for a diagnostics-only report). */
   readonly edits: readonly Edit[];
@@ -140,7 +144,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
   const edits = changeset?.edits ?? [];
 
   if (multiTask && report.problems.length > 0) {
-    return report.problems.map((problem) =>
+    return report.problems.map((problem, index) =>
       reportSpec(
         focusReport(report, problem),
         repo,
@@ -150,6 +154,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
         problem,
         undefined,
         target.branch,
+        changeset ? `${changeset.sessionId}:problem:${index}` : undefined,
       ),
     );
   }
@@ -168,6 +173,7 @@ function changesetSpec(
     title: title ? clampTitle(title) : titleFromEdits(changeset),
     spec: {
       source: HANDOFF_SOURCE,
+      idempotencyKey: changeset.sessionId,
       url: changeset.url,
       edits: changeset.edits,
       ...(branch ? { branch } : {}),
@@ -189,6 +195,7 @@ function reportSpec(
   problem?: string,
   title?: string,
   branch?: string,
+  idempotencyKey?: string,
 ): TaskSpec {
   return {
     template: TASK_TEMPLATE,
@@ -196,6 +203,7 @@ function reportSpec(
     title: title ? clampTitle(title) : problem ? clampTitle(problem) : titleFromSummary(report),
     spec: {
       source: HANDOFF_SOURCE,
+      ...(changeset ? { idempotencyKey: idempotencyKey ?? changeset.sessionId } : {}),
       url,
       edits,
       brief: toMarkdown(report, changeset),
@@ -260,9 +268,12 @@ export interface TaskBackend {
   ): Promise<TaskStatus>;
 }
 
-/** The exact arguments of a `task(action:'create')` call. */
+/** The exact arguments of a `task(action:'create')` call. `spec.idempotencyKey` is
+ *  threaded at the top level too, so a backend that dedupes on the create arguments
+ *  (rather than inside `spec`) sees the same stable session key. */
 export interface TaskCreateArgs extends TaskSpec {
   readonly action: 'create';
+  readonly idempotencyKey?: string;
 }
 
 /** One status update as Ship surfaces it — the underlying {@link TaskStatus} plus which task (of a
@@ -338,7 +349,14 @@ async function dispatchTask(
   // Retained across the try so a watch-phase failure still reports the id the create returned.
   let taskId = '';
   try {
-    const handle = await deps.backend.create({ action: 'create', ...spec }, deps.signal);
+    const handle = await deps.backend.create(
+      {
+        action: 'create',
+        ...spec,
+        ...(spec.spec.idempotencyKey ? { idempotencyKey: spec.spec.idempotencyKey } : {}),
+      },
+      deps.signal,
+    );
     taskId = handle.id;
     if (handle.status) emit(handle.status, taskId);
     const final = await deps.backend.watch(taskId, (status) => emit(status, taskId), deps.signal);
