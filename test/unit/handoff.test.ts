@@ -195,7 +195,7 @@ describe('planTasks', () => {
     expect(other[0]?.spec.idempotencyKey).toBe(differentSessionId);
     expect(other[0]?.spec.idempotencyKey).not.toBe(first[0]?.spec.idempotencyKey);
 
-    // Every spec of a multi-task report fan-out shares the session's key.
+    // Fan-out tasks have distinct session-derived keys, stable for the same report.
     const fanned = planTasks(
       {
         kind: 'report',
@@ -206,7 +206,10 @@ describe('planTasks', () => {
       target,
     );
     expect(fanned).toHaveLength(2);
-    expect(fanned.map((s) => s.spec.idempotencyKey)).toEqual([sessionId, sessionId]);
+    expect(fanned.map((s) => s.spec.idempotencyKey)).toEqual([
+      `${sessionId}:problem:0`,
+      `${sessionId}:problem:1`,
+    ]);
 
     // A report with no changeset has no session identity — no key, still a valid task.
     const keyless = planTasks({ kind: 'report', report: report() }, target);
@@ -261,6 +264,36 @@ function fakeBackend(): TaskBackend {
 
 describe('ship', () => {
   const target = { repo: 'acme/storefront' };
+
+  it('creates distinct fan-out tasks and reuses their IDs on retry with a deduplicating backend', async () => {
+    const ids = new Map<string, string>();
+    const backend: TaskBackend = {
+      create: vi.fn(async ({ idempotencyKey }) => {
+        if (!idempotencyKey) throw new Error('missing idempotency key');
+        let id = ids.get(idempotencyKey);
+        if (!id) {
+          id = `task-${ids.size + 1}`;
+          ids.set(idempotencyKey, id);
+        }
+        return { id };
+      }),
+      watch: vi.fn(async () => ({ status: 'ci_green' })),
+    };
+    const source: ShipSource = {
+      kind: 'report',
+      report: report(),
+      changeset: changeset(),
+      multiTask: true,
+    };
+    const first = await ship(source, target, { backend });
+    const retry = await ship(source, target, { backend });
+    const firstIds = first.tasks.map((task) => task.taskId);
+    expect(firstIds).toHaveLength(2);
+    expect(firstIds.every(Boolean)).toBe(true);
+    expect(new Set(firstIds).size).toBe(2);
+    expect(retry.tasks.map((task) => task.taskId)).toEqual(firstIds);
+    expect(ids.size).toBe(2);
+  });
 
   it('creates + watches a single task and streams its status', async () => {
     const backend = fakeBackend();
@@ -317,10 +350,13 @@ describe('ship', () => {
       await ship(source, target, { backend });
       const calls = vi.mocked(backend.create).mock.calls.map(([args]) => args);
       expect(calls, name).toHaveLength(expected);
-      for (const args of calls) {
+      const keys = calls.map((_, index) =>
+        expected === 1 ? sessionId : `${sessionId}:problem:${index}`,
+      );
+      for (const [index, args] of calls.entries()) {
         expect(args.action, name).toBe('create');
-        expect(args.spec.idempotencyKey, name).toBe(sessionId);
-        expect(args.idempotencyKey, name).toBe(sessionId);
+        expect(args.spec.idempotencyKey, name).toBe(keys[index]);
+        expect(args.idempotencyKey, name).toBe(keys[index]);
       }
 
       // A re-dispatch of the same session reuses the key; a different session does not.
@@ -332,7 +368,7 @@ describe('ship', () => {
       expect(
         retried.map((a) => a.idempotencyKey),
         name,
-      ).toEqual(Array(expected).fill(sessionId));
+      ).toEqual(keys);
 
       const differentSessionId = 'b3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
       const otherBackend = fakeBackend();
@@ -342,14 +378,17 @@ describe('ship', () => {
       };
       await ship(otherSource, target, { backend: otherBackend });
       const other = vi.mocked(otherBackend.create).mock.calls.map(([args]) => args);
+      const otherKeys = other.map((_, index) =>
+        expected === 1 ? differentSessionId : `${differentSessionId}:problem:${index}`,
+      );
       expect(
         other.map((a) => a.idempotencyKey),
         name,
-      ).toEqual(Array(expected).fill(differentSessionId));
+      ).toEqual(otherKeys);
       expect(
         other.map((a) => a.spec.idempotencyKey),
         name,
-      ).toEqual(Array(expected).fill(differentSessionId));
+      ).toEqual(otherKeys);
       expect(
         other.every((a) => a.idempotencyKey !== sessionId),
         name,

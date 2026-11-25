@@ -11,7 +11,7 @@ hidden or redefined; no key configuration or provider restriction changes as par
 | Claimed key | `src/shared/changeset.ts:188-191` documents `sessionId` as the handoff idempotency key. |
 | Missing key | At the pre-fix commit `e46d6408`, `src/agent/session.ts:112-114` and `src/entrypoints/background.ts:855-857` state no key is sent (`git show e46d6408:src/entrypoints/background.ts`); `src/mcp/handoff.ts` `planTasks` / `ship` then passed `task(create)` arguments without one. Those lines now say the opposite: they document the key as sent. |
 | Failure | `src/mcp/backend.ts` and the task executor pass create arguments through unchanged, so a retry or double Ship minted a second task on the same session. Both tasks sit held on a key and age into the census reading. |
-| Fix | Dispatch carries `idempotencyKey: changeset.sessionId` both inside the spec and at the top level of `task(create)`; a report without a changeset dispatches keyless because it has no session identity. `test/unit/handoff.test.ts` pins both paths. |
+| Fix | Dispatch carries a session-derived `idempotencyKey` both inside the spec and at the top level of `task(create)`. Fan-out tasks append their problem position, so a retry of the same ordered report reuses distinct task IDs. A report without a changeset dispatches keyless. `test/unit/handoff.test.ts` pins these paths. |
 
 ## Why this rule exists
 
@@ -24,7 +24,8 @@ cause.
 ## How to comply
 
 Before a merge touches the handoff path: derive the dispatch key from `changeset.sessionId`, keep it
-stable across retries and double Ship, and give distinct sessions distinct keys. Watch every
+stable across retries and double Ship, and give distinct sessions and fan-out positions distinct keys.
+The same ordered problem list is required on retry. Watch every
 dispatched task to terminal state or record an explicit failure; never leave a create unanswered.
 Write keyless creates only for reports with no changeset. Root `CLAUDE.md`, `.dz/schedules/`,
 census queries and metric definitions stay untouched. No API key configuration or provider

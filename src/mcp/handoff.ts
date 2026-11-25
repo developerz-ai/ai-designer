@@ -72,11 +72,9 @@ export function resolveRepo(url: string, map: OriginRepoMap): string | null {
  *  paste-ready Markdown review; `problem` names the one focused issue a multi-task split addresses. */
 export interface TaskSpecPayload {
   readonly source: typeof HANDOFF_SOURCE;
-  /** The changeset's `sessionId`, when the ship carries one. `dispatchTask` ALSO sends
-   *  this as a top-level `task(create)` argument, so a backend that dedupes on the create
-   *  arguments sees the same stable session key. Stable across a retry or double Ship,
-   *  so no second task opens and ages held on a key. A report with no changeset has no
-   *  session identity and dispatches without a key. */
+  /** The session ID for a single task, or a session-derived per-position key for a fan-out.
+   *  `dispatchTask` also sends it at the top level. Retries of the same report reuse the keys;
+   *  reports without a changeset dispatch without a key. */
   readonly idempotencyKey?: string;
   readonly url: string;
   /** The session's recorded edits — always present (may be empty for a diagnostics-only report). */
@@ -146,7 +144,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
   const edits = changeset?.edits ?? [];
 
   if (multiTask && report.problems.length > 0) {
-    return report.problems.map((problem) =>
+    return report.problems.map((problem, index) =>
       reportSpec(
         focusReport(report, problem),
         repo,
@@ -156,6 +154,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
         problem,
         undefined,
         target.branch,
+        changeset ? `${changeset.sessionId}:problem:${index}` : undefined,
       ),
     );
   }
@@ -196,6 +195,7 @@ function reportSpec(
   problem?: string,
   title?: string,
   branch?: string,
+  idempotencyKey?: string,
 ): TaskSpec {
   return {
     template: TASK_TEMPLATE,
@@ -203,7 +203,7 @@ function reportSpec(
     title: title ? clampTitle(title) : problem ? clampTitle(problem) : titleFromSummary(report),
     spec: {
       source: HANDOFF_SOURCE,
-      ...(changeset ? { idempotencyKey: changeset.sessionId } : {}),
+      ...(changeset ? { idempotencyKey: idempotencyKey ?? changeset.sessionId } : {}),
       url,
       edits,
       brief: toMarkdown(report, changeset),
