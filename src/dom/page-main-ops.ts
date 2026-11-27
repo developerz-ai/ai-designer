@@ -97,7 +97,9 @@ export function safeValue(value: unknown, depth = 0, seen = new WeakSet<object>(
 const SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const FORBIDDEN_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
-// Roots refused outright. Each is either a code-execution channel, a network channel (the page world
+// Capabilities refused at ANY depth, not just as the first segment: `window`, `self`, `globalThis`,
+// `top`, `parent`, `frames` and `document.defaultView` are all the page window itself, so a root-only
+// check let `window.fetch` / `self.localStorage` through. Each is either a code-execution channel, a network channel (the page world
 // is the one place an exfiltration would carry the user's real cookies), a navigation channel, or a
 // storage-write channel. The agent has purpose-built, reviewed tools for the legitimate versions of
 // all of these — `browse` for navigation, the diagnostics collector for network, the DOM tools for
@@ -133,6 +135,10 @@ const DENIED_ROOTS = new Set([
   'chrome',
   'browser',
   'trustedTypes',
+  // Session exfiltration and cross-window reach.
+  'cookie',
+  'cookieStore',
+  'opener',
 ]);
 
 // Method names refused wherever they appear in a path — `document.write` and `document.execCommand`
@@ -162,9 +168,9 @@ export function pathDenyReason(path: string): string | null {
       return `Refused: "${segment}" walks the prototype chain, which is a route to code construction.`;
     }
   }
-  const root = segments[0] ?? '';
-  if (DENIED_ROOTS.has(root)) {
-    return `Refused: "${root}" is a code-execution, network, navigation or storage capability; it is not reachable from a design tool.`;
+  const denied = segments.find((segment) => DENIED_ROOTS.has(segment));
+  if (denied) {
+    return `Refused: "${denied}" is a code-execution, network, navigation, storage or cookie capability; it is not reachable from a design tool.`;
   }
   const leaf = segments.at(-1) ?? '';
   if (DENIED_LEAVES.has(leaf)) {
@@ -316,7 +322,9 @@ export function runMainOp(op: MainOp, win: Window = window): MainOpResult {
           return fail(`window.${op.path} is not a function (it is ${typeof value}).`);
         }
         // Identity check on top of the name check: a page can alias `eval` to any name it likes,
-        // and the deny-list is by path. This catches the alias.
+        // and the deny-list is by path. This catches the alias. It is NOT a network sandbox: any
+        // page-owned function `pageCall` invokes can do what the page can, its own fetch included —
+        // that is inherent to invoking page functions, and why the deny-list covers every segment.
         if (isCodeConstructor(value, win)) {
           return fail('Refused: that path resolves to a code-construction function.');
         }
