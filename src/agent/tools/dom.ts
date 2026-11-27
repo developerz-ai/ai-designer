@@ -400,8 +400,10 @@ export function createDomTools(dispatch: DomDispatch) {
     }),
     diagnostics: tool({
       description:
-        '`drain` returns (and clears) the runtime/network signals buffered since the last ' +
-        'drain — console errors/warnings, uncaught exceptions, failed/slow requests. `scan` ' +
+        '`drain` returns (and clears) the signals buffered since the last drain — uncaught page ' +
+        "exceptions and failed resource loads (img/script/link). It does NOT see the page's own " +
+        "console.* calls or fetch/XHR traffic: the hooks run in the extension's isolated world, " +
+        "not the page's — read those from a screenshot or the page UI. `scan` " +
         'runs a fresh accessibility + layout pass. ToolResult.data = { signals: CollectorSignal[] }. ' +
         'Debug-mode first move: observe before you reproduce.',
       inputSchema: DiagnosticsInput.omit({ type: true }),

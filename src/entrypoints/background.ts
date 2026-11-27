@@ -223,7 +223,10 @@ export default defineBackground(() => {
   // The old content script stays in every open tab with its `chrome.*` bridge invalidated: a
   // corpse that still holds capture-phase listeners, so the page looks alive and nothing works.
   // The worker always restarts on reload, so booting is the one reliable signal. Re-injection is
-  // idempotent — content.ts's newest instance tears down the previous one (see its TAKEOVER note).
+  // safe to repeat — content.ts's newest instance tears down the previous one's listeners and UI
+  // (see its TAKEOVER note) but, within the same isolated world, ADOPTS its live edits and undo log
+  // (src/dom/live-edit-state.ts): an MV3 worker idles out after ~30s, so this runs mid-session. After
+  // an extension reload the new world starts empty — the reload wiped the session state anyway.
   void reinjectAllTabs();
 
   /** Re-run every declared content script in every already-open http(s) tab. Best-effort per tab
@@ -297,13 +300,14 @@ export default defineBackground(() => {
   // pasted empty AGAIN. Hydrated with the other ready promises in `handle`.
   const globalLog = new GlobalLogStore();
   const globalLogReady = globalLog.hydrate().catch(() => {});
-  /** A turnless error the panel must see AND the log must keep. Deliberately UNSTAMPED (no turnId)
-   *  — the panel renders unattributed errors as composer notices, never as a turn's failure. */
-  const postTurnlessError = (message: string): void => {
-    const update: SwToPanel = { type: 'error', message };
-    postToPanel(update);
-    const entry = logEntryFor(update, Date.now());
+  /** A send the turn guards refused: the log keeps it, and the caller REJECTS the `user-message`
+   *  ack with it (`{ ok: false, error }`). It used to be posted as an unstamped stream `error` with
+   *  an `{ ok: true }` ack — the panel, already streaming for that send, read the error as a
+   *  mid-turn notice, got no `turnId`, and stayed "streaming" (send disabled) forever. */
+  const rejectTurnless = (message: string): UserMessageResult => {
+    const entry = logEntryFor({ type: 'error', message }, Date.now());
     if (entry) globalLog.append(entry);
+    return { ok: false, error: message };
   };
 
   const logEscapedError = (prefix: string, err: unknown): void => {
@@ -852,9 +856,9 @@ export default defineBackground(() => {
     // turn's `appendTurn` keyed history under — minting a fresh random id here would target a
     // history entry that never existed (`setReport` throws, swallowed → the brief goes unrecorded).
     // A session-less tab (report before any turn) still gets a stable id via `ensure`.
-    // `sessionId` IS the handoff idempotency key: `src/mcp/handoff.ts` threads it into every
-    // dispatched `task(create)` spec and create args, so a retry or double Ship reuses the key
-    // instead of opening a second task held on a key.
+    // `sessionId` scopes the handoff idempotency key: `src/mcp/handoff.ts` keys every dispatched
+    // `task(create)` on the session plus a digest of the work it carries, so a retry or double Ship
+    // of the same edits reuses the task, and a later Ship of new edits opens a new one.
     const session = await sessions.ensure(tab.id, tab.url, crypto.randomUUID());
     const changeset = session.changeset;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
@@ -1029,27 +1033,28 @@ export default defineBackground(() => {
         // The try/finally guarantees a guard return or a setup throw always unregisters it.
         const turnId = crypto.randomUUID();
         startingTurns.add(turnId);
+        // Whether this turn's promise chain (whose `.finally` releases the running-turn state) was
+        // registered. A throw or return between installing the controller and registering it would
+        // otherwise leave `turnAbort` / `runningTurnId` set forever: `session-get` then reports a
+        // turn running that never will, and every reconnecting panel shows "streaming".
+        let chained = false;
         try {
           // These guards fire BEFORE a session exists, so they log via the SW-global ring
-          // (`postTurnlessError`) — a plain `postToPanel` here is exactly the error the user's
-          // pasted debug log never contained.
+          // (`rejectTurnless`) and reject the ack — the panel shows the reason as a notice.
           const tab = await resolveTargetTab();
           if (tab?.id === undefined || !tab.url) {
-            postTurnlessError('Open a web page to start designing.');
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless('Open a web page to start designing.');
           }
           const cfg = await getProviderConfig();
           if (!cfg) {
-            postTurnlessError('Add a model provider in Settings to start.');
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless('Add a model provider in Settings to start.');
           }
           // Fail here, named, rather than let the SDK issue a keyless request and surface the
           // provider's own wording ("Missing Authentication header") several frames deep in the
           // stream. Readiness blocks Start on the same condition; this covers a key cleared after
           // Start, and a session restored into a worker whose stored key has since gone.
           if (keyMissing(cfg)) {
-            postTurnlessError(MISSING_KEY_ERROR);
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless(MISSING_KEY_ERROR);
           }
           const tabId = tab.id;
           // Closure-stable alias (TS drops a captured property's narrowing inside the chained
@@ -1280,9 +1285,10 @@ export default defineBackground(() => {
                   ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
                     // L6): history is keyed by it, so minting a fresh id here forked the history
                     // conversation on every cross-document nav (and could evict an older one).
-                    // Safe to carry over: it is also the handoff idempotency key, so keeping it
-                    // lets a Ship after the nav reuse the same task. Edits are still wiped; only
-                    // the history/thread identity survives the nav.
+                    // Safe to carry over: the handoff idempotency key is the session PLUS a digest
+                    // of the dispatched edits (`src/mcp/handoff.ts` `dispatchKey`), so a Ship of the
+                    // new page's edits still opens its own task. Edits are still wiped; only the
+                    // history/thread identity survives the nav.
                     emptyChangeset(tabUrl, new Date().toISOString(), session.changeset.sessionId)
                   : priorChangeset,
                 { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
@@ -1714,12 +1720,20 @@ export default defineBackground(() => {
             });
           // Register the chain for the NEXT user-message's ordered supersede (see the wait above).
           settlingTurn = { id: turnId, done: turnDone };
+          chained = true;
 
           // #168 A: ack with the turn's id so the panel keys its in-flight bubble to this turn's
           // stream events (which all carry the same id via `emitTurn`).
           return { ok: true, turnId } satisfies UserMessageResult;
         } finally {
           startingTurns.delete(turnId);
+          // Only THIS turn's own state: a newer turn that superseded it owns `runningTurnId` now.
+          if (!chained && runningTurnId === turnId) {
+            turnAbort = null;
+            runningTurnId = null;
+            runningTurnTabId = null;
+            turnChangeset = null;
+          }
         }
       }
       // Ship (user-triggered) — dispatch to a connected coding backend, else return an MD brief to
@@ -2501,8 +2515,9 @@ export default defineBackground(() => {
   // falls back to it when no persister record exists). The mirror is re-seeded EMPTY for the new
   // URL, KEEPING the session's conversation id (#168 L6): the session — thread, usage — survives
   // the nav, and history is keyed by that id, so minting a fresh one forked the history
-  // conversation per nav (and could evict an older one). Safe to keep: it is also the handoff
-  // idempotency key, so a later Ship reuses the same task. Only edits are wiped. `webNavigation`
+  // conversation per nav (and could evict an older one). Safe to keep: the handoff idempotency key is
+  // the session plus a digest of the dispatched edits, so a later Ship of new edits opens its own
+  // task. Only edits are wiped. `webNavigation`
   // is already a manifest
   // permission (frame enumeration, slice 13), so this needs no new grant. Iframe commits
   // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
@@ -2633,6 +2648,13 @@ export default defineBackground(() => {
     });
     lastCommittedUrl.delete(tabId);
     void chrome.storage.session.remove(committedUrlKey(tabId)).catch(() => {});
+    // The tab's turn thread (`session:<id>`) and changeset (`changeset:<id>`) die with it. Both
+    // carry screenshots, and nothing else ever removed them: every closed tab's record stayed in
+    // chrome.storage.session (~10MB quota) until the browser restarted. History keeps its own copy.
+    void sessionsReady.then(() => sessions.clear(tabId)).catch(() => {});
+    void createSessionChangesetPersister(tabId)
+      .clear()
+      .catch(() => {});
   });
 
   // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the
