@@ -222,6 +222,26 @@ describe('forms', () => {
     expect(JSON.stringify(result)).not.toContain('hunter8');
   });
 
+  it('keeps secret detection across checked write events before a value write', () => {
+    const el = document.getElementById('email');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    el.type = 'text';
+    el.addEventListener(
+      'input',
+      () => {
+        if (el.checked) el.type = 'password';
+      },
+      { once: true },
+    );
+    el.addEventListener('change', () => {
+      el.type = 'text';
+    });
+    const result = setField(el, { checked: true, value: 'hunter9' });
+    expect(el.value).toBe('hunter9');
+    expect(result?.value).toBe('');
+    expect(JSON.stringify(result)).not.toContain('hunter9');
+  });
+
   it('does not hide an ordinary field whose autocomplete only mentions password in a section', () => {
     document.body.innerHTML =
       '<form id="f5"><input id="e5" type="email" autocomplete="section-reset-password email" value="a@b.co"></form>';

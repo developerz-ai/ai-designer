@@ -146,6 +146,7 @@ export function setField(
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
     el.dispatchEvent(new (doc.defaultView?.Event ?? Event)(type, { bubbles: true }));
+    secret ||= isSecretField(el);
   };
 
   if (input.checked !== undefined && el instanceof HTMLInputElement) {
@@ -156,10 +157,8 @@ export function setField(
   if (input.value !== undefined) {
     nativeSet(el, input.value);
     fire('input');
-    secret ||= isSecretField(el);
     fire('change');
   }
-  secret ||= isSecretField(el);
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
