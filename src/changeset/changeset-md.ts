@@ -21,10 +21,52 @@ import type { Changeset, Edit, StableSelector } from '@/shared/changeset';
 // renders the model-authored prose) because this half renders the MECHANICAL record; they meet
 // only in `toMarkdown`.
 
-const FENCE = '```';
-const CSS_FENCE = `${FENCE}css`;
-const HTML_FENCE = `${FENCE}html`;
 const COMMENT_CLOSE = `*${'/'}`;
+
+// Page content (copy text, replaced markup, injected CSS, computed values) is the PAGE's and so
+// untrusted in a brief a coding agent reads. A fixed ``` fence closes on the first ``` line inside
+// it and the rest renders as the brief's own headings and links. CommonMark closes a fence only on
+// a backtick run at least as long as the opener, so the fence is sized past the longest run inside.
+function fenced(lang: string, body: string): string {
+  const fence = '`'.repeat(Math.max(3, longestBacktickRun(body) + 1));
+  return [`${fence}${lang}`, body, fence].join('\n');
+}
+
+/** Page text as a literal inline code span: Markdown inside it (a `[link](…)`, `**bold**`) stays
+ *  text. The delimiter outruns any backtick run inside; a space pads a span that starts or ends on a
+ *  backtick. Line breaks fold to spaces — a span cannot hold a block. */
+function code(value: string): string {
+  const flat = value.replace(/[\r\n]+/g, ' ');
+  // An empty span (two backticks) is not a code span at all; say so in words instead.
+  if (flat === '') return '*(empty)*';
+  const ticks = '`'.repeat(longestBacktickRun(flat) + 1);
+  // CommonMark strips ONE space from each side when both sides have one, so a value that starts or
+  // ends with a space or a backtick gets a pad on BOTH sides: what is stripped is only the pad.
+  const pad = /^[ `]|[ `]$/.test(flat) ? ' ' : '';
+  return `${ticks}${pad}${flat}${pad}${ticks}`;
+}
+
+// A loop, not `Math.max(...runs)`: a large replaced subtree can hold more runs than the engine's
+// argument limit, which would throw and abort the whole export.
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  return longest;
+}
+
+/** A table cell: page text as a literal code span, every line break folded so the row cannot end
+ *  early. Only for values with no `|` — see {@link fitsTable}. */
+function cell(value: string): string {
+  return code(value);
+}
+
+/** Whether every value can sit in a GFM table cell. GFM splits a row on any `|` not preceded by an
+ *  ODD run of backslashes — even inside a code span — so a value carrying one is never escaped into
+ *  the table (`\|` in the page's own text would become `\\|` and split). Those edits render their
+ *  deltas as a fenced block instead. */
+function fitsTable(changes: Edit['changes']): boolean {
+  return changes.every((c) => !`${c.before ?? ''}${c.after}`.includes('|'));
+}
 
 /** How the honesty note reads per selector strategy. `null` = the selector is trustworthy enough
  *  to present without a caveat. */
@@ -64,7 +106,7 @@ export function renderStylesheet(changeset: Changeset): string {
   // so this is the LATEST version of each sheet, not a history of the agent's attempts.
   for (const sheet of changeset.stylesheets) {
     const header = sheet.intent ? `### ${sheet.intent}` : `### Stylesheet \`${sheet.id}\``;
-    sections.push([header, '', CSS_FENCE, sheet.css.trim(), FENCE].join('\n'));
+    sections.push([header, '', fenced('css', sheet.css.trim())].join('\n'));
   }
 
   // Then the per-element edits, reconstructed as rules. These are the changes made BEFORE or
@@ -75,9 +117,7 @@ export function renderStylesheet(changeset: Changeset): string {
       [
         changeset.stylesheets.length > 0 ? '### Per-element adjustments' : '',
         '',
-        CSS_FENCE,
-        rules.join('\n\n'),
-        FENCE,
+        fenced('css', rules.join('\n\n')),
       ]
         .filter((line, i) => !(i === 0 && line === ''))
         .join('\n'),
@@ -145,15 +185,30 @@ function editSection(edit: Edit, n: number): string {
   }
 
   if (edit.changes.length > 0) {
-    lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
-    for (const c of edit.changes) {
-      lines.push(`| \`${c.prop}\` | ${c.before ?? '—'} | ${c.after} |`);
+    if (fitsTable(edit.changes)) {
+      lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
+      for (const c of edit.changes) {
+        lines.push(
+          `| \`${c.prop}\` | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
+        );
+      }
+    } else {
+      const deltas = edit.changes.map((c) => `${c.prop}: ${c.before ?? '—'} -> ${c.after}`);
+      lines.push('', '**Property changes:**', '', fenced('text', deltas.join('\n')));
     }
   }
   const structural = structuralProse(edit);
   if (structural) lines.push('', structural);
   if (edit.text) {
-    lines.push('', `**Copy:** "${edit.text.before}" → "${edit.text.after}"`);
+    const { before, after } = edit.text;
+    lines.push(
+      '',
+      /[\r\n`]/.test(before + after)
+        ? ['**Copy:** was', '', fenced('text', before), '', 'now', '', fenced('text', after)].join(
+            '\n',
+          )
+        : `**Copy:** ${code(before)} → ${code(after)}`,
+    );
   }
   for (const a of edit.attrs) {
     lines.push(
@@ -183,9 +238,7 @@ function structuralProse(edit: Edit): string {
       return [
         `**Structure:** new markup added ${s.position ?? 'beforeend'} \`${s.refSelector?.value ?? 'the target'}\`:`,
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'wrap':
       // The restructuring ops are described as the SHAPE THE MARKUP SHOULD TAKE, because that is
@@ -196,28 +249,22 @@ function structuralProse(edit: Edit): string {
           ? `**Structure:** this element **through** \`${s.endSelector.value}\` — the whole run of siblings — is wrapped in a new container. In source, render that range inside:`
           : '**Structure:** this element is wrapped in a new container. In source, render it inside:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'unwrap':
       return [
         '**Structure:** this wrapper is removed and its children take its place — one level of nesting deleted, no content lost. The wrapper was:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'replace': {
       const lines = [
         '**Structure:** this element and its whole subtree become:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ];
       if (s.replacedHtml) {
-        lines.push('', 'Replacing:', '', HTML_FENCE, s.replacedHtml, FENCE);
+        lines.push('', 'Replacing:', '', fenced('html', s.replacedHtml));
       }
       return lines.join('\n');
     }
