@@ -186,13 +186,13 @@ describe('planTasks', () => {
     const first = planTasks(source(sessionId), target);
     const second = planTasks(source(sessionId), target);
     expect(first).toHaveLength(1);
-    expect(first[0]?.spec.idempotencyKey).toBe(sessionId);
+    expect(first[0]?.spec.idempotencyKey?.startsWith(`${sessionId}:`)).toBe(true);
     expect(second[0]?.spec.idempotencyKey).toBe(first[0]?.spec.idempotencyKey);
 
     // A different session must get a different key.
     const differentSessionId = 'b3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
     const other = planTasks(source(differentSessionId), target);
-    expect(other[0]?.spec.idempotencyKey).toBe(differentSessionId);
+    expect(other[0]?.spec.idempotencyKey?.startsWith(`${differentSessionId}:`)).toBe(true);
     expect(other[0]?.spec.idempotencyKey).not.toBe(first[0]?.spec.idempotencyKey);
 
     // Fan-out tasks have distinct session-derived keys, stable for the same report.
@@ -206,10 +206,9 @@ describe('planTasks', () => {
       target,
     );
     expect(fanned).toHaveLength(2);
-    expect(fanned.map((s) => s.spec.idempotencyKey)).toEqual([
-      `${sessionId}:problem:0`,
-      `${sessionId}:problem:1`,
-    ]);
+    const fannedKeys = fanned.map((s) => s.spec.idempotencyKey);
+    expect(fannedKeys.every((key) => key?.startsWith(`${sessionId}:`))).toBe(true);
+    expect(new Set(fannedKeys).size).toBe(2);
 
     // A report with no changeset has no session identity — no key, still a valid task.
     const keyless = planTasks({ kind: 'report', report: report() }, target);
@@ -295,6 +294,96 @@ describe('ship', () => {
     expect(ids.size).toBe(2);
   });
 
+  // The key is the SESSION plus WHAT is dispatched. A session outlives a Ship — the user keeps
+  // designing in the same chat and ships again — so a session-only key dedupes that second Ship onto
+  // the first task at the backend and the new edits are silently never dispatched.
+  function dedupingBackend(): { backend: TaskBackend; keys: Map<string, string> } {
+    const keys = new Map<string, string>();
+    const backend: TaskBackend = {
+      create: vi.fn(async ({ idempotencyKey }) => {
+        if (!idempotencyKey) throw new Error('missing idempotency key');
+        let id = keys.get(idempotencyKey);
+        if (!id) {
+          id = `task-${keys.size + 1}`;
+          keys.set(idempotencyKey, id);
+        }
+        return { id };
+      }),
+      watch: vi.fn(async () => ({ status: 'ci_green' })),
+    };
+    return { backend, keys };
+  }
+
+  it('opens a NEW task when the same session ships again with more edits', async () => {
+    const { backend } = dedupingBackend();
+    const firstShip = await ship({ kind: 'changeset', changeset: changeset() }, target, {
+      backend,
+    });
+    const grown = changeset({ edits: [edit(), edit({ intent: 'Tighten the nav' })] });
+    const secondShip = await ship({ kind: 'changeset', changeset: grown }, target, { backend });
+    expect(secondShip.tasks[0]?.taskId).not.toBe(firstShip.tasks[0]?.taskId);
+  });
+
+  it('opens a NEW task when the work changes in any keyed input, at the same edit count', async () => {
+    const { backend } = dedupingBackend();
+    const base = await ship({ kind: 'changeset', changeset: changeset() }, target, { backend });
+    const baseId = base.tasks[0]?.taskId;
+    const variants: Array<[string, Changeset, { repo: string; branch?: string }]> = [
+      [
+        'a different edit, same count',
+        changeset({ edits: [edit({ intent: 'Make the CTA green' })] }),
+        target,
+      ],
+      ['another page', changeset({ url: 'http://localhost:3000/checkout' }), target],
+      ['another repo', changeset(), { repo: 'acme/other' }],
+      ['another branch', changeset(), { ...target, branch: 'develop' }],
+    ];
+    for (const [name, cs, where] of variants) {
+      const result = await ship({ kind: 'changeset', changeset: cs }, where, { backend });
+      expect(result.tasks[0]?.taskId, name).not.toBe(baseId);
+    }
+  });
+
+  it('opens a NEW task when a later fan-out ships a different problem at the same position', async () => {
+    const { backend } = dedupingBackend();
+    const ship1 = await ship(
+      {
+        kind: 'report',
+        report: report({ problems: ['Nav overflows at 375px'] }),
+        changeset: changeset(),
+        multiTask: true,
+      },
+      target,
+      { backend },
+    );
+    const ship2 = await ship(
+      {
+        kind: 'report',
+        report: report({ problems: ['CTA contrast too low'] }),
+        changeset: changeset(),
+        multiTask: true,
+      },
+      target,
+      { backend },
+    );
+    expect(ship2.tasks[0]?.taskId).not.toBe(ship1.tasks[0]?.taskId);
+  });
+
+  it('keeps a retried report on its task even though the model re-authored the brief', async () => {
+    const { backend } = dedupingBackend();
+    const once = await ship(
+      { kind: 'report', report: report({ summary: 'First draft.' }), changeset: changeset() },
+      target,
+      { backend },
+    );
+    const again = await ship(
+      { kind: 'report', report: report({ summary: 'Second draft.' }), changeset: changeset() },
+      target,
+      { backend },
+    );
+    expect(again.tasks[0]?.taskId).toBe(once.tasks[0]?.taskId);
+  });
+
   it('creates + watches a single task and streams its status', async () => {
     const backend = fakeBackend();
     const updates: TaskStatusUpdate[] = [];
@@ -317,7 +406,7 @@ describe('ship', () => {
     expect(updates.every((u) => u.total === 1 && u.index === 0)).toBe(true);
   });
 
-  it('sends the session idempotency key on EVERY task(create) dispatch, stably across retries', async () => {
+  it('sends a session-scoped idempotency key on EVERY task(create) dispatch, stably across retries', async () => {
     const sessionId = 'a3e1c9f2-6b7d-4e8a-9c01-5f2d3b4a6e70';
     // All three Ship routes must carry the key: a bare changeset, an unsplit report with an
     // attached changeset, and a multi-task report fan-out. Dropping the top-level key on any
@@ -350,12 +439,11 @@ describe('ship', () => {
       await ship(source, target, { backend });
       const calls = vi.mocked(backend.create).mock.calls.map(([args]) => args);
       expect(calls, name).toHaveLength(expected);
-      const keys = calls.map((_, index) =>
-        expected === 1 ? sessionId : `${sessionId}:problem:${index}`,
-      );
+      const keys = calls.map((args) => args.spec.idempotencyKey);
+      expect(new Set(keys).size, name).toBe(expected);
       for (const [index, args] of calls.entries()) {
         expect(args.action, name).toBe('create');
-        expect(args.spec.idempotencyKey, name).toBe(keys[index]);
+        expect(keys[index]?.startsWith(`${sessionId}:`), name).toBe(true);
         expect(args.idempotencyKey, name).toBe(keys[index]);
       }
 
@@ -378,21 +466,15 @@ describe('ship', () => {
       };
       await ship(otherSource, target, { backend: otherBackend });
       const other = vi.mocked(otherBackend.create).mock.calls.map(([args]) => args);
-      const otherKeys = other.map((_, index) =>
-        expected === 1 ? differentSessionId : `${differentSessionId}:problem:${index}`,
-      );
+      const otherKeys = other.map((a) => a.idempotencyKey);
       expect(
-        other.map((a) => a.idempotencyKey),
+        otherKeys.every((key) => key?.startsWith(`${differentSessionId}:`)),
         name,
-      ).toEqual(otherKeys);
+      ).toBe(true);
       expect(
         other.map((a) => a.spec.idempotencyKey),
         name,
       ).toEqual(otherKeys);
-      expect(
-        other.every((a) => a.idempotencyKey !== sessionId),
-        name,
-      ).toBe(true);
     }
   });
 
