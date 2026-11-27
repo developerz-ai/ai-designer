@@ -47,9 +47,12 @@ export async function saveProviderConfig(cfg: ProviderConfig): Promise<void> {
   const previous = StoredConfig.safeParse((await chrome.storage.local.get(CONFIG_KEY))[CONFIG_KEY]);
   // With no config yet, a key already in the slot came from the legacy OpenRouter-only shim.
   const keyOwner = previous.success ? previous.data.baseURL : OPENROUTER_BASE_URL;
+  // Ordered so no concurrent `getProviderConfig` can ever pair the NEW url with the OLD key: drop
+  // the old host's key first, then write the url, then the new key. Every intermediate read is
+  // "old url, no key", "new url, no key" or "new url, new key".
+  if (keyOwner !== rest.baseURL) await clearSecret(KEY_SECRET);
   await chrome.storage.local.set({ [CONFIG_KEY]: rest });
   if (apiKey) await setSecret(KEY_SECRET, apiKey);
-  else if (keyOwner !== rest.baseURL) await clearSecret(KEY_SECRET);
 }
 
 /** Read the active config: plaintext fields + the decrypted apiKey (omitted if unset).
