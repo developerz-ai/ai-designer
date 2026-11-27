@@ -175,6 +175,7 @@ function changesetSpec(
       source: HANDOFF_SOURCE,
       idempotencyKey: dispatchKey(changeset.sessionId, {
         kind: 'changeset',
+        url: changeset.url,
         repo,
         branch,
         edits: changeset.edits,
@@ -211,6 +212,7 @@ function reportSpec(
         ? {
             idempotencyKey: dispatchKey(changeset.sessionId, {
               kind: 'report',
+              url,
               repo,
               branch,
               edits,
@@ -233,7 +235,7 @@ function reportSpec(
  * A session outlives a Ship (the user keeps designing in the same chat and ships again), so the
  * session id alone would dedupe that second Ship onto the first task and drop the new edits; a
  * fan-out keyed by position would dedupe a different problem onto whichever task held that slot.
- * The digest covers only stable inputs — repo, branch, edits, the focused problem — never the
+ * The digest covers only stable inputs — page URL, repo, branch, edits, the focused problem — never the
  * model-authored brief, so a retried report (which re-authors its prose) still lands on its task.
  * Not a security boundary: cyrb53, a fast 53-bit string hash, is plenty to tell two payloads apart.
  */

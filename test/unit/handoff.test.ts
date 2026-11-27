@@ -324,6 +324,26 @@ describe('ship', () => {
     expect(secondShip.tasks[0]?.taskId).not.toBe(firstShip.tasks[0]?.taskId);
   });
 
+  it('opens a NEW task when the work changes in any keyed input, at the same edit count', async () => {
+    const { backend } = dedupingBackend();
+    const base = await ship({ kind: 'changeset', changeset: changeset() }, target, { backend });
+    const baseId = base.tasks[0]?.taskId;
+    const variants: Array<[string, Changeset, { repo: string; branch?: string }]> = [
+      [
+        'a different edit, same count',
+        changeset({ edits: [edit({ intent: 'Make the CTA green' })] }),
+        target,
+      ],
+      ['another page', changeset({ url: 'http://localhost:3000/checkout' }), target],
+      ['another repo', changeset(), { repo: 'acme/other' }],
+      ['another branch', changeset(), { ...target, branch: 'develop' }],
+    ];
+    for (const [name, cs, where] of variants) {
+      const result = await ship({ kind: 'changeset', changeset: cs }, where, { backend });
+      expect(result.tasks[0]?.taskId, name).not.toBe(baseId);
+    }
+  });
+
   it('opens a NEW task when a later fan-out ships a different problem at the same position', async () => {
     const { backend } = dedupingBackend();
     const ship1 = await ship(
