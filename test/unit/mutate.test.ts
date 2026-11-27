@@ -361,7 +361,11 @@ describe('createMutator page ops', () => {
     const second = mutator.injectCss('.x{color:blue}', 'my theme');
     expect(document.querySelectorAll('style.dz-designer-injected')).toHaveLength(1);
     expect(second.computed.replaced).toBe(true);
-    expect(second.computed.id).toBe(mutator.injectCss('.x{color:green}', 'my theme').computed.id);
+    // The reported id IS the sheet's key — what stylesheet-recorded and the changeset carry.
+    expect(second.computed.id).toBe('mytheme');
+    expect(
+      document.querySelector('style.dz-designer-injected')?.getAttribute('data-dz-designer-css'),
+    ).toBe('mytheme');
   });
 
   it('setViewport constrains the document width and undo restores prior style', () => {
