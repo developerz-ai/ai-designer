@@ -452,3 +452,27 @@ describe('xpath strategy', () => {
     expect(pickUnique(el, document).strategy).not.toBe('xpath');
   });
 });
+
+describe('pickUnique — SVG elements keep their case-sensitive tag name', () => {
+  it('a positional path through <foreignObject> still resolves to the element', () => {
+    document.body.innerHTML = `
+      <div><svg><foreignObject width="10" height="10"><p>a</p><p>b</p></foreignObject></svg></div>
+      <div><svg><foreignObject width="10" height="10"><p>a</p><p>b</p></foreignObject></svg></div>`;
+    const target = document.querySelectorAll('p')[3] as Element;
+    const picked = pickUnique(target, document);
+    // An SVG type selector matches case-SENSITIVELY: `foreignobject` would select nothing.
+    expect(document.querySelector(picked.value)).toBe(target);
+  });
+});
+
+describe('pickUnique — case-distinct SVG siblings', () => {
+  it('tells an SVG <G> from a sibling <g>', () => {
+    document.body.innerHTML = '<svg></svg>';
+    const svg = document.querySelector('svg') as SVGSVGElement;
+    const ns = 'http://www.w3.org/2000/svg';
+    const lower = document.createElementNS(ns, 'g');
+    const upper = document.createElementNS(ns, 'G');
+    svg.append(lower, upper);
+    expect(document.querySelector(pickUnique(upper, document).value)).toBe(upper);
+  });
+});
