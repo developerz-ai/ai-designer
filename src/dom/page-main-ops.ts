@@ -367,10 +367,32 @@ function isCodeConstructor(fn: unknown, win: Window): boolean {
 }
 
 // `fetch`, `open`, `postMessage` and `sendBeacon` by identity: the same alias hole as above, on the
-// network channel the path deny-list closes by name.
+// network channel the path deny-list closes by name. A BOUND copy (`fetch.bind(window)`) has its own
+// identity, but the engine names it after its target ("bound fetch"), so the name catches that.
+//
+// Defence in depth, not a sandbox: `pageCall` invokes page-owned functions by design, and a page
+// function can do anything the page can (including its own fetch). What this closes is the agent
+// being steered into reaching the BROWSER's network primitives under an innocent path.
+const NETWORK_NAMES = new Set(['fetch', 'open', 'postMessage', 'sendBeacon']);
+
 function isNetworkFunction(fn: unknown, win: Window): boolean {
+  const bound = /^bound (.+)$/.exec(readSafely(() => String((fn as { name?: unknown }).name)))?.[1];
+  if (bound && NETWORK_NAMES.has(bound)) return true;
   const globals = win as unknown as Record<string, unknown>;
-  const nav = globals.navigator as Record<string, unknown> | undefined;
-  const suspects = [globals.fetch, globals.open, globals.postMessage, nav?.sendBeacon];
-  return suspects.some((s) => s !== undefined && s === fn);
+  // Each read guarded: a page's throwing getter on `window.fetch` must not fail an unrelated call.
+  const suspects = [
+    readSafely(() => globals.fetch),
+    readSafely(() => globals.open),
+    readSafely(() => globals.postMessage),
+    readSafely(() => (globals.navigator as Record<string, unknown> | undefined)?.sendBeacon),
+  ];
+  return suspects.some((s) => typeof s === 'function' && s === fn);
+}
+
+function readSafely<T>(read: () => T): T | '' {
+  try {
+    return read();
+  } catch {
+    return '';
+  }
 }
