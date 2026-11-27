@@ -860,7 +860,12 @@ export default defineBackground(() => {
       (await readCommittedUrl(tab.id)) ?? lastCommittedUrl.get(tab.id) ?? tab.url,
       crypto.randomUUID(),
     );
-    const changeset = session.changeset;
+    // The record is keyed to the committed DOCUMENT url (what the changeset guards compare), but
+    // what LEAVES the extension carries the live url: an SPA that replaceState'd a token out of its
+    // address bar (an OAuth `?code=` callback) must not have it restored into the brief or the task.
+    const recorded = session.changeset;
+    const changeset =
+      originOf(recorded.url) === originOf(tab.url) ? { ...recorded, url: tab.url } : recorded;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
     // guess) — best-effort: a page the content script can't reach (e.g. a chrome:// tab) just
     // ships without a tokens section rather than failing the whole handoff.
