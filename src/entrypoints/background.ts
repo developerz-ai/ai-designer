@@ -1029,6 +1029,11 @@ export default defineBackground(() => {
         // The try/finally guarantees a guard return or a setup throw always unregisters it.
         const turnId = crypto.randomUUID();
         startingTurns.add(turnId);
+        // Whether this turn's promise chain (whose `.finally` releases the running-turn state) was
+        // registered. A throw or return between installing the controller and registering it would
+        // otherwise leave `turnAbort` / `runningTurnId` set forever: `session-get` then reports a
+        // turn running that never will, and every reconnecting panel shows "streaming".
+        let chained = false;
         try {
           // These guards fire BEFORE a session exists, so they log via the SW-global ring
           // (`postTurnlessError`) — a plain `postToPanel` here is exactly the error the user's
@@ -1714,12 +1719,20 @@ export default defineBackground(() => {
             });
           // Register the chain for the NEXT user-message's ordered supersede (see the wait above).
           settlingTurn = { id: turnId, done: turnDone };
+          chained = true;
 
           // #168 A: ack with the turn's id so the panel keys its in-flight bubble to this turn's
           // stream events (which all carry the same id via `emitTurn`).
           return { ok: true, turnId } satisfies UserMessageResult;
         } finally {
           startingTurns.delete(turnId);
+          // Only THIS turn's own state: a newer turn that superseded it owns `runningTurnId` now.
+          if (!chained && runningTurnId === turnId) {
+            turnAbort = null;
+            runningTurnId = null;
+            runningTurnTabId = null;
+            turnChangeset = null;
+          }
         }
       }
       // Ship (user-triggered) — dispatch to a connected coding backend, else return an MD brief to
