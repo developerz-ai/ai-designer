@@ -38,16 +38,19 @@ describe('adoptLiveEditState — content-script takeover', () => {
     const holder: LiveEditHolder = {};
     const oldEvents: ContentToSw[] = [];
     const first = adoptLiveEditState(holder, (m) => oldEvents.push(m));
+    const originalColor = getComputedStyle(el('a')).color;
     const mutation = first.mutator.setStyle(el('a'), { color: 'rgb(255, 0, 0)' });
     first.recorder.record({ value: '#a', strategy: 'id', fragile: false }, mutation);
 
     const newEvents: ContentToSw[] = [];
     const second = adoptLiveEditState(holder, (m) => newEvents.push(m));
     expect(second.recorder.size()).toBe(1);
+    // The takeover itself kept the edit on the page…
+    expect(getComputedStyle(el('a')).color).toBe('rgb(255, 0, 0)');
     oldEvents.length = 0;
     second.recorder.undo();
-    // The edit is really reverted on the page, and the revert is reported to the NEW instance only.
-    expect(getComputedStyle(el('a')).color).not.toBe('rgb(255, 0, 0)');
+    // …and undo restores the ORIGINAL color, reported to the NEW instance only.
+    expect(getComputedStyle(el('a')).color).toBe(originalColor);
     expect(oldEvents).toHaveLength(0);
     expect(newEvents.map((m) => m.type)).toContain('recorder-revert');
   });
