@@ -60,12 +60,12 @@ function cell(value: string): string {
   return code(value);
 }
 
-/** Whether every value can sit in a GFM table cell. GFM splits a row on any `|` not preceded by an
+/** Whether every property name and value can sit in a GFM table cell. GFM splits a row on any `|` not preceded by an
  *  ODD run of backslashes — even inside a code span — so a value carrying one is never escaped into
  *  the table (`\|` in the page's own text would become `\\|` and split). Those edits render their
  *  deltas as a fenced block instead. */
 function fitsTable(changes: Edit['changes']): boolean {
-  return changes.every((c) => !`${c.before ?? ''}${c.after}`.includes('|'));
+  return changes.every((c) => !`${c.prop}${c.before ?? ''}${c.after}`.includes('|'));
 }
 
 /** How the honesty note reads per selector strategy. `null` = the selector is trustworthy enough
@@ -189,7 +189,7 @@ function editSection(edit: Edit, n: number): string {
       lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
       for (const c of edit.changes) {
         lines.push(
-          `| \`${c.prop}\` | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
+          `| ${cell(c.prop)} | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
         );
       }
     } else {

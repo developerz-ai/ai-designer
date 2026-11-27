@@ -147,4 +147,17 @@ describe('changeset-md: page content cannot break out of the brief’s structure
     const md = renderChangeset(changeset([edit({ text: { before: '', after: ' Save ' } })]));
     expect(md).toContain('**Copy:** *(empty)* → `  Save  `');
   });
+
+  it('a property name with a pipe also keeps the edit out of the table, and no delta is lost', () => {
+    const md = renderChangeset(
+      changeset([edit({ changes: [{ prop: '--a\\|b', before: 'x', after: 'y' }] })]),
+    );
+    expect(md).not.toMatch(/^\| `--a/m);
+    expect(md).toContain('--a\\|b: x -> y'); // the fenced block carries the whole delta
+  });
+
+  it('a fenced block carries its content verbatim', () => {
+    const md = renderChangeset(changeset([edit({ text: { before: INJECTION, after: 'x' } })]));
+    expect(md).toContain(INJECTION);
+  });
 });
