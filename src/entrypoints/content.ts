@@ -562,11 +562,16 @@ export default defineContentScript({
       });
       // A takeover must stop this instance's route poll, or every re-injection leaks one more.
       disposers.push(() => routes.dispose());
-      const onPageHide = (): void => {
+      // A page entering the back/forward cache is NOT torn down: it comes back on Back with this
+      // same content script and no re-injection, so disposing the bridge here left every MAIN-world
+      // read (framework state, page facts, pageCall) dead after a bfcache restore.
+      const onPageHide = (event: PageTransitionEvent): void => {
+        if (event.persisted) return;
+        window.removeEventListener('pagehide', onPageHide);
         routes.dispose();
         bridge.dispose();
       };
-      window.addEventListener('pagehide', onPageHide, { once: true });
+      window.addEventListener('pagehide', onPageHide);
       // …and a takeover removes it, or every re-injection leaves one more registered.
       disposers.push(() => window.removeEventListener('pagehide', onPageHide));
     }
