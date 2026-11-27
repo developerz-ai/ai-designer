@@ -16,13 +16,27 @@ env:
   BUN_VERSION: 1.4.4
 
 jobs:
-  # The tag ships what it points at, so it must pass the same validation the PR gate runs. A tag
-  # cut on a red commit otherwise built, attached and --auto-published to the store unchecked.
+  # The tag ships what it points at, so it must pass lint, typecheck and the unit + integration
+  # suite first. A tag cut on a red commit otherwise built, attached and --auto-published to the
+  # store unchecked. NOT run here: CI's Build extension + Test (e2e) jobs — cut tags from a main
+  # commit whose CI run is green (docs/RELEASING.md).
   verify:
     name: Verify (lint + typecheck + tests)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Read-only: nothing here publishes. Only `release` gets the workflow's `contents: write`.
+    permissions:
+      contents: read
     steps:
+      # A release needs a v* tag: on a branch the manifest reads package.json's version and the
+      # GitHub Release step refuses ("GitHub Releases requires a tag") after a full build. Shell
+      # `case` because it is case-sensitive; the `startsWith()` expression is not.
+      - name: Require a v* tag
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::Run the release on a v* tag (push one, or dispatch with --ref <tag>), not ${GITHUB_REF}."; exit 1 ;;
+          esac
       - uses: actions/checkout@v7.0.1
       - uses: ./.github/actions/bun-setup
         with:
@@ -51,13 +65,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # A release needs a tag: on a branch the manifest reads package.json's version and the
-      # GitHub Release step refuses ("GitHub Releases requires a tag") after a full build.
-      - name: Require a v* tag
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          echo "::error::Run the release on a v* tag (push one, or dispatch with --ref <tag>), not ${GITHUB_REF}."
-          exit 1
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:

@@ -28,7 +28,7 @@ git push origin v1.4.0
 
 The `Release` workflow (`.github/workflows/release.yml`) then:
 
-0. Runs a `verify` job first — `bun run postinstall`, `lint`, `typecheck`, `test` — and builds nothing unless it passes. It also refuses a run that is not on a `v*` tag.
+0. Runs a read-only `verify` job first: it refuses a run that is not on a `v*` tag (case-sensitive), then `bun run postinstall`, `lint`, `typecheck`, `test` (unit + integration); nothing is built unless it passes. It does **not** run CI's `Build extension` or `Test (e2e)` — cut the tag from a `main` commit whose CI run is green.
 1. Installs deps (`bun install --frozen-lockfile`).
 2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
