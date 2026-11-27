@@ -63,12 +63,12 @@ function CSS_ESCAPE(v: string): string {
   return v.replace(/["\\]/g, '\\$&');
 }
 
-/** A field that holds (or held) a secret: a password input, or one whose `autocomplete` says it is a
- *  password — a show-password toggle flips `type` to `text` while the value is still the password. */
+/** Text inputs can be revealed passwords, even without a useful autocomplete attribute. */
 function isSecretField(el: Field): boolean {
   if (!(el instanceof HTMLInputElement)) return false;
   return (
     el.type === 'password' ||
+    el.type === 'text' ||
     /(?:^|\s)(?:current-password|new-password)(?:\s|$)/i.test(el.autocomplete ?? '')
   );
 }

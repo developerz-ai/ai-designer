@@ -242,6 +242,46 @@ describe('forms', () => {
     expect(JSON.stringify(result)).not.toContain('hunter9');
   });
 
+  it('detects masking on checked change before the value input reveals it', () => {
+    const el = document.getElementById('email');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    let inputs = 0;
+    el.addEventListener('change', () => {
+      if (inputs === 1) el.type = 'password';
+    });
+    el.addEventListener('input', () => {
+      inputs += 1;
+      if (inputs === 2) {
+        el.type = 'email';
+        el.setCustomValidity(`rejected ${el.value}`);
+      }
+    });
+    const result = setField(el, { checked: true, value: 'hunter10' });
+    expect(el.value).toBe('hunter10');
+    expect(result).toMatchObject({ value: '', validationMessage: '', valid: false });
+    expect(JSON.stringify(result)).not.toContain('hunter10');
+  });
+
+  it.each(['off', '', 'on', 'section-login off'])(
+    'withholds an unidentified text field with autocomplete %s on read and write',
+    (autocomplete) => {
+      document.body.innerHTML = `<form><input type="text" autocomplete="${autocomplete}" value="hunter11"></form>`;
+      const form = document.querySelector('form');
+      const el = document.querySelector('input');
+      if (!form || !el) throw new Error('fixture');
+      el.setCustomValidity('rejected hunter11');
+      const fields = readFormState(form);
+      expect(fields).toHaveLength(1);
+      expect(fields[0]).toMatchObject({ value: '', validationMessage: '', valid: false });
+      expect(JSON.stringify(fields)).not.toContain('hunter11');
+      el.addEventListener('input', () => el.setCustomValidity(`rejected ${el.value}`));
+      const result = setField(el, { value: 'hunter12' });
+      expect(el.value).toBe('hunter12');
+      expect(result).toMatchObject({ value: '', validationMessage: '', valid: false });
+      expect(JSON.stringify(result)).not.toContain('hunter12');
+    },
+  );
+
   it('does not hide an ordinary field whose autocomplete only mentions password in a section', () => {
     document.body.innerHTML =
       '<form id="f5"><input id="e5" type="email" autocomplete="section-reset-password email" value="a@b.co"></form>';
@@ -255,7 +295,17 @@ describe('forms', () => {
       '<form id="f2"><input id="rv" type="text" autocomplete="current-password" value="hunter6"></form>';
     const form = document.getElementById('f2');
     if (!form) throw new Error('fixture');
-    expect(JSON.stringify(readFormState(form))).not.toContain('hunter6');
+    const fields = readFormState(form);
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ name: 'rv', value: '', valid: true });
+    expect(JSON.stringify(fields)).not.toContain('hunter6');
+    const el = document.getElementById('rv');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    el.addEventListener('input', () => el.setCustomValidity(`rejected ${el.value}`));
+    const result = setField(el, { value: 'hunter13' });
+    expect(el.value).toBe('hunter13');
+    expect(result).toMatchObject({ value: '', validationMessage: '', valid: false });
+    expect(JSON.stringify(result)).not.toContain('hunter13');
   });
 
   it('reads validity without firing invalid, so no page handler runs mid-read', () => {
