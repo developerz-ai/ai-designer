@@ -121,10 +121,10 @@ This repository is looked after by the [developerz.ai](https://developerz.ai) ma
 | Who opens it | What happens |
 |---|---|
 | you, an issue | triaged into bug, feature, duplicate, question or docs; asked for steps, expected, actual and version when they are missing; closed after 14 days if a requested reproduction never comes |
-| you, a pull request | reviewed (CodeRabbit and the developerz.ai reviewer), driven to green on the required checks, merged; closed after 21 days waiting on its author |
-| Dependabot | driven to green and merged |
+| you, a pull request | reviewed (CodeRabbit and the developerz.ai reviewer), driven to green, merged once the required checks pass, the review approves and branch protection is met; closed after 21 days waiting on its author |
+| Dependabot | driven to green, merged under the same three gates |
 | an outside change to CI, release or store automation (`.github/`, `scripts/pack-crx.sh`, `scripts/crx-key.ts`, `store/`, `keys/`) | declined: members own that pipeline |
-| keys or network calls outside the service worker, remote code or `eval`, logic in Solid components | declined: non-goals of this extension |
+| keys or network calls outside the service worker, remote code or `eval`, business logic in Solid components | declined: non-goals of this extension |
 
 Issues with no activity for 30 days get a comment, then are closed. A daily health checkup and a monthly improvement pass run on a schedule. Security reports, license and CLA questions go to a human.
 
