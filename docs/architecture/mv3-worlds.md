@@ -13,7 +13,7 @@ Four execution worlds, hard boundaries. Crossing one always goes through the typ
 
 - The content script runs in the **page's** world — the page's own scripts can observe its globals and any leaked references. The MAIN-world script *is* the page's own realm — strictly more exposed.
 - A compromised/hostile page must never see the provider API key or MCP tokens.
-- Therefore: all network calls to the model provider + MCP originate in the **service worker only**. The content script gets *commands*, returns *results* — never credentials. The MAIN world answers a narrow RPC (`page-facts`, `chart-data`, page-ops) and never receives or returns anything secret. It is not read-only: page-ops `pageCall` invokes page-owned functions by path (never a code string), behind a per-segment deny-list (code, network, navigation, storage, cookie) and an identity check against aliased code/network functions (`src/dom/page-main-ops.ts`).
+- Therefore: all network calls to the model provider + MCP originate in the **service worker only**. The content script gets *commands*, returns *results* — never credentials. The MAIN world answers a narrow RPC (`page-facts`, `chart-data`, page-ops) and never receives or returns anything secret. It is not read-only: page-ops `pageCall` invokes page-owned functions by path (never a code string), behind a per-segment deny-list (code, network, navigation, storage, cookie) and an identity check against aliased `eval`/`Function` (`src/dom/page-main-ops.ts`). It is not a network sandbox: an invoked page function can do anything the page can, its own `fetch` included.
 
 ```mermaid
 flowchart LR
