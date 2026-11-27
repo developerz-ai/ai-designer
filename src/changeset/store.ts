@@ -16,7 +16,13 @@
 // (structural sharing via `addEdit`), so `current` / `snapshot()` are safe to persist or stream to
 // the panel without later mutations leaking.
 
-import { addEdit, type Changeset, ChangesetState, type Edit } from '@/shared/changeset';
+import {
+  addEdit,
+  type Changeset,
+  ChangesetState,
+  type Edit,
+  type StylesheetEdit,
+} from '@/shared/changeset';
 
 /** Persist the store's full state after each mutation. Injected so the store stays chrome-free and
  *  unit-testable; the SW binds it to `chrome.storage.session` via {@link createSessionChangesetPersister}.
@@ -161,10 +167,47 @@ export class ChangesetStore {
     return replaced;
   }
 
-  /** Wipe every edit AND the redo stack — the Diff tab's "clear session" (#10). Keeps the same
-   *  changeset identity (url/createdAt/sessionId) so a subsequent record continues the same session. */
+  /** Record an injected stylesheet, UPSERTED by id: a re-injection with the same id replaces the
+   *  sheet in place (same slot, latest css/intent), a new id appends. Mirrors the page, where a
+   *  same-id `injectCss` replaces rather than stacks, so the record holds at most one entry per id.
+   *  Stylesheets live beside the edit history, not in it: the redo stack is untouched. */
+  recordStylesheet(sheet: StylesheetEdit): StylesheetEdit {
+    const { stylesheets } = this.changeset;
+    const at = stylesheets.findIndex((s) => s.id === sheet.id);
+    this.changeset = {
+      ...this.changeset,
+      stylesheets:
+        at === -1
+          ? [...stylesheets, sheet]
+          : [...stylesheets.slice(0, at), sheet, ...stylesheets.slice(at + 1)],
+    };
+    this.flush();
+    return sheet;
+  }
+
+  /** Fold a page-side undo of an `injectCss` (the `stylesheet-reverted` push): `css: null` drops
+   *  the sheet with `id`; a string restores the sheet's EARLIER text in place (an undone
+   *  re-injection), keeping the recorded intent — the push carries none, and the sheet's purpose
+   *  is the same across its versions. Returns whether the record changed; an unknown id with
+   *  `css: null` is a no-op (nothing persisted). */
+  revertStylesheet(id: string, css: string | null): boolean {
+    const { stylesheets } = this.changeset;
+    const existing = stylesheets.find((s) => s.id === id);
+    if (css === null) {
+      if (!existing) return false;
+      this.changeset = { ...this.changeset, stylesheets: stylesheets.filter((s) => s.id !== id) };
+      this.flush();
+      return true;
+    }
+    this.recordStylesheet({ ...existing, id, css });
+    return true;
+  }
+
+  /** Wipe every edit, every stylesheet AND the redo stack — the Diff tab's "clear session" (#10).
+   *  Keeps the same changeset identity (url/createdAt/sessionId) so a subsequent record continues
+   *  the same session. */
   clear(): void {
-    this.changeset = { ...this.changeset, edits: [] };
+    this.changeset = { ...this.changeset, edits: [], stylesheets: [] };
     this.redoStack.length = 0;
     this.flush();
   }

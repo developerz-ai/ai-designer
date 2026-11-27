@@ -260,6 +260,38 @@ describe('token refresh', () => {
     expect(await getAccessToken('never', OAUTH, { now: () => 1_000_000 })).toBeNull();
   });
 
+  it('accepts a numeric-string expires_in (real providers send "3600")', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(jsonResponse({ access_token: 'acc-2', expires_in: '3600' }));
+    const refreshed = await refreshToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    expect(refreshed.expiresAt).toBe(1_000_000 + 3600 * 1000);
+  });
+
+  it('still refuses a non-numeric expires_in', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(jsonResponse({ access_token: 'acc-2', expires_in: 'soon' }));
+    await expect(refreshToken('srv', OAUTH, { fetch, now: () => 1_000_000 })).rejects.toThrow();
+  });
+
+  it('getAccessToken: concurrent callers on an expired token share ONE refresh grant', async () => {
+    // Per-request header resolution means an expiry meets several calls at once; a rotating
+    // provider revokes the session on a second use of the old refresh token.
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(
+      jsonResponse({ access_token: 'acc-2', expires_in: 3600, refresh_token: 'r2' }),
+      jsonResponse({ access_token: 'acc-3', expires_in: 3600, refresh_token: 'r3' }),
+    );
+    const deps = { fetch, now: () => 1_000_000 };
+    const tokens = await Promise.all([
+      getAccessToken('srv', OAUTH, deps),
+      getAccessToken('srv', OAUTH, deps),
+      getAccessToken('srv', OAUTH, deps),
+    ]);
+    expect(tokens).toEqual(['acc-2', 'acc-2', 'acc-2']);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await getTokenSet('srv'))?.refreshToken).toBe('r2');
+  });
+
   it('refreshToken: throws with no stored refresh token', async () => {
     await seedToken('srv', { accessToken: 'a', expiresAt: 500 });
     await expect(refreshToken('srv', OAUTH, { fetch: fetchReturning() })).rejects.toThrow(

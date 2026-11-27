@@ -161,3 +161,54 @@ describe('changeset-md: page content cannot break out of the brief’s structure
     expect(md).toContain(INJECTION);
   });
 });
+
+describe('changeset-md: attribute, class and selector text go through code spans', () => {
+  // Page text with a backtick AND a newline: inside bare backticks the backtick closed the span
+  // and the newline started a fresh line, so the brief grew a real heading and a live link.
+  const HOSTILE = 'old`\n\n# Injected heading\n\n[click](https://evil.example)';
+  const SPAN = '``old` # Injected heading [click](https://evil.example)``';
+
+  function headings(md: string): string[] {
+    return proseLines(md).filter((l) => l.startsWith('# '));
+  }
+
+  it('an attribute name / before / after cannot inject a heading or a link', () => {
+    const set = renderChangeset(
+      changeset([edit({ attrs: [{ name: 'title', before: null, after: HOSTILE }] })]),
+    );
+    expect(headings(set)).toEqual([]);
+    expect(set).toContain(`**Attribute:** \`title\` → ${SPAN}`);
+
+    const removed = renderChangeset(
+      changeset([edit({ attrs: [{ name: HOSTILE, before: HOSTILE, after: null }] })]),
+    );
+    expect(headings(removed)).toEqual([]);
+    expect(removed).toContain(`**Attribute removed:** ${SPAN} (was ${SPAN})`);
+  });
+
+  it('a class name cannot inject', () => {
+    const md = renderChangeset(changeset([edit({ classes: [{ op: 'add', name: HOSTILE }] })]));
+    expect(headings(md)).toEqual([]);
+    expect(md).toContain(`**Class added:** ${SPAN}`);
+  });
+
+  it('the target, a move ref and a wrap end selector cannot inject', () => {
+    const sel = { value: HOSTILE, strategy: 'css-path' as const, fragile: false };
+    const md = renderChangeset(
+      changeset([
+        edit({ selector: sel, structural: { op: 'move', refSelector: sel } as Edit['structural'] }),
+        edit({
+          structural: { op: 'wrap', html: '<div></div>', endSelector: sel } as Edit['structural'],
+        }),
+        edit({
+          structural: { op: 'insert', html: '<p></p>', refSelector: sel } as Edit['structural'],
+        }),
+      ]),
+    );
+    expect(headings(md)).toEqual([]);
+    expect(md).toContain(`**Target:** ${SPAN} (css-path)`);
+    expect(md).toContain(`moves to ${SPAN}`);
+    expect(md).toContain(`**through** ${SPAN}`);
+    expect(md).toContain(`added beforeend ${SPAN}:`);
+  });
+});

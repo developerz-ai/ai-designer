@@ -157,7 +157,9 @@ const StatusPayload = z.object({
 export function createTaskBackend(execute: TaskToolExecute): TaskBackend {
   return {
     async create(args, signal) {
-      const parsed = CreatePayload.safeParse(unwrap(await execute({ ...args }, signal)));
+      const raw = await execute({ ...args }, signal);
+      throwOnToolError(raw, 'task create');
+      const parsed = CreatePayload.safeParse(unwrap(raw));
       if (!parsed.success) throw new Error('ship: backend did not return a task id');
       return parsed.data.status
         ? {
@@ -167,9 +169,11 @@ export function createTaskBackend(execute: TaskToolExecute): TaskBackend {
         : ({ id: parsed.data.id } satisfies TaskHandle);
     },
     async watch(taskId, onStatus, signal) {
-      const parsed = StatusPayload.safeParse(
-        unwrap(await execute({ action: 'watch', taskId }, signal)),
-      );
+      const raw = await execute({ action: 'watch', taskId }, signal);
+      // Before the lenient parse: an error envelope must fail the task with the server's words,
+      // not degrade to `status: 'unknown'` (which reads as "still running, no news").
+      throwOnToolError(raw, 'task watch');
+      const parsed = StatusPayload.safeParse(unwrap(raw));
       const status: TaskStatus = parsed.success
         ? { status: parsed.data.status, prUrl: parsed.data.prUrl }
         : { status: 'unknown' };
@@ -177,6 +181,33 @@ export function createTaskBackend(execute: TaskToolExecute): TaskBackend {
       return status;
     },
   };
+}
+
+// Cap on the server's error text carried into the panel's task timeline. It is remote text the
+// panel renders as a plain string (never markup); the cap only keeps one bad reply from flooding it.
+const MAX_TOOL_ERROR_CHARS = 300;
+
+/** An MCP `CallToolResult` with `isError: true` is the server REFUSING the call (bad repo, quota,
+ *  auth, validation) — the reason lives in its `content` text. Throw it as the error so Ship
+ *  surfaces what the server said instead of a generic "did not return a task id" or a silent
+ *  `unknown` status. A result without `isError: true` passes through untouched. */
+function throwOnToolError(raw: unknown, what: string): void {
+  if (raw === null || typeof raw !== 'object') return;
+  const obj = raw as Record<string, unknown>;
+  if (obj.isError !== true) return;
+  const texts: string[] = [];
+  if (Array.isArray(obj.content)) {
+    for (const part of obj.content) {
+      if (part && typeof part === 'object' && (part as { type?: unknown }).type === 'text') {
+        const text = (part as { text?: unknown }).text;
+        if (typeof text === 'string' && text.trim()) texts.push(text.trim());
+      }
+    }
+  }
+  const detail = texts.join(' ').replace(/\s+/g, ' ');
+  const clipped =
+    detail.length > MAX_TOOL_ERROR_CHARS ? `${detail.slice(0, MAX_TOOL_ERROR_CHARS - 1)}…` : detail;
+  throw new Error(`ship: backend ${what} failed${clipped ? `: ${clipped}` : ''}`);
 }
 
 /** Best-effort unwrap of an MCP tool result to its payload object: a bare object with `id`/`status`

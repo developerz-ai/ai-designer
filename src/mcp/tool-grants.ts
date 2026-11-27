@@ -12,6 +12,8 @@
 //
 // SW-ONLY: never import this from content.ts. See docs/architecture/security.md.
 
+import { withKeyLock } from './keyed-lock';
+
 // One `storage.local` key holds the whole map (small, always read/written together): serverId →
 // granted tool BASE names (the post-namespace name, e.g. `deploy` — never the namespaced
 // `<id>__deploy`).
@@ -42,22 +44,26 @@ export async function setToolGrant(
   tool: string,
   granted: boolean,
 ): Promise<void> {
-  const grants = await getToolGrants();
-  const current = new Set(grants[serverId] ?? []);
-  if (granted) current.add(tool);
-  else current.delete(tool);
-  const next = { ...grants };
-  if (current.size === 0) delete next[serverId];
-  else next[serverId] = [...current];
-  await chrome.storage.local.set({ [TOOL_GRANTS_KEY]: next });
+  await withKeyLock(TOOL_GRANTS_KEY, async () => {
+    const grants = await getToolGrants();
+    const current = new Set(grants[serverId] ?? []);
+    if (granted) current.add(tool);
+    else current.delete(tool);
+    const next = { ...grants };
+    if (current.size === 0) delete next[serverId];
+    else next[serverId] = [...current];
+    await chrome.storage.local.set({ [TOOL_GRANTS_KEY]: next });
+  });
 }
 
 /** Forget every grant a server holds — called on server removal so no orphaned grant survives
  *  (mirrors removeServer's credential purge). No-op when the server has none. */
 export async function clearToolGrants(serverId: string): Promise<void> {
-  const grants = await getToolGrants();
-  if (!(serverId in grants)) return;
-  const next = { ...grants };
-  delete next[serverId];
-  await chrome.storage.local.set({ [TOOL_GRANTS_KEY]: next });
+  await withKeyLock(TOOL_GRANTS_KEY, async () => {
+    const grants = await getToolGrants();
+    if (!(serverId in grants)) return;
+    const next = { ...grants };
+    delete next[serverId];
+    await chrome.storage.local.set({ [TOOL_GRANTS_KEY]: next });
+  });
 }

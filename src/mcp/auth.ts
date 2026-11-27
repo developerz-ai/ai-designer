@@ -3,7 +3,7 @@
 // `chrome.identity.launchWebAuthFlow`; refreshable user token. Secrets never touch the page
 // world: the API key and the OAuth token bundle live only in the encrypted key-store
 // (`mcp:<id>:apikey` / `mcp:<id>:token`, SW-only decrypt), and the resolved `Authorization`
-// header is applied by the SW transport at connection-open time (see `client.ts` getHeaders).
+// header is applied by the SW transport on every request (see `client.ts` getHeaders).
 //
 // SW-ONLY: never import this from content.ts or the page world. See
 // docs/architecture/security.md "Key custody".
@@ -51,7 +51,12 @@ export type TokenSet = z.infer<typeof TokenSet>;
 const TokenResponse = z.object({
   access_token: z.string().min(1),
   token_type: z.string().optional(),
-  expires_in: z.number().optional(), // seconds
+  // Seconds. RFC 6749 says a number, but real providers send `"3600"`; a strict number refused
+  // the whole grant and the user was told sign-in failed. A non-numeric string still fails.
+  expires_in: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+    z.number().finite().nonnegative().optional(),
+  ),
   refresh_token: z.string().optional(),
   scope: z.string().optional(),
 });
@@ -212,12 +217,29 @@ export async function getAccessToken(
   if (!isExpired(current, theNow(deps)())) return current.accessToken;
   if (config && current.refreshToken) {
     try {
-      return (await refreshToken(serverId, config, deps)).accessToken;
+      return (await refreshOnce(serverId, config, deps)).accessToken;
     } catch {
       // Refresh failed (revoked/offline) — fall through to the stale token.
     }
   }
   return current.accessToken;
+}
+
+// One refresh per server at a time. Headers now resolve per REQUEST (client.ts), so an expired
+// token meets several concurrent calls at once; letting each run its own refresh-token grant
+// races them, and a provider that ROTATES refresh tokens revokes the session on the second use of
+// the old one. Every caller awaiting the same refresh shares its result; the entry clears on
+// settle so the next expiry refreshes again.
+const refreshesInFlight = new Map<string, Promise<TokenSet>>();
+
+function refreshOnce(serverId: string, config: OAuthConfig, deps: AuthDeps): Promise<TokenSet> {
+  const pending = refreshesInFlight.get(serverId);
+  if (pending) return pending;
+  const run = refreshToken(serverId, config, deps).finally(() => {
+    refreshesInFlight.delete(serverId);
+  });
+  refreshesInFlight.set(serverId, run);
+  return run;
 }
 
 /** Read a server's stored OAuth bundle, or null if unset/corrupt. */
@@ -268,8 +290,8 @@ export async function authHeaders(
   }
 }
 
-/** A `HeaderResolver` (client.ts) that re-resolves this server's auth on every (re)open, so
- *  a refreshed OAuth token is picked up without re-registering the connection. */
+/** A `HeaderResolver` (client.ts) that re-resolves this server's auth on every request, so an
+ *  expired OAuth token is refreshed mid-session without reopening or re-registering. */
 export function headerResolverFor(target: AuthTarget, deps: AuthDeps = {}): HeaderResolver {
   return () => authHeaders(target, deps);
 }

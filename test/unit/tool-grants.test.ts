@@ -134,3 +134,22 @@ describe('mcp/tool-grants (#120)', () => {
     expect(await rawGrants()).toBeUndefined(); // never touched storage
   });
 });
+
+describe('tool-grants: concurrent writes', () => {
+  it('two grants fired together both persist (no lost update)', async () => {
+    // A storage fake whose get() reads, then yields before answering, so unserialized writers would both read
+    // the same old map and the second set() would drop the first grant.
+    const real = chrome.storage.local.get.bind(chrome.storage.local);
+    chrome.storage.local.get = (async (keys: string) => {
+      const snapshot = await real(keys); // read NOW, answer later: the window a racing write hits
+      await new Promise((r) => setTimeout(r, 0));
+      return snapshot;
+    }) as typeof chrome.storage.local.get;
+
+    await Promise.all([
+      setToolGrant('srv', 'deploy', true),
+      setToolGrant('srv', 'create_pr', true),
+    ]);
+    expect(await getToolGrants()).toEqual({ srv: ['deploy', 'create_pr'] });
+  });
+});

@@ -378,3 +378,31 @@ describe('applyChangesetOp retract (round-4 surgical late-revert)', () => {
     expect(current()?.changeset.edits.map((e) => e.intent)).toEqual(['e2']);
   });
 });
+
+describe('applyChangesetOp: stylesheet fold (no turn holds the store)', () => {
+  it('record-stylesheet upserts, persists and mirrors', async () => {
+    const { ports, mirrored, current } = fakePorts(stateWith('a'));
+    const v = await applyChangesetOp(ports, {
+      kind: 'record-stylesheet',
+      sheet: { id: 'default', css: 'a{}' },
+    });
+    expect(v.changeset?.stylesheets).toEqual([{ id: 'default', css: 'a{}' }]);
+    expect(current()?.changeset.stylesheets).toEqual([{ id: 'default', css: 'a{}' }]);
+    expect(mirrored.at(-1)?.stylesheets).toEqual([{ id: 'default', css: 'a{}' }]);
+  });
+
+  it('revert-stylesheet css:null removes the sheet', async () => {
+    const { ports, current } = fakePorts({
+      changeset: { ...seed(), stylesheets: [{ id: 'default', css: 'a{}' }] },
+      redoStack: [],
+    });
+    await applyChangesetOp(ports, { kind: 'revert-stylesheet', id: 'default', css: null });
+    expect(current()?.changeset.stylesheets).toEqual([]);
+  });
+
+  it('revert-stylesheet of an unknown id persists and mirrors nothing', async () => {
+    const { ports, mirrored } = fakePorts(stateWith('a'));
+    await applyChangesetOp(ports, { kind: 'revert-stylesheet', id: 'ghost', css: null });
+    expect(mirrored).toEqual([]);
+  });
+});

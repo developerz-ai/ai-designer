@@ -38,10 +38,12 @@ const CLOSE_TIMEOUT_MS = 5_000;
 // design-turn write-tool gate (design-gate.ts), which suffix-matches on it.
 export const NAMESPACE_SEP = '__';
 
-/** Resolves the auth headers for a connection at open time. A function (not a static
- *  record) so an OAuth token can be refreshed per open without re-registering the server;
- *  the API-key path just returns a fixed `Authorization: Bearer` header. Implemented by the
- *  auth layer (slice 02, `src/mcp/auth.ts`). */
+/** Resolves the auth headers for a connection, called on EVERY request the transport makes (not
+ *  once at open): an open client outlives an OAuth access token, and a header frozen at open
+ *  401s every call after expiry while the connection still reads healthy. A function (not a
+ *  static record) so an expired token is refreshed mid-session without re-registering the
+ *  server; the API-key path just returns a fixed `Authorization: Bearer` header. Implemented by
+ *  the auth layer (slice 02, `src/mcp/auth.ts`). */
 export type HeaderResolver = () =>
   | Record<string, string>
   | undefined
@@ -161,11 +163,21 @@ function namespaceTools(serverId: string, tools: ToolSet, lease: Lease): ToolSet
   return namespaced;
 }
 
-async function resolveHeaders(
-  spec: McpConnectionSpec,
-): Promise<Record<string, string> | undefined> {
-  if (spec.getHeaders) return (await spec.getHeaders()) ?? undefined;
-  return spec.headers;
+/** The transport's `fetch`. A wrapper, not `globalThis.fetch` itself: the SDK stores the fetch and
+ *  calls it as `this.fetchFn(...)`, which throws Illegal invocation on the native one (Sentry's
+ *  fetch wrapper hid this for as long as Sentry was initialised). With a `getHeaders` resolver it
+ *  also re-resolves auth PER REQUEST and lays it over the SDK's own headers, so a refreshed OAuth
+ *  token reaches the very next call instead of waiting for a reopen that never comes. */
+function transportFetch(spec: McpConnectionSpec): typeof globalThis.fetch {
+  const { getHeaders } = spec;
+  if (!getHeaders) return (input, init) => globalThis.fetch(input, init);
+  return async (input, init) => {
+    const fresh = await getHeaders();
+    if (!fresh) return globalThis.fetch(input, init);
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(fresh)) headers.set(name, value);
+    return globalThis.fetch(input, { ...init, headers });
+  };
 }
 
 /** Reject with `message` if `work` hasn't settled within `ms`. The underlying work is NOT
@@ -233,16 +245,14 @@ export function createConnection(
     },
   };
 
-  // Open (or reuse) the client, resolving auth headers at open time so a refreshed OAuth
-  // token is applied per (re)open. A failed open clears itself so the next call retries.
+  // Open (or reuse) the client. Auth from a `getHeaders` resolver is applied per request by
+  // `transportFetch` (so it is NOT frozen into the transport here); static `headers` ride the
+  // transport config. A failed open clears itself so the next call retries.
   function openClient(): Promise<McpClient> {
     if (!clientPromise) {
       clientPromise = (async () => {
-        const headers = await resolveHeaders(spec);
-        // A wrapper, not `globalThis.fetch` itself: the SDK defaults to storing the native fetch
-        // and calling it as `this.fetchFn(...)`, which throws Illegal invocation. Sentry's
-        // fetch wrapper hid this for as long as Sentry was initialised.
-        const fetch: typeof globalThis.fetch = (input, init) => globalThis.fetch(input, init);
+        const headers = spec.getHeaders ? undefined : spec.headers;
+        const fetch = transportFetch(spec);
         return connect({ transport: { type: 'http', url: spec.url, headers, fetch } });
       })().catch((err) => {
         clientPromise = null;

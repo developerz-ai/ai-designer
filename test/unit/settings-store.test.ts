@@ -14,10 +14,18 @@ function installChromeFake(opts: {
   granted?: string[];
   requestBehavior?: 'grant' | 'deny' | 'reject';
   handle: SendMessage;
-}): { request: ReturnType<typeof vi.fn>; sendMessage: ReturnType<typeof vi.fn> } {
+}): {
+  request: ReturnType<typeof vi.fn>;
+  sendMessage: ReturnType<typeof vi.fn>;
+  prompts: () => number;
+} {
   const held = new Set(opts.granted ?? []);
+  let prompted = 0;
   const request = vi.fn(async (p: { origins?: string[] }) => {
     if (opts.requestBehavior === 'reject') throw new Error('user gesture required');
+    // Chrome's real rule: an origin already held resolves true at once, with NO prompt.
+    if ((p.origins ?? []).every((o) => held.has(o))) return true;
+    prompted++;
     if (opts.requestBehavior === 'grant') {
       for (const o of p.origins ?? []) held.add(o);
       return true;
@@ -32,7 +40,7 @@ function installChromeFake(opts: {
     runtime: { sendMessage },
     permissions: { contains, request },
   };
-  return { request, sendMessage };
+  return { request, sendMessage, prompts: () => prompted };
 }
 
 // Minimal SW stand-in: save-provider always reports valid; get-provider echoes back
@@ -75,10 +83,11 @@ afterEach(() => {
 });
 
 describe('settings store: saveProvider requests a custom host grant from the Save click', () => {
-  it('skips the permission prompt for an already-granted origin (OpenRouter preset)', async () => {
+  it('shows no permission prompt for an already-granted origin (OpenRouter preset)', async () => {
     vi.resetModules();
-    const { request, sendMessage } = installChromeFake({
+    const { request, sendMessage, prompts } = installChromeFake({
       granted: ['https://openrouter.ai/*'],
+      requestBehavior: 'grant',
       handle: defaultHandle(),
     });
     const store = await import('@/entrypoints/sidepanel/stores/settings');
@@ -86,14 +95,18 @@ describe('settings store: saveProvider requests a custom host grant from the Sav
     store.selectPreset('openrouter');
     await store.saveProvider('sk-test', 'anthropic/claude-3.5-sonnet');
 
-    expect(request).not.toHaveBeenCalled();
+    // `request()` runs FIRST (no await in front of it keeps the user gesture alive —
+    // shared/host-permissions.ts), and for a held origin it resolves true without prompting.
+    expect(request).toHaveBeenCalledExactlyOnceWith({ origins: ['https://openrouter.ai/*'] });
+    await expect(request.mock.results[0]?.value).resolves.toBe(true);
+    expect(prompts()).toBe(0);
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'save-provider' }));
     expect(store.settings.saveStatus).toBe('valid');
   });
 
   it('requests the origin for a not-yet-granted custom host before saving', async () => {
     vi.resetModules();
-    const { request, sendMessage } = installChromeFake({
+    const { request, sendMessage, prompts } = installChromeFake({
       requestBehavior: 'grant',
       handle: defaultHandle(),
     });
@@ -104,6 +117,7 @@ describe('settings store: saveProvider requests a custom host grant from the Sav
     await store.saveProvider('sk-test', 'local-model');
 
     expect(request).toHaveBeenCalledWith({ origins: ['http://localhost/*'] });
+    expect(prompts()).toBe(1);
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'save-provider' }));
     expect(store.settings.saveStatus).toBe('valid');
   });
@@ -165,6 +179,7 @@ describe('settings store: budget preset persists and round-trips with the provid
     vi.resetModules();
     const { sendMessage } = installChromeFake({
       granted: ['https://openrouter.ai/*'],
+      requestBehavior: 'grant',
       handle: defaultHandle(),
     });
     const store = await import('@/entrypoints/sidepanel/stores/settings');

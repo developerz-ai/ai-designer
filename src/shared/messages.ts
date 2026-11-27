@@ -1871,6 +1871,16 @@ export const ContentToSw = z.discriminatedUnion('type', [
   // and an injected sheet has no single element target, so it gets its own push rather than a
   // fabricated selector that undo and the changeset would both have to special-case.
   z.object({ type: z.literal('stylesheet-recorded'), sheet: StylesheetEdit }),
+  // An `injectCss` was UNDONE on the page, so `Changeset.stylesheets` must follow — else Ship
+  // hands off CSS the user already took back. Keyed by the SAME normalized id
+  // `stylesheet-recorded` carried. `css: null` = the sheet is gone (the undo removed the
+  // injection that created it); a string = the undo restored the EARLIER text of a replaced sheet
+  // under that id (the SW upserts it).
+  z.object({
+    type: z.literal('stylesheet-reverted'),
+    id: StylesheetEdit.shape.id,
+    css: StylesheetEdit.shape.css.nullable(),
+  }),
   // The recorder's `undo()` succeeded: the page mutation was REVERTED, so its buffered event
   // must leave the SW's pending-mutations buffer (else the revert would still fold into the
   // durable changeset — a phantom edit). Emitted ONLY on a successful revert: a failed undo

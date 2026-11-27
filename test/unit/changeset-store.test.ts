@@ -431,3 +431,64 @@ describe('createSessionChangesetPersister (chrome.storage.session)', () => {
     expect(await persister.load()).toBeUndefined();
   });
 });
+
+describe('ChangesetStore stylesheets (injectCss fold)', () => {
+  const sheet = (id: string, css: string, intent?: string) => ({
+    id,
+    css,
+    ...(intent ? { intent } : {}),
+  });
+
+  it('records a sheet and upserts a same-id re-injection in place', () => {
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    store.recordStylesheet(sheet('default', 'a{}', 'tokens'));
+    store.recordStylesheet(sheet('nav', 'nav{}'));
+    store.recordStylesheet(sheet('default', 'a{color:red}', 'tokens v2'));
+
+    expect(store.current.stylesheets).toEqual([
+      sheet('default', 'a{color:red}', 'tokens v2'),
+      sheet('nav', 'nav{}'),
+    ]);
+    expect(saved.at(-1)?.changeset.stylesheets).toHaveLength(2);
+  });
+
+  it('does not touch the edit redo stack', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.undo();
+    store.recordStylesheet(sheet('default', 'a{}'));
+    expect(store.canRedo).toBe(true);
+  });
+
+  it('revert with css:null removes the sheet; the last one going leaves an empty changeset', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet(sheet('default', 'a{}'));
+    expect(store.revertStylesheet('default', null)).toBe(true);
+    expect(store.current).toEqual(seed());
+  });
+
+  it('revert with css restores the earlier text under the same id, keeping its intent', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet(sheet('default', 'v1{}', 'tokens'));
+    store.recordStylesheet(sheet('default', 'v2{}', 'tokens'));
+    store.revertStylesheet('default', 'v1{}');
+    expect(store.current.stylesheets).toEqual([sheet('default', 'v1{}', 'tokens')]);
+  });
+
+  it('revert of an unknown id with css:null is a no-op (no persist)', () => {
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    expect(store.revertStylesheet('ghost', null)).toBe(false);
+    expect(saved).toEqual([]);
+  });
+
+  it('clear() wipes stylesheets with the edits', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.recordStylesheet(sheet('default', 'a{}'));
+    store.clear();
+    expect(store.current.stylesheets).toEqual([]);
+    expect(store.current.edits).toEqual([]);
+  });
+});

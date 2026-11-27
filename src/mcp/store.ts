@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { clearAuth, OAuthConfig } from './auth';
 import type { OriginRepoEntry, OriginRepoMap } from './handoff';
+import { withKeyLock } from './keyed-lock';
 
 // One `storage.local` key holds the whole list (small, always read/written together).
 const SERVERS_KEY = 'mcp:servers';
@@ -74,20 +75,24 @@ export async function getServer(id: string): Promise<StoredServer | null> {
  *  normalized record (defaults applied). Throws on an invalid shape/url. */
 export async function saveServer(server: StoredServerInput): Promise<StoredServer> {
   const parsed = StoredServer.parse(server);
-  const next = (await listServers()).filter((s) => s.id !== parsed.id);
-  next.push(parsed);
-  await chrome.storage.local.set({ [SERVERS_KEY]: next });
+  await withKeyLock(SERVERS_KEY, async () => {
+    const next = (await listServers()).filter((s) => s.id !== parsed.id);
+    next.push(parsed);
+    await chrome.storage.local.set({ [SERVERS_KEY]: next });
+  });
   return parsed;
 }
 
 /** Forget a server and purge its stored credentials. No-op record write when the id is
  *  unknown, but its secrets (and non-secret OAuth config) are cleared regardless (defensive). */
 export async function removeServer(id: string): Promise<void> {
-  const list = await listServers();
-  const next = list.filter((s) => s.id !== id);
-  if (next.length !== list.length) {
-    await chrome.storage.local.set({ [SERVERS_KEY]: next });
-  }
+  await withKeyLock(SERVERS_KEY, async () => {
+    const list = await listServers();
+    const next = list.filter((s) => s.id !== id);
+    if (next.length !== list.length) {
+      await chrome.storage.local.set({ [SERVERS_KEY]: next });
+    }
+  });
   await clearAuth(id);
   await removeOAuthConfig(id);
 }
@@ -107,17 +112,22 @@ export async function getOAuthConfigs(): Promise<Record<string, OAuthConfig>> {
 
 /** Persist one server's OAuth endpoint config, replacing any prior one for that id. */
 export async function saveOAuthConfig(id: string, config: OAuthConfig): Promise<void> {
-  const map = await getOAuthConfigs();
-  map[id] = OAuthConfig.parse(config);
-  await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
+  const parsed = OAuthConfig.parse(config);
+  await withKeyLock(OAUTH_CONFIG_KEY, async () => {
+    const map = await getOAuthConfigs();
+    map[id] = parsed;
+    await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
+  });
 }
 
 /** Forget one server's OAuth endpoint config. No-op when the id isn't stored. */
 export async function removeOAuthConfig(id: string): Promise<void> {
-  const map = await getOAuthConfigs();
-  if (!(id in map)) return;
-  delete map[id];
-  await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
+  await withKeyLock(OAUTH_CONFIG_KEY, async () => {
+    const map = await getOAuthConfigs();
+    if (!(id in map)) return;
+    delete map[id];
+    await chrome.storage.local.set({ [OAUTH_CONFIG_KEY]: map });
+  });
 }
 
 /** The persisted origin→repo map that backs one-click Ship (`src/mcp/handoff.ts`
@@ -149,15 +159,19 @@ export async function getOriginRepoMap(): Promise<OriginRepoMap> {
 
 /** Map a page origin (`host[:port]`) to a routing entry, replacing any prior mapping. */
 export async function setOriginRepo(origin: string, entry: OriginRepoEntry): Promise<void> {
-  const map = await getOriginRepoMap();
-  map[origin] = entry;
-  await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
+  await withKeyLock(ORIGIN_REPO_KEY, async () => {
+    const map = await getOriginRepoMap();
+    map[origin] = entry;
+    await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
+  });
 }
 
 /** Forget a page origin's repo mapping. No-op when the origin isn't mapped. */
 export async function clearOriginRepo(origin: string): Promise<void> {
-  const map = await getOriginRepoMap();
-  if (!(origin in map)) return;
-  delete map[origin];
-  await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
+  await withKeyLock(ORIGIN_REPO_KEY, async () => {
+    const map = await getOriginRepoMap();
+    if (!(origin in map)) return;
+    delete map[origin];
+    await chrome.storage.local.set({ [ORIGIN_REPO_KEY]: map });
+  });
 }

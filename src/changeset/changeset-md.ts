@@ -105,7 +105,7 @@ export function renderStylesheet(changeset: Changeset): string {
   // reconstructed from per-element deltas. Held at most one entry per id (a re-injection replaces),
   // so this is the LATEST version of each sheet, not a history of the agent's attempts.
   for (const sheet of changeset.stylesheets) {
-    const header = sheet.intent ? `### ${sheet.intent}` : `### Stylesheet \`${sheet.id}\``;
+    const header = sheet.intent ? `### ${sheet.intent}` : `### Stylesheet ${code(sheet.id)}`;
     sections.push([header, '', fenced('css', sheet.css.trim())].join('\n'));
   }
 
@@ -177,7 +177,7 @@ function confidenceLine(changeset: Changeset): string {
 function editSection(edit: Edit, n: number): string {
   const lines: string[] = [`### ${n}. ${edit.intent}`, ''];
   const caveat = selectorCaveat(edit.selector);
-  lines.push(`**Target:** \`${edit.selector.value}\` (${edit.selector.strategy})`);
+  lines.push(`**Target:** ${code(edit.selector.value)} (${edit.selector.strategy})`);
   if (caveat) lines.push('', `> **Unreliable selector** — ${caveat}`);
   if (edit.breakpoint) lines.push('', `**Breakpoint:** ${edit.breakpoint}`);
   if (edit.frameworkHints.length > 0) {
@@ -214,12 +214,12 @@ function editSection(edit: Edit, n: number): string {
     lines.push(
       '',
       a.after === null
-        ? `**Attribute removed:** \`${a.name}\` (was \`${a.before ?? ''}\`)`
-        : `**Attribute:** \`${a.name}\` → \`${a.after}\``,
+        ? `**Attribute removed:** ${code(a.name)} (was ${code(a.before ?? '')})`
+        : `**Attribute:** ${code(a.name)} → ${code(a.after)}`,
     );
   }
   for (const c of edit.classes) {
-    lines.push('', `**Class ${c.op === 'add' ? 'added' : 'removed'}:** \`${c.name}\``);
+    lines.push('', `**Class ${c.op === 'add' ? 'added' : 'removed'}:** ${code(c.name)}`);
   }
   return lines.join('\n');
 }
@@ -233,10 +233,10 @@ function structuralProse(edit: Edit): string {
     case 'remove':
       return '**Structure:** this element is removed from the page.';
     case 'move':
-      return `**Structure:** this element moves to \`${s.refSelector.value}\` (${s.position ?? 'beforeend'}). In source this is a change of where the element is rendered, not a runtime move.`;
+      return `**Structure:** this element moves to ${code(s.refSelector.value)} (${s.position ?? 'beforeend'}). In source this is a change of where the element is rendered, not a runtime move.`;
     case 'insert':
       return [
-        `**Structure:** new markup added ${s.position ?? 'beforeend'} \`${s.refSelector?.value ?? 'the target'}\`:`,
+        `**Structure:** new markup added ${s.position ?? 'beforeend'} ${s.refSelector ? code(s.refSelector.value) : 'the target'}:`,
         '',
         fenced('html', s.html),
       ].join('\n');
@@ -246,7 +246,7 @@ function structuralProse(edit: Edit): string {
       // script for a live DOM and means nothing in a template.
       return [
         s.endSelector
-          ? `**Structure:** this element **through** \`${s.endSelector.value}\` — the whole run of siblings — is wrapped in a new container. In source, render that range inside:`
+          ? `**Structure:** this element **through** ${code(s.endSelector.value)} — the whole run of siblings — is wrapped in a new container. In source, render that range inside:`
           : '**Structure:** this element is wrapped in a new container. In source, render it inside:',
         '',
         fenced('html', s.html),

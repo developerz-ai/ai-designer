@@ -77,6 +77,23 @@ const OAUTH: McpOAuthConfig = {
 };
 
 /** A fake MCP client factory — no real HTTP server; branch on url if a test needs to. */
+// Auth is applied PER REQUEST by the transport's `fetch` (src/mcp/client.ts), not frozen into the
+// transport's static headers at open — so read it the way the server would: off a request.
+async function authorizationSent(transport: { fetch?: typeof fetch }): Promise<string | null> {
+  const seen: Headers[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers));
+    return new Response('{}');
+  }) as typeof fetch;
+  try {
+    await transport.fetch?.('https://s/mcp', { headers: { Accept: 'application/json' } });
+  } finally {
+    globalThis.fetch = original;
+  }
+  return seen[0]?.get('Authorization') ?? null;
+}
+
 function fakeMcpFactory(tools: Record<string, unknown> = { task: {} }): McpClientFactory {
   return vi.fn(async () => ({
     tools: async () => tools as never,
@@ -321,25 +338,30 @@ describe('integration: mcp-add -> mcp-list -> mcp-connect through the bus', () =
   it('a panel-side pre-grant makes the SW re-check a no-op — no second permission request (#157)', async () => {
     installChromeFakes();
     const { handleAdd } = makeHandlers(fakeMcpFactory({ task: {} }));
-    const request = (
+    const permissions = (
       globalThis as unknown as {
         chrome: { permissions: { request: ReturnType<typeof vi.fn> } };
       }
-    ).chrome.permissions.request;
+    ).chrome.permissions;
 
     // The panel requests the host permission inside the Add gesture, before the mcp-add RPC.
     expect(await ensureHostAccess('https://ai-dev.example.com/mcp')).toEqual({ ok: true });
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(permissions.request).toHaveBeenCalledTimes(1);
 
-    // The SW handler re-checks (belt-and-braces): contains() is now true, so it does NOT prompt
-    // again and the add succeeds. The panel-side grant + the SW-side re-check share ONE request.
+    // The SW handler re-checks (belt-and-braces) with NO user gesture: Chrome rejects `request()`
+    // there, so the re-check falls back to `contains()` — now true — and the add succeeds without
+    // a second prompt. The panel-side grant is the only one.
+    const swRequest = vi.fn(() =>
+      Promise.reject(new Error('This function must be called during a user gesture')),
+    );
+    permissions.request = swRequest;
     const added = await handleAdd({
       type: 'mcp-add',
       label: 'ai-dev',
       url: 'https://ai-dev.example.com/mcp',
     });
     expect(added.ok).toBe(true);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(swRequest).toHaveBeenCalledTimes(1);
   });
 
   it('mcp-connect on an unknown id returns ok:false without throwing', async () => {
@@ -386,9 +408,9 @@ describe('integration: mcp-remove tears down the connection and purges secrets',
 describe('integration: mcp-auth-start (apikey + oauth) then reconnect', () => {
   it('apikey path: stores the key, flips authKind, and reconnects with a Bearer header', async () => {
     installChromeFakes();
-    const connect = vi.fn(async (config: { transport: { headers?: Record<string, string> } }) => ({
+    const connect = vi.fn(async (config: { transport: { fetch?: typeof fetch } }) => ({
       tools: async () => {
-        expect(config.transport.headers).toEqual({ Authorization: 'Bearer admin-key-abc' });
+        expect(await authorizationSent(config.transport)).toBe('Bearer admin-key-abc');
         return { task: {} };
       },
       close: async () => {},
@@ -423,9 +445,9 @@ describe('integration: mcp-auth-start (apikey + oauth) then reconnect', () => {
         json: async () => ({ access_token: 'acc-1', expires_in: 3600, token_type: 'Bearer' }),
       })),
     );
-    const connect = vi.fn(async (config: { transport: { headers?: Record<string, string> } }) => ({
+    const connect = vi.fn(async (config: { transport: { fetch?: typeof fetch } }) => ({
       tools: async () => {
-        expect(config.transport.headers).toEqual({ Authorization: 'Bearer acc-1' });
+        expect(await authorizationSent(config.transport)).toBe('Bearer acc-1');
         return { task: {} };
       },
       close: async () => {},

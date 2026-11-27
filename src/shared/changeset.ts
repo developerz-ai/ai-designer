@@ -218,3 +218,10 @@ export function emptyChangeset(url: string, createdAt: string, sessionId: string
 export function addEdit(changeset: Changeset, edit: Edit): Changeset {
   return { ...changeset, edits: [...changeset.edits, edit] };
 }
+
+/** Whether a changeset carries anything Ship can hand off: a recorded edit OR an injected
+ *  stylesheet. A stylesheet-only session (a full-page `injectCss` overhaul) is real work — gating
+ *  Ship on `edits.length` alone told it "nothing to ship" while the page showed the redesign. */
+export function hasShippableWork(changeset: Changeset): boolean {
+  return changeset.edits.length > 0 || changeset.stylesheets.length > 0;
+}
