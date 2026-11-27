@@ -234,6 +234,29 @@ describe('freezeMotion', () => {
       doc.getAnimations = real;
     }
   });
+
+  it('resumes an animation whose target was detached at release (getAnimations omits it)', () => {
+    const anim = {
+      playState: 'running' as AnimationPlayState,
+      pause() {
+        anim.playState = 'paused';
+      },
+      play() {
+        anim.playState = 'running';
+      },
+    };
+    const doc = document as unknown as { getAnimations?: () => unknown[] };
+    const real = doc.getAnimations;
+    doc.getAnimations = () => [anim];
+    try {
+      freezeMotion(document, true);
+      doc.getAnimations = () => []; // target detached: the document no longer lists it
+      freezeMotion(document, false);
+      expect(anim.playState).toBe('running');
+    } finally {
+      doc.getAnimations = real;
+    }
+  });
 });
 
 describe('MAIN-world routing', () => {

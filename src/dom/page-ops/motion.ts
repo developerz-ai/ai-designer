@@ -83,7 +83,9 @@ export interface FreezeResult {
 // The animations each document's freeze paused — release resumes exactly these. Resuming every
 // paused animation would also start the ones the PAGE had paused (a carousel on hold, a stopped
 // hero video loop), which is not "letting it go again", it is a new behaviour.
-const pausedByFreeze = new WeakMap<Document, WeakSet<Animation>>();
+// A Set, not a WeakSet: release must iterate it, because `getAnimations()` omits an animation whose
+// target is detached at release time — re-attached later, it would otherwise stay paused for good.
+const pausedByFreeze = new WeakMap<Document, Set<Animation>>();
 
 export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   const existing = doc.querySelector(`style[${SHEET_ATTR}="${FREEZE_SHEET_ID}"]`);
@@ -93,10 +95,10 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   if (!frozen) {
     existing?.remove();
     let resumed = 0;
-    const ours = pausedByFreeze.get(doc);
+    const ours = pausedByFreeze.get(doc) ?? new Set<Animation>();
     pausedByFreeze.delete(doc);
-    for (const a of animations) {
-      if (a.playState !== 'paused' || !ours?.has(a)) continue;
+    for (const a of ours) {
+      if (a.playState !== 'paused') continue;
       try {
         a.play();
         resumed += 1;
@@ -114,7 +116,7 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
     (doc.head ?? doc.documentElement).appendChild(style);
   }
   let paused = 0;
-  const ours = pausedByFreeze.get(doc) ?? new WeakSet<Animation>();
+  const ours = pausedByFreeze.get(doc) ?? new Set<Animation>();
   pausedByFreeze.set(doc, ours);
   for (const a of animations) {
     if (a.playState !== 'running') continue;
