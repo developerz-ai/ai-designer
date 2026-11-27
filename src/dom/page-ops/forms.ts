@@ -67,7 +67,10 @@ function CSS_ESCAPE(v: string): string {
  *  password — a show-password toggle flips `type` to `text` while the value is still the password. */
 function isSecretField(el: Field): boolean {
   if (!(el instanceof HTMLInputElement)) return false;
-  return el.type === 'password' || /\bpassword\b/i.test(el.autocomplete ?? '');
+  return (
+    el.type === 'password' ||
+    /(?:^|\s)(?:current-password|new-password)(?:\s|$)/i.test(el.autocomplete ?? '')
+  );
 }
 
 /** Every field under `root`, with the state a form-debugging pass actually needs — including the
@@ -132,9 +135,10 @@ export function setField(
   input: { value?: string; checked?: boolean },
 ): SetFieldResult | null {
   if (!isField(el)) return null;
-  // Sampled BEFORE any event runs, and again after: a page handler can flip the field's type
-  // either way (a show-password toggle) or clear it.
-  const secretBefore = isSecretField(el);
+  // Sampled before any event runs, between the events, and after validation: a page handler can
+  // flip the field's type either way (a show-password toggle) any number of times. Once detected,
+  // the flag sticks for the rest of the call.
+  let secret = isSecretField(el);
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
     el.dispatchEvent(new (doc.defaultView?.Event ?? Event)(type, { bubbles: true }));
@@ -148,13 +152,15 @@ export function setField(
   if (input.value !== undefined) {
     nativeSet(el, input.value);
     fire('input');
+    secret ||= isSecretField(el);
     fire('change');
   }
+  secret ||= isSecretField(el);
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
   const valid = typeof el.checkValidity === 'function' ? el.checkValidity() : true;
-  const secret = secretBefore || isSecretField(el);
+  secret ||= isSecretField(el);
   return {
     // Same rule as readFormState: a password value never reaches the model transcript…
     value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),

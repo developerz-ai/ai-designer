@@ -192,6 +192,29 @@ describe('forms', () => {
     expect(JSON.stringify(result)).not.toContain('hunter5');
   });
 
+  it('…even when a handler masks it, then reveals it again before validation', () => {
+    document.body.innerHTML =
+      '<form id="f4"><input id="p4" type="text" required pattern="x"></form>';
+    const el = document.getElementById('p4') as HTMLInputElement;
+    el.addEventListener('input', () => {
+      el.type = 'password';
+    });
+    el.addEventListener('change', () => {
+      el.type = 'text';
+    });
+    el.addEventListener('invalid', () => el.setCustomValidity(`"${el.value}" rejected`));
+    const result = setField(el, { value: 'hunter8' });
+    expect(JSON.stringify(result)).not.toContain('hunter8');
+  });
+
+  it('does not hide an ordinary field whose autocomplete only mentions password in a section', () => {
+    document.body.innerHTML =
+      '<form id="f5"><input id="e5" type="email" autocomplete="section-reset-password email" value="a@b.co"></form>';
+    const form = document.getElementById('f5');
+    if (!form) throw new Error('fixture');
+    expect(readFormState(form)[0]?.value).toBe('a@b.co');
+  });
+
   it('…and when a revealed password (text, autocomplete=current-password) is read', () => {
     document.body.innerHTML =
       '<form id="f2"><input id="rv" type="text" autocomplete="current-password" value="hunter6"></form>';
