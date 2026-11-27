@@ -73,6 +73,13 @@ function isSecretField(el: Field): boolean {
   );
 }
 
+/** The browser's validity verdict, read WITHOUT `checkValidity()`: that fires `invalid`, which runs
+ *  page handlers mid-read — they can change the value, the type (a show-password toggle) or the
+ *  message after the verdict was taken. `validity.valid` is the same verdict with no event. */
+function validityOf(el: Field): boolean {
+  return !el.willValidate || el.validity.valid;
+}
+
 /** Every field under `root`, with the state a form-debugging pass actually needs — including the
  *  browser's own validation verdict, which is invisible in a screenshot. */
 export function readFormState(root: ParentNode): FieldState[] {
@@ -81,11 +88,8 @@ export function readFormState(root: ParentNode): FieldState[] {
     if (!isField(el) || out.length >= MAX_FIELDS) break;
     const checkable =
       el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
-    // Secret-ness is sampled BEFORE and AFTER `checkValidity()`: its `invalid` event runs page
-    // handlers, which can flip a password field to text (or back) mid-read.
-    const secretBefore = isSecretField(el);
-    const valid = typeof el.checkValidity === 'function' ? el.checkValidity() : true;
-    const secret = secretBefore || isSecretField(el);
+    const secret = isSecretField(el);
+    const valid = validityOf(el);
     out.push({
       name: el.name || el.id || '',
       type: el instanceof HTMLSelectElement ? 'select' : el.type,
@@ -135,9 +139,9 @@ export function setField(
   input: { value?: string; checked?: boolean },
 ): SetFieldResult | null {
   if (!isField(el)) return null;
-  // Sampled before any event runs, between the events, and after validation: a page handler can
-  // flip the field's type either way (a show-password toggle) any number of times. Once detected,
-  // the flag sticks for the rest of the call.
+  // Sampled before any event runs, between the events and after them: a page handler can flip the
+  // field's type either way (a show-password toggle) any number of times. Once detected, the flag
+  // sticks for the rest of the call. (Validity is read without an event — see validityOf.)
   let secret = isSecretField(el);
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
@@ -159,8 +163,7 @@ export function setField(
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
-  const valid = typeof el.checkValidity === 'function' ? el.checkValidity() : true;
-  secret ||= isSecretField(el);
+  const valid = validityOf(el);
   return {
     // Same rule as readFormState: a password value never reaches the model transcript…
     value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),

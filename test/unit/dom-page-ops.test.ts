@@ -223,18 +223,22 @@ describe('forms', () => {
     expect(JSON.stringify(readFormState(form))).not.toContain('hunter6');
   });
 
-  it('…and when an invalid handler reveals the password during the read', () => {
+  it('reads validity without firing invalid, so no page handler runs mid-read', () => {
     document.body.innerHTML = '<form id="f3"><input id="p3" type="password" required></form>';
     const el = document.getElementById('p3') as HTMLInputElement;
     el.value = 'hunter7';
     el.pattern = 'x';
+    let invalidFired = false;
     el.addEventListener('invalid', () => {
+      invalidFired = true;
       el.type = 'text';
-      el.setCustomValidity(`"${el.value}" rejected`);
     });
     const form = document.getElementById('f3');
     if (!form) throw new Error('fixture');
-    expect(JSON.stringify(readFormState(form))).not.toContain('hunter7');
+    const [field] = readFormState(form);
+    expect(invalidFired).toBe(false);
+    expect(field?.valid).toBe(false); // the verdict is still reported
+    expect(JSON.stringify(field)).not.toContain('hunter7');
   });
 
   it('…even when the validator quotes the password and then clears the field', () => {
