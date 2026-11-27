@@ -172,6 +172,15 @@ describe('forms', () => {
     expect(result?.value).toBe(''); // …but not read back, same rule as readFormState
   });
 
+  it('never echoes the password through a page validator message either', () => {
+    const el = document.getElementById('pw');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    el.addEventListener('input', () => el.setCustomValidity(`"${el.value}" is too weak`));
+    const result = setField(el, { value: 'hunter3' });
+    expect(result?.valid).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('hunter3');
+  });
+
   it('writes through the NATIVE prototype setter so a framework tracker sees it', () => {
     const el = document.getElementById('email');
     if (!(el instanceof HTMLInputElement)) throw new Error('fixture');

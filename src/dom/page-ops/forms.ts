@@ -103,6 +103,10 @@ function nativeSet(el: Field, value: string): void {
   else el.value = value;
 }
 
+function redact(text: string, secret: string): string {
+  return secret ? text.split(secret).join('[redacted]') : text;
+}
+
 export interface SetFieldResult {
   readonly value: string;
   readonly checked: boolean | null;
@@ -140,14 +144,13 @@ export function setField(
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
+  const secret = el instanceof HTMLInputElement && el.type === 'password' ? el.value : '';
   return {
-    // Same rule as readFormState: a password value never reaches the model transcript.
-    value:
-      el instanceof HTMLInputElement && el.type === 'password'
-        ? ''
-        : String(el.value ?? '').slice(0, MAX_VALUE),
+    // Same rule as readFormState: a password value never reaches the model transcript…
+    value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
     checked: checkable ? el.checked : null,
     valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-    validationMessage: el.validationMessage ?? '',
+    // …not even inside a page validator's message (`setCustomValidity(\`"${v}" is too weak\`)`).
+    validationMessage: redact(el.validationMessage ?? '', secret),
   };
 }
