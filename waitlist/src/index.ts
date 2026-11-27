@@ -26,7 +26,11 @@ export function seedFromEnv(raw: string | undefined): number {
 const WAITLIST_SEED = seedFromEnv(process.env.WAITLIST_SEED_COUNT);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const validEmail = (s: string): boolean => EMAIL_RE.test(s) && s.length <= 320;
+// Type and length FIRST: the pattern backtracks quadratically on a long run of dots, and an
+// unbounded body (160k chars) blocked the event loop for ~27s before the captcha was checked.
+// A non-string (an array) would also pass `test()`'s string coercion.
+const validEmail = (s: unknown): s is string =>
+  typeof s === 'string' && s.length <= 320 && EMAIL_RE.test(s);
 
 export const app = new Hono();
 
@@ -54,7 +58,7 @@ interface SubscribeBody {
 
 app.post('/subscribe', async (c) => {
   const body = (await c.req.json().catch(() => null)) as SubscribeBody | null;
-  if (!body?.email || !validEmail(body.email)) return c.json({ error: 'invalid email' }, 400);
+  if (!validEmail(body?.email)) return c.json({ error: 'invalid email' }, 400);
   if (!body.captchaToken) return c.json({ error: 'captcha required' }, 400);
   if (body.consent !== 'true') return c.json({ error: 'consent required' }, 400);
   if (!(await verifyCaptcha(body.captchaToken))) return c.json({ error: 'captcha failed' }, 400);
