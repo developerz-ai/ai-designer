@@ -5,6 +5,19 @@ import { afterEach, expect, it, vi } from 'vitest';
 // `{ ok: true }` with no turnId; the panel, streaming for that send, kept send disabled forever.
 
 vi.mock('#imports', () => ({ defineBackground: (callback: () => void) => callback }));
+const state = vi.hoisted(() => ({
+  config: null as null | { baseURL: string; model: string },
+  keyMissing: false,
+}));
+vi.mock('@/agent/config-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agent/config-store')>()),
+  getProviderConfig: async () => state.config,
+  migrateLegacyProvider: async () => {},
+}));
+vi.mock('@/agent/provider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agent/provider')>()),
+  keyMissing: () => state.keyMissing,
+}));
 vi.mock('@/mcp/manager', () => ({
   McpManager: class {
     async hydrate() {}
@@ -18,7 +31,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('a user-message with no web page to design rejects its ack with the reason', async () => {
+const TAB = { id: 7, url: 'https://shop.example/' };
+const cases = [
+  {
+    name: 'no web page',
+    tabs: [],
+    config: null,
+    keyMissing: false,
+    error: 'Open a web page to start designing.',
+  },
+  {
+    name: 'no provider',
+    tabs: [TAB],
+    config: null,
+    keyMissing: false,
+    error: 'Add a model provider in Settings to start.',
+  },
+  {
+    name: 'missing key',
+    tabs: [TAB],
+    config: { baseURL: 'https://openrouter.ai/api/v1', model: 'test' },
+    keyMissing: true,
+    error: 'MISSING_KEY',
+  },
+];
+
+it.each(cases)('a user-message refused for $name rejects its ack with the reason', async (c) => {
+  state.config = c.config;
+  state.keyMissing = c.keyMissing;
+  vi.resetModules();
   const area = () => {
     const data: Record<string, unknown> = {};
     return {
@@ -47,7 +88,7 @@ it('a user-message with no web page to design rejects its ack with the reason', 
       getURL: (path: string) => `chrome-extension://test/${path}`,
     },
     tabs: {
-      query: async () => [], // no active web page
+      query: async () => c.tabs,
       get: async () => undefined,
       sendMessage: async () => ({}),
       onRemoved: event,
@@ -69,5 +110,9 @@ it('a user-message with no web page to design rejects its ack with the reason', 
         resolve(value as Record<string, unknown>),
       );
   });
-  expect(reply).toEqual({ ok: false, error: 'Open a web page to start designing.' });
+  const { MISSING_KEY_ERROR } = await import('@/agent/provider');
+  expect(reply).toEqual({
+    ok: false,
+    error: c.error === 'MISSING_KEY' ? MISSING_KEY_ERROR : c.error,
+  });
 });
