@@ -354,6 +354,16 @@ describe('createMutator page ops', () => {
     expect(document.querySelectorAll('style.dz-designer-injected')).toHaveLength(0);
   });
 
+  it('injectCss with an id that needs cleaning replaces its sheet instead of stacking a second', () => {
+    mount('<div></div>');
+    const mutator = createMutator(document);
+    mutator.injectCss('.x{color:red}', 'my theme');
+    const second = mutator.injectCss('.x{color:blue}', 'my theme');
+    expect(document.querySelectorAll('style.dz-designer-injected')).toHaveLength(1);
+    expect(second.computed.replaced).toBe(true);
+    expect(second.computed.id).toBe(mutator.injectCss('.x{color:green}', 'my theme').computed.id);
+  });
+
   it('setViewport constrains the document width and undo restores prior style', () => {
     mount('<div></div>');
     const root = document.documentElement;

@@ -931,7 +931,11 @@ export function createMutator(doc: Document = document): Mutator {
     const denied = cssDenyReason(css);
     if (denied) throw new Error(denied);
 
-    const existing = doc.querySelector(`style[${SHEET_ATTR}="${cssIdent(id)}"]`);
+    // ONE normalized key for the lookup, the attribute and the reported id: the lookup used the
+    // cleaned id while the attribute kept the raw one, so an id like "my theme" never matched its
+    // own sheet and every re-injection stacked another instead of replacing it.
+    const key = cssIdent(id);
+    const existing = doc.querySelector(`style[${SHEET_ATTR}="${key}"]`);
     const style = existing instanceof HTMLStyleElement ? existing : doc.createElement('style');
     const priorText: string | null =
       existing instanceof HTMLStyleElement ? style.textContent : null;
@@ -939,7 +943,7 @@ export function createMutator(doc: Document = document): Mutator {
     style.textContent = css;
     if (!existing) {
       style.className = 'dz-designer-injected';
-      style.setAttribute(SHEET_ATTR, id);
+      style.setAttribute(SHEET_ATTR, key);
       // Last child of <head>, so page CSS loses ties on equal specificity without us reaching for
       // `!important` on every declaration the way the per-element override sheet has to.
       (doc.head ?? doc.documentElement).appendChild(style);
@@ -947,7 +951,7 @@ export function createMutator(doc: Document = document): Mutator {
     return {
       // `replaced` lets the model tell "I refined my design system" from "I added a second one" —
       // the distinction that makes iterate-and-refine legible in the changeset.
-      computed: { bytes: css.length, id, replaced: priorText !== null },
+      computed: { bytes: css.length, id: key, replaced: priorText !== null },
       undo() {
         if (priorText === null) style.remove();
         else style.textContent = priorText;
