@@ -297,13 +297,14 @@ export default defineBackground(() => {
   // pasted empty AGAIN. Hydrated with the other ready promises in `handle`.
   const globalLog = new GlobalLogStore();
   const globalLogReady = globalLog.hydrate().catch(() => {});
-  /** A turnless error the panel must see AND the log must keep. Deliberately UNSTAMPED (no turnId)
-   *  — the panel renders unattributed errors as composer notices, never as a turn's failure. */
-  const postTurnlessError = (message: string): void => {
-    const update: SwToPanel = { type: 'error', message };
-    postToPanel(update);
-    const entry = logEntryFor(update, Date.now());
+  /** A send the turn guards refused: the log keeps it, and the caller REJECTS the `user-message`
+   *  ack with it (`{ ok: false, error }`). It used to be posted as an unstamped stream `error` with
+   *  an `{ ok: true }` ack — the panel, already streaming for that send, read the error as a
+   *  mid-turn notice, got no `turnId`, and stayed "streaming" (send disabled) forever. */
+  const rejectTurnless = (message: string): UserMessageResult => {
+    const entry = logEntryFor({ type: 'error', message }, Date.now());
     if (entry) globalLog.append(entry);
+    return { ok: false, error: message };
   };
 
   const logEscapedError = (prefix: string, err: unknown): void => {
@@ -1031,25 +1032,21 @@ export default defineBackground(() => {
         startingTurns.add(turnId);
         try {
           // These guards fire BEFORE a session exists, so they log via the SW-global ring
-          // (`postTurnlessError`) — a plain `postToPanel` here is exactly the error the user's
-          // pasted debug log never contained.
+          // (`rejectTurnless`) and reject the ack — the panel shows the reason as a notice.
           const tab = await resolveTargetTab();
           if (tab?.id === undefined || !tab.url) {
-            postTurnlessError('Open a web page to start designing.');
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless('Open a web page to start designing.');
           }
           const cfg = await getProviderConfig();
           if (!cfg) {
-            postTurnlessError('Add a model provider in Settings to start.');
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless('Add a model provider in Settings to start.');
           }
           // Fail here, named, rather than let the SDK issue a keyless request and surface the
           // provider's own wording ("Missing Authentication header") several frames deep in the
           // stream. Readiness blocks Start on the same condition; this covers a key cleared after
           // Start, and a session restored into a worker whose stored key has since gone.
           if (keyMissing(cfg)) {
-            postTurnlessError(MISSING_KEY_ERROR);
-            return { ok: true } satisfies UserMessageResult;
+            return rejectTurnless(MISSING_KEY_ERROR);
           }
           const tabId = tab.id;
           // Closure-stable alias (TS drops a captured property's narrowing inside the chained
