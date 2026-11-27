@@ -205,6 +205,58 @@ describe('freezeMotion', () => {
     freezeMotion(document, false);
     expect(document.querySelectorAll('style[data-dz-designer-css]')).toHaveLength(0);
   });
+
+  it('on release resumes only the animations IT paused, never one the page had paused', () => {
+    const fake = (playState: AnimationPlayState) => {
+      const a = {
+        playState,
+        pause() {
+          a.playState = 'paused';
+        },
+        play() {
+          a.playState = 'running';
+        },
+      };
+      return a;
+    };
+    const running = fake('running');
+    const pausedByPage = fake('paused');
+    const doc = document as unknown as { getAnimations?: () => unknown[] };
+    const real = doc.getAnimations;
+    doc.getAnimations = () => [running, pausedByPage];
+    try {
+      freezeMotion(document, true);
+      expect(running.playState).toBe('paused');
+      expect(freezeMotion(document, false).paused).toBe(1);
+      expect(running.playState).toBe('running');
+      expect(pausedByPage.playState).toBe('paused'); // the page's own pause survives
+    } finally {
+      doc.getAnimations = real;
+    }
+  });
+
+  it('resumes an animation whose target was detached at release (getAnimations omits it)', () => {
+    const anim = {
+      playState: 'running' as AnimationPlayState,
+      pause() {
+        anim.playState = 'paused';
+      },
+      play() {
+        anim.playState = 'running';
+      },
+    };
+    const doc = document as unknown as { getAnimations?: () => unknown[] };
+    const real = doc.getAnimations;
+    doc.getAnimations = () => [anim];
+    try {
+      freezeMotion(document, true);
+      doc.getAnimations = () => []; // target detached: the document no longer lists it
+      freezeMotion(document, false);
+      expect(anim.playState).toBe('running');
+    } finally {
+      doc.getAnimations = real;
+    }
+  });
 });
 
 describe('MAIN-world routing', () => {

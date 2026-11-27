@@ -78,8 +78,15 @@ export interface FreezeResult {
  * pins CSS animations and collapses transitions, and the Web Animations API pauses everything else
  * (a JS-driven animation ignores `animation-play-state` entirely).
  *
- * Reversible: releasing removes the sheet and plays every animation the freeze paused.
+ * Reversible: releasing removes the sheet and plays exactly the animations the freeze paused.
  */
+// The animations each document's freeze paused — release resumes exactly these. Resuming every
+// paused animation would also start the ones the PAGE had paused (a carousel on hold, a stopped
+// hero video loop), which is not "letting it go again", it is a new behaviour.
+// A Set, not a WeakSet: release must iterate it, because `getAnimations()` omits an animation whose
+// target is detached at release time — re-attached later, it would otherwise stay paused for good.
+const pausedByFreeze = new WeakMap<Document, Set<Animation>>();
+
 export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   const existing = doc.querySelector(`style[${SHEET_ATTR}="${FREEZE_SHEET_ID}"]`);
   const host = doc as unknown as { getAnimations?: () => Animation[] };
@@ -88,7 +95,9 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   if (!frozen) {
     existing?.remove();
     let resumed = 0;
-    for (const a of animations) {
+    const ours = pausedByFreeze.get(doc) ?? new Set<Animation>();
+    pausedByFreeze.delete(doc);
+    for (const a of ours) {
       if (a.playState !== 'paused') continue;
       try {
         a.play();
@@ -107,10 +116,13 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
     (doc.head ?? doc.documentElement).appendChild(style);
   }
   let paused = 0;
+  const ours = pausedByFreeze.get(doc) ?? new Set<Animation>();
+  pausedByFreeze.set(doc, ours);
   for (const a of animations) {
     if (a.playState !== 'running') continue;
     try {
       a.pause();
+      ours.add(a);
       paused += 1;
     } catch {
       // Some animations cannot be paused (a finished one); the stylesheet still covers CSS motion.
