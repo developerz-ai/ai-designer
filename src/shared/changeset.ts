@@ -185,9 +185,9 @@ export type StylesheetEdit = z.infer<typeof StylesheetEdit>;
 export const Changeset = z.object({
   url: z.url(),
   createdAt: z.string(),
-  // Idempotency key for the #19 handoff: a retried `task(action:'create', {spec})`
-  // after a network failure must resolve to the same session, not open a second PR.
-  // The SW session owns it (crypto.randomUUID); nothing else in the schema fits.
+  // Scopes the #19 handoff idempotency key (`src/mcp/handoff.ts` `dispatchKey`: session + a digest
+  // of the dispatched work): a retried `task(action:'create', {spec})` after a network failure must
+  // resolve to the same task, not open a second PR. The SW session owns it (crypto.randomUUID).
   sessionId: z.uuid(),
   edits: z.array(Edit).default([]),
   // Page-level stylesheets injected this session. Defaults to empty so every changeset persisted
