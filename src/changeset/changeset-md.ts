@@ -54,10 +54,18 @@ function longestBacktickRun(text: string): number {
   return longest;
 }
 
-/** A table cell: page text as a literal code span, with `|` escaped (GFM splits cells on it even
- *  inside a span) and every line break — CR, LF or both — folded so the row cannot end early. */
+/** A table cell: page text as a literal code span, every line break folded so the row cannot end
+ *  early. Only for values with no `|` — see {@link fitsTable}. */
 function cell(value: string): string {
-  return code(value).replace(/\|/g, '\\|');
+  return code(value);
+}
+
+/** Whether every value can sit in a GFM table cell. GFM splits a row on any `|` not preceded by an
+ *  ODD run of backslashes — even inside a code span — so a value carrying one is never escaped into
+ *  the table (`\|` in the page's own text would become `\\|` and split). Those edits render their
+ *  deltas as a fenced block instead. */
+function fitsTable(changes: Edit['changes']): boolean {
+  return changes.every((c) => !`${c.before ?? ''}${c.after}`.includes('|'));
 }
 
 /** How the honesty note reads per selector strategy. `null` = the selector is trustworthy enough
@@ -177,11 +185,16 @@ function editSection(edit: Edit, n: number): string {
   }
 
   if (edit.changes.length > 0) {
-    lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
-    for (const c of edit.changes) {
-      lines.push(
-        `| \`${c.prop}\` | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
-      );
+    if (fitsTable(edit.changes)) {
+      lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
+      for (const c of edit.changes) {
+        lines.push(
+          `| \`${c.prop}\` | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
+        );
+      }
+    } else {
+      const deltas = edit.changes.map((c) => `${c.prop}: ${c.before ?? '—'} -> ${c.after}`);
+      lines.push('', '**Property changes:**', '', fenced('text', deltas.join('\n')));
     }
   }
   const structural = structuralProse(edit);

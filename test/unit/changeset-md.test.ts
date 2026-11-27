@@ -32,8 +32,9 @@ const changeset = (edits: Edit[], stylesheets: Changeset['stylesheets'] = []): C
 function proseLines(md: string): string[] {
   const out: string[] = [];
   let open = 0;
-  for (const line of md.split('\n')) {
-    const run = /^(`{3,})/.exec(line)?.[1]?.length ?? 0;
+  // CommonMark: any of CRLF / LF / CR ends a line, and a fence may be indented up to 3 spaces.
+  for (const line of md.split(/\r\n|\r|\n/)) {
+    const run = /^ {0,3}(`{3,})/.exec(line)?.[1]?.length ?? 0;
     if (open === 0 && run > 0) open = run;
     else if (open > 0 && run >= open && line.trim() === '`'.repeat(run)) open = 0;
     else if (open === 0) out.push(line);
@@ -82,15 +83,27 @@ describe('changeset-md: page content cannot break out of the brief’s structure
     expectNoInjectedProse(md, '### After sheet');
   });
 
-  it('a value with a pipe or newline cannot break the property table', () => {
+  it('a value with a pipe (escaped or not) never enters the table; it renders fenced', () => {
+    for (const before of ['a | b', 'a \\| b']) {
+      const md = renderChangeset(
+        changeset([
+          edit({ changes: [{ prop: 'content', before, after: 'c\n# Injected heading' }] }),
+        ]),
+      );
+      expectNoInjectedProse(md);
+      expect(md).not.toContain('| `content`');
+      expect(md).toContain('**Property changes:**');
+    }
+  });
+
+  it('a newline in a value cannot end a table row', () => {
     const md = renderChangeset(
       changeset([
-        edit({ changes: [{ prop: 'content', before: 'a | b', after: 'c\n# Injected heading' }] }),
+        edit({ changes: [{ prop: 'content', before: 'a', after: 'c\n# Injected heading' }] }),
       ]),
     );
     expectNoInjectedProse(md);
-    const row = md.split('\n').find((l) => l.startsWith('| `content`'));
-    expect(row?.split(/(?<!\\)\|/).length).toBe(5); // | prop | was | now |
+    expect(md.split('\n').filter((l) => l.startsWith('| `content`'))).toHaveLength(1);
   });
 
   it('renders one-line copy and table values as literal text, never as links or emphasis', () => {
