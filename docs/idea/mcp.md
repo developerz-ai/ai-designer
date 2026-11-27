@@ -15,7 +15,7 @@ Where work lands — **optional**. The MCP management UI lets the user connect d
 
 1. MCP tab → **Add server** → name + URL + transport (HTTP-streamable).
 2. Authenticate (see below). On success, tool catalog is fetched and cached.
-3. Map page origins → repos (e.g. `localhost:3000` → `acme/storefront`) for one-click [Ship](handoff.md). The mapping is storage-only today (`mcp:origin-repo`) — the management UI is #20; unmapped origins fall back to the report download.
+3. Map page origins → repos (e.g. `localhost:3000` → `acme/storefront`) for one-click [Ship](handoff.md). The map persists under `mcp:origin-repo` and is edited in the MCP tab or inline in the Ship bar (#20); unmapped origins fall back to the report download.
 
 ## Auth
 

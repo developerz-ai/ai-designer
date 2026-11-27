@@ -1,6 +1,6 @@
 # UI
 
-SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS with SRP: **one component = one `.tsx` + one co-located `.scss`**. Icons are self-hosted FontAwesome SVG (`Icon.tsx` + `icon-registry.ts`) — built from imported icon data, nothing fetched at runtime, no `innerHTML`.
+SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS with SRP: **one component = one `.tsx` + one co-located `.scss`**. Icons are a hand-drawn inline SVG set (`Icon.tsx` + `icon-registry.ts`: 16×16, 1.5px stroke, `currentColor`) — no icon package, nothing fetched at runtime, no `innerHTML`.
 
 ## Surfaces
 
@@ -14,7 +14,7 @@ SolidJS, prebuilt to a static bundle (CSP-clean MV3 — no runtime eval). SCSS w
 Four tabs (`Tab = 'chat' | 'mcp' | 'history' | 'settings'`) — there is no standalone "diff review" tab; the changeset lives inside the Chat flow.
 
 - **Chat** — the design conversation. Modes (copy / debug / none) are pinned per message or inferred from its text — suggestion chips, no picker UI. Streamed tokens, tool-call chips, the picked-element context chip, the input box, task status timelines + PR links after a Ship, and the **Ship bar** (Ship or Download report, per [handoff.md](handoff.md)).
-- **MCP** — connected backends, auth status (API key / OAuth per server). Feature-flagged, on by default. The origin→repo mapping is storage-only today (no UI — see #20). See [mcp.md](mcp.md).
+- **MCP** — connected backends, auth status (API key / OAuth per server). Feature-flagged, on by default. The origin→repo map is edited here (and inline in the Ship bar when a page has no repo) — `OriginRepoSection.tsx`, #20. See [mcp.md](mcp.md).
 - **History** — last 10 conversations (+ their reports/PR links). Selecting one swaps in a read-only replay; delete supported. See [Memory](agent.md#memory) and [History](#history).
 - **Settings** — provider config (base URL, API key, model picker), overlay opt-in.
 
@@ -63,11 +63,11 @@ Two related, visually consistent surfaces, both drawn in a shadow-DOM host so pa
 | `chat/AttachmentTray.tsx` | Attached mockups + promoted big pastes, above the composer shell |
 | `ShipBar.tsx` | Ship / Download report actions |
 | `TaskTimeline.tsx` | Handoff status → PR link |
-| `McpPanel.tsx` | Connected backends + add/remove (origin→repo mapping is storage-only, no UI — #20) |
+| `McpPanel.tsx` | Connected backends + add/remove, plus the origin→repo map (`OriginRepoSection.tsx`, #20) |
 | `AuthDialog.tsx` | OAuth/PKCE + API-key entry |
 | `HistoryPanel.tsx` / `ConversationView.tsx` | Last-10 list + read-only replay |
 | `SettingsPanel.tsx` | Provider config + model picker |
-| `Icon.tsx` / `icon-registry.ts` | Self-hosted FontAwesome SVG icons |
+| `Icon.tsx` / `icon-registry.ts` | Hand-drawn inline SVG icons |
 
 ## Styling
 
