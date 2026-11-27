@@ -28,14 +28,32 @@ const COMMENT_CLOSE = `*${'/'}`;
 // it and the rest renders as the brief's own headings and links. CommonMark closes a fence only on
 // a backtick run at least as long as the opener, so the fence is sized past the longest run inside.
 function fenced(lang: string, body: string): string {
-  const longest = Math.max(0, ...Array.from(body.matchAll(/`+/g), (m) => m[0].length));
-  const fence = '`'.repeat(Math.max(3, longest + 1));
+  const fence = '`'.repeat(Math.max(3, longestBacktickRun(body) + 1));
   return [`${fence}${lang}`, body, fence].join('\n');
 }
 
-/** A table cell: a `|` would end the cell and a newline the row. */
+/** Page text as a literal inline code span: Markdown inside it (a `[link](…)`, `**bold**`) stays
+ *  text. The delimiter outruns any backtick run inside; a space pads a span that starts or ends on a
+ *  backtick. Line breaks fold to spaces — a span cannot hold a block. */
+function code(value: string): string {
+  const flat = value.replace(/[\r\n]+/g, ' ');
+  const ticks = '`'.repeat(longestBacktickRun(flat) + 1);
+  const pad = flat.startsWith('`') || flat.endsWith('`') ? ' ' : '';
+  return `${ticks}${pad}${flat}${pad}${ticks}`;
+}
+
+// A loop, not `Math.max(...runs)`: a large replaced subtree can hold more runs than the engine's
+// argument limit, which would throw and abort the whole export.
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  return longest;
+}
+
+/** A table cell: page text as a literal code span, with `|` escaped (GFM splits cells on it even
+ *  inside a span) and every line break — CR, LF or both — folded so the row cannot end early. */
 function cell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return code(value).replace(/\|/g, '\\|');
 }
 
 /** How the honesty note reads per selector strategy. `null` = the selector is trustworthy enough
@@ -157,7 +175,9 @@ function editSection(edit: Edit, n: number): string {
   if (edit.changes.length > 0) {
     lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
     for (const c of edit.changes) {
-      lines.push(`| \`${c.prop}\` | ${cell(c.before ?? '—')} | ${cell(c.after)} |`);
+      lines.push(
+        `| \`${c.prop}\` | ${c.before == null ? '—' : cell(c.before)} | ${cell(c.after)} |`,
+      );
     }
   }
   const structural = structuralProse(edit);
@@ -170,7 +190,7 @@ function editSection(edit: Edit, n: number): string {
         ? ['**Copy:** was', '', fenced('text', before), '', 'now', '', fenced('text', after)].join(
             '\n',
           )
-        : `**Copy:** "${before}" → "${after}"`,
+        : `**Copy:** ${code(before)} → ${code(after)}`,
     );
   }
   for (const a of edit.attrs) {

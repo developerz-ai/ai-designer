@@ -22,7 +22,8 @@ const changeset = (edits: Edit[], stylesheets: Changeset['stylesheets'] = []): C
   url: 'http://localhost:3000/',
   createdAt: '2026-07-14T00:00:00.000Z',
   sessionId: '00000000-0000-0000-0000-000000000000',
-  edits,
+  // A trailing edit whose heading must still render as prose after the injected block.
+  edits: [...edits, edit({ intent: 'After' })],
   stylesheets,
 });
 
@@ -40,8 +41,11 @@ function proseLines(md: string): string[] {
   return out;
 }
 
-function expectNoInjectedProse(md: string): void {
+function expectNoInjectedProse(md: string, after = '### 2. After'): void {
   const prose = proseLines(md);
+  // The fence must have CLOSED: the edit rendered after it is prose again. A fence left open would
+  // hide the injection and everything after it, and the checks below would pass vacuously.
+  expect(prose).toContain(after);
   expect(prose.some((l) => l.startsWith('# Injected'))).toBe(false);
   expect(prose.some((l) => l.includes('](https://evil.example)'))).toBe(false);
 }
@@ -70,12 +74,12 @@ describe('changeset-md: page content cannot break out of the brief’s structure
 
   it('an injected stylesheet with a fence line stays inert', () => {
     const md = renderStylesheet(
-      changeset(
-        [],
-        [{ id: 'theme', css: `/* ${INJECTION} */ body{}` } as Changeset['stylesheets'][number]],
-      ),
+      changeset([], [
+        { id: 'theme', css: `/* ${INJECTION} */ body{}` },
+        { id: 'next', css: 'p{}', intent: 'After sheet' },
+      ] as Changeset['stylesheets']),
     );
-    expectNoInjectedProse(md);
+    expectNoInjectedProse(md, '### After sheet');
   });
 
   it('a value with a pipe or newline cannot break the property table', () => {
@@ -87,5 +91,42 @@ describe('changeset-md: page content cannot break out of the brief’s structure
     expectNoInjectedProse(md);
     const row = md.split('\n').find((l) => l.startsWith('| `content`'));
     expect(row?.split(/(?<!\\)\|/).length).toBe(5); // | prop | was | now |
+  });
+
+  it('renders one-line copy and table values as literal text, never as links or emphasis', () => {
+    const md = renderChangeset(
+      changeset([
+        edit({
+          text: { before: '[click](https://evil.example)', after: '**bold**' },
+          changes: [{ prop: 'content', before: '[x](https://evil.example)', after: 'ok' }],
+        }),
+      ]),
+    );
+    expect(md).toContain('`[click](https://evil.example)`');
+    expect(md).toContain('`**bold**`');
+    expect(md).toContain('`[x](https://evil.example)`');
+  });
+
+  it('a lone carriage return cannot end a table row', () => {
+    const md = renderChangeset(
+      changeset([
+        edit({ changes: [{ prop: 'content', before: 'a\r# Injected heading', after: 'b' }] }),
+      ]),
+    );
+    expect(md).not.toMatch(/\r/);
+    expectNoInjectedProse(md);
+  });
+
+  it('survives a replaced subtree with more backtick runs than the argument limit', () => {
+    const replacedHtml = '<i>`</i>'.repeat(200_000);
+    expect(() =>
+      renderChangeset(
+        changeset([
+          edit({
+            structural: { op: 'replace', html: '<p/>', replacedHtml } as Edit['structural'],
+          }),
+        ]),
+      ),
+    ).not.toThrow();
   });
 });
