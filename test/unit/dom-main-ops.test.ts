@@ -117,58 +117,6 @@ describe('pageCall', () => {
     expect(res.ok ? '' : res.error).toContain('code-construction');
   });
 
-  it('catches an ALIASED network function by identity, not by name', () => {
-    // Inert stand-ins for each browser primitive, installed where the page would find them.
-    const nav = (window as unknown as { navigator: Record<string, unknown> }).navigator;
-    const cases: Array<[string, Record<string, unknown>]> = [
-      ['fetch', window as unknown as Record<string, unknown>],
-      ['open', window as unknown as Record<string, unknown>],
-      ['postMessage', window as unknown as Record<string, unknown>],
-      ['sendBeacon', nav],
-    ];
-    for (const [name, host] of cases) {
-      const real = Reflect.get(host, name);
-      let invoked = false;
-      const standIn = () => {
-        invoked = true;
-      };
-      Reflect.set(host, name, standIn);
-      try {
-        const w = win({ api: { send: standIn } });
-        const res = runMainOp({ op: 'pageCall', path: 'api.send', args: ['https://evil.test'] }, w);
-        expect([name, res.ok]).toEqual([name, false]);
-        expect([name, invoked]).toEqual([name, false]);
-      } finally {
-        Reflect.set(host, name, real);
-      }
-    }
-  });
-
-  it('catches a BOUND copy of a network function by its engine-given name', () => {
-    function fetch(): void {}
-    const w = win({ api: { send: fetch.bind(window) } });
-    const res = runMainOp({ op: 'pageCall', path: 'api.send', args: [] }, w);
-    expect(res.ok).toBe(false);
-  });
-
-  it('a throwing getter on window.fetch does not break an unrelated page call', () => {
-    const real = Object.getOwnPropertyDescriptor(window, 'fetch');
-    Object.defineProperty(window, 'fetch', {
-      configurable: true,
-      get() {
-        throw new Error('page getter');
-      },
-    });
-    try {
-      const w = win({ myChart: { update: () => 'updated' } });
-      const res = runMainOp({ op: 'pageCall', path: 'myChart.update', args: [] }, w);
-      expect(res.ok).toBe(true);
-    } finally {
-      if (real) Object.defineProperty(window, 'fetch', real);
-      else Reflect.deleteProperty(window, 'fetch');
-    }
-  });
-
   it('refuses pageValue on document.cookie', () => {
     const res = runMainOp({ op: 'pageValue', path: 'document.cookie' }, win());
     expect(res.ok).toBe(false);

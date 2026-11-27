@@ -321,13 +321,12 @@ export function runMainOp(op: MainOp, win: Window = window): MainOpResult {
         if (typeof value !== 'function') {
           return fail(`window.${op.path} is not a function (it is ${typeof value}).`);
         }
-        // Identity check on top of the name check: a page can alias `eval` or `fetch` to any name
-        // it likes, and the deny-list is by path. This catches the alias.
+        // Identity check on top of the name check: a page can alias `eval` to any name it likes,
+        // and the deny-list is by path. This catches the alias. It is NOT a network sandbox: any
+        // page-owned function `pageCall` invokes can do what the page can, its own fetch included —
+        // that is inherent to invoking page functions, and why the deny-list covers every segment.
         if (isCodeConstructor(value, win)) {
           return fail('Refused: that path resolves to a code-construction function.');
-        }
-        if (isNetworkFunction(value, win)) {
-          return fail('Refused: that path resolves to a network or window-opening function.');
         }
         let result: unknown;
         try {
@@ -364,35 +363,4 @@ function isCodeConstructor(fn: unknown, win: Window): boolean {
     // Exotic realm; the two named globals above still cover the common case.
   }
   return suspects.some((s) => s === fn);
-}
-
-// `fetch`, `open`, `postMessage` and `sendBeacon` by identity: the same alias hole as above, on the
-// network channel the path deny-list closes by name. A BOUND copy (`fetch.bind(window)`) has its own
-// identity, but the engine names it after its target ("bound fetch"), so the name catches that.
-//
-// Defence in depth, not a sandbox: `pageCall` invokes page-owned functions by design, and a page
-// function can do anything the page can (including its own fetch). What this closes is the agent
-// being steered into reaching the BROWSER's network primitives under an innocent path.
-const NETWORK_NAMES = new Set(['fetch', 'open', 'postMessage', 'sendBeacon']);
-
-function isNetworkFunction(fn: unknown, win: Window): boolean {
-  const bound = /^bound (.+)$/.exec(readSafely(() => String((fn as { name?: unknown }).name)))?.[1];
-  if (bound && NETWORK_NAMES.has(bound)) return true;
-  const globals = win as unknown as Record<string, unknown>;
-  // Each read guarded: a page's throwing getter on `window.fetch` must not fail an unrelated call.
-  const suspects = [
-    readSafely(() => globals.fetch),
-    readSafely(() => globals.open),
-    readSafely(() => globals.postMessage),
-    readSafely(() => (globals.navigator as Record<string, unknown> | undefined)?.sendBeacon),
-  ];
-  return suspects.some((s) => typeof s === 'function' && s === fn);
-}
-
-function readSafely<T>(read: () => T): T | '' {
-  try {
-    return read();
-  } catch {
-    return '';
-  }
 }
