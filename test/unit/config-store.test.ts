@@ -52,6 +52,25 @@ beforeEach(() => {
 });
 
 describe('config-store', () => {
+  it('never carries a saved key to a DIFFERENT provider host on a blank-key re-save', async () => {
+    await saveProviderConfig(CONFIG);
+    // The user switches to a custom endpoint and leaves the (presence-only) key field blank.
+    await saveProviderConfig({
+      ...CONFIG,
+      apiKey: undefined,
+      baseURL: 'https://llm.example.test/v1',
+    });
+    const saved = await getProviderConfig();
+    expect(saved?.baseURL).toBe('https://llm.example.test/v1');
+    expect(saved?.apiKey).toBeUndefined();
+  });
+
+  it('keeps the saved key on a blank-key re-save to the SAME host (a model change)', async () => {
+    await saveProviderConfig(CONFIG);
+    await saveProviderConfig({ ...CONFIG, apiKey: undefined, model: 'openai/gpt-4o' });
+    expect((await getProviderConfig())?.apiKey).toBe(CONFIG.apiKey);
+  });
+
   it('round-trips a config; the apiKey is stored encrypted, never plaintext', async () => {
     await saveProviderConfig(CONFIG);
     expect(await getProviderConfig()).toEqual(CONFIG);
