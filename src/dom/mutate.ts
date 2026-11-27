@@ -494,10 +494,26 @@ export function createMutator(doc: Document = document): Mutator {
   function markerOf(el: Element): string {
     const current = el.getAttribute(MARKER_ATTR);
     if (current) return current;
-    markerSeq += 1;
-    const id = `dz-${markerSeq}`;
+    // Skip ids already on the page: a mutator from another isolated world (the corpse an extension
+    // reload leaves behind) stamped its own `dz-N`s, and reusing one aims this rule at its element.
+    let id: string;
+    do {
+      markerSeq += 1;
+      id = `dz-${markerSeq}`;
+    } while (markerTaken(el, id));
     el.setAttribute(MARKER_ATTR, id);
     return id;
+  }
+
+  // Taken in the page document OR in the element's own shadow root (a shadow tree's markers are
+  // invisible to a document query, and its rule lives in that root's sheet).
+  function markerTaken(el: Element, id: string): boolean {
+    const selector = `[${MARKER_ATTR}="${id}"]`;
+    const root = rootOf(el);
+    return (
+      doc.querySelector(selector) !== null ||
+      (root !== doc && root.querySelector(selector) !== null)
+    );
   }
 
   function setStyle(
