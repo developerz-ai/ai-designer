@@ -13,7 +13,7 @@ Four execution worlds, hard boundaries. Crossing one always goes through the typ
 
 - The content script runs in the **page's** world — the page's own scripts can observe its globals and any leaked references. The MAIN-world script *is* the page's own realm — strictly more exposed.
 - A compromised/hostile page must never see the provider API key or MCP tokens.
-- Therefore: all network calls to the model provider + MCP originate in the **service worker only**. The content script gets *commands*, returns *results* — never credentials. The MAIN world answers a narrow **read-only** RPC (`page-facts`, `chart-data`) and never receives or returns anything secret.
+- Therefore: all network calls to the model provider + MCP originate in the **service worker only**. The content script gets *commands*, returns *results* — never credentials. The MAIN world answers a narrow RPC (`page-facts`, `chart-data`, page-ops) and never receives or returns anything secret. It is not read-only: page-ops `pageCall` invokes page-owned functions by path (never a code string), behind a per-segment deny-list (code, network, navigation, storage, cookie) and an identity check against aliased code/network functions (`src/dom/page-main-ops.ts`).
 
 ```mermaid
 flowchart LR
@@ -39,7 +39,7 @@ flowchart LR
 
 - Declared `world: 'MAIN'`, injected into every frame (`allFrames: true, matchAboutBlank: true`) — WXT emits the manifest `"world":"MAIN"` entry from that option, no manual `wxt.config.ts` registration.
 - It's the only world that can read the page's own JS globals — needed to read real chart-lib instances (Chart.js/ECharts/Highcharts/D3/Recharts, see `src/dom/charts.ts`) and detect the framework/runtime stack (`src/dom/page-facts.ts`) beyond what DOM inspection alone reveals.
-- `serveBridge()` answers requests from the isolated content script over `window.postMessage`, guarded by origin check, `source === window`, and a per-request nonce — read-only, request/response, no ambient access.
+- `serveBridge()` answers requests from the isolated content script over `window.postMessage`, guarded by origin check, `source === window`, and a per-request nonce — request/response, no ambient access; page-ops `pageCall` is the one channel that invokes page code (guarded, see above).
 
 ## Typed message bus
 
@@ -49,7 +49,7 @@ Every cross-world payload is a Zod discriminated union in `src/shared/messages.t
 |---------|-----------|----------|
 | UI | panel ↔ SW | `PanelToSw` (chat, ship/download, provider config, picker), readiness, history, overlay opt-in, `StreamChunk` |
 | DOM | SW ↔ content | `DomTool` (query/mutate/capture), browser-control (interact/tabs/frames/vision), `ToolResult`, `RecorderEvent` |
-| Bridge | content ↔ MAIN | `page-facts`, `chart-data` — read-only, nonce-guarded `postMessage` (not Zod-bus, see [above](#main-world-bridge-srcdombridgets-srcentrypointsinjectedcontentts)) |
+| Bridge | content ↔ MAIN | `page-facts`, `chart-data`, page-ops — nonce-guarded `postMessage` (not Zod-bus, see [above](#main-world-bridge-srcdombridgets-srcentrypointsinjectedcontentts)) |
 
 ```mermaid
 sequenceDiagram
