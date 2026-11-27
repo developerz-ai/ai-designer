@@ -78,8 +78,13 @@ export interface FreezeResult {
  * pins CSS animations and collapses transitions, and the Web Animations API pauses everything else
  * (a JS-driven animation ignores `animation-play-state` entirely).
  *
- * Reversible: releasing removes the sheet and plays every animation the freeze paused.
+ * Reversible: releasing removes the sheet and plays exactly the animations the freeze paused.
  */
+// The animations each document's freeze paused — release resumes exactly these. Resuming every
+// paused animation would also start the ones the PAGE had paused (a carousel on hold, a stopped
+// hero video loop), which is not "letting it go again", it is a new behaviour.
+const pausedByFreeze = new WeakMap<Document, WeakSet<Animation>>();
+
 export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   const existing = doc.querySelector(`style[${SHEET_ATTR}="${FREEZE_SHEET_ID}"]`);
   const host = doc as unknown as { getAnimations?: () => Animation[] };
@@ -88,8 +93,10 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
   if (!frozen) {
     existing?.remove();
     let resumed = 0;
+    const ours = pausedByFreeze.get(doc);
+    pausedByFreeze.delete(doc);
     for (const a of animations) {
-      if (a.playState !== 'paused') continue;
+      if (a.playState !== 'paused' || !ours?.has(a)) continue;
       try {
         a.play();
         resumed += 1;
@@ -107,10 +114,13 @@ export function freezeMotion(doc: Document, frozen: boolean): FreezeResult {
     (doc.head ?? doc.documentElement).appendChild(style);
   }
   let paused = 0;
+  const ours = pausedByFreeze.get(doc) ?? new WeakSet<Animation>();
+  pausedByFreeze.set(doc, ours);
   for (const a of animations) {
     if (a.playState !== 'running') continue;
     try {
       a.pause();
+      ours.add(a);
       paused += 1;
     } catch {
       // Some animations cannot be paused (a finished one); the stylesheet still covers CSS motion.
