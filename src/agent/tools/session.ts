@@ -19,7 +19,8 @@ import { type MutationEvent, type SwToPanel, ToolResult } from '@/shared/message
 
 /** Everything the session tools need, injected so the module stays chrome-free and testable. */
 export interface SessionToolDeps {
-  /** The live changeset for this turn's tab (seeded from / persisted back to the SessionStore). */
+  /** The live changeset for this turn's tab (seeded from / persisted back to the SessionStore).
+   *  Read at every use (may be a getter — the SW swaps it on an agent navigation). */
   readonly store: ChangesetStore;
   /** Persist the changeset after every mutation (→ `chrome.storage.session` via SessionStore). */
   readonly persist: (changeset: Changeset) => Promise<void> | void;
@@ -76,7 +77,9 @@ const result = (data: unknown): ToolResult => ({ type: 'tool-result', ok: true, 
  * inert until the user approves it in the loop.
  */
 export function createSessionTools(deps: SessionToolDeps) {
-  const { store, persist, emit, drainRecorderEvents, captureEditScreenshots } = deps;
+  const { persist, emit, drainRecorderEvents, captureEditScreenshots } = deps;
+  // `deps.store` is read at each use, never destructured: the SW's deps expose it as a getter so
+  // an agent navigation can rebase the turn onto a new document's store mid-turn.
 
   return {
     recordEdit: tool({
@@ -133,9 +136,9 @@ export function createSessionTools(deps: SessionToolDeps) {
                 intent: `${illustrated.intent} (+${dropped} earlier events dropped at buffer cap)`,
               }
             : illustrated;
-        store.record(recorded);
-        for (const extra of spillover) store.record(extra);
-        await persist(store.current);
+        deps.store.record(recorded);
+        for (const extra of spillover) deps.store.record(extra);
+        await persist(deps.store.current);
         emit({ type: 'edit-recorded', edit: recorded });
         for (const extra of spillover) emit({ type: 'edit-recorded', edit: extra });
         // The spillover count rides the result so the model can pair session `undo`s with the
@@ -146,7 +149,7 @@ export function createSessionTools(deps: SessionToolDeps) {
         // further calls on this element instead of its paraphrase.
         const rescued = drained?.rescued ?? false;
         return result({
-          edits: store.size,
+          edits: deps.store.size,
           spillover: spillover.length,
           rescued,
           ...(rescued ? { healedSelector: recorded.selector.value } : {}),
@@ -160,10 +163,10 @@ export function createSessionTools(deps: SessionToolDeps) {
       inputSchema: NoInput,
       outputSchema: ToolResult,
       execute: async () => {
-        const undone = store.undo();
-        await persist(store.current);
-        emit({ type: 'changeset', changeset: store.current });
-        return result({ undone: undone !== undefined, edits: store.size });
+        const undone = deps.store.undo();
+        await persist(deps.store.current);
+        emit({ type: 'changeset', changeset: deps.store.current });
+        return result({ undone: undone !== undefined, edits: deps.store.size });
       },
     }),
     redo: tool({
@@ -171,10 +174,10 @@ export function createSessionTools(deps: SessionToolDeps) {
       inputSchema: NoInput,
       outputSchema: ToolResult,
       execute: async () => {
-        const redone = store.redo();
-        await persist(store.current);
-        emit({ type: 'changeset', changeset: store.current });
-        return result({ redone: redone !== undefined, edits: store.size });
+        const redone = deps.store.redo();
+        await persist(deps.store.current);
+        emit({ type: 'changeset', changeset: deps.store.current });
+        return result({ redone: redone !== undefined, edits: deps.store.size });
       },
     }),
     handoff: tool({
@@ -188,7 +191,12 @@ export function createSessionTools(deps: SessionToolDeps) {
       // MCP `task(create)` or a downloadable MD report — is slice 07; here we hand the assembled
       // changeset back so the SW can route it. Never auto-ships.
       execute: async ({ summary, backend }) =>
-        result({ summary, backend, edits: store.size, sessionId: store.current.sessionId }),
+        result({
+          summary,
+          backend,
+          edits: deps.store.size,
+          sessionId: deps.store.current.sessionId,
+        }),
     }),
   };
 }

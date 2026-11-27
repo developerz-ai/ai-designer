@@ -37,15 +37,20 @@ const DEBUG_KEYWORDS = [
   'diagnose',
 ];
 
+// No bare 'like' (it made "I'd like the header bigger" a copy turn, and stickiness then kept every
+// later turn of the session in copy mode). A reference-shaped phrase is required instead — see
+// COPY_LIKE_MATCHERS / likeNamesAReference below.
 const COPY_KEYWORDS = [
   'copy',
   'clone',
-  'like',
   'inspired by',
+  'in the style of',
+  'similar to',
   'redesign',
   'design ideas',
   'make it look',
   'match the style',
+  'match the look',
   'reference site',
   'competitor',
 ];
@@ -57,17 +62,64 @@ const asMatchers = (keywords: readonly string[]): RegExp[] =>
 const DEBUG_MATCHERS = asMatchers(DEBUG_KEYWORDS);
 const COPY_MATCHERS = asMatchers(COPY_KEYWORDS);
 
+// "like" counts only when it is about RESEMBLANCE: "look like" ("make the hero look like…"),
+// "styled like", "make it like", or "like <a URL / domain>" ("like stripe.com"). Deliberately not
+// "looks/feels like": those DESCRIBE ("the button looks like it's disabled") far more than they
+// point at a reference.
+const COPY_LIKE_MATCHERS: readonly RegExp[] = [
+  /\b(?:look|styled|make (?:it|this|mine|ours))\s+like\b/i,
+  /\blike\s+(?:https?:\/\/|www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/i,
+];
+
+// The want sense of "like" ("I'd like", "would like", "you like") — never a reference.
+const WANT_LIKE_SUBJECTS: ReadonlySet<string> = new Set([
+  'i',
+  "i'd",
+  'id',
+  'we',
+  "we'd",
+  'you',
+  'they',
+  'would',
+  'do',
+  "don't",
+  'should',
+]);
+
+/** "like Stripe" / "like Linear's hero": a capitalised name right after "like", unless the word
+ *  before makes it the want sense ("I'd like The header…"). Case-sensitive on the name, so "I'd
+ *  like the header bigger" never qualifies. */
+function likeNamesAReference(text: string): boolean {
+  const words = [...text.matchAll(/[\w'’-]+/g)].map((m) => m[0].replace('’', "'"));
+  return words.some(
+    (word, i) =>
+      word.toLowerCase() === 'like' &&
+      /^[A-Z]/.test(words[i + 1] ?? '') &&
+      !WANT_LIKE_SUBJECTS.has((words[i - 1] ?? '').toLowerCase()),
+  );
+}
+
+/** Whether the text itself carries a copy/reference signal. */
+function hasCopySignal(text: string): boolean {
+  return (
+    COPY_MATCHERS.some((m) => m.test(text)) ||
+    COPY_LIKE_MATCHERS.some((m) => m.test(text)) ||
+    likeNamesAReference(text)
+  );
+}
+
 /** Best-effort mode from free text — the same heuristic a human skimming the instruction would
- *  use, word-bounded so 'fix' never fires inside "prefix". When neither vocabulary shows up,
- *  falls back to `previous` — the mode the SESSION last ran under (`TurnSession.lastMode`) —
- *  because a follow-up like "now the header too" continues the same activity; mode was
- *  previously re-inferred from each message alone, so every follow-up silently dropped the
- *  debug/copy addendum. Returns `undefined` only when there's no signal at all (a generic
+ *  use, word-bounded so 'fix' never fires inside "prefix". When neither vocabulary shows up, a
+ *  previous DEBUG mode (the session's `TurnSession.lastMode`) carries over — a follow-up like "now
+ *  the header too" continues the same investigation (#168). A previous COPY mode does NOT carry
+ *  over: copy is only ever inferred (the panel has no copy picker), so a sticky copy turned one
+ *  mis-read sentence into a whole session of copy turns; a copy follow-up has to carry its own
+ *  reference signal (or pin `mode`). Returns `undefined` when there's no signal at all (a generic
  *  edit): the base prompt covers that, so no addendum is the correct answer, not a failure. */
 export function inferMode(text: string, previous?: Mode): Mode | undefined {
   if (DEBUG_MATCHERS.some((m) => m.test(text))) return 'debug';
-  if (COPY_MATCHERS.some((m) => m.test(text))) return 'copy';
-  return previous;
+  if (hasCopySignal(text)) return 'copy';
+  return previous === 'debug' ? 'debug' : undefined;
 }
 
 /** An explicit `mode` always wins; only fall back to inference (then to the session's previous

@@ -1,5 +1,6 @@
 import { generateObject, generateText, type Tool } from 'ai';
 import { defineBackground } from '#imports';
+import { AgentNavMarker, mayNavigate } from '@/agent/agent-nav';
 import { toStoredUserContent, toUserContent } from '@/agent/attachments';
 import { type BrowseTabDriver, runBrowse } from '@/agent/browse-tab';
 import { type BrowserControlDriver, runFrames, runNav, runTabs } from '@/agent/browser-control';
@@ -34,8 +35,9 @@ import { HistoryStore } from '@/agent/history-store';
 import { getOpenRouterKey, setOpenRouterKey } from '@/agent/key-store';
 import { runTurn } from '@/agent/loop';
 import { modeGuidance, resolveMode } from '@/agent/modes';
-import { shouldAbortTurnOnCommit } from '@/agent/nav-abort';
+import { shouldAbortTurnOnCommit, shouldRebaseTurnOnCommit } from '@/agent/nav-abort';
 import { wirePanelOpen } from '@/agent/panel-open';
+import { relayPickerCmd } from '@/agent/picker-relay';
 import { cachedSystemPrompt, withCacheBreakpoint } from '@/agent/prompt-cache';
 import {
   createProvider,
@@ -59,6 +61,7 @@ import { compactForThread } from '@/agent/thread-compact';
 import { toThreadView } from '@/agent/thread-view';
 import { createSessionTools } from '@/agent/tools/session';
 import type { ScreenshotDispatch } from '@/agent/tools/vision';
+import { TurnChangeset } from '@/agent/turn-changeset';
 import { errorLogEntry, logEntryFor, mergeLogs, renderTurnLog } from '@/agent/turn-log';
 import { type GenerateVision, runDescribeScene, runInspect } from '@/agent/vision';
 import { AUTO_RECORDED_INTENT } from '@/changeset/fold-mutations';
@@ -97,7 +100,7 @@ import {
   setOriginRepo,
 } from '@/mcp/store';
 import { clearToolGrants, getToolGrants, setToolGrant } from '@/mcp/tool-grants';
-import { emptyChangeset } from '@/shared/changeset';
+import { emptyChangeset, hasShippableWork, type StylesheetEdit } from '@/shared/changeset';
 import { ensureHostAccess } from '@/shared/host-permissions';
 import type {
   CaptureResult,
@@ -314,7 +317,9 @@ export default defineBackground(() => {
     const entry = errorLogEntry(prefix, err, Date.now());
     // No conversation to attribute it to (a pre-first-turn crash): keep it in the SW-global ring
     // instead of dropping it — this used to `return` and the pasted log stayed empty.
-    if (lastTurnTabId === null) {
+    // Same when that conversation is gone (tab closed, session cleared): `appendLog` is a no-op
+    // without a session, so the error would vanish.
+    if (lastTurnTabId === null || !hasSession(lastTurnTabId)) {
       globalLog.append(entry);
       return;
     }
@@ -382,11 +387,12 @@ export default defineBackground(() => {
     bufferEmpty: (tabId) => pendingMutations.peekGroups(tabId).length === 0,
   });
 
-  // #148 item 2: tabs whose CURRENT navigation the agent's own nav driver started (`runNav`,
-  // marked inside its capture-lock ride, so the commit lands inside the window). An agent nav is
-  // deliberate turn work — the onCommitted abort below must not kill the turn for it; the
-  // per-tab lock serializes navs, so a plain Set (no counting) suffices.
-  const agentNavTabs = new Set<number>();
+  // #148 item 2: tabs whose CURRENT navigation the agent started — its nav drivers (`runNav`,
+  // marked inside its capture-lock ride) and content interactions that can navigate (a link
+  // click, a submit; marked with a grace window, see agent-nav.ts). An agent nav is deliberate
+  // turn work — the onCommitted listener below rebases the turn onto the new document instead
+  // of aborting it.
+  const agentNav = new AgentNavMarker();
 
   // Document-identity authority for the turn-start URL guard (#9 review round 2): the last
   // CROSS-DOCUMENT committed main-frame URL per tab, stamped by the webNavigation.onCommitted
@@ -504,11 +510,7 @@ export default defineBackground(() => {
   // retraction (`retractRevertedEdit` below) strips the reverted event from THIS store too, so
   // the turn's next `persistChangeset` can't resurrect a phantom the page already reverted (#9
   // review round 4). Keyed by tab so a revert from another tab never touches it.
-  let turnChangeset: {
-    tabId: number;
-    store: ChangesetStore;
-    persist: () => Promise<void>;
-  } | null = null;
+  let turnChangeset: { tabId: number; changeset: TurnChangeset } | null = null;
 
   // Per-tab serialization of the durable-changeset mutation paths (#142 item 1): the curation
   // RPCs' load→mutate→save→mirror (the `changeset-*` cases) and the turn's rehydration (load →
@@ -755,7 +757,7 @@ export default defineBackground(() => {
       // page, recorded edits against a different origin. Reads and page DRIVERS still address any
       // tab (that is how copy mode reaches content); only design mutations are pinned. The line is
       // per-TAB, never per-frame: every frame of this tab stays writable.
-      const blockedTab = mutationBlockedReason(message.type, message.tabId, defaultTabId);
+      const blockedTab = mutationBlockedReason(message, defaultTabId);
       if (blockedTab) return { type: 'tool-result', ok: false, error: blockedTab };
       const tabId = message.tabId ?? defaultTabId;
       const frameId = message.frameId ?? 0;
@@ -954,7 +956,7 @@ export default defineBackground(() => {
 
     // No connected backend / no repo mapped ⇒ fall back to a downloadable brief (with the reason).
     if (route.kind === 'report') {
-      if (opts.source === 'changeset' && changeset.edits.length === 0) {
+      if (opts.source === 'changeset' && !hasShippableWork(changeset)) {
         return { ok: false, error: 'Nothing to ship yet — make some edits first.' };
       }
       const report = await makeReport();
@@ -1047,14 +1049,45 @@ export default defineBackground(() => {
         // otherwise leave `turnAbort` / `runningTurnId` set forever: `session-get` then reports a
         // turn running that never will, and every reconnecting panel shows "streaming".
         let chained = false;
+        // Supersede any in-flight turn, then run this one under a fresh abort controller (Stop /
+        // a newer instruction aborts it). Session-start/-stop share `turnAbort` (slice 03).
+        // Installed HERE, before the first await of the setup: a Stop (or a newer Send) that
+        // arrived while this turn was still resolving its tab / config was otherwise lost — Stop
+        // aborted nothing, and a newer Send's controller was then overwritten (and aborted!) by
+        // this OLDER turn once its setup resumed. Every setup await below re-checks the signal.
+        // Installed before the settlement wait so the supersede window never reports
+        // `turnRunning: false`, and so the aborted turn's `.finally` sees itself non-current.
+        // Trade-off, deliberate: a send the guards below then REJECT has still stopped the prior
+        // turn — the user asked for something new; continuing the old instruction would be wrong.
+        const priorTurn = settlingTurn;
+        turnAbort?.abort();
+        const controller = new AbortController();
+        turnAbort = controller;
+        runningTurnId = turnId;
+        // Registered as the settling turn from the start too, so the NEXT send (or a
+        // conversation reset) waits for this one even while it is still in setup. Resolves when
+        // the turn's chain settles, or when setup exits without one (finally, below).
+        let settleSetup: () => void = () => {};
+        settlingTurn = {
+          id: turnId,
+          done: new Promise<void>((resolve) => {
+            settleSetup = resolve;
+          }),
+        };
+        const stoppedDuringSetup = (): UserMessageResult => ({
+          ok: false,
+          error: 'Stopped before the turn started.',
+        });
         try {
           // These guards fire BEFORE a session exists, so they log via the SW-global ring
           // (`rejectTurnless`) and reject the ack — the panel shows the reason as a notice.
           const tab = await resolveTargetTab();
+          if (controller.signal.aborted) return stoppedDuringSetup();
           if (tab?.id === undefined || !tab.url) {
             return rejectTurnless('Open a web page to start designing.');
           }
           const cfg = await getProviderConfig();
+          if (controller.signal.aborted) return stoppedDuringSetup();
           if (!cfg) {
             return rejectTurnless('Add a model provider in Settings to start.');
           }
@@ -1070,16 +1103,6 @@ export default defineBackground(() => {
           // rehydration closure below — same reason `tabId` is aliased).
           const tabUrl = tab.url;
 
-          // Supersede any in-flight turn, then run this one under a fresh abort controller (Stop /
-          // a newer instruction aborts it). Session-start/-stop share `turnAbort` (slice 03).
-          // The new controller is installed BEFORE the settlement wait below so the supersede
-          // window never reports `turnRunning: false`, and so the aborted turn's `.finally` sees
-          // itself non-current (it must not emit `turn-done` or null a controller it no longer owns).
-          const priorTurn = settlingTurn;
-          turnAbort?.abort();
-          const controller = new AbortController();
-          turnAbort = controller;
-          runningTurnId = turnId;
           // From here until this turn's `.finally`, out-of-band conversation reads answer for THIS
           // tab — the turn owns the panel's transcript, whatever tab the agent (or user) activates.
           runningTurnTabId = tabId;
@@ -1101,6 +1124,7 @@ export default defineBackground(() => {
             ]);
             if (!settledInTime) forfeitedTurns.add(priorTurn.id);
           }
+          if (controller.signal.aborted) return stoppedDuringSetup();
 
           // This turn's device-emulation owner + the driver BOUND to it: the driver stamps the owner
           // on any attach/resize, so a superseded turn's teardown (below) only clears the emulation
@@ -1120,6 +1144,10 @@ export default defineBackground(() => {
             (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tab.url,
             crypto.randomUUID(),
           );
+          // The last bail-out point: past the user-message append below, an abort is handled the
+          // way a mid-turn Stop is (the turn runs on an aborted signal and persists its partial),
+          // so the thread never keeps a user message no turn answered.
+          if (controller.signal.aborted) return stoppedDuringSetup();
 
           // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction
           // WITH the session's last resolved mode as the sticky fallback (#168 E) — "now fix the
@@ -1221,7 +1249,11 @@ export default defineBackground(() => {
             if (RECORDED_MUTATION_TYPES.has(message.type) && (message.tabId ?? tabId) === tabId) {
               await editShots.beforeMutation(tabId, signal);
             }
-            return rawContent(message, signal);
+            // A click/submit that commits a new document is the agent's navigation, not the page
+            // walking away from the turn: open the nav window around it (agent-nav.ts).
+            return mayNavigate(message)
+              ? agentNav.within(message.tabId ?? tabId, () => rawContent(message, signal))
+              : rawContent(message, signal);
           };
           const screenshot = screenshotDispatchFor(tabId);
 
@@ -1270,79 +1302,77 @@ export default defineBackground(() => {
           // whole rehydration rides the per-tab mutation chain (#142 item 1): a curation op whose
           // save→mirror tail is still in flight settles first, so this load seeds from the
           // POST-curation record instead of persisting the pre-op state over it.
-          const { changesetStore, persistChangeset } = await enqueueChangesetMutation(
-            tabId,
-            async () => {
-              const changesetPersister = createSessionChangesetPersister(tabId);
-              const priorChangesetState = await changesetPersister.load();
-              // Turn-start URL guard (#9 review): the persister record (and the session mirror it
-              // falls back to) can hold a changeset for a URL the tab has since left — the nav-clear
-              // wipe is async and a between-turns navigation can race it. Edits recorded against
-              // another page must never fold into this turn's record, so on mismatch BOTH mirrors
-              // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
-              // references the old record's edits). The comparison runs against the last
-              // CROSS-DOCUMENT committed URL, not the live `tab.url`: a same-document navigation
-              // (hash change, history.pushState) fires no commit, leaves DOM + live edits intact, and
-              // must not wipe the record (#9 review round 2). The committed URL is read from
-              // chrome.storage.session FIRST (#9 review round 4): it survives the SW eviction the
-              // in-memory `lastCommittedUrl` map doesn't, so a woken SW no longer falls straight
-              // through to `tab.url` and false-wipes on a hash change; the map then the live
-              // `tab.url` remain the fallbacks for a tab no commit was ever seen for. This closes
-              // the BETWEEN-turns race; the MID-turn half is #148: a page/user navigation aborts
-              // the turn outright (onCommitted below), and the agent's own nav leaves the turn
-              // alive but `persist` (next to this) refuses to write the old document's record.
-              const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
-              // The record is keyed to the DOCUMENT (last committed) URL, and so is the re-seed:
-              // seeding with the live `tabUrl` after a pushState/hash change made `persist`'s guard
-              // (same chain, below) refuse every write for the rest of the session.
-              const documentUrl =
-                (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl;
-              const staleRecord = priorChangeset.url !== documentUrl;
-              const store = new ChangesetStore(
-                staleRecord
-                  ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
-                    // L6): history is keyed by it, so minting a fresh id here forked the history
-                    // conversation on every cross-document nav (and could evict an older one).
-                    // Safe to carry over: the handoff idempotency key is the session PLUS a digest
-                    // of the dispatched edits (`src/mcp/handoff.ts` `dispatchKey`), so a Ship of the
-                    // new page's edits still opens its own task. Edits are still wiped; only the
-                    // history/thread identity survives the nav.
-                    emptyChangeset(
-                      documentUrl,
-                      new Date().toISOString(),
-                      session.changeset.sessionId,
-                    )
-                  : priorChangeset,
-                { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
-              );
-              // Named (not inline) so the turn-done auto-finalize below records + persists + streams
-              // leftover recorder groups through the exact same path as a model-called `recordEdit`.
-              // Mid-turn committed-URL guard (#148 item 2, the agent-nav residual): an agent
-              // `navigate` mid-turn wipes both mirrors for the NEW document while this store still
-              // holds the OLD document's edits — every later persist (recordEdit, auto-finalize,
-              // the mid-turn retraction) would write them straight back over the wipe. Refuse to
-              // write a record whose URL no longer matches the tab's committed URL — the same
-              // comparison chain the turn-start guard runs (persisted stamp → in-memory stamp →
-              // the turn's resolved tab.url). The skipped write is deliberate loss: those edits
-              // died with the old document, and the record must not ship them.
-              const persist = async (): Promise<void> => {
-                const committed =
-                  (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl;
-                if (store.current.url !== committed) return;
-                await changesetPersister.save(store.snapshot());
-                await sessions.setChangeset(tabId, store.current);
-              };
-              // A stale (cross-URL) record was re-seeded above: write the empty changeset to BOTH
-              // mirrors now, so neither the persister nor the session mirror can resurrect the old
-              // page's edits on a later load.
-              if (staleRecord) await persist();
-              // Register the turn's store for the mid-turn half of the recorder-revert retraction
-              // (retractRevertedEdit strips the reverted event's contribution here too, so this
-              // store's next persist can't resurrect the phantom over the op's retraction).
-              turnChangeset = { tabId, store, persist };
-              return { changesetStore: store, persistChangeset: persist };
-            },
-          );
+          const turnChangesetHolder = await enqueueChangesetMutation(tabId, async () => {
+            const changesetPersister = createSessionChangesetPersister(tabId);
+            const priorChangesetState = await changesetPersister.load();
+            // Turn-start URL guard (#9 review): the persister record (and the session mirror it
+            // falls back to) can hold a changeset for a URL the tab has since left — the nav-clear
+            // wipe is async and a between-turns navigation can race it. Edits recorded against
+            // another page must never fold into this turn's record, so on mismatch BOTH mirrors
+            // start EMPTY for the tab's current committed URL (redo stack dropped too — it only
+            // references the old record's edits). The comparison runs against the last
+            // CROSS-DOCUMENT committed URL, not the live `tab.url`: a same-document navigation
+            // (hash change, history.pushState) fires no commit, leaves DOM + live edits intact, and
+            // must not wipe the record (#9 review round 2). The committed URL is read from
+            // chrome.storage.session FIRST (#9 review round 4): it survives the SW eviction the
+            // in-memory `lastCommittedUrl` map doesn't, so a woken SW no longer falls straight
+            // through to `tab.url` and false-wipes on a hash change; the map then the live
+            // `tab.url` remain the fallbacks for a tab no commit was ever seen for. This closes
+            // the BETWEEN-turns race; the MID-turn half is #148: a page/user navigation aborts
+            // the turn outright (onCommitted below), and the agent's own nav leaves the turn
+            // alive but `persist` (next to this) refuses to write the old document's record.
+            const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
+            // The record is keyed to the DOCUMENT (last committed) URL, and so is the re-seed:
+            // seeding with the live `tabUrl` after a pushState/hash change made `persist`'s guard
+            // (same chain, below) refuse every write for the rest of the session.
+            const documentUrl =
+              (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl;
+            const staleRecord = priorChangeset.url !== documentUrl;
+            const store = new ChangesetStore(
+              staleRecord
+                ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
+                  // L6): history is keyed by it, so minting a fresh id here forked the history
+                  // conversation on every cross-document nav (and could evict an older one).
+                  // Safe to carry over: the handoff idempotency key is the session PLUS a digest
+                  // of the dispatched edits (`src/mcp/handoff.ts` `dispatchKey`), so a Ship of the
+                  // new page's edits still opens its own task. Edits are still wiped; only the
+                  // history/thread identity survives the nav.
+                  emptyChangeset(documentUrl, new Date().toISOString(), session.changeset.sessionId)
+                : priorChangeset,
+              {
+                redoStack: staleRecord ? undefined : priorChangesetState?.redoStack,
+                stylesheetHistory: staleRecord ? undefined : priorChangesetState?.stylesheetHistory,
+              },
+            );
+            // Named (not inline) so the turn-done auto-finalize below records + persists + streams
+            // leftover recorder groups through the exact same path as a model-called `recordEdit`.
+            // Mid-turn committed-URL guard (#148 item 2, the agent-nav residual): an agent
+            // `navigate` mid-turn wipes both mirrors for the NEW document while this store still
+            // holds the OLD document's edits — every later persist (recordEdit, auto-finalize,
+            // the mid-turn retraction) would write them straight back over the wipe. Refuse to
+            // write a record whose URL no longer matches the tab's committed URL — the same
+            // comparison chain the turn-start guard runs (persisted stamp → in-memory stamp →
+            // the turn's resolved tab.url). The skipped write is deliberate loss: those edits
+            // died with the old document, and the record must not ship them.
+            // The guard, the agent-nav rebase and the closed-tab refusal live in TurnChangeset.
+            const changeset = new TurnChangeset(store, {
+              committedUrl: async () =>
+                (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl,
+              save: changesetPersister.save,
+              mirror: (cs) => sessions.setChangeset(tabId, cs),
+            });
+            // A stale (cross-URL) record was re-seeded above: write the empty changeset to BOTH
+            // mirrors now, so neither the persister nor the session mirror can resurrect the old
+            // page's edits on a later load.
+            if (staleRecord) await changeset.persist();
+            // Register the turn's store for the mid-turn half of the recorder-revert retraction
+            // (retractRevertedEdit strips the reverted event's contribution here too, so this
+            // store's next persist can't resurrect the phantom over the op's retraction) and for
+            // the agent-nav rebase / tab-close refusal. Not for a turn already stopped during
+            // setup: it would overwrite the registration of the turn that replaced it.
+            if (!controller.signal.aborted) turnChangeset = { tabId, changeset };
+            return changeset;
+          });
           // Stamp this turn's tab onto its record pushes: a Diff view keyed to ANOTHER tab drops
           // them instead of folding phantom rows (the turn keeps running when the user switches
           // tabs mid-turn; the retargeted view heals on the settle refresh). #141 review.
@@ -1357,8 +1387,11 @@ export default defineBackground(() => {
             );
           };
           const sessionTools = createSessionTools({
-            store: changesetStore,
-            persist: persistChangeset,
+            // A getter, read at use time: an agent navigation rebases (swaps) the store.
+            get store() {
+              return turnChangesetHolder.store;
+            },
+            persist: () => turnChangesetHolder.persist(),
             emit: emitRecord,
             // #9: `recordEdit` drains this tab's buffered recorder events for its selector and
             // folds their real mechanical deltas into the Edit (ground truth wins per family).
@@ -1369,7 +1402,7 @@ export default defineBackground(() => {
             captureEditScreenshots: () =>
               editShots.capturePair(
                 tabId,
-                screenshotChars(changesetStore.current),
+                screenshotChars(turnChangesetHolder.store.current),
                 controller.signal,
               ),
           });
@@ -1404,14 +1437,9 @@ export default defineBackground(() => {
               // from the page/user navigating out from under the turn.
               nav: (msg, signal) => {
                 const navTab = msg.tabId ?? tabId;
-                return withCaptureLock(navTab, async () => {
-                  agentNavTabs.add(navTab);
-                  try {
-                    return await runNav(chromeBrowserDriver, msg, tabId, signal);
-                  } finally {
-                    agentNavTabs.delete(navTab);
-                  }
-                });
+                return withCaptureLock(navTab, () =>
+                  agentNav.within(navTab, () => runNav(chromeBrowserDriver, msg, tabId, signal)),
+                );
               },
             },
             tabsFrames: {
@@ -1608,9 +1636,9 @@ export default defineBackground(() => {
                 // error push the panel could misread as the turn failing (#168 M5).
                 try {
                   await historyStore.appendTurn({
-                    id: changesetStore.current.sessionId,
+                    id: turnChangesetHolder.store.current.sessionId,
                     title: msg.text,
-                    url: changesetStore.current.url,
+                    url: turnChangesetHolder.store.current.url,
                     mode,
                     messages: [{ role: 'user' as const, content: msg.text }, ...compacted],
                   });
@@ -1666,8 +1694,8 @@ export default defineBackground(() => {
                   for (const edit of [folded, ...spillover]) {
                     const tagged = capNote ? { ...edit, intent: `${edit.intent}${capNote}` } : edit;
                     capNote = ''; // tab-level loss: noted once, on the first finalized edit
-                    changesetStore.record(tagged);
-                    await persistChangeset();
+                    turnChangesetHolder.store.record(tagged);
+                    await turnChangesetHolder.persist();
                     emitRecord({ type: 'edit-recorded', edit: tagged });
                   }
                 }
@@ -1740,8 +1768,10 @@ export default defineBackground(() => {
               // (with its spend) now reaches the debug log too, which it always bypassed.
               if (wasCurrent) emitTurn({ type: 'turn-done', usage: sessionUsage });
             });
-          // Register the chain for the NEXT user-message's ordered supersede (see the wait above).
-          settlingTurn = { id: turnId, done: turnDone };
+          // The settling-turn entry registered at setup start now resolves with the chain (it never
+          // rejects — `.catch` above). Only overwrite it if it is still OURS: a newer send that
+          // started meanwhile owns `settlingTurn` and already waited on this turn through it.
+          void turnDone.then(settleSetup);
           chained = true;
 
           // #168 A: ack with the turn's id so the panel keys its in-flight bubble to this turn's
@@ -1755,6 +1785,10 @@ export default defineBackground(() => {
             runningTurnId = null;
             runningTurnTabId = null;
             turnChangeset = null;
+          }
+          if (!chained) {
+            settleSetup();
+            if (settlingTurn?.id === turnId) settlingTurn = null;
           }
         }
       }
@@ -1803,7 +1837,7 @@ export default defineBackground(() => {
                 : msg.type === 'select-element'
                   ? { type: 'picker-select', value: msg.value }
                   : { type: 'picker-deselect', value: msg.value };
-          await chrome.tabs.sendMessage(tab.id, cmd).catch(() => {});
+          return relayPickerCmd((id, c) => chrome.tabs.sendMessage(id, c), tab.id, cmd);
         }
         return { ok: true };
       }
@@ -1989,6 +2023,15 @@ export default defineBackground(() => {
             // Persist the NON-secret endpoint config (never the token) so a woken SW can still
             // refresh the stored token instead of forcing re-auth (see mcpReady rehydration).
             await saveOAuthConfig(msg.id, msg.oauth);
+            // The token exchange is a fetch from this worker; a token endpoint on another host
+            // than the server needs its own grant (the panel requests it inside the gesture).
+            const tokenAccess = await ensureHostAccess(msg.oauth.tokenEndpoint);
+            if (!tokenAccess.ok) {
+              return {
+                ok: false,
+                error: tokenAccess.error ?? 'Host access denied for the OAuth token endpoint',
+              };
+            }
             await startOAuth(msg.id, msg.oauth);
           }
         } catch (err) {
@@ -2447,17 +2490,55 @@ export default defineBackground(() => {
     // to the turn's OWN tab — a revert from another tab must never touch this store (selector
     // values can coincide across tabs).
     if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
-      const result = retractFromEdits(turnChangeset.store.current.edits, event);
+      const live = turnChangeset.changeset;
+      const result = retractFromEdits(live.store.current.edits, event);
       if (result !== null) {
-        if (result.edits.length < turnChangeset.store.current.edits.length) {
-          turnChangeset.store.removeAt(result.changedIndex, { preserveRedo: true });
+        if (result.edits.length < live.store.current.edits.length) {
+          live.store.removeAt(result.changedIndex, { preserveRedo: true });
         } else {
           const stripped = result.edits[result.changedIndex];
-          if (stripped)
-            turnChangeset.store.replaceAt(result.changedIndex, stripped, { preserveRedo: true });
+          if (stripped) live.store.replaceAt(result.changedIndex, stripped, { preserveRedo: true });
         }
-        await turnChangeset.persist();
+        await live.persist();
       }
+    }
+  }
+
+  // An `injectCss` sheet reaching (or leaving) the durable changeset — without this, injected CSS
+  // lived only on the page and Ship / the report never carried it. A running turn on this tab
+  // owns the record (its in-memory store would otherwise persist straight over an out-of-band
+  // write), so the sheet folds into THAT store; between turns it rides the same per-tab mutation
+  // chain + applyChangesetOp the curation RPCs use. Tab-stamped panel push either way.
+  type StylesheetOp =
+    | { readonly kind: 'record-stylesheet'; readonly sheet: StylesheetEdit }
+    | { readonly kind: 'revert-stylesheet'; readonly id: string; readonly css: string | null };
+  async function foldStylesheet(tabId: number, op: StylesheetOp): Promise<void> {
+    if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
+      const live = turnChangeset.changeset;
+      if (op.kind === 'record-stylesheet') live.store.recordStylesheet(op.sheet);
+      else if (!live.store.revertStylesheet(op.id, op.css)) return;
+      await live.persist();
+      postToPanel({ type: 'changeset', changeset: live.store.current, tabId });
+      return;
+    }
+    const persister = createSessionChangesetPersister(tabId);
+    const before = await persister.load();
+    const { changeset } = await enqueueChangesetMutation(tabId, () =>
+      applyChangesetOp(
+        {
+          load: persister.load,
+          save: persister.save,
+          mirror: (cs) =>
+            sessions
+              .setChangeset(tabId, cs)
+              .then(() => undefined)
+              .catch(() => undefined),
+        },
+        op,
+      ),
+    );
+    if (changeset && changeset !== before?.changeset) {
+      postToPanel({ type: 'changeset', changeset, tabId });
     }
   }
 
@@ -2524,6 +2605,20 @@ export default defineBackground(() => {
       }
     }
 
+    // An injected stylesheet was applied / undone on the page: fold it into the durable record.
+    if (parsed.data.type === 'stylesheet-recorded' || parsed.data.type === 'stylesheet-reverted') {
+      const senderTabId = sender.tab?.id;
+      const op: StylesheetOp =
+        parsed.data.type === 'stylesheet-recorded'
+          ? { kind: 'record-stylesheet', sheet: parsed.data.sheet }
+          : { kind: 'revert-stylesheet', id: parsed.data.id, css: parsed.data.css };
+      if (senderTabId !== undefined) {
+        void foldStylesheet(senderTabId, op).catch((err) =>
+          console.warn(`[stylesheet] failed to fold the stylesheet for tab ${senderTabId}:`, err),
+        );
+      }
+    }
+
     // Pure mapping lives in src/shared/relay.ts (testable; entrypoints are
     // coverage-excluded). null = the event carries nothing to forward.
     const out = relayToPanel(parsed.data);
@@ -2545,6 +2640,30 @@ export default defineBackground(() => {
   // (frameId !== 0) never clear the tab's record. A RELOAD is not a navigation away: the page
   // is the same URL, so per docs/architecture/changeset.md the live edits die but the recorded
   // changeset (and the recorder buffer) survive.
+  // Ends the RUNNING turn from outside it (its tab navigated away / closed): the same clears as
+  // `session-stop` — the lifecycle value is untouched (the session stays open for the next
+  // message). The error is stamped with the dead turn's id so the panel closes that turn's
+  // bubble, and logged so a pasted debug log explains why the turn stopped.
+  function abortRunningTurn(tabId: number, message: string): void {
+    const abortedTurnId = runningTurnId;
+    turnAbort?.abort();
+    turnAbort = null;
+    runningTurnId = null;
+    runningTurnTabId = null; // the .finally won't clear these (it sees itself non-current)
+    turnChangeset = null;
+    const update: SwToPanel = {
+      type: 'error',
+      message,
+      ...(abortedTurnId !== null ? { turnId: abortedTurnId } : {}),
+    };
+    postToPanel(update);
+    const entry = logEntryFor(update, Date.now());
+    if (entry) void sessions.appendLog(tabId, entry).catch(() => {});
+    // Settle every open panel's turn liveness (a second window's in-flight bubble) — the
+    // same push `conversation-new` uses; the lifecycle itself is unchanged.
+    postToPanel({ type: 'session-state', state: sessionState, turnRunning: isTurnRunning() });
+  }
+
   chrome.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
     const { tabId, url } = details;
@@ -2566,42 +2685,27 @@ export default defineBackground(() => {
         console.warn(`[nav-clear] failed to persist the committed URL for tab ${tabId}:`, err),
       );
     // #148 item 2: a cross-document commit of the RUNNING turn's tab ends the turn — the
-    // document it was editing is gone (reload included: the live edits died with it). Same
-    // clears as `session-stop`; the lifecycle value is untouched (the session stays open for
-    // the next message). NOT aborted: the agent's own nav (`agentNavTabs` — deliberate turn
-    // work; the mirrors are still wiped below and the turn's persist guard stops the stale
-    // re-persist) and same-document navigations (hash/pushState never commit, so they never
-    // reach here — see nav-abort.ts for the full table). The error is stamped with the dead
-    // turn's id so the panel closes that turn's bubble, and logged so a pasted debug log
-    // explains why the turn stopped.
-    if (
-      shouldAbortTurnOnCommit({
-        frameId: details.frameId,
+    // document it was editing is gone (reload included: the live edits died with it). NOT
+    // aborted: the agent's own navigation (`agentNav` — a nav driver, or a click/submit that
+    // committed a new document) — that is turn work, so the turn REBASES onto the new document
+    // instead: the mirrors are wiped below (old-document edits died with it) and the turn's
+    // store moves to the new URL so its later edits persist. Same-document navigations
+    // (hash/pushState) never commit, so they never reach here — see nav-abort.ts for the table.
+    const commit = {
+      frameId: details.frameId,
+      tabId,
+      runningTurnTabId,
+      turnRunning: turnAbort !== null,
+      agentNavInFlight: agentNav.has(tabId),
+    };
+    if (shouldAbortTurnOnCommit(commit)) {
+      abortRunningTurn(
         tabId,
-        runningTurnTabId,
-        turnRunning: turnAbort !== null,
-        agentNavInFlight: agentNavTabs.has(tabId),
-      })
-    ) {
-      const abortedTurnId = runningTurnId;
-      turnAbort?.abort();
-      turnAbort = null;
-      runningTurnId = null;
-      runningTurnTabId = null; // the .finally won't clear these (it sees itself non-current)
-      turnChangeset = null;
-      const update: SwToPanel = {
-        type: 'error',
-        message:
-          'The page navigated away mid-turn, so the turn was stopped. ' +
+        'The page navigated away mid-turn, so the turn was stopped. ' +
           'Send a new message to continue on the current page.',
-        ...(abortedTurnId !== null ? { turnId: abortedTurnId } : {}),
-      };
-      postToPanel(update);
-      const entry = logEntryFor(update, Date.now());
-      if (entry) void sessions.appendLog(tabId, entry).catch(() => {});
-      // Settle every open panel's turn liveness (a second window's in-flight bubble) — the
-      // same push `conversation-new` uses; the lifecycle itself is unchanged.
-      postToPanel({ type: 'session-state', state: sessionState, turnRunning: isTurnRunning() });
+      );
+    } else if (shouldRebaseTurnOnCommit(commit) && turnChangeset?.tabId === tabId) {
+      turnChangeset.changeset.rebase(url);
     }
     if (details.transitionType === 'reload') return;
     // Gated on `pendingReady` (#148 item 3) like every buffer touch: the clear must not race the
@@ -2659,6 +2763,14 @@ export default defineBackground(() => {
   // Same for the document-identity stamp (both copies): a recycled id must not compare against
   // the dead tab's committed URL.
   chrome.tabs.onRemoved.addListener((tabId) => {
+    // A turn still running on the closed tab ends with it, and its store refuses every later
+    // write — otherwise an in-flight recordEdit / the turn-end auto-finalize wrote
+    // `changeset:<tabId>` straight back after the clear below (#310 resurrected).
+    if (turnChangeset?.tabId === tabId) turnChangeset.changeset.close();
+    if (turnAbort !== null && runningTurnTabId === tabId) {
+      abortRunningTurn(tabId, 'The tab was closed, so the turn was stopped.');
+    }
+    agentNav.forget(tabId);
     diagnosticsGeneration.set(tabId, (diagnosticsGeneration.get(tabId) ?? 0) + 1);
     diagnosticsDocument.delete(tabId);
     void pendingDiagnosticsReady.then(() => pendingDiagnostics.clear(tabId));

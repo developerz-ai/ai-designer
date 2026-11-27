@@ -49,8 +49,31 @@ describe('inferMode', () => {
 
   it('sticks to the previous session mode when the new message carries no keyword (#168)', () => {
     expect(inferMode('now the header too', 'debug')).toBe('debug');
-    expect(inferMode('now the header too', 'copy')).toBe('copy');
     expect(inferMode('now the header too')).toBeUndefined();
+  });
+
+  it('an inferred copy mode does NOT stick — a copy follow-up must carry its own signal', () => {
+    // Copy is only ever inferred (no picker sends it), so a sticky copy turned one mis-read
+    // sentence into a whole session of copy turns.
+    expect(inferMode('now the header too', 'copy')).toBeUndefined();
+    expect(inferMode('now make the footer look like stripe.com too', 'copy')).toBe('copy');
+  });
+
+  it("bare 'like' is not a copy signal — the want sense never enters copy mode", () => {
+    expect(inferMode("I'd like the header bigger")).toBeUndefined();
+    expect(inferMode('I would like the CTA orange')).toBeUndefined();
+    expect(inferMode('we like the spacing, keep it')).toBeUndefined();
+    expect(inferMode("I'd like The header bigger")).toBeUndefined();
+    expect(inferMode('the button looks like it is disabled, make it bolder')).toBeUndefined();
+  });
+
+  it("'like' still signals copy when it points at a reference", () => {
+    expect(inferMode('make the hero look like the Stripe one')).toBe('copy');
+    expect(inferMode('a pricing table like linear.app')).toBe('copy');
+    expect(inferMode('a pricing table like https://linear.app/pricing')).toBe('copy');
+    expect(inferMode('a nav bar like Vercel')).toBe('copy');
+    expect(inferMode('Like Apple, use a lot of whitespace')).toBe('copy');
+    expect(inferMode('cards styled like the reference')).toBe('copy');
   });
 
   it('a fresh keyword overrides the previous mode — stickiness is only a fallback', () => {
@@ -75,7 +98,9 @@ describe('resolveMode', () => {
   });
 
   it('falls back to the previous mode when neither explicit nor inferred', () => {
-    expect(resolveMode(undefined, 'and the sidebar as well', 'copy')).toBe('copy');
+    expect(resolveMode(undefined, 'and the sidebar as well', 'debug')).toBe('debug');
+    // …but never a previous copy (see inferMode).
+    expect(resolveMode(undefined, 'and the sidebar as well', 'copy')).toBeUndefined();
   });
 
   it('resolves to undefined when nothing carries a mode', () => {
