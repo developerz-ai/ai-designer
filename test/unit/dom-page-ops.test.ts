@@ -167,9 +167,18 @@ describe('forms', () => {
   it('never echoes a password it just wrote back into the transcript', () => {
     const el = document.getElementById('pw');
     if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    // A page validator can quote the rejected value in its message, so neither the value nor the
+    // message may reach the result. Assert the whole object, not just `value`.
+    el.addEventListener('input', () => el.setCustomValidity(`"${el.value}" is too weak`));
     const result = setField(el, { value: 'correct horse battery staple' });
     expect(el.value).toBe('correct horse battery staple'); // written…
-    expect(result?.value).toBe(''); // …but not read back, same rule as readFormState
+    expect(result).toEqual({
+      value: '',
+      checked: null,
+      valid: false,
+      validationMessage: '',
+    }); // …but the entire result is secret-free, while the validity verdict survives
+    expect(JSON.stringify(result)).not.toContain('correct horse battery staple');
   });
 
   it('never echoes the password through a page validator message either', () => {
