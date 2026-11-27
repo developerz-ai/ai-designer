@@ -11,7 +11,7 @@ import { createDomExecutor } from '@/dom/execute';
 import { extractIdentity } from '@/dom/identity';
 import { imageContent, readImages } from '@/dom/images';
 import { createInteractor } from '@/dom/interact';
-import { createMutator } from '@/dom/mutate';
+import { adoptLiveEditState, type LiveEditHolder } from '@/dom/live-edit-state';
 import { createOverlay } from '@/dom/overlay';
 import { createPageFacts } from '@/dom/page-facts';
 import { createPageOps, MainOpReply } from '@/dom/page-ops/index';
@@ -27,7 +27,6 @@ import {
   screenshotRect,
   scrollableAncestors,
 } from '@/dom/read';
-import { createRecorder } from '@/dom/recorder';
 import { scanResponsive } from '@/dom/responsive';
 import { createWidgetDriver } from '@/dom/widgets';
 import {
@@ -88,7 +87,7 @@ export default defineContentScript({
     // So the NEWEST instance always wins: it tears down whatever came before, then installs its
     // own teardown for the next one. The handle lives on the ISOLATED world's `window`, which is
     // per-frame and invisible to the page.
-    type ContentWindow = typeof window & { __dzDesignerDispose?: () => void };
+    type ContentWindow = typeof window & LiveEditHolder & { __dzDesignerDispose?: () => void };
     const self = window as ContentWindow;
     try {
       self.__dzDesignerDispose?.();
@@ -116,8 +115,9 @@ export default defineContentScript({
       void chrome.runtime.sendMessage(msg).catch(() => {});
     };
 
-    const mutator = createMutator();
-    const recorder = createRecorder(emit);
+    // The live edits OUTLIVE this instance: every service-worker boot re-injects this script, and a
+    // fresh mutator/recorder would wipe the page's edits and the undo log (src/dom/live-edit-state.ts).
+    const { mutator, recorder } = adoptLiveEditState(self, emit);
     // `emit` is handed to the executor as well as the recorder: `injectCss` is a PAGE-level op
     // with no element target, so it cannot ride the recorder's MutationEvent path (which requires
     // a selector) and emits `stylesheet-recorded` directly.
@@ -560,6 +560,8 @@ export default defineContentScript({
         pageFacts.invalidate();
         deriveFacts();
       });
+      // A takeover must stop this instance's route poll, or every re-injection leaks one more.
+      disposers.push(() => routes.dispose());
       window.addEventListener(
         'pagehide',
         () => {

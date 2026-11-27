@@ -223,7 +223,9 @@ export default defineBackground(() => {
   // The old content script stays in every open tab with its `chrome.*` bridge invalidated: a
   // corpse that still holds capture-phase listeners, so the page looks alive and nothing works.
   // The worker always restarts on reload, so booting is the one reliable signal. Re-injection is
-  // idempotent — content.ts's newest instance tears down the previous one (see its TAKEOVER note).
+  // safe to repeat — content.ts's newest instance tears down the previous one's listeners and UI
+  // (see its TAKEOVER note) but ADOPTS its live edits and undo log (src/dom/live-edit-state.ts):
+  // an MV3 worker idles out after ~30s, so this runs mid-session, not just after a reload.
   void reinjectAllTabs();
 
   /** Re-run every declared content script in every already-open http(s) tab. Best-effort per tab

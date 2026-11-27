@@ -494,8 +494,13 @@ export function createMutator(doc: Document = document): Mutator {
   function markerOf(el: Element): string {
     const current = el.getAttribute(MARKER_ATTR);
     if (current) return current;
-    markerSeq += 1;
-    const id = `dz-${markerSeq}`;
+    // Skip ids already on the page: a mutator from another isolated world (the corpse an extension
+    // reload leaves behind) stamped its own `dz-N`s, and reusing one aims this rule at its element.
+    let id: string;
+    do {
+      markerSeq += 1;
+      id = `dz-${markerSeq}`;
+    } while (doc.querySelector(`[${MARKER_ATTR}="${id}"]`));
     el.setAttribute(MARKER_ATTR, id);
     return id;
   }
