@@ -59,6 +59,13 @@ describe('release.yml', () => {
     expect(first?.run).toContain('exit 1');
   });
 
+  it('lets nothing bypass a red verify: no job-level if on release, no continue-on-error anywhere', () => {
+    // `if: always()` on release would publish after verify failed; `continue-on-error` on a step
+    // would turn a failing suite green.
+    expect(job('release')).not.toMatch(/^ {4}if:/m);
+    expect(text).not.toMatch(/continue-on-error/);
+  });
+
   it('gives write access only to the publishing job', () => {
     expect(job('verify')).toMatch(/^ {4}permissions:\n {6}contents: read$/m);
   });
