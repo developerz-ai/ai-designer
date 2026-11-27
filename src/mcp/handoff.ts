@@ -72,9 +72,10 @@ export function resolveRepo(url: string, map: OriginRepoMap): string | null {
  *  paste-ready Markdown review; `problem` names the one focused issue a multi-task split addresses. */
 export interface TaskSpecPayload {
   readonly source: typeof HANDOFF_SOURCE;
-  /** The session ID for a single task, or a session-derived per-position key for a fan-out.
-   *  `dispatchTask` also sends it at the top level. Retries of the same report reuse the keys;
-   *  reports without a changeset dispatch without a key. */
+  /** `<sessionId>:<digest of what this task dispatches>` ({@link dispatchKey}). `dispatchTask`
+   *  also sends it at the top level. A retry of the same work reuses the key; new edits or a
+   *  different problem in the same session get a new one. Reports without a changeset dispatch
+   *  without a key. */
   readonly idempotencyKey?: string;
   readonly url: string;
   /** The session's recorded edits — always present (may be empty for a diagnostics-only report). */
@@ -144,7 +145,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
   const edits = changeset?.edits ?? [];
 
   if (multiTask && report.problems.length > 0) {
-    return report.problems.map((problem, index) =>
+    return report.problems.map((problem) =>
       reportSpec(
         focusReport(report, problem),
         repo,
@@ -154,7 +155,6 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
         problem,
         undefined,
         target.branch,
-        changeset ? `${changeset.sessionId}:problem:${index}` : undefined,
       ),
     );
   }
@@ -173,7 +173,12 @@ function changesetSpec(
     title: title ? clampTitle(title) : titleFromEdits(changeset),
     spec: {
       source: HANDOFF_SOURCE,
-      idempotencyKey: changeset.sessionId,
+      idempotencyKey: dispatchKey(changeset.sessionId, {
+        kind: 'changeset',
+        repo,
+        branch,
+        edits: changeset.edits,
+      }),
       url: changeset.url,
       edits: changeset.edits,
       ...(branch ? { branch } : {}),
@@ -195,7 +200,6 @@ function reportSpec(
   problem?: string,
   title?: string,
   branch?: string,
-  idempotencyKey?: string,
 ): TaskSpec {
   return {
     template: TASK_TEMPLATE,
@@ -203,7 +207,17 @@ function reportSpec(
     title: title ? clampTitle(title) : problem ? clampTitle(problem) : titleFromSummary(report),
     spec: {
       source: HANDOFF_SOURCE,
-      ...(changeset ? { idempotencyKey: idempotencyKey ?? changeset.sessionId } : {}),
+      ...(changeset
+        ? {
+            idempotencyKey: dispatchKey(changeset.sessionId, {
+              kind: 'report',
+              repo,
+              branch,
+              edits,
+              problem,
+            }),
+          }
+        : {}),
       url,
       edits,
       brief: toMarkdown(report, changeset),
@@ -212,6 +226,32 @@ function reportSpec(
       ...(branch ? { branch } : {}),
     },
   };
+}
+
+/**
+ * The idempotency key for one dispatched task: the session plus a digest of WHAT the task asks for.
+ * A session outlives a Ship (the user keeps designing in the same chat and ships again), so the
+ * session id alone would dedupe that second Ship onto the first task and drop the new edits; a
+ * fan-out keyed by position would dedupe a different problem onto whichever task held that slot.
+ * The digest covers only stable inputs — repo, branch, edits, the focused problem — never the
+ * model-authored brief, so a retried report (which re-authors its prose) still lands on its task.
+ * Not a security boundary: cyrb53, a fast 53-bit string hash, is plenty to tell two payloads apart.
+ */
+function dispatchKey(sessionId: string, work: Record<string, unknown>): string {
+  return `${sessionId}:${cyrb53(JSON.stringify(work)).toString(36)}`;
+}
+
+function cyrb53(text: string): number {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
 
 /** Narrow a report to a single problem for a per-problem task — same shared context (summary,
@@ -270,7 +310,7 @@ export interface TaskBackend {
 
 /** The exact arguments of a `task(action:'create')` call. `spec.idempotencyKey` is
  *  threaded at the top level too, so a backend that dedupes on the create arguments
- *  (rather than inside `spec`) sees the same stable session key. */
+ *  (rather than inside `spec`) sees the same key. */
 export interface TaskCreateArgs extends TaskSpec {
   readonly action: 'create';
   readonly idempotencyKey?: string;
