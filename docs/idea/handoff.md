@@ -74,7 +74,7 @@ The changeset is the task spec. Maps to ai-dev's domain tool:
 
 ## Failure / mismatch
 
-- Dev-agent can't locate the element in source → returns a question; surfaced in chat, user clarifies, re-dispatch.
+- Dev-agent can't locate the element in source → that follow-up happens on the backend and the PR; the panel only renders the task status the backend reports (no in-chat question/re-dispatch loop exists).
 - Fragile selector flagged in the changeset → dev-agent treats it as low-confidence, prefers `frameworkHints`.
 - CI red → ai-dev's own loop fixes and re-pushes; the user just watches.
 

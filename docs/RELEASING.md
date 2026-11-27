@@ -27,7 +27,7 @@ git push origin v1.4.0
 The `Release` workflow (`.github/workflows/release.yml`) then:
 
 1. Installs deps (`bun install --frozen-lockfile`).
-2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
+2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `bun run build && wxt zip`, i.e. `wxt build` → `pack-crx`, then `wxt zip`, which builds again: the `.crx` and the `.zip` come from two builds of the same commit and config). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
 5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build.

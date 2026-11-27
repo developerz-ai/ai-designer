@@ -56,7 +56,7 @@ Off. The extension sends no crash reports, error events, or telemetry of any kin
 | `activeTab` | Page access only on explicit user gesture. |
 | `tabs` | Capture screenshots; track the active tab for edits. |
 | `identity` | OAuth (PKCE) consent window when you connect an MCP backend; tokens stay in the service worker. |
-| `webNavigation` | Enumerating a page's frames so tools can address iframes. |
+| `webNavigation` | Enumerating a page's frames so tools can address iframes (`getAllFrames`), and seeing a main-frame navigation commit (`onCommitted`) so edits recorded on the old document are dropped instead of shipped. |
 | `debugger` | Device emulation for responsive checks (`setDevice`) — triggers Chrome's "started debugging" banner while active. |
 | `scripting` | `chrome.scripting.executeScript` — the service worker re-injects the extension's own shipped content scripts into existing http(s) tabs it can already access, on install/update and every worker boot. No remote code, no added host grant. |
 | `host_permissions: https://openrouter.ai/*` | BYOK model endpoint; SW-only, CORS-exempt. |
