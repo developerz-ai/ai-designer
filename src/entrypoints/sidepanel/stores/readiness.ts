@@ -46,6 +46,13 @@ export function initReadinessStore(): void {
   // resets to `disconnected` with the worker. Re-pull rather than keep rendering the old worker's
   // "1/1 connected" (#165 S5).
   onReconnect(() => void hydrateReadiness());
+  // The "Page access" row reflects a host permission the SW only re-checks when asked, and a
+  // grant/revoke can come from anywhere — Start's prompt, chrome://extensions, another panel.
+  // Re-pull on every change so the row never shows a stale verdict (guarded — the unit-test
+  // chrome fake carries only `runtime`).
+  const refresh = (): void => void hydrateReadiness();
+  chrome.permissions?.onAdded?.addListener?.(refresh);
+  chrome.permissions?.onRemoved?.addListener?.(refresh);
 }
 
 /** Pull the current readiness snapshot from the SW (mount / manual refresh). Never throws

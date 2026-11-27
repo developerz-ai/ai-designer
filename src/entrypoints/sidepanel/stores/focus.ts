@@ -42,11 +42,32 @@ export function reduceFocus(state: FocusState, msg: SwToPanel): FocusState {
   }
 }
 
-const [selector, setSelector] = createSignal<StableSelector | null>(null);
-const [xpath, setXpath] = createSignal<string | null>(null);
-const [rect, setRect] = createSignal<Rect | null>(null);
+const [pin, setSelector] = createSignal<StableSelector | null>(null);
+const [pinXpath, setXpath] = createSignal<string | null>(null);
+const [pinRect, setRect] = createSignal<Rect | null>(null);
 const [pickerActive, setPickerActive] = createSignal<boolean>(false);
-const [multiSelectors, setMultiSelectors] = createSignal<StableSelector[]>([]);
+const [multi, setMultiSelectors] = createSignal<StableSelector[]>([]);
+
+// References are TAB-scoped: they were picked on one page, and the `focus`/`focus-multi` pushes
+// carry no tab. So the store records the tab this panel's window was showing when they arrived,
+// and the exported accessors below hide them on any other tab — otherwise a pin made on tab A
+// was sent as the referent of "this" for a message about tab B. Hidden, not cleared: the picker
+// on A still draws them, so switching back has to bring the chips back with their outlines.
+// `null` = unknown (no tab API, or nothing observed yet) — no gating, the pre-scope behaviour.
+const [refsTab, setRefsTab] = createSignal<number | null>(null);
+const [activeTab, setActiveTab] = createSignal<number | null>(null);
+let ownWindowId: number | null = null;
+
+/** Whether the stored references belong to the tab the panel is showing. */
+function onRefsTab(): boolean {
+  const owner = refsTab();
+  return owner === null || owner === activeTab();
+}
+
+const selector = (): StableSelector | null => (onRefsTab() ? pin() : null);
+const xpath = (): string | null => (onRefsTab() ? pinXpath() : null);
+const rect = (): Rect | null => (onRefsTab() ? pinRect() : null);
+const multiSelectors = (): StableSelector[] => (onRefsTab() ? multi() : []);
 // Picker RPC failures (a worker mid-restart answers "Receiving end does not exist"): every other
 // store action surfaces its failure rather than rejecting into an unhandled rejection, which the
 // UI cannot show and Sentry records as a crash.
@@ -84,7 +105,11 @@ export function initFocusStore(): void {
   }
   wired = true;
   connectPort();
+  trackActiveTab();
   subscribeToSw((msg) => {
+    const isRefs = msg.type === 'focus' || msg.type === 'focus-multi';
+    // A pick on this tab starts from THIS tab's references (the visible ones — empty when the
+    // stored set is another tab's), so another tab's hidden pin never resurfaces beside it.
     const next = reduceFocus(
       {
         selector: selector(),
@@ -95,10 +120,14 @@ export function initFocusStore(): void {
       },
       msg,
     );
+    setPickerActive(next.pickerActive);
+    // Only a references push writes the references: folding the GATED view back on any other
+    // message would erase another tab's hidden pin the moment, say, a picker-state arrived.
+    if (!isRefs) return;
+    setRefsTab(activeTab());
     setSelector(next.selector);
     setXpath(next.xpath);
     setRect(next.rect);
-    setPickerActive(next.pickerActive);
     setMultiSelectors(next.selectors);
     // Recents are fed from the SAME echo that feeds the chips, so a mention and a pick are
     // indistinguishable downstream — there is no second write path into the reference set.
@@ -106,6 +135,27 @@ export function initFocusStore(): void {
       foldRecent(current, orderedReferences(next.selector, next.selectors)),
     );
   });
+}
+
+/** Follow the active tab of THIS panel's window (the side panel is window-scoped). Guarded — the
+ *  unit-test chrome fake usually carries only `runtime`. */
+function trackActiveTab(): void {
+  chrome.tabs?.onActivated?.addListener?.((info) => {
+    if (ownWindowId !== null && info.windowId !== ownWindowId) return;
+    setActiveTab(info.tabId);
+  });
+  const query = chrome.tabs?.query?.bind(chrome.tabs);
+  if (!query) return;
+  query({ active: true, currentWindow: true })
+    .then(([tab]) => {
+      if (!tab?.id) return;
+      ownWindowId = tab.windowId;
+      // An activation that landed first is newer than this snapshot.
+      if (activeTab() === null) setActiveTab(tab.id);
+    })
+    .catch(() => {
+      // Best-effort: unknown stays ungated, which is the pre-scope behaviour.
+    });
 }
 
 /** Manual reset of the focus state — the one place a pin is dropped (the chip's dismiss). */
@@ -198,7 +248,10 @@ export async function mentionReference(value: string): Promise<void> {
 export async function startPicker(): Promise<void> {
   setError(null);
   try {
-    await request({ type: 'start-picker' }, OkResult);
+    // `{ ok: false }` satisfies `OkResult` — a tab with no content script answers it, and the
+    // crosshair must not look armed over a page that never got the picker.
+    const result = await request({ type: 'start-picker' }, OkResult);
+    if (!result.ok) setError(i18n.t('focus.error.pageUnreachable'));
   } catch (e) {
     setError(errMsg(e));
   }
@@ -221,7 +274,8 @@ export async function disarmPicker(): Promise<void> {
   setPickerActive(false);
   setError(null);
   try {
-    await request({ type: 'stop-picker' }, OkResult);
+    const result = await request({ type: 'stop-picker' }, OkResult);
+    if (!result.ok) setError(i18n.t('focus.error.pageUnreachable'));
   } catch (e) {
     setError(errMsg(e));
   }
@@ -234,7 +288,8 @@ export async function stopPicker(): Promise<void> {
   clearFocus();
   setError(null);
   try {
-    await request({ type: 'stop-picker' }, OkResult);
+    const result = await request({ type: 'stop-picker' }, OkResult);
+    if (!result.ok) setError(i18n.t('focus.error.pageUnreachable'));
   } catch (e) {
     setError(errMsg(e));
   }

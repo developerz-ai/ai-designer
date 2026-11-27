@@ -164,6 +164,47 @@ describe('mcp store actions', () => {
     expect(store.servers.find((s) => s.id === 'a')?.status).toBe('connected');
   });
 
+  // The SW's code→token exchange fetches `tokenEndpoint`; its origin must be granted inside the
+  // Authorize click (a grant does not survive the hop to the SW), before mcp-auth-start goes out.
+  const OAUTH = {
+    authorizationEndpoint: 'https://auth.example.com/authorize',
+    tokenEndpoint: 'https://tokens.example.com/oauth/token',
+    clientId: 'designer',
+  };
+
+  it('startOAuth requests the token endpoint origin, then sends mcp-auth-start', async () => {
+    vi.resetModules();
+    const { sendMessage, requestPermission } = installChromeFake((msg) =>
+      msg.type === 'mcp-auth-start'
+        ? { ok: true, server: { ...serverA, authKind: 'oauth', status: 'connected' } }
+        : { ok: true },
+    );
+    const store = await import('@/entrypoints/sidepanel/stores/mcp');
+
+    const ok = await store.startOAuth('a', OAUTH);
+
+    expect(ok).toBe(true);
+    expect(requestPermission).toHaveBeenCalledWith({ origins: ['https://tokens.example.com/*'] });
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'mcp-auth-start', authKind: 'oauth', oauth: OAUTH }),
+    );
+    expect(store.authError()).toBeNull();
+  });
+
+  it('startOAuth sends nothing and shows the denial when the grant is refused', async () => {
+    vi.resetModules();
+    const { sendMessage } = installChromeFake(() => ({ ok: true }), { denyRequest: true });
+    const store = await import('@/entrypoints/sidepanel/stores/mcp');
+
+    const ok = await store.startOAuth('a', OAUTH);
+
+    expect(ok).toBe(false);
+    const sentTypes = sendMessage.mock.calls.map((c) => (c[0] as PanelToSw).type);
+    expect(sentTypes).not.toContain('mcp-auth-start');
+    expect(store.authError()).toBe('Host access denied.');
+    expect(store.authPending()).toBeNull();
+  });
+
   it('removeServer drops the server from local state on success', async () => {
     vi.resetModules();
     installChromeFake((msg) => {

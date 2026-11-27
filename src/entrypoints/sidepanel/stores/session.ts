@@ -3,6 +3,7 @@ import { requestPageAccess } from '@/shared/host-permissions';
 import type { SwToPanel } from '@/shared/messages';
 import { OkResult, SessionStateResult } from '@/shared/messages';
 import { request } from './bus';
+import { hydrateReadiness } from './readiness';
 import { connectPort, onReconnect, publishLocal, subscribeToSw } from './sw-stream';
 
 // Session store: thin reflection of the SW's Start/Stop lifecycle (background.ts's
@@ -82,9 +83,15 @@ export async function startSession(): Promise<void> {
   setError(null);
   // First statement, and unawaited: `chrome.permissions.request` only prompts inside the gesture's
   // own call stack, so anything awaited before it kills the prompt (see requestPageAccess).
-  void requestPageAccess().catch(() => {});
+  // A grant flips the readiness "Page access" row; re-pull once it resolves rather than leave the
+  // pill on the pre-Start verdict.
+  void requestPageAccess()
+    .then((access) => (access.ok ? hydrateReadiness() : undefined))
+    .catch(() => {});
   try {
-    await request({ type: 'session-start' }, OkResult);
+    // `{ ok: false }` satisfies `OkResult`: a refused Start must surface, not read as started.
+    const r = await request({ type: 'session-start' }, OkResult);
+    if (!r.ok) setError(r.error ?? 'Could not start the session. Try again.');
   } catch (e) {
     setError(errMsg(e));
   }
@@ -95,7 +102,8 @@ export async function startSession(): Promise<void> {
 export async function stopSession(): Promise<void> {
   setError(null);
   try {
-    await request({ type: 'session-stop' }, OkResult);
+    const r = await request({ type: 'session-stop' }, OkResult);
+    if (!r.ok) setError(r.error ?? 'Could not stop the turn. Try again.');
   } catch (e) {
     setError(errMsg(e));
   }

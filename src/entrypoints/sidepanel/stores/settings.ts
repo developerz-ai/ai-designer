@@ -120,9 +120,16 @@ function presetForBaseURL(baseURL: string): ProviderPreset {
   return match?.id ?? 'custom';
 }
 
+/** What a model-list refresh may do to `settings.error`. `keepError` is the post-Save refresh:
+ *  the save's own verdict ("key rejected", "host unreachable") is the more specific message, and
+ *  a refresh that cleared it — or replaced it with a generic list failure — hid why Save failed. */
+interface RefreshOptions {
+  keepError?: boolean;
+}
+
 /** Load the saved config (if any) + key presence on mount; pull the model list when a
  *  key is already stored. */
-export async function hydrate(): Promise<void> {
+export async function hydrate(opts: RefreshOptions = {}): Promise<void> {
   try {
     const r = await request({ type: 'get-provider' }, GetProviderResult);
     if (r.config) {
@@ -139,7 +146,7 @@ export async function hydrate(): Promise<void> {
     } else {
       set({ hasKey: r.hasKey ?? false });
     }
-    if (r.hasKey) await loadModels();
+    if (r.hasKey) await loadModels(undefined, opts);
   } catch (e) {
     set({ error: errMsg(e) });
   }
@@ -192,10 +199,12 @@ export function budgetPresetHint(): string {
  *  key when the base URL is unchanged from what's persisted; otherwise (a not-yet-saved
  *  endpoint, or a freshly typed key) carries an explicit endpoint so the panel can
  *  populate the dropdown before Save. */
-export async function loadModels(apiKeyText?: string): Promise<void> {
+export async function loadModels(apiKeyText?: string, opts: RefreshOptions = {}): Promise<void> {
   const typed = apiKeyText?.trim();
   const canUseSaved = !typed && settings.hasKey && settings.baseURL === settings.savedBaseURL;
-  set({ modelsLoading: true, error: null });
+  // A kept error outranks whatever this refresh reports; otherwise the refresh owns the line.
+  const kept = opts.keepError ? settings.error : null;
+  set({ modelsLoading: true, error: kept });
   try {
     const r = await request(
       canUseSaved
@@ -213,11 +222,11 @@ export async function loadModels(apiKeyText?: string): Promise<void> {
     const first = models[0];
     set({
       models,
-      error: r.error ?? null,
+      error: kept ?? r.error ?? null,
       ...(settings.model === null && first ? { model: first.id } : {}),
     });
   } catch (e) {
-    set({ error: errMsg(e) });
+    set({ error: kept ?? errMsg(e) });
   } finally {
     set({ modelsLoading: false });
   }
@@ -272,7 +281,7 @@ export async function saveProvider(apiKeyText: string, model: string): Promise<v
       saveStatus: r.valid ? 'valid' : 'invalid',
       error: r.valid ? null : (r.error ?? i18n.t('settings.error.unreachable')),
     });
-    await hydrate();
+    await hydrate({ keepError: true });
   } catch (e) {
     set({ saveStatus: 'invalid', error: errMsg(e) });
   }
@@ -285,7 +294,10 @@ export async function switchModel(model: string): Promise<void> {
   const previous = settings.model;
   set({ model, error: null });
   try {
-    await request({ type: 'set-model', model }, OkResult);
+    // `{ ok: false }` satisfies `OkResult`: a refused switch must roll the picker back, or it
+    // shows a model the next turn will not use.
+    const r = await request({ type: 'set-model', model }, OkResult);
+    if (!r.ok) set({ model: previous, error: r.error ?? 'Could not switch the model. Try again.' });
   } catch (e) {
     set({ model: previous, error: errMsg(e) });
   }
@@ -294,7 +306,12 @@ export async function switchModel(model: string): Promise<void> {
 /** Forget the stored config + key entirely. */
 export async function clearProvider(): Promise<void> {
   try {
-    await request({ type: 'clear-openrouter-key' }, OkResult);
+    // A refused clear left the key stored: resetting the form to "no key" would claim otherwise.
+    const r = await request({ type: 'clear-openrouter-key' }, OkResult);
+    if (!r.ok) {
+      set({ error: r.error ?? 'Could not clear the saved provider. Try again.' });
+      return;
+    }
   } catch (e) {
     set({ error: errMsg(e) });
     return;

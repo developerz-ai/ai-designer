@@ -306,8 +306,22 @@ export async function submitApiKey(id: string, apiKey: string): Promise<boolean>
 }
 
 /** AuthDialog's OAuth path: run the PKCE flow (opens `chrome.identity.launchWebAuthFlow`
- *  in the SW), then reconnect with the issued token. */
+ *  in the SW), then reconnect with the issued token.
+ *
+ *  The SW's code→token exchange `fetch`es `tokenEndpoint`, usually an origin the extension does
+ *  not hold. Same gesture rule as `addServer`: the grant is requested HERE, as the first await
+ *  of the Authorize click, before anything crosses to the SW. A denial sends nothing. */
 export async function startOAuth(id: string, oauth: McpOAuthConfig): Promise<boolean> {
+  setAuthError(null);
+  const access = await ensureHostAccess(oauth.tokenEndpoint);
+  if (!access.ok) {
+    setAuthError(
+      access.reason === 'denied'
+        ? i18n.t('mcp.error.hostDenied')
+        : (access.error ?? i18n.t('mcp.error.authFailed')),
+    );
+    return false;
+  }
   return runAuth(id, { type: 'mcp-auth-start', id, authKind: 'oauth', oauth });
 }
 
