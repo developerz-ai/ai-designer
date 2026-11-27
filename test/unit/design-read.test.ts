@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractDesignRead, parseColor, primaryFamily } from '@/dom/design-read';
+import { extractDesignRead, fontFamilyOf, parseColor, primaryFamily } from '@/dom/design-read';
 
 // design-read.ts unit: reduce a live DOM to a compact, token-bounded design identity. Pure DOM in
 // (jsdom), typed DesignRead out — no chrome.*. Fixtures use inline styles so getComputedStyle
@@ -132,5 +132,27 @@ describe('primaryFamily', () => {
   it('returns empty for missing input', () => {
     expect(primaryFamily('')).toBe('');
     expect(primaryFamily(undefined)).toBe('');
+  });
+});
+
+// The shared font-family reader: jsdom's UA computes exactly `monospace` for every un-authored
+// element, so the skip is scoped to the jsdom UA token. An authored `font-family: monospace` (a
+// `code`/`pre` rule) must survive on a live page instead of vanishing from typography.
+describe('fontFamilyOf', () => {
+  it("keeps an authored `monospace` in a live page, skips jsdom's UA default", () => {
+    mount('<code id="snippet">mono</code>');
+    const style = document.createElement('style');
+    style.textContent = 'code { font-family: monospace }';
+    document.head.appendChild(style);
+    const el = document.getElementById('snippet') as Element;
+
+    expect(fontFamilyOf(el, getComputedStyle(el), window)).toBe('');
+
+    const realWindow = Object.create(window) as Window;
+    Object.defineProperty(realWindow, 'navigator', {
+      configurable: true,
+      value: { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120' },
+    });
+    expect(fontFamilyOf(el, getComputedStyle(el), realWindow)).toBe('monospace');
   });
 });

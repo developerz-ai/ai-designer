@@ -1,4 +1,4 @@
-import { parseColor, primaryFamily } from '@/dom/design-read';
+import { fontFamilyOf, parseColor, primaryFamily } from '@/dom/design-read';
 import { queryAll } from '@/dom/read';
 
 // Design-identity extractor — reduces a live page to a compact, token-like "identity": a
@@ -74,10 +74,6 @@ const ACCENT_SELECTORS = [
   '[class*="btn" i]',
   '[class*="cta" i]',
 ];
-
-// jsdom's computed style returns this placeholder for `font-family` (it doesn't resolve the font
-// cascade); treated as "no value" so the extractor falls back to the inline stack.
-const UA_FONT_PLACEHOLDER = 'depends on user agent';
 
 /**
  * Extract a compact {@link Identity} from a loaded document. Deterministic and bounded: the walk is
@@ -212,7 +208,7 @@ function typeScale(elements: Element[], win: Window): TypeScale {
   for (const el of elements) {
     if (!hasDirectText(el)) continue;
     const style = win.getComputedStyle(el);
-    const family = primaryFamily(fontFamilyOf(el, style));
+    const family = primaryFamily(fontFamilyOf(el, style, win));
     if (family) families.set(family, (families.get(family) ?? 0) + 1);
     const size = Math.round(parseFloat(cssProp(style, 'font-size') || ''));
     if (Number.isFinite(size) && size > 0) sizes.add(size);
@@ -228,14 +224,6 @@ function typeScale(elements: Element[], win: Window): TypeScale {
     sizes: [...sizes].sort((a, b) => b - a).slice(0, MAX_SIZES),
     weights: [...weights].sort((a, b) => a - b).slice(0, MAX_WEIGHTS),
   };
-}
-
-/** The font-family stack for `el`: the computed value in a live page, falling back to the inline
- *  value when the computed stack is unavailable (jsdom). */
-function fontFamilyOf(el: Element, style: CSSStyleDeclaration): string {
-  const computed = cssProp(style, 'font-family');
-  if (computed && computed !== UA_FONT_PLACEHOLDER) return computed;
-  return inlineProp(el, 'font-family');
 }
 
 function fontWeight(el: Element, style: CSSStyleDeclaration): number | null {
@@ -326,7 +314,7 @@ function shadows(elements: Element[], win: Window): string[] {
   for (const el of elements) {
     const raw = cssProp(win.getComputedStyle(el), 'box-shadow') || inlineProp(el, 'box-shadow');
     const shadow = normalizeShadow(raw);
-    if (shadow) freq.set(shadow, (freq.get(shadow) ?? 0) + 1);
+    if (shadow && !isZeroShadow(shadow)) freq.set(shadow, (freq.get(shadow) ?? 0) + 1);
   }
   return [...freq.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -334,10 +322,20 @@ function shadows(elements: Element[], win: Window): string[] {
     .map(([shadow]) => shadow);
 }
 
-function normalizeShadow(raw: string): string | null {
+// Exported for direct unit coverage: jsdom's computed box-shadow never exercises these branches
+// on its own (its UA default serializes away), so a regex regression would otherwise go unnoticed.
+export function normalizeShadow(raw: string): string | null {
   const value = raw.trim();
-  if (!value || value === 'none') return null;
+  // jsdom 31's UA default is `currentcolor none` for an element with no authored shadow.
+  // `none` in any position means no shadow is drawn.
+  if (!value || value === 'none' || value.endsWith(' none')) return null;
   return value.replace(/\s+/g, ' ');
+}
+
+// jsdom 31 supplies a concrete UA-default `0px 0px 0px 0px` box-shadow where jsdom 30 left it
+// empty. A zero shadow draws nothing, so it is not part of the page's shadow vocabulary.
+export function isZeroShadow(shadow: string): boolean {
+  return /^(?:rgba?\([^)]*\)\s*)?0(?:px)?(?:\s+0(?:px)?){2,3}$/.test(shadow);
 }
 
 // --- shared parsing -------------------------------------------------------

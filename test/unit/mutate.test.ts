@@ -630,9 +630,10 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
 
   // #9 round-2 review fix: styleChanges must not stamp UNAPPLIED values. An invalid declaration
   // is dropped by the CSS parser; the raw-input fallback used to record it as if it took. The
-  // pair is now built from the fallback-free readback and dropped when the after reads empty.
-  // (`gap` pins this in jsdom: it strictly validates the value and defaults to '' — unlike
-  // color, whose UA default always computes non-empty.)
+  // pair is now built from the fallback-free readback and dropped when the after reads empty or
+  // matches the pre-mutation value. (`gap` pins this: jsdom 30 defaults it to '', jsdom 31 computes
+  // 'normal' as a UA default, so the invalid declaration yields a no-op pair either way — unlike
+  // color, whose UA default always computes non-empty and changes.)
   it('setStyle drops an invalid declaration from styleChanges but keeps the valid prop', () => {
     mount('<button id="cta">Buy</button>');
     const mutation = createMutator(document).setStyle(byId('cta'), {
@@ -645,5 +646,17 @@ describe('#9 typed mutation fields (recorder ground truth)', () => {
     // The model-facing `computed` readback KEEPS the raw-input fallback (pre-existing contract):
     // it reports the value the model just set, even when the parser dropped it.
     expect(mutation.computed).toEqual({ gap: 'not-a-length', color: 'rgb(1, 2, 3)' });
+  });
+
+  // A valid same-value edit (color: red on an already-red element) still LANDS its declaration,
+  // so the raw-input fallback must not fire: `computed` reports the canonical `rgb(255, 0, 0)`,
+  // not the raw `red`. Keying the fallback on the pre-mutation comparison would have stamped `red`
+  // here, because a landed no-op leaves the computed value unchanged.
+  it('setStyle keeps the canonical computed value for a valid same-value edit', () => {
+    mount('<button id="cta" style="color: red">Buy</button>');
+    const mutation = createMutator(document).setStyle(byId('cta'), { color: 'red' });
+    expect(mutation.computed.color).toBe('rgb(255, 0, 0)');
+    // No visible change → no styleChanges pair (the ground truth is fallback-free).
+    expect(mutation.styleChanges).toEqual([]);
   });
 });

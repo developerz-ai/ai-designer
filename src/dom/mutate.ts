@@ -460,7 +460,14 @@ export function createMutator(doc: Document = document): Mutator {
   // and append page-wide CSS — the parser simply drops a declaration it can't parse. This is the
   // same threat the sanitizer's DROPPED_TAGS entry for <style> names: a page-WIDE stylesheet is a
   // repaint-anything + selector/url() exfil channel, beyond setStyle's per-element grant.
+  // marker id -> the props whose declaration the CSS parser actually ACCEPTED in the last render.
+  // A dropped declaration (invalid value, or a `}`-bearing injection) never lands, so the
+  // model-facing readback needs its raw-input fallback; a landed one is reported by its computed
+  // value even when that value equals the pre-mutation one (a valid no-op edit).
+  let landedProps = new Map<string, Set<string>>();
+
   function renderSheet(): void {
+    landedProps = new Map();
     for (const entry of overrides.values()) if (entry.props.size > 0) ensureSheet(entry.root);
     for (const style of sheets.values()) {
       const sheet = style.sheet;
@@ -474,7 +481,13 @@ export function createMutator(doc: Document = document): Mutator {
       const index = sheet.insertRule(`[${MARKER_ATTR}="${id}"] {}`, sheet.cssRules.length);
       const rule = sheet.cssRules[index];
       if (!(rule instanceof CSSStyleRule)) continue;
-      for (const [prop, value] of entry.props) rule.style.setProperty(prop, value, 'important');
+      const landed = new Set<string>();
+      for (const [prop, value] of entry.props) {
+        rule.style.setProperty(prop, value, 'important');
+        // setProperty silently drops a declaration it cannot parse; CSSOM keeps only what landed.
+        if (rule.style.getPropertyValue(prop) !== '') landed.add(prop);
+      }
+      landedProps.set(id, landed);
     }
   }
 
@@ -517,17 +530,26 @@ export function createMutator(doc: Document = document): Mutator {
     const fallback = Object.fromEntries(entries);
     // The model-facing ToolResult readback KEEPS the raw-input fallback (pre-existing: a
     // not-yet-cascaded rule should still report the value the model just set).
-    const computed = readComputed(el, touchedProps, fallback);
+    const computed = readComputed(el, touchedProps);
+    const landed = landedProps.get(id);
+    for (const [prop, value] of entries) {
+      // Only a declaration the parser DROPPED (it never landed in the rule — an invalid value, or
+      // the `}`-bearing injection renderSheet's CSSOM path neutralises) needs the raw-input
+      // fallback. Keying on landed-ness, not on `computed === preComputed`: a valid no-op edit
+      // (color: red on an already-red element) landed, so `computed` keeps its canonical
+      // `rgb(255, 0, 0)` instead of being overwritten with the raw `red`.
+      if (!landed?.has(prop)) computed[prop] = value;
+    }
     // Ground truth must NOT: an invalid declaration is dropped by the CSS parser, and the
     // fallback would stamp the UNAPPLIED raw value into styleChanges as if it took. Read back
-    // fallback-free and drop any pair whose after is empty (the declaration didn't take). A
-    // prop with a non-empty UA default (color, gap→normal) instead records that default — the
-    // honest current value, never the raw input.
+    // fallback-free and drop any pair whose after is empty (the declaration didn't take). Also
+    // drop pairs where the after equals the pre-mutation value: jsdom 31 reports a non-empty UA
+    // default (gap→normal) for an invalid declaration, which is no change at all.
     const applied = readComputed(el, touchedProps);
     const styleChanges: StyleChange[] = [];
     for (const [prop] of entries) {
       const after = applied[prop];
-      if (!after) continue;
+      if (!after || after === preComputed[prop]) continue;
       styleChanges.push({ prop, before: preComputed[prop] ?? null, after });
     }
     return {
