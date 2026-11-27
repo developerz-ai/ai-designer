@@ -141,7 +141,11 @@ export function setField(
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
   return {
-    value: String(el.value ?? '').slice(0, MAX_VALUE),
+    // Same rule as readFormState: a password value never reaches the model transcript.
+    value:
+      el instanceof HTMLInputElement && el.type === 'password'
+        ? ''
+        : String(el.value ?? '').slice(0, MAX_VALUE),
     checked: checkable ? el.checked : null,
     valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
     validationMessage: el.validationMessage ?? '',

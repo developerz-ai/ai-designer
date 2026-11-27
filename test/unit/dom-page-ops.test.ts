@@ -164,6 +164,14 @@ describe('forms', () => {
     expect(readFormState(form).find((f) => f.name === 'pw')?.value).toBe('');
   });
 
+  it('never echoes a password it just wrote back into the transcript', () => {
+    const el = document.getElementById('pw');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    const result = setField(el, { value: 'correct horse battery staple' });
+    expect(el.value).toBe('correct horse battery staple'); // written…
+    expect(result?.value).toBe(''); // …but not read back, same rule as readFormState
+  });
+
   it('writes through the NATIVE prototype setter so a framework tracker sees it', () => {
     const el = document.getElementById('email');
     if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
