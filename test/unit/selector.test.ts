@@ -464,3 +464,15 @@ describe('pickUnique — SVG elements keep their case-sensitive tag name', () =>
     expect(document.querySelector(picked.value)).toBe(target);
   });
 });
+
+describe('pickUnique — case-distinct SVG siblings', () => {
+  it('tells an SVG <G> from a sibling <g>', () => {
+    document.body.innerHTML = '<svg></svg>';
+    const svg = document.querySelector('svg') as SVGSVGElement;
+    const ns = 'http://www.w3.org/2000/svg';
+    const lower = document.createElementNS(ns, 'g');
+    const upper = document.createElementNS(ns, 'G');
+    svg.append(lower, upper);
+    expect(document.querySelector(pickUnique(upper, document).value)).toBe(upper);
+  });
+});

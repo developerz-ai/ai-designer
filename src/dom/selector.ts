@@ -14,6 +14,8 @@ export interface ElementLike {
   getAttribute(name: string): string | null;
   readonly id: string;
   readonly tagName: string;
+  /** The real element's case-exact tag; minimal test doubles omit it. */
+  readonly localName?: string;
   readonly textContent: string | null;
   // Optional tree links. A real DOM Element supplies them; the minimal unit-test
   // fakes omit them, so the css-path generator degrades to a bare tag when absent.
@@ -27,11 +29,13 @@ export interface ElementLike {
 
 const STABLE_DATA_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy'];
 
-/** The tag as a CSS type selector. An HTML element reports an upper-case `tagName` and matches
- *  case-insensitively, so it is lower-cased; an SVG/MathML element reports its real case
- *  (`foreignObject`, `linearGradient`) and matches case-SENSITIVELY, so it is kept as-is —
- *  lower-casing it produced a selector that resolves to nothing. */
+/** The tag as a CSS type selector. An HTML type selector matches case-insensitively; an SVG/MathML
+ *  one (`foreignObject`, `linearGradient`) matches case-SENSITIVELY — lower-casing `tagName`
+ *  produced a selector that resolved to nothing. */
 function tagOf(el: ElementLike): string {
+  // A real element's `localName` is exactly that (lower-case for HTML, real case for SVG — even an
+  // SVG element literally named `G`). The upper-case heuristic is only for test doubles without it.
+  if (el.localName) return el.localName;
   const tag = el.tagName;
   return tag === tag.toUpperCase() ? tag.toLowerCase() : tag;
 }
