@@ -2648,6 +2648,13 @@ export default defineBackground(() => {
     });
     lastCommittedUrl.delete(tabId);
     void chrome.storage.session.remove(committedUrlKey(tabId)).catch(() => {});
+    // The tab's turn thread (`session:<id>`) and changeset (`changeset:<id>`) die with it. Both
+    // carry screenshots, and nothing else ever removed them: every closed tab's record stayed in
+    // chrome.storage.session (~10MB quota) until the browser restarted. History keeps its own copy.
+    void sessionsReady.then(() => sessions.clear(tabId)).catch(() => {});
+    void createSessionChangesetPersister(tabId)
+      .clear()
+      .catch(() => {});
   });
 
   // Screenshot capture (content -> SW, request/response). Only the SW has `tabs` capture; the
