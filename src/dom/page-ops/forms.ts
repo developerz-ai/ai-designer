@@ -63,6 +63,23 @@ function CSS_ESCAPE(v: string): string {
   return v.replace(/["\\]/g, '\\$&');
 }
 
+/** Text inputs can be revealed passwords, even without a useful autocomplete attribute. */
+function isSecretField(el: Field): boolean {
+  if (!(el instanceof HTMLInputElement)) return false;
+  return (
+    el.type === 'password' ||
+    el.type === 'text' ||
+    /(?:^|\s)(?:current-password|new-password)(?:\s|$)/i.test(el.autocomplete ?? '')
+  );
+}
+
+/** The browser's validity verdict, read WITHOUT `checkValidity()`: that fires `invalid`, which runs
+ *  page handlers mid-read — they can change the value, the type (a show-password toggle) or the
+ *  message after the verdict was taken. `validity.valid` is the same verdict with no event. */
+function validityOf(el: Field): boolean {
+  return !el.willValidate || el.validity.valid;
+}
+
 /** Every field under `root`, with the state a form-debugging pass actually needs — including the
  *  browser's own validation verdict, which is invisible in a screenshot. */
 export function readFormState(root: ParentNode): FieldState[] {
@@ -71,20 +88,20 @@ export function readFormState(root: ParentNode): FieldState[] {
     if (!isField(el) || out.length >= MAX_FIELDS) break;
     const checkable =
       el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
+    const secret = isSecretField(el);
+    const valid = validityOf(el);
     out.push({
       name: el.name || el.id || '',
       type: el instanceof HTMLSelectElement ? 'select' : el.type,
       // A password value is never read back: the field's presence and validity are the useful
-      // facts, and the value would land in the model transcript.
-      value:
-        el instanceof HTMLInputElement && el.type === 'password'
-          ? ''
-          : String(el.value ?? '').slice(0, MAX_VALUE),
+      // facts, and the value would land in the model transcript…
+      value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
       checked: checkable ? el.checked : null,
       disabled: el.disabled,
       required: el.required,
-      valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-      validationMessage: el.validationMessage ?? '',
+      valid,
+      // …and neither does its validation message, which a page validator can make quote it.
+      validationMessage: secret ? '' : (el.validationMessage ?? ''),
       label: labelFor(el),
     });
   }
@@ -122,9 +139,14 @@ export function setField(
   input: { value?: string; checked?: boolean },
 ): SetFieldResult | null {
   if (!isField(el)) return null;
+  // Sampled before any event runs, between the events and after them: a page handler can flip the
+  // field's type either way (a show-password toggle) any number of times. Once detected, the flag
+  // sticks for the rest of the call. (Validity is read without an event — see validityOf.)
+  let secret = isSecretField(el);
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
     el.dispatchEvent(new (doc.defaultView?.Event ?? Event)(type, { bubbles: true }));
+    secret ||= isSecretField(el);
   };
 
   if (input.checked !== undefined && el instanceof HTMLInputElement) {
@@ -140,10 +162,14 @@ export function setField(
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
+  const valid = validityOf(el);
   return {
-    value: String(el.value ?? '').slice(0, MAX_VALUE),
+    // Same rule as readFormState: a password value never reaches the model transcript…
+    value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
     checked: checkable ? el.checked : null,
-    valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-    validationMessage: el.validationMessage ?? '',
+    valid,
+    // …and neither does a password field's validation MESSAGE: a page validator can quote the
+    // rejected value (and even clear the field first), so only the validity verdict is reported.
+    validationMessage: secret ? '' : (el.validationMessage ?? ''),
   };
 }
