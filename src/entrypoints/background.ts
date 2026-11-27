@@ -855,7 +855,11 @@ export default defineBackground(() => {
     // `sessionId` IS the handoff idempotency key: `src/mcp/handoff.ts` threads it into every
     // dispatched `task(create)` spec and create args, so a retry or double Ship reuses the key
     // instead of opening a second task held on a key.
-    const session = await sessions.ensure(tab.id, tab.url, crypto.randomUUID());
+    const session = await sessions.ensure(
+      tab.id,
+      (await readCommittedUrl(tab.id)) ?? lastCommittedUrl.get(tab.id) ?? tab.url,
+      crypto.randomUUID(),
+    );
     const changeset = session.changeset;
     // Ground the brief's token tables in the page's real palette/type/spacing (not the model's
     // guess) — best-effort: a page the content script can't reach (e.g. a chrome:// tab) just
@@ -1099,7 +1103,13 @@ export default defineBackground(() => {
           // of them, not just the turn's default tab. A `reset` removes the tab from the set.
           const emulatedTabs = new Set<number>();
 
-          const ensured = await sessions.ensure(tabId, tab.url, crypto.randomUUID());
+          // Created against the DOCUMENT URL, the one the changeset guards below compare with —
+          // a session first opened after a pushState must not start out as a stale record.
+          const ensured = await sessions.ensure(
+            tabId,
+            (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tab.url,
+            crypto.randomUUID(),
+          );
 
           // Copy/debug mode (slice 06): an explicit choice wins, else infer from the instruction
           // WITH the session's last resolved mode as the sticky fallback (#168 E) — "now fix the
@@ -1272,9 +1282,12 @@ export default defineBackground(() => {
               // the turn outright (onCommitted below), and the agent's own nav leaves the turn
               // alive but `persist` (next to this) refuses to write the old document's record.
               const priorChangeset = priorChangesetState?.changeset ?? session.changeset;
-              const staleRecord =
-                priorChangeset.url !==
-                ((await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl);
+              // The record is keyed to the DOCUMENT (last committed) URL, and so is the re-seed:
+              // seeding with the live `tabUrl` after a pushState/hash change made `persist`'s guard
+              // (same chain, below) refuse every write for the rest of the session.
+              const documentUrl =
+                (await readCommittedUrl(tabId)) ?? lastCommittedUrl.get(tabId) ?? tabUrl;
+              const staleRecord = priorChangeset.url !== documentUrl;
               const store = new ChangesetStore(
                 staleRecord
                   ? // Re-seed EMPTY for the new URL but KEEP the session's conversation id (#168
@@ -1283,7 +1296,11 @@ export default defineBackground(() => {
                     // Safe to carry over: it is also the handoff idempotency key, so keeping it
                     // lets a Ship after the nav reuse the same task. Edits are still wiped; only
                     // the history/thread identity survives the nav.
-                    emptyChangeset(tabUrl, new Date().toISOString(), session.changeset.sessionId)
+                    emptyChangeset(
+                      documentUrl,
+                      new Date().toISOString(),
+                      session.changeset.sessionId,
+                    )
                   : priorChangeset,
                 { redoStack: staleRecord ? undefined : priorChangesetState?.redoStack },
               );
