@@ -2,7 +2,8 @@ import { BRIDGE_SOURCE, type BridgeMethod, BridgeRequest, BridgeResponse } from 
 
 // The MAIN-world bridge — transport for the isolated content world to call the page's own JS world
 // (`src/entrypoints/injected.content.ts`). Only the MAIN world can read page globals (framework
-// internals, chart-lib instances); it answers a NARROW, READ-ONLY RPC over `window.postMessage`.
+// internals, chart-lib instances); it answers a NARROW RPC over `window.postMessage` (reads, plus page-ops `pageCall`, which
+// invokes page-owned functions by path behind `src/dom/page-main-ops.ts`'s guard).
 // The origin / `source === window` / per-request nonce checks ROUTE replies to their request; they
 // do NOT authenticate the responder (see `fromSameWindow`) — every result is untrusted page-derived
 // content. NOTHING secret ever crosses — MAIN == the page's own, untrusted world (CLAUDE.md "MV3

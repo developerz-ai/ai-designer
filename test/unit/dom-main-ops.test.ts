@@ -53,6 +53,35 @@ describe('pathDenyReason — the boundary that keeps this from being eval', () =
     }
   });
 
+  it('refuses a denied capability reached through a window alias or a nested object', () => {
+    // A root-only check let every one of these through: `window`, `self`, `globalThis`, `top`,
+    // `parent`, `frames` and `document.defaultView` are the page window itself.
+    for (const path of [
+      'window.fetch',
+      'self.localStorage',
+      'globalThis.XMLHttpRequest',
+      'top.location.href',
+      'parent.postMessage',
+      'frames.open',
+      'document.defaultView.fetch',
+      'window.window.eval',
+      'window.navigator.sendBeacon',
+    ]) {
+      expect([path, pathDenyReason(path)]).not.toEqual([path, null]);
+    }
+  });
+
+  it('refuses cookie and opener reads, which exfiltrate the session or reach another window', () => {
+    for (const path of [
+      'document.cookie',
+      'window.document.cookie',
+      'cookieStore.getAll',
+      'opener',
+    ]) {
+      expect([path, pathDenyReason(path)]).not.toEqual([path, null]);
+    }
+  });
+
   it('allows an ordinary page API path', () => {
     for (const path of ['myChart.update', '__NEXT_DATA__.props.pageProps', 'app.store.state']) {
       expect([path, pathDenyReason(path)]).toEqual([path, null]);
@@ -86,6 +115,11 @@ describe('pageCall', () => {
     const res = runMainOp({ op: 'pageCall', path: 'harmlessHelper', args: ['alert(1)'] }, w);
     expect(res.ok).toBe(false);
     expect(res.ok ? '' : res.error).toContain('code-construction');
+  });
+
+  it('refuses pageValue on document.cookie', () => {
+    const res = runMainOp({ op: 'pageValue', path: 'document.cookie' }, win());
+    expect(res.ok).toBe(false);
   });
 
   it('reports a page-thrown error as an answer rather than failing the turn', () => {

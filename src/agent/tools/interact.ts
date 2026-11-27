@@ -112,8 +112,9 @@ export function createInteractTools({ control, nav }: InteractDeps) {
     handleDialog: tool({
       description:
         'Arm the answer for a native dialog (alert / confirm / prompt) that YOUR next action will ' +
-        'raise: `accept` = OK vs Cancel, `promptText` fills a prompt(). Only for dialogs the agent ' +
-        'triggers — a dialog the user raised is never dismissed for them.',
+        'raise: `accept` = OK vs Cancel, `promptText` fills a prompt(). Limit: it answers dialogs ' +
+        "raised in the extension's isolated world only — a dialog the PAGE's own script opens is " +
+        'not answered and waits for the user. A dialog the user raised is never dismissed for them.',
       inputSchema: HandleDialogInput.omit({ type: true }),
       outputSchema: ToolResult,
       execute: (input, { abortSignal }) => control({ type: 'handleDialog', ...input }, abortSignal),

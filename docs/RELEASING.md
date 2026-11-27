@@ -5,7 +5,9 @@ How a Developerz.ai Designer release is cut. Tag → CI builds the optimized zip
 ## Versioning
 
 **The git tag is the version.** `wxt.config.ts` reads `GITHUB_REF_NAME` (or `EXT_VERSION`
-locally) and writes it into the manifest — nothing to bump by hand, nothing to keep in sync.
+locally) and writes it into the manifest. `package.json`'s `version` is only the fallback for an
+untagged build (`bun run build` on a branch), so bump it in the release PR to keep local builds
+honest — the tag, not `package.json`, is what ships.
 
 | Tag | manifest `version` | manifest `version_name` |
 |--|--|--|
@@ -26,11 +28,12 @@ git push origin v1.4.0
 
 The `Release` workflow (`.github/workflows/release.yml`) then:
 
+0. Runs a read-only `verify` job first: it refuses a run that is not on a `v*` tag (case-sensitive), then `bun run postinstall`, `lint`, `typecheck`, `test` (unit + integration); nothing is built unless it passes. It does **not** run CI's `Build extension` or `Test (e2e)` — cut the tag from a `main` commit whose CI run is green.
 1. Installs deps (`bun install --frozen-lockfile`).
 2. Builds the production Chrome zip + signed `.crx` (`bun run release` = `wxt build && pack-crx && wxt zip`). Signed with the `CRX_PRIVATE_KEY` repo secret when set — that key fixes the extension ID.
 3. Builds the Firefox zip (`wxt build -b firefox && wxt zip -b firefox`).
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
-5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build.
+5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build. **A prerelease tag (`v1.4.0-beta.1`, anything with a `-`) never reaches the store**: it is marked a GitHub prerelease and both store steps skip.
 
 `workflow_dispatch` is also enabled for manual runs — dispatch it **on a tag** (`gh workflow run release.yml --ref v1.4.0`). On a branch the build reads `package.json`'s version and the GitHub Release step fails: a release needs a tag.
 

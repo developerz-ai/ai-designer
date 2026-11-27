@@ -20,7 +20,7 @@ import type { SwToPanel } from '@/shared/messages';
 // `#imports`), so this drives the REAL GlobalLogStore/turn-log modules and mirrors only the
 // handler glue — same approach as thread-memory.test.ts.
 
-/** Mirrors background.ts's `postTurnlessError` log half (the panel push is irrelevant here). */
+/** Mirrors background.ts's `rejectTurnless` log half (the rejected ack is irrelevant here). */
 function postTurnlessError(globalLog: GlobalLogStore, message: string): void {
   const update: SwToPanel = { type: 'error', message };
   const entry = logEntryFor(update, Date.now());
