@@ -8,12 +8,15 @@ import { describe, expect, it } from 'vitest';
 // needs no `wxt` import.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const config = readFileSync(resolve(__dirname, '../../wxt.config.ts'), 'utf8');
-const excluded = config.match(/excludeSources:\s*\[([^\]]*)\]/)?.[1] ?? '';
+// The array literal, with comment lines dropped so a commented-out pattern never counts.
+const excluded = (config.match(/excludeSources:\s*\[([^\]]*)\]/)?.[1] ?? '')
+  .split('\n')
+  .filter((line) => !/^\s*\/\//.test(line))
+  .join('\n');
+const patterns = Array.from(excluded.matchAll(/'([^']+)'/g), (m) => m[1]);
 
 describe('wxt zip sources', () => {
-  it('never packs the signing key or a local .env', () => {
-    for (const pattern of ["'keys/**'", "'.env'", "'.env.local'"]) {
-      expect(excluded, pattern).toContain(pattern);
-    }
+  it('never packs the signing key, any PEM, or any local .env file', () => {
+    expect(patterns).toEqual(expect.arrayContaining(['keys/**', '**/*.pem', '.env', '.env.*']));
   });
 });

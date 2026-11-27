@@ -45,9 +45,9 @@ export default defineConfig({
   modules: ['@wxt-dev/module-solid', '@wxt-dev/i18n/module'],
   // `wxt zip -b firefox` also emits a SOURCES zip for AMO review, packed from the repo root. It does
   // not read .gitignore: a local run packed keys/designer.pem — the signing key that IS the
-  // extension ID — plus any local .env with a provider key. test/unit/zip-sources.test.ts pins this.
+  // extension ID — plus any local .env / .env.* with a provider key. test/unit/zip-sources.test.ts pins this.
   zip: {
-    excludeSources: ['keys/**', '.env', '.env.local', '.env.*.local'],
+    excludeSources: ['keys/**', '**/*.pem', '.env', '.env.*'],
   },
   manifest: ({ browser }) => ({
     ...VERSION_FIELDS,
