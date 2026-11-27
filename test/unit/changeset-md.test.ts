@@ -129,4 +129,9 @@ describe('changeset-md: page content cannot break out of the brief’s structure
       ),
     ).not.toThrow();
   });
+
+  it('renders empty copy as a word and keeps a value’s edge spaces', () => {
+    const md = renderChangeset(changeset([edit({ text: { before: '', after: ' Save ' } })]));
+    expect(md).toContain('**Copy:** *(empty)* → `  Save  `');
+  });
 });

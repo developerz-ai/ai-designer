@@ -37,8 +37,12 @@ function fenced(lang: string, body: string): string {
  *  backtick. Line breaks fold to spaces — a span cannot hold a block. */
 function code(value: string): string {
   const flat = value.replace(/[\r\n]+/g, ' ');
+  // An empty span (two backticks) is not a code span at all; say so in words instead.
+  if (flat === '') return '*(empty)*';
   const ticks = '`'.repeat(longestBacktickRun(flat) + 1);
-  const pad = flat.startsWith('`') || flat.endsWith('`') ? ' ' : '';
+  // CommonMark strips ONE space from each side when both sides have one, so a value that starts or
+  // ends with a space or a backtick gets a pad on BOTH sides: what is stripped is only the pad.
+  const pad = /^[ `]|[ `]$/.test(flat) ? ' ' : '';
   return `${ticks}${pad}${flat}${pad}${ticks}`;
 }
 
