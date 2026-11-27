@@ -92,9 +92,39 @@ function isGeneratedClass(name: string): boolean {
 const LANDMARK_TAGS = new Set(['html', 'body', 'main', 'header', 'footer', 'nav', 'aside', 'form']);
 
 // Separates two shadow-boundary segments in a `shadow`-strategy value. Always spaced, so it never
-// collides with the css-path child combinator (` > `) nor with an unspaced `>>>` inside a quoted
-// attribute value — `split`/`join` on this exact literal are round-trip safe.
+// collides with the css-path child combinator (` > `). A quoted attribute value can still CONTAIN
+// it (`[aria-label="a >>> b"]`), so splitting goes through {@link splitShadowPath}, never a bare
+// `split`.
 export const SHADOW_COMBINATOR = ' >>> ';
+
+/** Split a selector on {@link SHADOW_COMBINATOR} where it sits OUTSIDE a quoted string or an
+ *  attribute bracket. One element back = not a shadow path. */
+export function splitShadowPath(value: string): string[] {
+  const out: string[] = [];
+  let quote: string | null = null;
+  let brackets = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const c = value[i];
+    if (c === '\\') {
+      i += 1; // an escaped char is never a quote, bracket or combinator
+    } else if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === '[') {
+      brackets += 1;
+    } else if (c === ']') {
+      brackets = Math.max(0, brackets - 1);
+    } else if (brackets === 0 && value.startsWith(SHADOW_COMBINATOR, i)) {
+      out.push(value.slice(start, i));
+      i += SHADOW_COMBINATOR.length - 1;
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out;
+}
 
 function attr(el: ElementLike, name: string): string | null {
   const v = el.getAttribute(name);
@@ -242,7 +272,7 @@ export function resolveShadowSelector(root: ParentNode, value: string): Element 
   // XPath values arrive here too (the overlay highlight and the widget driver both replay stored
   // selectors through this function), and they are not host-paths — resolve them directly.
   if (isXPath(value)) return resolveXPath(root, value);
-  const segments = value.split(SHADOW_COMBINATOR);
+  const segments = splitShadowPath(value);
   let scope: ParentNode | null = root;
   let found: Element | null = null;
   for (let i = 0; i < segments.length; i += 1) {
@@ -509,9 +539,17 @@ function make(value: string, strategy: SelectorStrategy, fragile = false): Stabl
 }
 
 function cssValue(v: string): string {
-  // Escape the backslash FIRST (else escaping `"` would double-count the `\` it emits), then the
-  // quote — otherwise a value containing `\` yields a broken/invalid attribute selector.
-  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  // One pass, char by char, so an emitted escape is never re-escaped: `\` and `"` get a backslash
+  // (else the attribute selector breaks or closes early). A raw newline (or any C0 control / DEL) is illegal inside a CSS string, so `aria-label="a\nb"` must
+  // become `"a\a b"`: hex escape + the terminating space, as in `cssEscape`; NUL becomes U+FFFD.
+  const escaped = Array.from(v, (ch) => {
+    const c = ch.charCodeAt(0);
+    if (c === 0x00) return '\uFFFD';
+    if (c <= 0x1f || c === 0x7f) return `\\${c.toString(16)} `;
+    if (ch === '\\' || ch === '"') return `\\${ch}`;
+    return ch;
+  }).join('');
+  return `"${escaped}"`;
 }
 
 // Serialize a string as a CSS identifier (CSSOM "serialize an identifier").

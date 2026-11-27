@@ -173,7 +173,12 @@ export function createOverlay(doc: Document = document): Overlay {
   }
 
   function ensureUi(): Ui {
-    if (ui) return ui;
+    if (ui) {
+      // A Turbo / pjax navigation swaps <body> wholesale and takes our host with it; re-attach the
+      // (intact) host instead of narrating into a detached tree nobody can see.
+      if (!ui.host.isConnected) (doc.body ?? doc.documentElement).appendChild(ui.host);
+      return ui;
+    }
     const host = doc.createElement('div');
     host.id = OVERLAY_HOST_ID;
     host.setAttribute('data-dz-designer', 'overlay');
@@ -276,16 +281,17 @@ export function createOverlay(doc: Document = document): Overlay {
   }
 
   function step(s: OverlayStep): void {
-    if (!enabled || !ui) return;
+    if (!enabled) return;
+    const view = ensureUi();
     const act = s.kind === 'act';
-    ui.now.textContent = s.label;
-    ui.now.classList.toggle('dz-act', act);
+    view.now.textContent = s.label;
+    view.now.classList.toggle('dz-act', act);
 
     const item = mkEl('li', 'dz-log-item');
     item.textContent = s.label;
-    ui.log.insertBefore(item, ui.log.firstChild);
-    while (ui.log.childElementCount > MAX_LOG) {
-      const last = ui.log.lastElementChild;
+    view.log.insertBefore(item, view.log.firstChild);
+    while (view.log.childElementCount > MAX_LOG) {
+      const last = view.log.lastElementChild;
       if (!last) break;
       last.remove();
     }

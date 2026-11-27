@@ -7,6 +7,7 @@ import {
   resolveShadowSelector,
   resolveXPath,
   SHADOW_COMBINATOR,
+  splitShadowPath,
   xpathFor,
 } from '@/dom/selector';
 
@@ -398,6 +399,32 @@ describe('shadow-aware selectors', () => {
     expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}button`)).toBe(null);
     expect(resolveShadowSelector(document, `#nope${SHADOW_COMBINATOR}button`)).toBe(null);
     expect(resolveShadowSelector(document, `#host${SHADOW_COMBINATOR}`)).toBe(null);
+  });
+});
+
+describe('attribute values with special characters', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('a newline in an aria-label still yields a selector that resolves', () => {
+    const btn = document.createElement('button');
+    btn.setAttribute('aria-label', 'line one\nline two');
+    document.body.append(btn, document.createElement('button'));
+    const sel = pickUnique(btn, document);
+    expect(sel.value).not.toContain('\n');
+    expect(document.querySelectorAll(sel.value)).toHaveLength(1);
+    expect(document.querySelector(sel.value)).toBe(btn);
+  });
+
+  it('a shadow path whose segment quotes ` >>> ` splits only on the real boundary', () => {
+    document.body.innerHTML = '<x-host id="h"></x-host>';
+    const host = document.getElementById('h');
+    const root = host?.attachShadow({ mode: 'open' });
+    if (!root) throw new Error('fixture');
+    root.innerHTML = '<i title="x >>> y">in</i>';
+    expect(splitShadowPath('#h >>> [title="x >>> y"]')).toEqual(['#h', '[title="x >>> y"]']);
+    expect(resolveShadowSelector(document, '#h >>> [title="x >>> y"]')?.textContent).toBe('in');
   });
 });
 

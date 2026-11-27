@@ -146,6 +146,15 @@ describe('safeValue — the page is hostile', () => {
     expect(safeValue(a)).toEqual({ name: 'a', self: '[Circular]' });
   });
 
+  it('serializes a shared, NON-cyclic reference every time it appears', () => {
+    const shared = { x: 1 };
+    expect(safeValue({ a: shared, b: shared, list: [shared, shared] })).toEqual({
+      a: { x: 1 },
+      b: { x: 1 },
+      list: [{ x: 1 }, { x: 1 }],
+    });
+  });
+
   it('survives a getter that throws', () => {
     const evil = {};
     Object.defineProperty(evil, 'trap', {
@@ -196,6 +205,22 @@ describe('frameworkState', () => {
     expect(data.framework).toBe('react');
     expect(data.componentName).toBe('ProductCard');
     expect(data.props).toEqual({ variant: 'sale' });
+  });
+
+  it('resolves a ` >>> ` shadow path and an XPath, like every other DOM tool', () => {
+    const host = document.createElement('x-card');
+    host.id = 'host';
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = '<span class="inner"></span>';
+    const inner = root.querySelector('.inner');
+    function InnerThing() {}
+    (inner as unknown as Record<string, unknown>).__reactFiber$q = { elementType: InnerThing };
+
+    const shadow = runMainOp({ op: 'frameworkState', selector: '#host >>> .inner' }, win());
+    expect(shadow).toMatchObject({ ok: true, data: { componentName: 'InnerThing' } });
+    const xpath = runMainOp({ op: 'frameworkState', selector: '//*[@id="card"]' }, win());
+    expect(xpath.ok).toBe(true);
   });
 
   it('says it found nothing rather than inventing a framework', () => {

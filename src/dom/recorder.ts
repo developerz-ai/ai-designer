@@ -1,4 +1,4 @@
-import type { ElementMutation } from '@/dom/mutate';
+import type { ElementMutation, Reversible } from '@/dom/mutate';
 import type { StructuralChange } from '@/shared/changeset';
 import type { ContentToSw, MutationEvent, StableSelector } from '@/shared/messages';
 
@@ -36,30 +36,46 @@ export interface RecordExtras {
   intent?: string;
 }
 
+/** The undo-log record of a PAGE-level mutation (`injectCss`): no element target, so it is not a
+ *  `MutationEvent` and never rides `recorder-event` / `recorder-revert` — but it still sits on the
+ *  ONE LIFO stack, so `undo` reverts it in the order it was applied, interleaved with element edits. */
+export interface PageUndoEvent {
+  kind: 'injectCss';
+  /** The normalized sheet id the injection wrote (mutate.ts `cssIdent`). */
+  sheetId: string;
+  /** The sheet text a revert restores; `null` = the revert removes the sheet. */
+  restoredCss: string | null;
+}
+
+/** What `undo` / `drop` hand back: the element event, or the page-level record. */
+export type UndoEvent = MutationEvent | PageUndoEvent;
+
 export interface Recorder {
   /** Record an applied mutation against `selector`: emits `recorder-event`, stacks the undo,
    *  and returns the emitted event. The mutation's own typed fields (#9: styleChanges /
    *  attrChange / classChange / textChange) and the caller's `extras` fold onto the event. */
   record(selector: StableSelector, mutation: ElementMutation, extras?: RecordExtras): MutationEvent;
+  /** Stack a PAGE-level mutation's undo on the same log (no bus event — the caller emits its own
+   *  page-level push). A successful `undo` of it emits nothing: there is no MutationEvent to retract. */
+  recordPage(event: PageUndoEvent, mutation: Reversible): void;
   /** Reverse the most recent recorded mutation (LIFO), returning its event — or `null` when the
    *  log is empty. Reverses the exact DOM change via the mutation's own `undo()`. A mutation that
    *  FAILS to revert keeps its entry (re-pushed) and throws — see `drop` for the deliberate
    *  escape. A SUCCESSFUL revert also emits `recorder-revert` so the SW drops the buffered event:
    *  the change no longer exists on the page, so it must never fold into the durable changeset. */
-  undo(): MutationEvent | null;
+  undo(): UndoEvent | null;
   /** Pop the most recent entry WITHOUT reverting it (the `discardUndo` tool's escape for a
    *  permanently churned anchor wedging the LIFO top), returning its event — or `null` when empty. */
-  drop(): MutationEvent | null;
+  drop(): UndoEvent | null;
   /** Number of undoable mutations currently on the stack. */
   size(): number;
   /** Drop the undo log without reversing anything (e.g. a session reset). */
   clear(): void;
 }
 
-interface Entry {
-  event: MutationEvent;
-  mutation: ElementMutation;
-}
+type Entry =
+  | { page: false; event: MutationEvent; mutation: Reversible }
+  | { page: true; event: PageUndoEvent; mutation: Reversible };
 
 /**
  * Build a recorder. `now` is injected (defaults to `Date.now`) so tests can assert deterministic
@@ -91,12 +107,16 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
       ...(extras?.structural ? { structural: extras.structural } : {}),
       ...(extras?.frameworkHints ? { frameworkHints: extras.frameworkHints } : {}),
     };
-    stack.push({ event, mutation });
+    stack.push({ page: false, event, mutation });
     emit({ type: 'recorder-event', event });
     return event;
   }
 
-  function undo(): MutationEvent | null {
+  function recordPage(event: PageUndoEvent, mutation: Reversible): void {
+    stack.push({ page: true, event, mutation });
+  }
+
+  function undo(): UndoEvent | null {
     const entry = stack.pop();
     if (!entry) return null;
     try {
@@ -113,7 +133,7 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
     // must leave the SW's pending buffer (else turn-end would fold a reverted change into the
     // durable changeset: a phantom edit). Only the success path emits: a failed revert kept the
     // change live (its event stays truthful), and `drop()` deliberately does too.
-    emit({ type: 'recorder-revert', event: entry.event });
+    if (!entry.page) emit({ type: 'recorder-revert', event: entry.event });
     return entry.event;
   }
 
@@ -121,13 +141,14 @@ export function createRecorder(emit: RecorderEmit, now: () => number = () => Dat
   // anchor wedges the LIFO top (every undo retries the same failing entry, bricking the older
   // ones). Agent-surface only via the `discardUndo` tool, so the discard is a loud, chosen act —
   // never a silent auto-drop.
-  function drop(): MutationEvent | null {
+  function drop(): UndoEvent | null {
     const entry = stack.pop();
     return entry ? entry.event : null;
   }
 
   return {
     record,
+    recordPage,
     undo,
     drop,
     size: () => stack.length,

@@ -142,7 +142,7 @@ export interface Mutator {
   injectCss(
     css: string,
     id?: string,
-  ): PageMutation<{ bytes: number; id: string; replaced: boolean }>;
+  ): PageMutation<{ bytes: number; id: string; replaced: boolean; prior: string | null }>;
   setViewport(size: { width: number; height?: number }): PageMutation<{
     width: number;
     height: number | null;
@@ -408,6 +408,38 @@ export function attrDenyReason(name: string, value: string): string | null {
   return null;
 }
 
+// Attributes whose write on THIS element is a resource load no matter the value: a `<link>`'s
+// `href`/`rel`/`imagesrcset` (stylesheet, preload, icon, manifest… — `rel=stylesheet` + a remote
+// href is `@import` by another name) and `<base href>` (re-points every relative URL on the page).
+// The name-only deny-list above can't see the element, so this is the element-aware half.
+const ELEMENT_LOAD_ATTRS: Record<string, ReadonlySet<string>> = {
+  link: new Set(['href', 'rel', 'imagesrcset']),
+  base: new Set(['href']),
+};
+
+/** {@link attrDenyReason} plus the element-specific load channels, or `null` when safe. */
+export function elementAttrDenyReason(el: Element, name: string, value: string): string | null {
+  const generic = attrDenyReason(name, value);
+  if (generic) return generic;
+  const attr = name.trim().toLowerCase();
+  if (ELEMENT_LOAD_ATTRS[el.localName]?.has(attr)) {
+    return `Refused: "${name}" on <${el.localName}> loads or re-points a remote resource; it is not editable. Use injectCss for page-wide styles.`;
+  }
+  return null;
+}
+
+/** Why a `setText` on this element is refused (a script/stylesheet body is code, not copy), or
+ *  `null`. A `<style>` body gets the SAME policy `injectCss` enforces, so `setText` on a page sheet
+ *  is not an `@import` / remote `url()` side door; a `<script>` body is refused outright — writing
+ *  text into a not-yet-started script runs it. */
+export function textDenyReason(el: Element, value: string): string | null {
+  if (el.localName === 'script') {
+    return 'Refused: setText on <script> would write executable code into the page.';
+  }
+  if (el.localName === 'style') return cssDenyReason(value);
+  return null;
+}
+
 /** A tree that can host an overrides sheet: the page document, or a shadow root (whose elements
  *  document CSS never reaches — see `rootOf`). */
 type SheetRoot = Document | ShadowRoot;
@@ -599,6 +631,9 @@ export function createMutator(doc: Document = document): Mutator {
     // #9: the typed delta carries the flattened TEXT (what the model sees as changing), bounded —
     // the lossless innerHTML above stays the undo/record state.
     const textBefore = (el.textContent ?? '').slice(0, TEXT_CHANGE_BEFORE_CAP);
+    // Safe at the source, like setAttr: the executor checks first for a clean refusal.
+    const denied = textDenyReason(el, value);
+    if (denied) throw new Error(denied);
     el.textContent = value;
     return {
       kind: 'setText',
@@ -616,7 +651,7 @@ export function createMutator(doc: Document = document): Mutator {
     // Safe at the source: refuse a denied write even for a direct caller that skips the executor's
     // pre-check. The executor (execute.ts) checks first so the agent gets a clean error ToolResult
     // rather than this throw.
-    const denied = attrDenyReason(name, value);
+    const denied = elementAttrDenyReason(el, name, value);
     if (denied) throw new Error(denied);
     const prev = el.getAttribute(name); // string | null — null means the attribute was absent
     el.setAttribute(name, value);
@@ -943,7 +978,7 @@ export function createMutator(doc: Document = document): Mutator {
   function injectCss(
     css: string,
     id = 'default',
-  ): PageMutation<{ bytes: number; id: string; replaced: boolean }> {
+  ): PageMutation<{ bytes: number; id: string; replaced: boolean; prior: string | null }> {
     const denied = cssDenyReason(css);
     if (denied) throw new Error(denied);
 
@@ -967,7 +1002,9 @@ export function createMutator(doc: Document = document): Mutator {
     return {
       // `replaced` lets the model tell "I refined my design system" from "I added a second one" —
       // the distinction that makes iterate-and-refine legible in the changeset.
-      computed: { bytes: css.length, id: key, replaced: priorText !== null },
+      // `prior` is what undo puts back (null = undo removes the sheet) — the executor needs it to
+      // tell the SW what the changeset's stylesheet becomes on revert.
+      computed: { bytes: css.length, id: key, replaced: priorText !== null, prior: priorText },
       undo() {
         if (priorText === null) style.remove();
         else style.textContent = priorText;

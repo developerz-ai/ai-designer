@@ -1,4 +1,10 @@
-import { isXPath, pickUnique, resolveShadowSelector, resolveXPath } from '@/dom/selector';
+import {
+  isXPath,
+  pickUnique,
+  resolveShadowSelector,
+  resolveXPath,
+  splitShadowPath,
+} from '@/dom/selector';
 import type {
   A11yNode,
   A11yResult,
@@ -24,7 +30,8 @@ import type {
  *  this every shadow-nested target silently resolved to nothing (#165 F4). The replay yields at
  *  most one element, so the result is `[el]` or `[]`. */
 export function queryAll(root: ParentNode, selector: string): Element[] {
-  if (selector.includes('>>>')) {
+  // Quote-aware: a ` >>> ` INSIDE an attribute value (`[aria-label="a >>> b"]`) is plain CSS.
+  if (splitShadowPath(selector).length > 1) {
     const el = resolveShadowSelector(root, selector);
     return el ? [el] : [];
   }

@@ -26,6 +26,13 @@ function byId(id: string): HTMLElement {
   return el;
 }
 
+describe('queryAll — ` >>> ` inside an attribute value is plain CSS', () => {
+  it('matches every element, not just a shadow-path first hit', () => {
+    mount('<b aria-label="a >>> b">1</b><b aria-label="a >>> b">2</b>');
+    expect(query(document, '[aria-label="a >>> b"]').matches).toHaveLength(2);
+  });
+});
+
 describe('query', () => {
   it('returns a stable, non-fragile selector for a data-testid element', () => {
     mount('<button data-testid="cta">Buy</button>');

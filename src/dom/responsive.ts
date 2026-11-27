@@ -1,3 +1,4 @@
+import { isOwnChrome } from '@/dom/own-chrome';
 import { queryAll } from '@/dom/read';
 import { pickUnique } from '@/dom/selector';
 import type { StableSelector } from '@/shared/changeset';
@@ -472,6 +473,9 @@ function scanFixedOverlaps(
   const pinned: { el: Element; box: Box }[] = [];
   for (const el of capped(queryAll(root, '*'))) {
     if (pinned.length >= MAX_FIXED) break;
+    // Our picker/overlay hosts are fixed + full-viewport: each would "overlap" every pinned page
+    // element and read as a finding about the user's page.
+    if (isOwnChrome(el)) continue;
     const position = probe.computed(el, 'position');
     if ((position === 'fixed' || position === 'sticky') && isVisible(el, probe)) {
       pinned.push({ el, box: probe.rect(el) });
