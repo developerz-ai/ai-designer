@@ -16,16 +16,48 @@ env:
   BUN_VERSION: 1.4.4
 
 jobs:
+  # The tag ships what it points at, so it must pass the same validation the PR gate runs. A tag
+  # cut on a red commit otherwise built, attached and --auto-published to the store unchecked.
+  verify:
+    name: Verify (lint + typecheck + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: ./.github/actions/bun-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Prepare WXT types
+        run: bun run postinstall
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Unit + integration tests
+        run: bun run test
+
   release:
+    needs: [verify]
     # Step-`if` cannot read the secrets context (actionlint availability matrix) — the
     # gate rides job env instead: HAS_CWS is "true" iff CWS_EXTENSION_ID is set.
+    # PRERELEASE is "true" for a tag with a semver suffix (v1.4.0-beta.1): it is marked a GitHub
+    # prerelease and NEVER goes to the Chrome Web Store, which has no prerelease channel here and
+    # would --auto-publish it to every user.
     env:
       HAS_CWS: ${{ secrets.CWS_EXTENSION_ID != '' }}
+      PRERELEASE: ${{ contains(github.ref_name, '-') }}
     name: Build + publish release
     # GitHub-hosted runner: this repository is public.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # A release needs a tag: on a branch the manifest reads package.json's version and the
+      # GitHub Release step refuses ("GitHub Releases requires a tag") after a full build.
+      - name: Require a v* tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          echo "::error::Run the release on a v* tag (push one, or dispatch with --ref <tag>), not ${GITHUB_REF}."
+          exit 1
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:
@@ -52,6 +84,7 @@ jobs:
             build/*.crx
           generate_release_notes: true
           fail_on_unmatched_files: true
+          prerelease: ${{ env.PRERELEASE == 'true' }}
 
       # --- Chrome Web Store publish (secret-guarded, #28) -------------------------
       # Runs only when the CWS secrets exist (docs/STORE-SETUP.md §2): until they are set —
@@ -61,10 +94,10 @@ jobs:
       # upload carrying ours is rejected) — it OVERWRITES the zip under the same name, so it
       # must run after the GitHub Release step has already attached the self-hosted zip.
       - name: Build store zip
-        if: env.HAS_CWS == 'true'
+        if: env.HAS_CWS == 'true' && env.PRERELEASE != 'true'
         run: bun run zip:store
       - name: Publish to Chrome Web Store
-        if: env.HAS_CWS == 'true'
+        if: env.HAS_CWS == 'true' && env.PRERELEASE != 'true'
         run: >
           bunx chrome-webstore-upload-cli@3 upload --auto-publish
           --source build/*-chrome.zip
