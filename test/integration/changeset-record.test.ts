@@ -156,10 +156,10 @@ function makeSw() {
     turnTabUrl = tabUrl;
     const priorState = persister.load();
     const prior = priorState?.changeset ?? sessionMirror.changeset;
-    const stale =
-      prior.url !== (persistedCommitted.get(TAB_ID) ?? lastCommitted.get(TAB_ID) ?? tabUrl);
+    const documentUrl = persistedCommitted.get(TAB_ID) ?? lastCommitted.get(TAB_ID) ?? tabUrl;
+    const stale = prior.url !== documentUrl;
     store = new ChangesetStore(
-      stale ? emptyChangeset(tabUrl, '2026-07-16T00:00:00Z', BOOT_SESSION_ID) : prior,
+      stale ? emptyChangeset(documentUrl, '2026-07-16T00:00:00Z', BOOT_SESSION_ID) : prior,
       { redoStack: stale ? undefined : priorState?.redoStack },
     );
     if (stale) persistChangeset();
@@ -1231,6 +1231,33 @@ describe('#9 review round 4: retract op / in-turn store / nav-clear race / evict
     sw.bootTurn(`${URL}#pricing`);
     expect(sw.store.current.edits).toHaveLength(1);
     expect(sw.store.current.url).toBe(URL);
+    expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
+    expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
+  });
+});
+
+describe('a session that starts after a same-document navigation', () => {
+  it('persists its edits: the record is keyed to the document URL, not the pushState URL', async () => {
+    const sw = makeSw();
+    // The page loaded at URL (the committed stamp), then the SPA pushState'd to #pricing BEFORE
+    // the first turn — so the session was created from the live tab.url.
+    sw.persistedCommitted.set(TAB_ID, URL);
+    sw.sessionMirror.changeset = emptyChangeset(
+      `${URL}#pricing`,
+      '2026-07-14T00:00:00Z',
+      SESSION_ID,
+    );
+    sw.bootTurn(`${URL}#pricing`);
+    await runTool(sw.tools.recordEdit.execute, {
+      intent: 'Make the primary CTA blue',
+      selector: { value: '#cta', strategy: 'id', fragile: false },
+      changes: [{ prop: 'color', before: '#000', after: '#00f' }],
+      attrs: [],
+      classes: [],
+      frameworkHints: [],
+    });
+    // Before the fix the re-seed used the live URL while the persist guard compared against the
+    // committed one, so every persist returned early: Diff and Ship were empty forever.
     expect(sw.persister.load()?.changeset.edits).toHaveLength(1);
     expect(sw.sessionMirror.changeset.edits).toHaveLength(1);
   });
