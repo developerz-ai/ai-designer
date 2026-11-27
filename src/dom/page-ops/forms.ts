@@ -63,6 +63,13 @@ function CSS_ESCAPE(v: string): string {
   return v.replace(/["\\]/g, '\\$&');
 }
 
+/** A field that holds (or held) a secret: a password input, or one whose `autocomplete` says it is a
+ *  password — a show-password toggle flips `type` to `text` while the value is still the password. */
+function isSecretField(el: Field): boolean {
+  if (!(el instanceof HTMLInputElement)) return false;
+  return el.type === 'password' || /\bpassword\b/i.test(el.autocomplete ?? '');
+}
+
 /** Every field under `root`, with the state a form-debugging pass actually needs — including the
  *  browser's own validation verdict, which is invisible in a screenshot. */
 export function readFormState(root: ParentNode): FieldState[] {
@@ -71,24 +78,23 @@ export function readFormState(root: ParentNode): FieldState[] {
     if (!isField(el) || out.length >= MAX_FIELDS) break;
     const checkable =
       el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
+    // Secret-ness is sampled BEFORE and AFTER `checkValidity()`: its `invalid` event runs page
+    // handlers, which can flip a password field to text (or back) mid-read.
+    const secretBefore = isSecretField(el);
+    const valid = typeof el.checkValidity === 'function' ? el.checkValidity() : true;
+    const secret = secretBefore || isSecretField(el);
     out.push({
       name: el.name || el.id || '',
       type: el instanceof HTMLSelectElement ? 'select' : el.type,
       // A password value is never read back: the field's presence and validity are the useful
-      // facts, and the value would land in the model transcript.
-      value:
-        el instanceof HTMLInputElement && el.type === 'password'
-          ? ''
-          : String(el.value ?? '').slice(0, MAX_VALUE),
+      // facts, and the value would land in the model transcript…
+      value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
       checked: checkable ? el.checked : null,
       disabled: el.disabled,
       required: el.required,
-      valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-      // A page validator can quote a password in its message; report the verdict only.
-      validationMessage:
-        el instanceof HTMLInputElement && el.type === 'password'
-          ? ''
-          : (el.validationMessage ?? ''),
+      valid,
+      // …and neither does its validation message, which a page validator can make quote it.
+      validationMessage: secret ? '' : (el.validationMessage ?? ''),
       label: labelFor(el),
     });
   }
@@ -126,8 +132,9 @@ export function setField(
   input: { value?: string; checked?: boolean },
 ): SetFieldResult | null {
   if (!isField(el)) return null;
-  // Decided BEFORE any event runs: a page handler could change the field's type or clear it.
-  const isPassword = el instanceof HTMLInputElement && el.type === 'password';
+  // Sampled BEFORE any event runs, and again after: a page handler can flip the field's type
+  // either way (a show-password toggle) or clear it.
+  const secretBefore = isSecretField(el);
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
     el.dispatchEvent(new (doc.defaultView?.Event ?? Event)(type, { bubbles: true }));
@@ -146,13 +153,15 @@ export function setField(
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
+  const valid = typeof el.checkValidity === 'function' ? el.checkValidity() : true;
+  const secret = secretBefore || isSecretField(el);
   return {
     // Same rule as readFormState: a password value never reaches the model transcript…
-    value: isPassword ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
+    value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
     checked: checkable ? el.checked : null,
-    valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
+    valid,
     // …and neither does a password field's validation MESSAGE: a page validator can quote the
     // rejected value (and even clear the field first), so only the validity verdict is reported.
-    validationMessage: isPassword ? '' : (el.validationMessage ?? ''),
+    validationMessage: secret ? '' : (el.validationMessage ?? ''),
   };
 }

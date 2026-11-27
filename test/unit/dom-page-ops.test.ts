@@ -181,6 +181,39 @@ describe('forms', () => {
     expect(JSON.stringify(result)).not.toContain('hunter3');
   });
 
+  it('…even when a handler flips the password field to text (show-password) during the write', () => {
+    const el = document.getElementById('pw');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    el.addEventListener('input', () => {
+      el.setCustomValidity(`"${el.value}" is too weak`);
+      el.type = 'text';
+    });
+    const result = setField(el, { value: 'hunter5' });
+    expect(JSON.stringify(result)).not.toContain('hunter5');
+  });
+
+  it('…and when a revealed password (text, autocomplete=current-password) is read', () => {
+    document.body.innerHTML =
+      '<form id="f2"><input id="rv" type="text" autocomplete="current-password" value="hunter6"></form>';
+    const form = document.getElementById('f2');
+    if (!form) throw new Error('fixture');
+    expect(JSON.stringify(readFormState(form))).not.toContain('hunter6');
+  });
+
+  it('…and when an invalid handler reveals the password during the read', () => {
+    document.body.innerHTML = '<form id="f3"><input id="p3" type="password" required></form>';
+    const el = document.getElementById('p3') as HTMLInputElement;
+    el.value = 'hunter7';
+    el.pattern = 'x';
+    el.addEventListener('invalid', () => {
+      el.type = 'text';
+      el.setCustomValidity(`"${el.value}" rejected`);
+    });
+    const form = document.getElementById('f3');
+    if (!form) throw new Error('fixture');
+    expect(JSON.stringify(readFormState(form))).not.toContain('hunter7');
+  });
+
   it('…even when the validator quotes the password and then clears the field', () => {
     const el = document.getElementById('pw');
     if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
