@@ -99,6 +99,21 @@ describe('POST /subscribe', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects an oversized address fast, before the pattern can backtrack', async () => {
+    // A 160k-char "a@a....@" body made the email pattern backtrack for ~27s, blocking the event
+    // loop for every other request — before the captcha was even checked.
+    const huge = `a@a${'.'.repeat(160_000)}@`;
+    const started = performance.now();
+    const res = await app.request('/subscribe', json({ ...valid, email: huge }));
+    expect(res.status).toBe(400);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('400 on a non-string email (an array would pass a coercing pattern test)', async () => {
+    const res = await app.request('/subscribe', json({ ...valid, email: ['user@example.com'] }));
+    expect(res.status).toBe(400);
+  });
+
   it('400 when the captcha token is missing', async () => {
     const res = await app.request(
       '/subscribe',

@@ -38,11 +38,19 @@ const LEGACY_MODEL_STORAGE = 'selected-model';
 const StoredConfig = ProviderConfig.omit({ apiKey: true });
 
 /** Persist a provider config: non-secret fields plaintext, apiKey to the key-store. A
- *  missing/empty apiKey leaves any existing stored key intact — the panel shows a
- *  presence-only placeholder, so a re-save that only changes the model needn't re-enter
- *  the key. */
+ *  missing/empty apiKey leaves the stored key intact ONLY for the same `baseURL` — the panel
+ *  shows a presence-only placeholder, so a re-save that only changes the model needn't re-enter
+ *  the key. A blank key under a NEW baseURL clears the stored one: there is one key slot, and the
+ *  old provider's key must never be sent as a Bearer token to a different host. */
 export async function saveProviderConfig(cfg: ProviderConfig): Promise<void> {
   const { apiKey, ...rest } = ProviderConfig.parse(cfg);
+  const previous = StoredConfig.safeParse((await chrome.storage.local.get(CONFIG_KEY))[CONFIG_KEY]);
+  // With no config yet, a key already in the slot came from the legacy OpenRouter-only shim.
+  const keyOwner = previous.success ? previous.data.baseURL : OPENROUTER_BASE_URL;
+  // Ordered so no concurrent `getProviderConfig` can ever pair the NEW url with the OLD key: drop
+  // the old host's key first, then write the url, then the new key. Every intermediate read is
+  // "old url, no key", "new url, no key" or "new url, new key".
+  if (keyOwner !== rest.baseURL) await clearSecret(KEY_SECRET);
   await chrome.storage.local.set({ [CONFIG_KEY]: rest });
   if (apiKey) await setSecret(KEY_SECRET, apiKey);
 }
