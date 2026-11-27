@@ -265,6 +265,22 @@ describe('createTaskBackend', () => {
     expect(final).toEqual({ status: 'ci_green', prUrl: 'https://gh/t1/pull/1' });
   });
 
+  it('drops a PR link that is not http(s) — the panel renders it as a clickable href', async () => {
+    for (const prUrl of ['javascript:alert(1)', 'data:text/html,<b>x</b>', 'not a url']) {
+      const created = await createTaskBackend(async () => ({
+        id: 't1',
+        status: 'queued',
+        prUrl,
+      })).create(createArgs);
+      expect([prUrl, created.status?.prUrl]).toEqual([prUrl, undefined]);
+      const final = await createTaskBackend(async () => ({ status: 'pr_open', prUrl })).watch(
+        't1',
+        () => {},
+      );
+      expect([prUrl, final]).toEqual([prUrl, { status: 'pr_open' }]);
+    }
+  });
+
   it('reports an unknown status when the watch reply is unparseable', async () => {
     const execute: TaskToolExecute = async () => ({});
     const final = await createTaskBackend(execute).watch('t1', () => {});
