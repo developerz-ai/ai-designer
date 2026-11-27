@@ -84,7 +84,11 @@ export function readFormState(root: ParentNode): FieldState[] {
       disabled: el.disabled,
       required: el.required,
       valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-      validationMessage: el.validationMessage ?? '',
+      // A page validator can quote a password in its message; report the verdict only.
+      validationMessage:
+        el instanceof HTMLInputElement && el.type === 'password'
+          ? ''
+          : (el.validationMessage ?? ''),
       label: labelFor(el),
     });
   }
@@ -101,10 +105,6 @@ function nativeSet(el: Field, value: string): void {
   const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
   if (descriptor?.set) descriptor.set.call(el, value);
   else el.value = value;
-}
-
-function redact(text: string, secret: string): string {
-  return secret ? text.split(secret).join('[redacted]') : text;
 }
 
 export interface SetFieldResult {
@@ -126,6 +126,8 @@ export function setField(
   input: { value?: string; checked?: boolean },
 ): SetFieldResult | null {
   if (!isField(el)) return null;
+  // Decided BEFORE any event runs: a page handler could change the field's type or clear it.
+  const isPassword = el instanceof HTMLInputElement && el.type === 'password';
   const doc = el.ownerDocument;
   const fire = (type: string): void => {
     el.dispatchEvent(new (doc.defaultView?.Event ?? Event)(type, { bubbles: true }));
@@ -144,13 +146,13 @@ export function setField(
 
   const checkable =
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio');
-  const secret = el instanceof HTMLInputElement && el.type === 'password' ? el.value : '';
   return {
     // Same rule as readFormState: a password value never reaches the model transcript…
-    value: secret ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
+    value: isPassword ? '' : String(el.value ?? '').slice(0, MAX_VALUE),
     checked: checkable ? el.checked : null,
     valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
-    // …not even inside a page validator's message (`setCustomValidity(\`"${v}" is too weak\`)`).
-    validationMessage: redact(el.validationMessage ?? '', secret),
+    // …and neither does a password field's validation MESSAGE: a page validator can quote the
+    // rejected value (and even clear the field first), so only the validity verdict is reported.
+    validationMessage: isPassword ? '' : (el.validationMessage ?? ''),
   };
 }

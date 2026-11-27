@@ -181,6 +181,19 @@ describe('forms', () => {
     expect(JSON.stringify(result)).not.toContain('hunter3');
   });
 
+  it('…even when the validator quotes the password and then clears the field', () => {
+    const el = document.getElementById('pw');
+    if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
+    el.required = true;
+    el.addEventListener('change', () => {
+      el.setCustomValidity(`"${el.value}" was rejected`);
+      el.value = '';
+    });
+    const result = setField(el, { value: 'hunter4' });
+    expect(result?.valid).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('hunter4');
+  });
+
   it('writes through the NATIVE prototype setter so a framework tracker sees it', () => {
     const el = document.getElementById('email');
     if (!(el instanceof HTMLInputElement)) throw new Error('fixture');
