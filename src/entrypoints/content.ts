@@ -562,14 +562,13 @@ export default defineContentScript({
       });
       // A takeover must stop this instance's route poll, or every re-injection leaks one more.
       disposers.push(() => routes.dispose());
-      window.addEventListener(
-        'pagehide',
-        () => {
-          routes.dispose();
-          bridge.dispose();
-        },
-        { once: true },
-      );
+      const onPageHide = (): void => {
+        routes.dispose();
+        bridge.dispose();
+      };
+      window.addEventListener('pagehide', onPageHide, { once: true });
+      // …and a takeover removes it, or every re-injection leaves one more registered.
+      disposers.push(() => window.removeEventListener('pagehide', onPageHide));
     }
   },
 });

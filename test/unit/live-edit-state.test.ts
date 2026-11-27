@@ -46,8 +46,18 @@ describe('adoptLiveEditState — content-script takeover', () => {
     expect(second.recorder.size()).toBe(1);
     oldEvents.length = 0;
     second.recorder.undo();
+    // The edit is really reverted on the page, and the revert is reported to the NEW instance only.
+    expect(getComputedStyle(el('a')).color).not.toBe('rgb(255, 0, 0)');
     expect(oldEvents).toHaveLength(0);
-    expect(newEvents.length).toBeGreaterThan(0);
+    expect(newEvents.map((m) => m.type)).toContain('recorder-revert');
+  });
+
+  it('is not fooled by a page element whose id names a state slot', () => {
+    // DOM named access: `window.<id>` resolves to an element with that id. A string-keyed slot
+    // would have "adopted" the element and left the executor with no mutator.
+    document.body.insertAdjacentHTML('beforeend', '<div id="__dzDesignerLiveEdits"></div>');
+    const state = adoptLiveEditState(window as unknown as LiveEditHolder, () => {});
+    expect(typeof state.mutator.setStyle).toBe('function');
   });
 });
 
@@ -61,5 +71,18 @@ describe('createMutator — a second mutator on the same document', () => {
     createMutator(document).setStyle(el('b'), { color: 'rgb(0, 0, 255)' });
     expect(el('b').getAttribute(MARKER_ATTR)).not.toBe(el('a').getAttribute(MARKER_ATTR));
     expect(getComputedStyle(el('a')).color).not.toBe('rgb(0, 0, 255)');
+  });
+});
+
+describe('createMutator — markers inside a shadow root', () => {
+  it('never reuses a marker an earlier mutator stamped inside the same shadow root', () => {
+    mount('<div id="host"></div>');
+    const shadow = el('host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<p id="x">x</p><p id="y">y</p>';
+    const x = shadow.getElementById('x') as HTMLElement;
+    const y = shadow.getElementById('y') as HTMLElement;
+    createMutator(document).setStyle(x, { color: 'rgb(255, 0, 0)' });
+    createMutator(document).setStyle(y, { color: 'rgb(0, 0, 255)' });
+    expect(y.getAttribute(MARKER_ATTR)).not.toBe(x.getAttribute(MARKER_ATTR));
   });
 });

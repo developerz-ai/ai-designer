@@ -500,9 +500,20 @@ export function createMutator(doc: Document = document): Mutator {
     do {
       markerSeq += 1;
       id = `dz-${markerSeq}`;
-    } while (doc.querySelector(`[${MARKER_ATTR}="${id}"]`));
+    } while (markerTaken(el, id));
     el.setAttribute(MARKER_ATTR, id);
     return id;
+  }
+
+  // Taken in the page document OR in the element's own shadow root (a shadow tree's markers are
+  // invisible to a document query, and its rule lives in that root's sheet).
+  function markerTaken(el: Element, id: string): boolean {
+    const selector = `[${MARKER_ATTR}="${id}"]`;
+    const root = rootOf(el);
+    return (
+      doc.querySelector(selector) !== null ||
+      (root !== doc && root.querySelector(selector) !== null)
+    );
   }
 
   function setStyle(
