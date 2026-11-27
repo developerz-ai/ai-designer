@@ -6,6 +6,20 @@
 
 > **Design in the live page. Ship the real code.**
 
+<div align="center">
+
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-install-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/developerzai-designer/hjgggflaedpmilakacheejggngennfhm)
+[![GitHub release](https://img.shields.io/github/v/release/developerz-ai/ai-designer)](https://github.com/developerz-ai/ai-designer/releases/latest)
+[![CI](https://github.com/developerz-ai/ai-designer/actions/workflows/ci.yml/badge.svg)](https://github.com/developerz-ai/ai-designer/actions/workflows/ci.yml)
+[![AI-maintained](https://img.shields.io/badge/maintained%20by-developerz.ai-8a2be2.svg)](#ai-maintained)
+[![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![SolidJS](https://img.shields.io/badge/SolidJS-2C4F7C?logo=solid&logoColor=white)](https://www.solidjs.com/)
+[![Bun](https://img.shields.io/badge/Bun-000000?logo=bun&logoColor=white)](https://bun.sh/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
+
 Chrome extension. Open any page — your prod app or `localhost` — open a side-panel chat, and tell an agent what to change. It mutates the live DOM/CSS instantly so you *see* it. When you like it, click **Ship** and the agent hands the change off over **MCP** to a dev-agent backend ([developerz.ai MCP endpoint](https://mcp.developerz.ai/v1/mcp)) that makes the real code change and opens a PR.
 
 Not a page builder. Not a Figma clone. It edits **your codebase**, and the only durable output is a reviewable PR.
@@ -99,6 +113,22 @@ bun run release            # build + sign .crx + zip → build/*.zip, build/*.cr
 | [Privacy policy](docs/architecture/privacy.md) | Data handling: BYOK inference, ephemeral edits, changeset-only durable output |
 | [docs/RELEASING.md](docs/RELEASING.md) · [docs/STORE-SETUP.md](docs/STORE-SETUP.md) · [docs/store/LISTING.md](docs/store/LISTING.md) | Release: tag → signed build → GitHub Release. Store accounts + the CI secrets to publish. The paste-ready dashboard listing |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [store/README.md](store/README.md) | Setup, checks and conventions; the store assets and how to regenerate them |
+
+## AI-maintained
+
+This repository is looked after by the [developerz.ai](https://developerz.ai) maintainer agent. It works publicly as `developerz-ai[bot]` and marks every comment it posts as bot-made. Its rules are committed in [`.dz/maintainer/maintainer.yml`](.dz/maintainer/maintainer.yml).
+
+| Who opens it | What happens |
+|---|---|
+| you, an issue | triaged into bug, feature, duplicate, question or docs; asked for steps, expected, actual and version when they are missing; closed after 14 days if a requested reproduction never comes |
+| you, a pull request | reviewed (CodeRabbit and the developerz.ai reviewer), driven to green, merged once the required checks pass, the review approves and branch protection is met; closed after 21 days waiting on its author |
+| Dependabot | driven to green, merged under the same three gates |
+| an outside change to CI, release or store automation (`.github/`, `scripts/pack-crx.sh`, `scripts/crx-key.ts`, `store/`, `keys/`) | declined: members own that pipeline |
+| keys or network calls outside the service worker, remote code or `eval`, business logic in Solid components | declined: non-goals of this extension |
+
+Issues with no activity for 30 days get a comment, then are closed. A daily health checkup and a monthly improvement pass run on a schedule. Security reports, license and CLA questions go to a human.
+
+**Releases are not automated.** The agent publishes nothing itself: a member pushes a `v*` tag, and [`release.yml`](.github/workflows/release.yml) builds the extension, attaches it to a GitHub Release and uploads it to the Chrome Web Store ([docs/RELEASING.md](docs/RELEASING.md)).
 
 ## Status
 
