@@ -122,14 +122,30 @@ export type TaskToolExecute = (
 
 // The backend's create/status payloads, parsed defensively from the tool result (see `unwrap`): an
 // MCP tool may reply with the bare object, a `structuredContent`, or a `content` text envelope.
+// The PR link is rendered as a clickable href in the panel and History. It comes from a remote
+// backend, so anything but an http(s) URL (`javascript:`, `data:`, garbage) is dropped, not shown.
+const PrUrl = z
+  .string()
+  .optional()
+  .transform((value) => (value !== undefined && isHttpUrl(value) ? value : undefined));
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 const CreatePayload = z.object({
   id: z.string().min(1),
   status: z.string().min(1).optional(),
-  prUrl: z.string().optional(),
+  prUrl: PrUrl,
 });
 const StatusPayload = z.object({
   status: z.string().min(1),
-  prUrl: z.string().optional(),
+  prUrl: PrUrl,
 });
 
 /** Adapt an MCP `task` tool into the {@link TaskBackend} `ship` drives: `create` →

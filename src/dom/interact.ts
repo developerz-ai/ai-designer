@@ -385,9 +385,9 @@ export function createInteractor(deps: InteractorDeps = {}): Interactor {
 
   // Arm an auto-answer for native dialogs (`alert`/`confirm`/`prompt`) the agent's own actions
   // trigger, so a click/type that raises one doesn't stall the turn. Content scripts run in an
-  // ISOLATED world, so this governs dialogs raised in the content world; page-world native dialogs
-  // (and `beforeunload`) are answered by the service worker over the debugger protocol (a later
-  // slice-13 SW task). Kept honest + typed here; the SW mirrors the same policy. The override is
+  // ISOLATED world, so this governs dialogs raised in the content world ONLY. Page-world native
+  // dialogs (and `beforeunload`) are NOT answered: the SW-side debugger-protocol answer was planned
+  // (slice 13) and never built, and the tool description says so. The override is
   // reversible via `restoreDialogs` so it never leaks past the action it was armed for.
   let savedDialogs: NativeDialogs | null = null;
 
