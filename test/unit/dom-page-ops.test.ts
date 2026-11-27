@@ -202,8 +202,14 @@ describe('forms', () => {
     el.addEventListener('change', () => {
       el.type = 'text';
     });
-    el.addEventListener('invalid', () => el.setCustomValidity(`"${el.value}" rejected`));
+    let invalidFired = false;
+    el.addEventListener('invalid', () => {
+      invalidFired = true;
+    });
+    el.addEventListener('change', () => el.setCustomValidity(`"${el.value}" rejected`));
     const result = setField(el, { value: 'hunter8' });
+    expect(invalidFired).toBe(false); // validity is read without firing invalid
+    expect(result?.valid).toBe(false);
     expect(JSON.stringify(result)).not.toContain('hunter8');
   });
 
@@ -233,9 +239,11 @@ describe('forms', () => {
       invalidFired = true;
       el.type = 'text';
     });
+    el.setCustomValidity('"hunter7" is too weak'); // a page message quoting the password
     const form = document.getElementById('f3');
     if (!form) throw new Error('fixture');
     const [field] = readFormState(form);
+    expect(field?.validationMessage).toBe('');
     expect(invalidFired).toBe(false);
     expect(field?.valid).toBe(false); // the verdict is still reported
     expect(JSON.stringify(field)).not.toContain('hunter7');
