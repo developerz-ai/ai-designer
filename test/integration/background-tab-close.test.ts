@@ -18,8 +18,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const turnSession = (tabId: number, url: string) => ({
+  tabId,
+  url,
+  changeset: {
+    url,
+    createdAt: '2026-07-14T00:00:00.000Z',
+    sessionId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+    edits: [],
+    stylesheets: [],
+  },
+  messages: [{ role: 'user', content: `design tab ${tabId}` }],
+  updatedAt: 1,
+});
+
 it('closing a tab removes its session and changeset records', async () => {
   const session: Record<string, unknown> = {
+    // Valid sessions for BOTH tabs, present before boot so the worker hydrates them into its cache.
+    'session:7': turnSession(7, 'https://shop.example/'),
+    'session:8': turnSession(8, 'https://other.example/'),
     'changeset:7': {
       changeset: {
         url: 'https://shop.example/',
@@ -45,12 +62,14 @@ it('closing a tab removes its session and changeset records', async () => {
       for (const k of Array.isArray(key) ? key : [key]) delete data[k];
     },
   });
+  type Listener = (raw: unknown, sender: object, reply: (value: unknown) => void) => unknown;
+  const listeners: Listener[] = [];
   const removed: Array<(id: number) => void> = [];
   const event = { addListener: () => {} };
   vi.stubGlobal('chrome', {
     storage: { session: area(session), local: area({}) },
     runtime: {
-      onMessage: event,
+      onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
       onConnect: event,
       onInstalled: event,
       getURL: (path: string) => `chrome-extension://test/${path}`,
@@ -71,8 +90,14 @@ it('closing a tab removes its session and changeset records', async () => {
   });
   const { default: start } = await import('@/entrypoints/background');
   (start as unknown as () => void)();
-  // A session record for tab 7, written the way SessionStore writes it.
-  session['session:7'] = { stand: 'in' };
+  const threadGet = (tabId: number) =>
+    new Promise<Record<string, unknown>>((resolve) => {
+      for (const listener of listeners)
+        listener({ type: 'thread-get', tabId }, {}, (value) =>
+          resolve(value as Record<string, unknown>),
+        );
+    });
+  expect((await threadGet(7)).ok).toBe(true); // hydrated: the cache holds tab 7's thread
 
   for (const listener of removed) listener(7);
 
@@ -80,5 +105,10 @@ it('closing a tab removes its session and changeset records', async () => {
     expect(session['changeset:7']).toBeUndefined();
     expect(session['session:7']).toBeUndefined();
   });
-  expect(session['changeset:8']).toEqual({ kept: true }); // another tab's record is untouched
+  // The in-memory cache forgot it too, not just storage.
+  expect(await threadGet(7)).toMatchObject({ ok: false });
+  // Another tab's records — session AND changeset — are untouched.
+  expect(session['changeset:8']).toEqual({ kept: true });
+  expect(session['session:8']).toBeDefined();
+  expect(await threadGet(8)).toMatchObject({ ok: true, tabId: 8 });
 });
