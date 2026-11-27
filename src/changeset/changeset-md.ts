@@ -21,10 +21,22 @@ import type { Changeset, Edit, StableSelector } from '@/shared/changeset';
 // renders the model-authored prose) because this half renders the MECHANICAL record; they meet
 // only in `toMarkdown`.
 
-const FENCE = '```';
-const CSS_FENCE = `${FENCE}css`;
-const HTML_FENCE = `${FENCE}html`;
 const COMMENT_CLOSE = `*${'/'}`;
+
+// Page content (copy text, replaced markup, injected CSS, computed values) is the PAGE's and so
+// untrusted in a brief a coding agent reads. A fixed ``` fence closes on the first ``` line inside
+// it and the rest renders as the brief's own headings and links. CommonMark closes a fence only on
+// a backtick run at least as long as the opener, so the fence is sized past the longest run inside.
+function fenced(lang: string, body: string): string {
+  const longest = Math.max(0, ...Array.from(body.matchAll(/`+/g), (m) => m[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return [`${fence}${lang}`, body, fence].join('\n');
+}
+
+/** A table cell: a `|` would end the cell and a newline the row. */
+function cell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
 
 /** How the honesty note reads per selector strategy. `null` = the selector is trustworthy enough
  *  to present without a caveat. */
@@ -64,7 +76,7 @@ export function renderStylesheet(changeset: Changeset): string {
   // so this is the LATEST version of each sheet, not a history of the agent's attempts.
   for (const sheet of changeset.stylesheets) {
     const header = sheet.intent ? `### ${sheet.intent}` : `### Stylesheet \`${sheet.id}\``;
-    sections.push([header, '', CSS_FENCE, sheet.css.trim(), FENCE].join('\n'));
+    sections.push([header, '', fenced('css', sheet.css.trim())].join('\n'));
   }
 
   // Then the per-element edits, reconstructed as rules. These are the changes made BEFORE or
@@ -75,9 +87,7 @@ export function renderStylesheet(changeset: Changeset): string {
       [
         changeset.stylesheets.length > 0 ? '### Per-element adjustments' : '',
         '',
-        CSS_FENCE,
-        rules.join('\n\n'),
-        FENCE,
+        fenced('css', rules.join('\n\n')),
       ]
         .filter((line, i) => !(i === 0 && line === ''))
         .join('\n'),
@@ -147,13 +157,21 @@ function editSection(edit: Edit, n: number): string {
   if (edit.changes.length > 0) {
     lines.push('', '| Property | Was | Now |', '| --- | --- | --- |');
     for (const c of edit.changes) {
-      lines.push(`| \`${c.prop}\` | ${c.before ?? '—'} | ${c.after} |`);
+      lines.push(`| \`${c.prop}\` | ${cell(c.before ?? '—')} | ${cell(c.after)} |`);
     }
   }
   const structural = structuralProse(edit);
   if (structural) lines.push('', structural);
   if (edit.text) {
-    lines.push('', `**Copy:** "${edit.text.before}" → "${edit.text.after}"`);
+    const { before, after } = edit.text;
+    lines.push(
+      '',
+      /[\r\n`]/.test(before + after)
+        ? ['**Copy:** was', '', fenced('text', before), '', 'now', '', fenced('text', after)].join(
+            '\n',
+          )
+        : `**Copy:** "${before}" → "${after}"`,
+    );
   }
   for (const a of edit.attrs) {
     lines.push(
@@ -183,9 +201,7 @@ function structuralProse(edit: Edit): string {
       return [
         `**Structure:** new markup added ${s.position ?? 'beforeend'} \`${s.refSelector?.value ?? 'the target'}\`:`,
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'wrap':
       // The restructuring ops are described as the SHAPE THE MARKUP SHOULD TAKE, because that is
@@ -196,28 +212,22 @@ function structuralProse(edit: Edit): string {
           ? `**Structure:** this element **through** \`${s.endSelector.value}\` — the whole run of siblings — is wrapped in a new container. In source, render that range inside:`
           : '**Structure:** this element is wrapped in a new container. In source, render it inside:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'unwrap':
       return [
         '**Structure:** this wrapper is removed and its children take its place — one level of nesting deleted, no content lost. The wrapper was:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ].join('\n');
     case 'replace': {
       const lines = [
         '**Structure:** this element and its whole subtree become:',
         '',
-        HTML_FENCE,
-        s.html,
-        FENCE,
+        fenced('html', s.html),
       ];
       if (s.replacedHtml) {
-        lines.push('', 'Replacing:', '', HTML_FENCE, s.replacedHtml, FENCE);
+        lines.push('', 'Replacing:', '', fenced('html', s.replacedHtml));
       }
       return lines.join('\n');
     }
