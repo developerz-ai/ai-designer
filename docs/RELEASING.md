@@ -32,7 +32,7 @@ The `Release` workflow (`.github/workflows/release.yml`) then:
 4. Creates a GitHub Release with auto-generated notes, both `.zip`s and the `.crx` attached from `build/`.
 5. **Publishes to the Chrome Web Store** — the four `CWS_*` repo secrets have been configured since 2026-08-15 ([STORE-SETUP.md](STORE-SETUP.md)). The secret-guarded step rebuilds the store zip with `CWS_UPLOAD=1` (drops the manifest `key`) and uploads it with `--auto-publish`; a successful upload enters Chrome Web Store review. If `CWS_EXTENSION_ID` is unavailable, the guarded upload skips and the tag remains a GitHub-Release-only build.
 
-`workflow_dispatch` is also enabled for manual runs.
+`workflow_dispatch` is also enabled for manual runs — dispatch it **on a tag** (`gh workflow run release.yml --ref v1.4.0`). On a branch the build reads `package.json`'s version and the GitHub Release step fails: a release needs a tag.
 
 Store listing content (description, screenshots, permission justifications) lives in
 [store/LISTING.md](store/LISTING.md); regenerate the screenshots with `bun run store:shots`.
