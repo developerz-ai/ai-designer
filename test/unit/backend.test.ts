@@ -272,12 +272,15 @@ describe('createTaskBackend', () => {
         status: 'queued',
         prUrl,
       })).create(createArgs);
-      expect([prUrl, created.status?.prUrl]).toEqual([prUrl, undefined]);
+      // The handle keeps its id and status; only the link is dropped.
+      expect([prUrl, created]).toEqual([prUrl, { id: 't1', status: { status: 'queued' } }]);
+      const streamed: TaskStatus[] = [];
       const final = await createTaskBackend(async () => ({ status: 'pr_open', prUrl })).watch(
         't1',
-        () => {},
+        (s) => streamed.push(s),
       );
       expect([prUrl, final]).toEqual([prUrl, { status: 'pr_open' }]);
+      expect([prUrl, streamed]).toEqual([prUrl, [{ status: 'pr_open' }]]);
     }
   });
 
