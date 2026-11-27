@@ -116,9 +116,9 @@ describe('createConnection', () => {
     expect(toolsFn).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves getHeaders() PER REQUEST, so an expired token is replaced mid-session', async () => {
-    // A fake expiring OAuth token: the resolver hands out whatever is current, the way
-    // auth.ts getAccessToken refreshes an expired token. The client stays open across the expiry.
+  it('calls getHeaders() on every request instead of freezing it at open', async () => {
+    // The transport-level half only; the real expiring-token path (headerResolverFor + an
+    // advancing clock) is in mcp-auth.test.ts, which runs in node for crypto.subtle.
     let current = 'Bearer one';
     const getHeaders = vi.fn(async () => ({ Authorization: current }));
     const { connect } = fakeFactory();
@@ -141,7 +141,7 @@ describe('createConnection', () => {
     expect(transport.headers).toBeUndefined();
 
     await transport.fetch('https://x/mcp', { headers: { 'content-type': 'application/json' } });
-    current = 'Bearer two'; // the token expired and was refreshed — no reopen
+    current = 'Bearer two'; // the resolver's answer changed — no reopen
     await transport.fetch('https://x/mcp', { headers: { 'content-type': 'application/json' } });
 
     expect(sent).toEqual(['Bearer one', 'Bearer two']);

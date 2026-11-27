@@ -177,7 +177,7 @@ describe('changeset-md: attribute, class and selector text go through code spans
       changeset([edit({ attrs: [{ name: 'title', before: null, after: HOSTILE }] })]),
     );
     expect(headings(set)).toEqual([]);
-    expect(set).toContain(`**Attribute:** \`title\` → ${SPAN}`);
+    expect(set).toContain(`**Attribute:** \`title\`: *(absent)* → ${SPAN}`);
 
     const removed = renderChangeset(
       changeset([edit({ attrs: [{ name: HOSTILE, before: HOSTILE, after: null }] })]),
@@ -210,5 +210,43 @@ describe('changeset-md: attribute, class and selector text go through code spans
     expect(md).toContain(`moves to ${SPAN}`);
     expect(md).toContain(`**through** ${SPAN}`);
     expect(md).toContain(`added beforeend ${SPAN}:`);
+  });
+});
+
+describe('changeset-md: attribute replacement and stylesheet headers', () => {
+  it('a replaced attribute shows what it was, telling absent apart from empty', () => {
+    const md = renderChangeset(
+      changeset([
+        edit({
+          attrs: [
+            { name: 'title', before: 'Old`name', after: 'New' },
+            { name: 'alt', before: '', after: 'Logo' },
+            { name: 'role', before: null, after: 'button' },
+          ],
+        }),
+      ]),
+    );
+    expect(md).toContain('**Attribute:** `title`: ``Old`name`` → `New`');
+    expect(md).toContain('**Attribute:** `alt`: *(empty)* → `Logo`');
+    expect(md).toContain('**Attribute:** `role`: *(absent)* → `button`');
+  });
+
+  it('a stylesheet intent with a newline cannot open a section of its own', () => {
+    const md = renderStylesheet(
+      changeset([], [
+        {
+          id: 'theme',
+          css: 'a{}',
+          intent: 'Tokens\n\n# Injected heading\n[click](https://evil.example)',
+        },
+      ] as Changeset['stylesheets']),
+    );
+    expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
+    expect(md).toContain('### Tokens # Injected heading [click](https://evil.example)');
+  });
+
+  it('an edit intent with a newline cannot open a section of its own', () => {
+    const md = renderChangeset(changeset([edit({ intent: 'Hero\n# Injected heading' })]));
+    expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
   });
 });

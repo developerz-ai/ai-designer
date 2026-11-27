@@ -54,6 +54,12 @@ function longestBacktickRun(text: string): number {
   return longest;
 }
 
+/** Model/page prose as ONE heading line: line breaks fold to spaces, so a newline in an intent
+ *  cannot end the heading and open a section (`# …`) of its own. */
+function headingText(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
 /** A table cell: page text as a literal code span, every line break folded so the row cannot end
  *  early. Only for values with no `|` — see {@link fitsTable}. */
 function cell(value: string): string {
@@ -105,7 +111,9 @@ export function renderStylesheet(changeset: Changeset): string {
   // reconstructed from per-element deltas. Held at most one entry per id (a re-injection replaces),
   // so this is the LATEST version of each sheet, not a history of the agent's attempts.
   for (const sheet of changeset.stylesheets) {
-    const header = sheet.intent ? `### ${sheet.intent}` : `### Stylesheet ${code(sheet.id)}`;
+    const header = sheet.intent
+      ? `### ${headingText(sheet.intent)}`
+      : `### Stylesheet ${code(sheet.id)}`;
     sections.push([header, '', fenced('css', sheet.css.trim())].join('\n'));
   }
 
@@ -175,7 +183,7 @@ function confidenceLine(changeset: Changeset): string {
 }
 
 function editSection(edit: Edit, n: number): string {
-  const lines: string[] = [`### ${n}. ${edit.intent}`, ''];
+  const lines: string[] = [`### ${n}. ${headingText(edit.intent)}`, ''];
   const caveat = selectorCaveat(edit.selector);
   lines.push(`**Target:** ${code(edit.selector.value)} (${edit.selector.strategy})`);
   if (caveat) lines.push('', `> **Unreliable selector** — ${caveat}`);
@@ -214,14 +222,20 @@ function editSection(edit: Edit, n: number): string {
     lines.push(
       '',
       a.after === null
-        ? `**Attribute removed:** ${code(a.name)} (was ${code(a.before ?? '')})`
-        : `**Attribute:** ${code(a.name)} → ${code(a.after)}`,
+        ? `**Attribute removed:** ${code(a.name)} (was ${attrValue(a.before)})`
+        : `**Attribute:** ${code(a.name)}: ${attrValue(a.before)} → ${code(a.after)}`,
     );
   }
   for (const c of edit.classes) {
     lines.push('', `**Class ${c.op === 'add' ? 'added' : 'removed'}:** ${code(c.name)}`);
   }
   return lines.join('\n');
+}
+
+/** An attribute's value for the brief: `null` means the attribute was not there at all, which is
+ *  not the same as present-but-empty (`code('')` → `*(empty)*`). */
+function attrValue(value: string | null | undefined): string {
+  return value == null ? '*(absent)*' : code(value);
 }
 
 /** A structural edit described as STRUCTURE. "Move this node after that node" is a replay script;

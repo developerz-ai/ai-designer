@@ -492,3 +492,19 @@ describe('ChangesetStore stylesheets (injectCss fold)', () => {
     expect(store.current.edits).toEqual([]);
   });
 });
+
+describe('ChangesetStore.revertStylesheet after clear', () => {
+  it('a restore for a sheet the record no longer holds does not re-add it', () => {
+    // clear() drops the record, not the page's CSS; a later undo of a same-id replacement must
+    // not put the cleared sheet back into what Ship hands off.
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    store.recordStylesheet({ id: 'default', css: 'v1{}' });
+    store.recordStylesheet({ id: 'default', css: 'v2{}' });
+    store.clear();
+    const writes = saved.length;
+    expect(store.revertStylesheet('default', 'v1{}')).toBe(false);
+    expect(store.current.stylesheets).toEqual([]);
+    expect(saved).toHaveLength(writes);
+  });
+});

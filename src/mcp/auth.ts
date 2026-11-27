@@ -11,10 +11,15 @@
 import { z } from 'zod';
 import { clearSecret, getSecret, setSecret } from '@/agent/key-store';
 import type { HeaderResolver } from './client';
+import { withKeyLock } from './keyed-lock';
 import type { AuthKind } from './store';
 
 // Refresh a little before the real expiry so a token can't lapse mid-request.
 const EXPIRY_SKEW_MS = 60_000;
+// Bound one token-endpoint round trip. Every MCP request resolves its header through a refresh
+// when the token has expired, and concurrent ones share it — a token endpoint that never answers
+// would otherwise hang every call to the server (and pin the shared refresh forever).
+const TOKEN_TIMEOUT_MS = 15_000;
 
 // --- secret names (single source of truth; store.ts purges these on remove) --------------
 
@@ -75,6 +80,8 @@ export type AuthDeps = {
   now?: () => number;
   launchWebAuthFlow?: LaunchWebAuthFlow;
   getRedirectURL?: (path?: string) => string;
+  /** Token-endpoint deadline in ms (default {@link TOKEN_TIMEOUT_MS}); tests shorten it. */
+  tokenTimeoutMs?: number;
 };
 
 const theFetch = (deps: AuthDeps): typeof fetch => deps.fetch ?? fetch;
@@ -170,7 +177,7 @@ export async function startOAuth(
     }),
     deps,
   );
-  await saveTokenSet(serverId, tokens);
+  await withKeyLock(mcpSecretNames(serverId).token, () => saveTokenSet(serverId, tokens));
   return tokens;
 }
 
@@ -197,7 +204,17 @@ export async function refreshToken(
     ...refreshed,
     refreshToken: refreshed.refreshToken ?? current.refreshToken,
   };
-  await saveTokenSet(serverId, merged);
+  // Compare-and-set under the token's lock: the grant took a network round trip, and in that window
+  // the credentials may have been deleted (server removed, signed out) or replaced (re-authorized).
+  // Writing anyway would resurrect a deleted token, or clobber the newer one with a refresh of the
+  // old session. Only the bundle this refresh started from may be replaced.
+  const stored = await withKeyLock(mcpSecretNames(serverId).token, async () => {
+    const latest = await getTokenSet(serverId);
+    if (latest?.refreshToken !== current.refreshToken) return false;
+    await saveTokenSet(serverId, merged);
+    return true;
+  });
+  if (!stored) throw new Error('Credentials changed during the token refresh; not storing it');
   return merged;
 }
 
@@ -254,7 +271,8 @@ export async function getTokenSet(serverId: string): Promise<TokenSet | null> {
  *  and on sign-out so no orphaned token survives. */
 export async function clearAuth(serverId: string): Promise<void> {
   const { apiKey, token } = mcpSecretNames(serverId);
-  await Promise.all([clearSecret(apiKey), clearSecret(token)]);
+  // On the token's lock so it orders against a refresh's compare-and-set (see refreshToken).
+  await Promise.all([clearSecret(apiKey), withKeyLock(token, () => clearSecret(token))]);
 }
 
 // --- header resolution (consumed by client.ts `getHeaders`) ------------------------------
@@ -313,8 +331,10 @@ async function requestToken(
   body: URLSearchParams,
   deps: AuthDeps,
 ): Promise<TokenSet> {
+  const timeoutMs = deps.tokenTimeoutMs ?? TOKEN_TIMEOUT_MS;
   const res = await theFetch(deps)(endpoint, {
     method: 'POST',
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',

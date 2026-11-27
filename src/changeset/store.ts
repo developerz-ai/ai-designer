@@ -188,8 +188,8 @@ export class ChangesetStore {
   /** Fold a page-side undo of an `injectCss` (the `stylesheet-reverted` push): `css: null` drops
    *  the sheet with `id`; a string restores the sheet's EARLIER text in place (an undone
    *  re-injection), keeping the recorded intent — the push carries none, and the sheet's purpose
-   *  is the same across its versions. Returns whether the record changed; an unknown id with
-   *  `css: null` is a no-op (nothing persisted). */
+   *  is the same across its versions. Returns whether the record changed; an id the record does
+   *  not hold is a no-op either way (nothing persisted). */
   revertStylesheet(id: string, css: string | null): boolean {
     const { stylesheets } = this.changeset;
     const existing = stylesheets.find((s) => s.id === id);
@@ -199,7 +199,10 @@ export class ChangesetStore {
       this.flush();
       return true;
     }
-    this.recordStylesheet({ ...existing, id, css });
+    // Only an entry the record still holds is restored: `clear()` drops the record but not the
+    // page's CSS, so an undo arriving after a clear must not put the cleared sheet back into Ship.
+    if (!existing) return false;
+    this.recordStylesheet({ ...existing, css });
     return true;
   }
 
