@@ -29,7 +29,7 @@ Check no open PR or issue already covers it. If nothing is worth changing, do no
 ## Rows
 
 - `gate` — First: run `bun run verify` on fresh `main`; address anything broken or flaky at its root cause, never with a retry or a skip.
-- `dependency-majors` — Second: use `bun outdated` to identify dependency majors Dependabot could not land, one per PR.
+- `dependency-majors` — Second: use `bun outdated` to identify dependency majors Dependabot could not land, and `gh pr list --author app/dependabot --json number,updatedAt,statusCheckRollup` for Dependabot PRs whose checks have failed for seven days (any bump size); one per PR.
 - `open-bugs` — Third: use `gh issue list --state open --label bug --json number,title,url`; each bug starts from a test that fails on `main`.
 - `stale-docs` — Fourth: docs that no longer match the code.
 - `dead-code` — After stale docs: dead code.
