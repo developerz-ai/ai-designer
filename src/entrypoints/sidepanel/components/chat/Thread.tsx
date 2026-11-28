@@ -29,8 +29,24 @@ export function sentencePrefix(text: string): string {
   return match ? match[0] : '';
 }
 
+/** Whether a scroll container sits within the stick-to-bottom band. Pure over the three
+ *  measurements — exported for a DOM-free unit test. */
+export function isNearBottom(el: {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+}): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_PX;
+}
+
 export function Thread(props: ThreadProps) {
   let logEl: HTMLUListElement | undefined;
+  // "Was the reader at the foot BEFORE this update" — tracked on scroll, because by the time the
+  // effect below runs Solid has already rendered the new content: measuring there read a grown
+  // `scrollHeight`, so any update taller than the band (a long chunk, a new bubble) looked like
+  // the reader had scrolled away and the thread stopped following. Our own scroll-to-bottom fires
+  // a scroll event too, which keeps this true while following.
+  let atBottom = true;
 
   // Reruns on every fold of the stream (new message, growing token text, streaming flag flip) —
   // reading `.length`/last message's `text`/`streaming` inside the effect is what makes Solid track
@@ -42,9 +58,9 @@ export function Thread(props: ThreadProps) {
     void last?.streaming;
     const el = logEl;
     if (!el) return;
-    // Measured BEFORE the DOM grows: "was the reader at the foot a moment ago". A reader who has
-    // scrolled back to compare an earlier reply must not be yanked to the bottom by every token.
-    if (el.scrollHeight - el.scrollTop - el.clientHeight > STICK_TO_BOTTOM_PX) return;
+    // A reader who has scrolled back to compare an earlier reply must not be yanked to the bottom
+    // by every token.
+    if (!atBottom) return;
     queueMicrotask(() => {
       el.scrollTop = el.scrollHeight;
     });
@@ -115,7 +131,13 @@ export function Thread(props: ThreadProps) {
 
   return (
     <>
-      <ul class="dz-thread" ref={logEl}>
+      <ul
+        class="dz-thread"
+        ref={logEl}
+        onScroll={(e) => {
+          atBottom = isNearBottom(e.currentTarget);
+        }}
+      >
         {/* `Index` (keyed by position, not object identity) keeps each row's subtree mounted while
             its `ChatMessage` is replaced wholesale every stream fold (`stores/chat.ts` returns a new
             last-message object per token). A keyed `<For>` would dispose+remount the streaming row on

@@ -170,6 +170,7 @@ export function Composer() {
     const trimmed = draft().trim();
     const attached = attachments();
     if ((!trimmed && attached.length === 0) || streaming()) return;
+    const sentDraft = draft();
     setDraft('');
     // The picked element is the whole point of the picker: without this third argument
     // "make this bigger" reaches the agent with no target and it guesses. `selector()` is the
@@ -185,6 +186,9 @@ export function Composer() {
     // cost nothing; now it would cost the user six re-picked files, so the tray outlives it and
     // the same Send press works again.
     if (accepted) clearAttachments();
+    // Same rule for the words: a rejected send hands the draft back, unless the user has already
+    // started typing the next one — their new text wins over the refused one.
+    else if (draft() === '') setDraft(sentDraft);
   }
 
   /** Three ways in, one of them destructive if it is got wrong: pasting a stylesheet into a

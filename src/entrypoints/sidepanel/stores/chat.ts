@@ -328,6 +328,24 @@ export function mergeInFlight(persisted: ChatMessage[], local: ChatMessage[]): C
   return from === -1 ? persisted : [...persisted, ...local.slice(from)];
 }
 
+/** Land an accepted send's user bubble. Normally an append — but a `thread-get` merge that ran
+ *  while the ack was pending can already carry this very message (the SW persists the user turn
+ *  BEFORE it acks), and appending again rendered it twice. When `maybePersisted` (a merge landed
+ *  during this ack window) and the transcript already ends on a user turn with the same text,
+ *  that persisted copy IS this message: replace it with the local bubble, which keeps the
+ *  attachments the thread view cannot carry. Pure — exported for a mock-free unit test. */
+export function landUserBubble(
+  messages: ChatMessage[],
+  bubble: ChatMessage,
+  maybePersisted: boolean,
+): ChatMessage[] {
+  const last = messages.at(-1);
+  if (maybePersisted && last?.role === 'user' && last.text === bubble.text) {
+    return [...messages.slice(0, -1), bubble];
+  }
+  return [...messages, bubble];
+}
+
 /** Append `patch` onto the in-flight assistant message, or start a new one when the last message
  *  isn't a streaming assistant bubble (turn start, or the previous one already closed out). */
 function foldIntoAssistant(
@@ -439,6 +457,9 @@ async function confirmTurnLiveness(): Promise<void> {
 // replay it once the ack keys the turn, instead of losing the turn's opening tokens.
 let ackPending = false;
 let heldTurnEvents: SwToPanel[] = [];
+// Set when a `thread-get` merge is applied while `ackPending` — the rebuilt transcript may then
+// already hold the message being acked (see `landUserBubble`). Reset per send.
+let mergedDuringAck = false;
 const MAX_HELD_EVENTS = 200;
 
 // Which conversation a `send` belongs to. `newConversation` advances it, so a send whose ack is
@@ -502,7 +523,13 @@ export function initChatStore(): void {
   // always shows the conversation of the tab the user is looking at — same subscription shape as
   // stores/changeset.ts (guarded — the unit-test chrome fake carries only `runtime`).
   const retarget = (): void => void hydrateThread();
-  chrome.tabs?.onActivated?.addListener?.(retarget);
+  chrome.tabs?.onActivated?.addListener?.((info) => {
+    // Mid-turn the hydrate below is PINNED to the turn's tab, so it can never move the view —
+    // remember the switch and re-key once the turn settles, or the chat stays on the old tab
+    // while the changeset follows the new one and its edits are dropped as foreign.
+    if (streaming() && info.tabId !== viewTabId()) pendingRehydrate = true;
+    retarget();
+  });
   chrome.windows?.onFocusChanged?.addListener?.(retarget);
 }
 
@@ -557,6 +584,7 @@ export async function hydrateThread(): Promise<void> {
         return;
       }
       setMessages((local) => mergeInFlight(threadToMessages(t.thread ?? []), local));
+      if (ackPending) mergedDuringAck = true;
       if (!s.turnRunning) scheduleTurnLivenessCheck(); // verify, don't act on the first answer
       return;
     }
@@ -607,6 +635,7 @@ export async function send(
   setError(null);
   setStreaming(true);
   ackPending = true;
+  mergedDuringAck = false;
   const gen = conversationGen;
   const multi = multiSelectors();
   try {
@@ -640,7 +669,10 @@ export async function send(
     // applying them would wipe the bubble just appended). Same last-writer-wins rule as the
     // changeset store's viewSeq.
     hydrateSeq++;
-    setMessages((prev) => [...prev, newUserMessage(trimmed, attachments)]);
+    const persistedMaybe = mergedDuringAck;
+    setMessages((prev) =>
+      landUserBubble(prev, newUserMessage(trimmed, attachments), persistedMaybe),
+    );
     // Key the panel to this turn (`null` = a pre-#168 SW that acks without a turnId — unstamped
     // events keep folding), then replay any stamped events that beat the ack.
     setActiveTurnId(r.turnId ?? null);
@@ -657,6 +689,7 @@ export async function send(
     return false;
   } finally {
     ackPending = false;
+    mergedDuringAck = false;
     heldTurnEvents = [];
   }
 }
@@ -708,7 +741,10 @@ export async function newConversation(): Promise<boolean> {
  *  second store import for one button. */
 export async function stopTurn(): Promise<void> {
   try {
-    await request({ type: 'session-stop' }, OkResult);
+    // `{ ok: false }` satisfies `OkResult` — a refused stop is a failure the user must see, or
+    // the Stop button looks broken while the agent keeps editing the page.
+    const r = await request({ type: 'session-stop' }, OkResult);
+    if (!r.ok) setError(r.error ?? 'Could not stop the turn. Try again.');
   } catch (e) {
     setError(errMsg(e));
   }

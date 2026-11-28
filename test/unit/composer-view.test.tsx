@@ -277,6 +277,38 @@ describe('Composer — send dispatch', () => {
     expect(input()).toHaveValue('');
   });
 
+  // `send()` resolves `false` on a rejected send (a restarting worker, a guard refusal). The draft
+  // was cleared on Enter, so without a restore the text was gone — and the attachment-only
+  // fallback instruction went out on the retry instead of the user's words.
+  it('restores the draft when the send is rejected', async () => {
+    chat.send.mockResolvedValueOnce(false);
+    render(() => <Composer />);
+    type('make the hero red');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(input()).toHaveValue('');
+
+    await vi.waitFor(() => expect(input()).toHaveValue('make the hero red'));
+  });
+
+  it('keeps what the user typed meanwhile over the rejected draft', async () => {
+    let reject: (v: boolean) => void = () => {};
+    chat.send.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((r) => {
+          reject = r;
+        }),
+    );
+    render(() => <Composer />);
+    type('first');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    type('second thought');
+    reject(false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(input()).toHaveValue('second thought');
+  });
+
   it('does not send on the Enter that commits an IME candidate', () => {
     render(() => <Composer />);
     type('日本語');
