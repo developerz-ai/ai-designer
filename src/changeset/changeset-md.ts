@@ -54,14 +54,11 @@ function longestBacktickRun(text: string): number {
   return longest;
 }
 
-/** Model/page prose as ONE inert heading line: line breaks fold to spaces (a newline cannot end
- *  the heading and open a section of its own) and every inline-Markdown/HTML metacharacter is
- *  backslash-escaped, so a `[x](url)`, image, emphasis or tag in an intent renders as its text. */
+/** Model/page prose as ONE inert heading line: a single code span (`code` folds line breaks),
+ *  so no newline can open a section and no link, bare-URL autolink, image, emphasis or tag in an
+ *  intent is live. Escaping metacharacters one by one kept missing GFM's extensions. */
 function headingText(value: string): string {
-  return value
-    .replace(/[\r\n]+/g, ' ')
-    .trim()
-    .replace(/[\\`*_[\]()<>!#|~&{}]/g, '\\$&');
+  return code(value.trim());
 }
 
 /** A table cell: page text as a literal code span, every line break folded so the row cannot end

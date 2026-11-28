@@ -510,15 +510,36 @@ describe('ChangesetStore.revertStylesheet after clear', () => {
 });
 
 describe('ChangesetStore.revertStylesheet only restores text recorded since the last clear', () => {
-  it('clear -> re-record the same id -> revert to the pre-clear text is ignored', () => {
+  it('clear -> re-record the same id -> revert to the pre-clear text drops the sheet', () => {
+    // The page now shows the pre-Clear text, which is outside the durable record; keeping the
+    // re-recorded text would ship CSS the page no longer shows, restoring the old would ship
+    // CSS the user cleared. Neither belongs in Ship.
     const store = new ChangesetStore(seed());
     store.recordStylesheet({ id: 'default', css: 'old{}' });
-    store.recordStylesheet({ id: 'old-replaced', css: 'x{}' });
+    store.recordStylesheet({ id: 'other', css: 'x{}' });
     store.clear();
     store.recordStylesheet({ id: 'default', css: 'new{}' });
-    expect(store.revertStylesheet('default', 'old{}')).toBe(false);
-    expect(store.current.stylesheets).toEqual([{ id: 'default', css: 'new{}' }]);
+    store.recordStylesheet({ id: 'other', css: 'y{}' });
+    expect(store.revertStylesheet('default', 'old{}')).toBe(true);
+    expect(store.current.stylesheets).toEqual([{ id: 'other', css: 'y{}' }]);
+    // Its history went with it: a later restore of the post-clear text is ignored too.
+    expect(store.revertStylesheet('default', 'new{}')).toBe(false);
   });
+
+  it.each(['constructor', '__proto__', 'toString'])(
+    'a sheet id %s (an Object.prototype name) records, reverts and round-trips',
+    (id) => {
+      const store = new ChangesetStore(seed());
+      store.recordStylesheet({ id, css: 'v1{}' });
+      store.recordStylesheet({ id, css: 'v2{}' });
+      const woken = ChangesetStore.fromState(
+        ChangesetState.parse(JSON.parse(JSON.stringify(store.snapshot()))),
+      );
+      expect(woken.revertStylesheet(id, 'v1{}')).toBe(true);
+      expect(woken.current.stylesheets).toEqual([{ id, css: 'v1{}' }]);
+      expect(woken.revertStylesheet(`fresh-${id}`, 'v1{}')).toBe(false);
+    },
+  );
 
   it('a revert to a text recorded since the clear still applies, and survives a rehydrate', () => {
     const store = new ChangesetStore(seed());

@@ -42,7 +42,7 @@ function proseLines(md: string): string[] {
   return out;
 }
 
-function expectNoInjectedProse(md: string, after = '### 2. After'): void {
+function expectNoInjectedProse(md: string, after = '### 2. `After`'): void {
   const prose = proseLines(md);
   // The fence must have CLOSED: the edit rendered after it is prose again. A fence left open would
   // hide the injection and everything after it, and the checks below would pass vacuously.
@@ -80,7 +80,7 @@ describe('changeset-md: page content cannot break out of the brief’s structure
         { id: 'next', css: 'p{}', intent: 'After sheet' },
       ] as Changeset['stylesheets']),
     );
-    expectNoInjectedProse(md, '### After sheet');
+    expectNoInjectedProse(md, '### `After sheet`');
   });
 
   it('a value with a pipe (escaped or not) never enters the table; it renders fenced', () => {
@@ -242,7 +242,7 @@ describe('changeset-md: attribute replacement and stylesheet headers', () => {
       ] as Changeset['stylesheets']),
     );
     expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
-    expect(md).toContain('### Tokens \\# Injected heading \\[click\\]\\(https://evil.example\\)');
+    expect(md).toContain('### `Tokens # Injected heading [click](https://evil.example)`');
   });
 
   it('an edit intent with a newline cannot open a section of its own', () => {
@@ -251,28 +251,35 @@ describe('changeset-md: attribute replacement and stylesheet headers', () => {
   });
 });
 
-describe('changeset-md: inline Markdown in headings stays literal', () => {
-  const HOSTILE = '[click](https://evil.example) ![img](https://evil.example/x.png) **b** <b>x</b>';
+describe('changeset-md: heading intents render as one code span', () => {
+  const HOSTILE = 'see https://evil.example and [x](y)\n# Injected';
 
-  /** A `](` or `<` not preceded by a backslash would still be live Markdown/HTML. */
-  function expectInert(line: string | undefined): void {
-    expect(line).toBeDefined();
-    expect(line).not.toMatch(/(^|[^\\])\]\(/);
-    expect(line).not.toMatch(/(^|[^\\])</);
-    expect(line).not.toMatch(/(^|[^\\])\*\*/);
+  /** Everything after the prefix is a single code span — no text outside backticks. */
+  function expectSpanOnly(line: string | undefined, prefix: string): void {
+    expect(line?.startsWith(prefix)).toBe(true);
+    const rest = (line ?? '').slice(prefix.length);
+    const ticks = /^`+/.exec(rest)?.[0] ?? '';
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(rest.endsWith(ticks)).toBe(true);
+    expect(rest).toContain('https://evil.example');
+    expect(rest).toContain('[x](y)');
   }
 
-  it('a stylesheet intent renders its link, image, emphasis and html escaped', () => {
+  it('a stylesheet intent with a bare URL and a link is fully inside the span', () => {
     const md = renderStylesheet(
       changeset([], [{ id: 'theme', css: 'a{}', intent: HOSTILE }] as Changeset['stylesheets']),
     );
-    const line = md.split('\n').find((l) => l.startsWith('### '));
-    expectInert(line);
-    expect(line).toContain('\\[click\\]\\(https://evil.example\\)');
+    expectSpanOnly(
+      md.split('\n').find((l) => l.startsWith('### ')),
+      '### ',
+    );
   });
 
-  it('an edit intent renders its link, image, emphasis and html escaped', () => {
+  it('an edit intent with a bare URL and a link is fully inside the span', () => {
     const md = renderChangeset(changeset([edit({ intent: HOSTILE })]));
-    expectInert(md.split('\n').find((l) => l.startsWith('### 1. ')));
+    expectSpanOnly(
+      md.split('\n').find((l) => l.startsWith('### 1. ')),
+      '### 1. ',
+    );
   });
 });

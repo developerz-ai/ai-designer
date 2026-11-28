@@ -210,7 +210,9 @@ export const ChangesetState = z.object({
   // `clear()`. A page-side undo (`stylesheet-reverted`) may only restore one of these: after a
   // Clear the page still holds its CSS, so an undo can name text from BEFORE the Clear, which
   // must not re-enter what Ship hands off. Optional so every earlier record still parses.
-  stylesheetHistory: z.record(z.string(), z.array(z.string())).optional(),
+  // `[id, digests]` PAIRS, not a record: an id is free text, and parsing a `__proto__` key into an
+  // object assigns the prototype instead of an entry — that sheet's history would vanish.
+  stylesheetHistory: z.array(z.tuple([z.string(), z.array(z.string())])).optional(),
 });
 export type ChangesetState = z.infer<typeof ChangesetState>;
 

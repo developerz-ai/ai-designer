@@ -37,7 +37,7 @@ export interface ChangesetStoreOptions {
   readonly redoStack?: readonly Edit[];
   /** Digests of the css recorded per sheet id since the last clear — supplied when rehydrating
    *  (see `ChangesetState.stylesheetHistory`). Copied defensively. */
-  readonly stylesheetHistory?: Readonly<Record<string, readonly string[]>>;
+  readonly stylesheetHistory?: readonly (readonly [string, readonly string[]])[];
   /** Called after every mutation with the new full state. Best-effort; see {@link PersistChangesetState}. */
   readonly persist?: PersistChangesetState;
 }
@@ -64,14 +64,16 @@ export class ChangesetStore {
   // Edits popped by `undo`, newest last — re-applied LIFO by `redo`, cleared on a fresh `record`.
   private readonly redoStack: Edit[];
   // Per sheet id: digests of the css texts recorded since the last clear (see revertStylesheet).
-  private stylesheetHistory: Record<string, string[]>;
+  // A Map, not a plain object: a sheet id is free text, and `constructor` / `__proto__` would read
+  // an inherited Object.prototype value. Persisted as `[id, digests]` pairs (ChangesetState).
+  private stylesheetHistory: Map<string, string[]>;
   private readonly persist?: PersistChangesetState;
 
   constructor(changeset: Changeset, options: ChangesetStoreOptions = {}) {
     this.changeset = changeset;
     this.redoStack = options.redoStack ? [...options.redoStack] : [];
-    this.stylesheetHistory = Object.fromEntries(
-      Object.entries(options.stylesheetHistory ?? {}).map(([id, list]) => [id, [...list]]),
+    this.stylesheetHistory = new Map(
+      (options.stylesheetHistory ?? []).map(([id, list]) => [id, [...list]]),
     );
     this.persist = options.persist;
   }
@@ -100,9 +102,7 @@ export class ChangesetStore {
     return {
       changeset: this.changeset,
       redoStack: [...this.redoStack],
-      stylesheetHistory: Object.fromEntries(
-        Object.entries(this.stylesheetHistory).map(([id, list]) => [id, [...list]]),
-      ),
+      stylesheetHistory: [...this.stylesheetHistory].map(([id, list]) => [id, [...list]]),
     };
   }
 
@@ -194,9 +194,9 @@ export class ChangesetStore {
    *  same-id `injectCss` replaces rather than stacks, so the record holds at most one entry per id.
    *  Stylesheets live beside the edit history, not in it: the redo stack is untouched. */
   recordStylesheet(sheet: StylesheetEdit): StylesheetEdit {
-    const seen = this.stylesheetHistory[sheet.id] ?? [];
+    const seen = this.stylesheetHistory.get(sheet.id) ?? [];
     const digest = cssDigest(sheet.css);
-    if (!seen.includes(digest)) this.stylesheetHistory[sheet.id] = [...seen, digest];
+    if (!seen.includes(digest)) this.stylesheetHistory.set(sheet.id, [...seen, digest]);
     return this.upsertStylesheet(sheet);
   }
 
@@ -217,22 +217,24 @@ export class ChangesetStore {
   /** Fold a page-side undo of an `injectCss` (the `stylesheet-reverted` push): `css: null` drops
    *  the sheet with `id`; a string restores the sheet's EARLIER text in place (an undone
    *  re-injection), keeping the recorded intent — the push carries none, and the sheet's purpose
-   *  is the same across its versions. Returns whether the record changed; an id the record does
-   *  not hold is a no-op either way (nothing persisted). */
+   *  is the same across its versions — but only a text recorded since the last clear. A restore to
+   *  any other text (pre-Clear CSS the page still held) means the page now shows CSS outside the
+   *  record, so the sheet's entry is DROPPED rather than kept stale or restored. Returns whether
+   *  the record changed; an id the record does not hold is a no-op either way (nothing persisted). */
   revertStylesheet(id: string, css: string | null): boolean {
     const { stylesheets } = this.changeset;
     const existing = stylesheets.find((s) => s.id === id);
-    if (css === null) {
-      if (!existing) return false;
-      this.changeset = { ...this.changeset, stylesheets: stylesheets.filter((s) => s.id !== id) };
-      this.flush();
+    if (!existing) return false;
+    if (css !== null && this.stylesheetHistory.get(id)?.includes(cssDigest(css))) {
+      this.upsertStylesheet({ ...existing, css });
       return true;
     }
-    // Only a text recorded since the last clear, onto an entry the record still holds: `clear()`
-    // drops the record but not the page's CSS, so an undo can name pre-Clear text — even for an id
-    // re-recorded since — and that must not re-enter what Ship hands off.
-    if (!existing || !this.stylesheetHistory[id]?.includes(cssDigest(css))) return false;
-    this.upsertStylesheet({ ...existing, css });
+    // Removed on the page, or restored to text from before the last clear (`clear()` drops the
+    // record, not the page's CSS): either way the record must not ship this sheet. Its history
+    // goes too — nothing recorded for this id still describes what the page shows.
+    this.stylesheetHistory.delete(id);
+    this.changeset = { ...this.changeset, stylesheets: stylesheets.filter((s) => s.id !== id) };
+    this.flush();
     return true;
   }
 
@@ -241,7 +243,7 @@ export class ChangesetStore {
    *  the same session. */
   clear(): void {
     this.changeset = { ...this.changeset, edits: [], stylesheets: [] };
-    this.stylesheetHistory = {};
+    this.stylesheetHistory = new Map();
     this.redoStack.length = 0;
     this.flush();
   }
