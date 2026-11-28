@@ -2,8 +2,9 @@
 
 Fired on the first and third Monday of each month by `schedules: improve` (`weeks_of_month: [1, 3]`).
 
-Twice a month, leave the extension measurably better. `CLAUDE.md` binds every change, and `non_goals` in the policy file are off limits. A red `main`,
-a missing publish and a stuck Dependabot PR belong to the platform's red-main ask (red `main`) and the owner (publishing).
+Twice a month, leave the extension measurably better. `CLAUDE.md` binds every change, and `non_goals` in the policy file are off limits. A red `main`
+and a missing publish belong to the platform's red-main ask and the owner (publishing). A Dependabot PR
+whose checks have failed for seven days is item 2 below: the scheduled `health` check that used to escalate it was retired on 2026-11-28.
 
 ## Signals
 
@@ -16,7 +17,7 @@ a missing publish and a stuck Dependabot PR belong to the platform's red-main as
 ## Pick at most three, in this order
 
 1. Anything the gate found broken or flaky: the root cause, never a retry or a skip.
-2. Dependency majors Dependabot could not land, one per PR.
+2. Dependency majors Dependabot could not land, and Dependabot PRs red for seven days, one per PR.
 3. Open bugs, each starting from a test that fails on `main`.
 4. Docs that no longer match the code, then dead code.
 
