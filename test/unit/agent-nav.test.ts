@@ -88,3 +88,16 @@ describe('AgentNavMarker', () => {
     expect(marker.has(7)).toBe(false);
   });
 });
+
+describe('AgentNavMarker.forget — outstanding releases go inert', () => {
+  it('a release that lands after forget() does not recreate the window', () => {
+    let t = 0;
+    const marker = new AgentNavMarker(AGENT_NAV_GRACE_MS, () => t);
+    const release = marker.begin(7);
+    marker.forget(7); // the tab closed while the click was in flight
+    release();
+    expect(marker.has(7)).toBe(false);
+    t += 1;
+    expect(marker.has(7)).toBe(false);
+  });
+});

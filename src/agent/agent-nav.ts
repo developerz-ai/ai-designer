@@ -45,6 +45,8 @@ export function mayNavigate(message: ContentRoutedMessage): boolean {
 export class AgentNavMarker {
   private readonly active = new Map<number, number>();
   private readonly graceUntil = new Map<number, number>();
+  // Bumped by `forget`, so releases handed out before it go inert.
+  private readonly epochs = new Map<number, number>();
 
   constructor(
     private readonly graceMs: number = AGENT_NAV_GRACE_MS,
@@ -55,10 +57,13 @@ export class AgentNavMarker {
    *  starts the grace). Idempotent: a second release is a no-op. */
   begin(tabId: number): () => void {
     this.active.set(tabId, (this.active.get(tabId) ?? 0) + 1);
+    const epoch = this.epochs.get(tabId) ?? 0;
     let released = false;
     return () => {
       if (released) return;
       released = true;
+      // A release from before `forget` belongs to a dead tab: it must not recreate the entry.
+      if ((this.epochs.get(tabId) ?? 0) !== epoch) return;
       const left = (this.active.get(tabId) ?? 1) - 1;
       if (left > 0) this.active.set(tabId, left);
       else this.active.delete(tabId);
@@ -76,8 +81,10 @@ export class AgentNavMarker {
     return false;
   }
 
-  /** Forget a tab entirely (closed — a recycled id must not inherit the window). */
+  /** Forget a tab entirely (closed — a recycled id must not inherit the window), including every
+   *  outstanding release. */
   forget(tabId: number): void {
+    this.epochs.set(tabId, (this.epochs.get(tabId) ?? 0) + 1);
     this.active.delete(tabId);
     this.graceUntil.delete(tabId);
   }

@@ -55,6 +55,7 @@ import {
   reconcileTurnStatus,
   writeSessionLifecycle,
 } from '@/agent/session-lifecycle';
+import { chainSettlingTurn, type SettlingTurn } from '@/agent/settling-turn';
 import { buildSystemPrompt } from '@/agent/system-prompt';
 import { mutationBlockedReason } from '@/agent/tab-guard';
 import { compactForThread } from '@/agent/thread-compact';
@@ -503,7 +504,7 @@ export default defineBackground(() => {
   // [user1, assistant1(partial), user2] — one source of truth for ordering. A turn that missed
   // the bound is FORFEITED: its late finalization must no longer append (it would land after
   // the newer user message and corrupt the resume thread).
-  let settlingTurn: { id: string; done: Promise<void> } | null = null;
+  let settlingTurn: SettlingTurn | null = null;
   const forfeitedTurns = new Set<string>();
   // The in-flight turn's changeset store + persist hook, registered at turn start and cleared in
   // the turn's `.finally` (and on session start/stop) — the mid-turn half of the recorder-revert
@@ -1064,16 +1065,27 @@ export default defineBackground(() => {
         const controller = new AbortController();
         turnAbort = controller;
         runningTurnId = turnId;
-        // Registered as the settling turn from the start too, so the NEXT send (or a
-        // conversation reset) waits for this one even while it is still in setup. Resolves when
-        // the turn's chain settles, or when setup exits without one (finally, below).
+        // The superseded turn's tab ownership dies with its controller: until this turn resolves
+        // its own tab, a close/navigation of the OLD tab must not be read as this turn's.
+        runningTurnTabId = null;
+        turnChangeset = null;
+        // Registered as the settling turn from the start too, CHAINED onto every earlier turn
+        // still unsettled (settling-turn.ts), so the NEXT send (or a conversation reset) waits
+        // for this one and its whole unsettled lineage, even while this one is still in setup.
+        // Its own share resolves when the turn's chain settles, or when setup exits without one
+        // (finally, below).
         let settleSetup: () => void = () => {};
-        settlingTurn = {
-          id: turnId,
-          done: new Promise<void>((resolve) => {
+        const settling = chainSettlingTurn(
+          priorTurn,
+          turnId,
+          new Promise<void>((resolve) => {
             settleSetup = resolve;
           }),
-        };
+        );
+        settlingTurn = settling;
+        void settling.done.then(() => {
+          if (settlingTurn === settling) settlingTurn = null;
+        });
         const stoppedDuringSetup = (): UserMessageResult => ({
           ok: false,
           error: 'Stopped before the turn started.',
@@ -1122,7 +1134,7 @@ export default defineBackground(() => {
                 () => false,
               ),
             ]);
-            if (!settledInTime) forfeitedTurns.add(priorTurn.id);
+            if (!settledInTime) for (const id of priorTurn.pending()) forfeitedTurns.add(id);
           }
           if (controller.signal.aborted) return stoppedDuringSetup();
 
@@ -1740,9 +1752,8 @@ export default defineBackground(() => {
                 // must never receive another strip (see retractRevertedEdit).
                 turnChangeset = null;
               }
-              // This turn's supersede bookkeeping dies with it: a settled turn no longer needs to
-              // be awaited, and its forfeit mark (checked in the `.then` above) must not leak.
-              if (settlingTurn?.id === turnId) settlingTurn = null;
+              // This turn's forfeit mark (checked in the `.then` above) must not leak. Its
+              // `settlingTurn` entry clears itself once the whole lineage settles (see setup).
               forfeitedTurns.delete(turnId);
               // The turn is over: clear the persisted per-tab turn status so a later `session-get`
               // doesn't read a stale `'running'` and report an orphan (#165 S5). A superseded turn
@@ -1768,9 +1779,8 @@ export default defineBackground(() => {
               // (with its spend) now reaches the debug log too, which it always bypassed.
               if (wasCurrent) emitTurn({ type: 'turn-done', usage: sessionUsage });
             });
-          // The settling-turn entry registered at setup start now resolves with the chain (it never
-          // rejects — `.catch` above). Only overwrite it if it is still OURS: a newer send that
-          // started meanwhile owns `settlingTurn` and already waited on this turn through it.
+          // This turn's share of the settling chain registered at setup start now resolves with
+          // the turn's chain (it never rejects — `.catch` above).
           void turnDone.then(settleSetup);
           chained = true;
 
@@ -1786,10 +1796,7 @@ export default defineBackground(() => {
             runningTurnTabId = null;
             turnChangeset = null;
           }
-          if (!chained) {
-            settleSetup();
-            if (settlingTurn?.id === turnId) settlingTurn = null;
-          }
+          if (!chained) settleSetup();
         }
       }
       // Ship (user-triggered) — dispatch to a connected coding backend, else return an MD brief to
@@ -2019,12 +2026,10 @@ export default defineBackground(() => {
           if (msg.authKind === 'apikey') {
             await saveApiKey(msg.id, msg.apiKey);
           } else {
-            oauthConfigs.set(msg.id, msg.oauth);
-            // Persist the NON-secret endpoint config (never the token) so a woken SW can still
-            // refresh the stored token instead of forcing re-auth (see mcpReady rehydration).
-            await saveOAuthConfig(msg.id, msg.oauth);
             // The token exchange is a fetch from this worker; a token endpoint on another host
             // than the server needs its own grant (the panel requests it inside the gesture).
+            // Checked BEFORE anything is saved: a denied re-authorization must leave the working
+            // config in place, not a replacement that can never complete.
             const tokenAccess = await ensureHostAccess(msg.oauth.tokenEndpoint);
             if (!tokenAccess.ok) {
               return {
@@ -2032,6 +2037,10 @@ export default defineBackground(() => {
                 error: tokenAccess.error ?? 'Host access denied for the OAuth token endpoint',
               };
             }
+            oauthConfigs.set(msg.id, msg.oauth);
+            // Persist the NON-secret endpoint config (never the token) so a woken SW can still
+            // refresh the stored token instead of forcing re-auth (see mcpReady rehydration).
+            await saveOAuthConfig(msg.id, msg.oauth);
             await startOAuth(msg.id, msg.oauth);
           }
         } catch (err) {
@@ -2236,7 +2245,7 @@ export default defineBackground(() => {
               () => false,
             ),
           ]);
-          if (!settledInTime) forfeitedTurns.add(priorTurn.id);
+          if (!settledInTime) for (const id of priorTurn.pending()) forfeitedTurns.add(id);
         }
         // No session = nothing to archive or reset; the next turn starts fresh anyway.
         if (tabId === null || !hasSession(tabId)) return { ok: true };
@@ -2505,29 +2514,51 @@ export default defineBackground(() => {
   }
 
   // An `injectCss` sheet reaching (or leaving) the durable changeset — without this, injected CSS
-  // lived only on the page and Ship / the report never carried it. A running turn on this tab
-  // owns the record (its in-memory store would otherwise persist straight over an out-of-band
-  // write), so the sheet folds into THAT store; between turns it rides the same per-tab mutation
-  // chain + applyChangesetOp the curation RPCs use. Tab-stamped panel push either way.
+  // lived only on the page and Ship / the report never carried it. Everything is decided INSIDE
+  // the tab's mutation queue (the turn registers its store there too, so "is a turn's store
+  // live?" cannot race a turn start): a running turn on this tab owns the record (its in-memory
+  // store would otherwise persist straight over an out-of-band write), so the sheet folds into
+  // THAT store; between turns it rides applyChangesetOp like the curation RPCs. The event carries
+  // the DOCUMENT it was raised on (captured at receipt); if the tab has since committed another
+  // document, or the target record belongs to another URL, the event is dropped — a sheet from a
+  // dead page must never land in the new page's record. Tab-stamped panel push when it changed.
   type StylesheetOp =
     | { readonly kind: 'record-stylesheet'; readonly sheet: StylesheetEdit }
     | { readonly kind: 'revert-stylesheet'; readonly id: string; readonly css: string | null };
-  async function foldStylesheet(tabId: number, op: StylesheetOp): Promise<void> {
-    if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
-      const live = turnChangeset.changeset;
-      if (op.kind === 'record-stylesheet') live.store.recordStylesheet(op.sheet);
-      else if (!live.store.revertStylesheet(op.id, op.css)) return;
-      await live.persist();
-      postToPanel({ type: 'changeset', changeset: live.store.current, tabId });
-      return;
-    }
-    const persister = createSessionChangesetPersister(tabId);
-    const before = await persister.load();
-    const { changeset } = await enqueueChangesetMutation(tabId, () =>
-      applyChangesetOp(
+  /** The document a content push was raised on: its committed URL and (top frame) documentId. */
+  interface PushDocument {
+    readonly url: string | undefined;
+    readonly documentId: string | undefined;
+  }
+  function foldStylesheet(tabId: number, op: StylesheetOp, origin: PushDocument): Promise<void> {
+    return enqueueChangesetMutation(tabId, async () => {
+      const current = diagnosticsDocument.get(tabId);
+      if (origin.documentId && current && origin.documentId !== current) return;
+      const url = origin.url ?? (await readCommittedUrl(tabId));
+      const committed = lastCommittedUrl.get(tabId);
+      if (url !== undefined && committed !== undefined && url !== committed) return;
+      if (turnAbort !== null && turnChangeset !== null && turnChangeset.tabId === tabId) {
+        const live = turnChangeset.changeset;
+        if (url !== undefined && live.store.current.url !== url) return;
+        if (op.kind === 'record-stylesheet') live.store.recordStylesheet(op.sheet);
+        else if (!live.store.revertStylesheet(op.id, op.css)) return;
+        await live.persist();
+        postToPanel({ type: 'changeset', changeset: live.store.current, tabId });
+        return;
+      }
+      const persister = createSessionChangesetPersister(tabId);
+      let saved = false;
+      const { changeset } = await applyChangesetOp(
         {
-          load: persister.load,
-          save: persister.save,
+          // The ONE load; a record for another document reads as "none" (a no-op).
+          load: async () => {
+            const state = await persister.load();
+            return state && (url === undefined || state.changeset.url === url) ? state : undefined;
+          },
+          save: async (state) => {
+            saved = true;
+            await persister.save(state);
+          },
           mirror: (cs) =>
             sessions
               .setChangeset(tabId, cs)
@@ -2535,11 +2566,9 @@ export default defineBackground(() => {
               .catch(() => undefined),
         },
         op,
-      ),
-    );
-    if (changeset && changeset !== before?.changeset) {
-      postToPanel({ type: 'changeset', changeset, tabId });
-    }
+      );
+      if (saved && changeset) postToPanel({ type: 'changeset', changeset, tabId });
+    });
   }
 
   // Content -> SW push (fire-and-forget forwarding to the panel; no response).
@@ -2613,7 +2642,12 @@ export default defineBackground(() => {
           ? { kind: 'record-stylesheet', sheet: parsed.data.sheet }
           : { kind: 'revert-stylesheet', id: parsed.data.id, css: parsed.data.css };
       if (senderTabId !== undefined) {
-        void foldStylesheet(senderTabId, op).catch((err) =>
+        // The document identity AT RECEIPT — re-checked inside the queue (see foldStylesheet).
+        const origin: PushDocument = {
+          url: lastCommittedUrl.get(senderTabId),
+          documentId: sender.frameId === 0 ? sender.documentId : undefined,
+        };
+        void foldStylesheet(senderTabId, op, origin).catch((err) =>
           console.warn(`[stylesheet] failed to fold the stylesheet for tab ${senderTabId}:`, err),
         );
       }

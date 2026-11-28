@@ -68,9 +68,18 @@ type Commit = {
   tabId: number;
   url: string;
   transitionType: string;
+  documentId?: string;
 };
 
-function boot(opts: { query?: () => Promise<unknown[]> } = {}) {
+function boot(
+  opts: {
+    query?: () => Promise<unknown[]>;
+    local?: Record<string, unknown>;
+    /** `chrome.permissions` answers for every origin (contains + request). */
+    granted?: boolean;
+  } = {},
+) {
+  const local: Record<string, unknown> = opts.local ?? {};
   const session: Record<string, unknown> = { 'committedUrl:7': OLD };
   const area = (data: Record<string, unknown>) => ({
     get: async (key: string | string[] | null) => {
@@ -90,7 +99,11 @@ function boot(opts: { query?: () => Promise<unknown[]> } = {}) {
   const removed: Array<(id: number) => void> = [];
   const event = { addListener: () => {} };
   vi.stubGlobal('chrome', {
-    storage: { session: area(session), local: area({}) },
+    storage: { session: area(session), local: area(local) },
+    permissions: {
+      contains: async () => opts.granted ?? true,
+      request: async () => opts.granted ?? true,
+    },
     runtime: {
       onMessage: { addListener: (listener: Listener) => listeners.push(listener) },
       onConnect: event,
@@ -119,17 +132,19 @@ function boot(opts: { query?: () => Promise<unknown[]> } = {}) {
       for (const listener of listeners)
         listener(message, {}, (value) => resolve(value as Record<string, unknown>));
     });
-  const commit = (url: string) => {
-    for (const listener of commits) listener({ frameId: 0, tabId: 7, url, transitionType: 'link' });
+  const commit = (url: string, documentId?: string) => {
+    for (const listener of commits)
+      listener({ frameId: 0, tabId: 7, url, transitionType: 'link', documentId });
   };
-  const closeTab = () => {
-    for (const listener of removed) listener(7);
+  const closeTab = (tabId = 7) => {
+    for (const listener of removed) listener(tabId);
   };
-  // A content-script push from tab 7's top frame.
-  const push = (message: object) => {
-    for (const listener of listeners) listener(message, { tab: { id: 7 }, frameId: 0 }, () => {});
+  // A content-script push from tab 7's top frame (raised on `documentId`, when given).
+  const push = (message: object, documentId?: string) => {
+    for (const listener of listeners)
+      listener(message, { tab: { id: 7 }, frameId: 0, documentId }, () => {});
   };
-  return { session, rpc, commit, closeTab, push };
+  return { session, local, rpc, commit, closeTab, push };
 }
 
 async function start(): Promise<void> {
@@ -353,5 +368,102 @@ describe('escaped errors after the conversation is gone', () => {
     );
     const log = await env.rpc({ type: 'debug-log-get' });
     expect(String(log.markdown)).toContain('escaped-boom');
+  });
+});
+
+describe('a new Send resolving its tab', () => {
+  it('is not aborted by the close of the PREVIOUS turn’s tab', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const env = boot({
+      query: async () => {
+        calls++;
+        if (calls === 1) return [{ id: 7, url: OLD }];
+        await gate;
+        return [{ id: 9, url: 'https://other.example/' }];
+      },
+    });
+    await start();
+    expect((await env.rpc({ type: 'user-message', text: 'first, on tab 7' })).ok).toBe(true);
+    const second = env.rpc({ type: 'user-message', text: 'second, on tab 9' });
+    await vi.waitFor(() => expect(calls).toBe(2));
+    env.closeTab(7); // the superseded turn's tab — not the new Send's
+    release();
+
+    expect((await second).ok).toBe(true);
+    expect(turns[1]?.signal?.aborted).toBe(false);
+  });
+});
+
+describe('mcp-auth-start with a denied token endpoint', () => {
+  it('refuses BEFORE replacing the saved OAuth config', async () => {
+    const oldConfig = {
+      authorizationEndpoint: 'https://mcp.example/authorize',
+      tokenEndpoint: 'https://mcp.example/token',
+      clientId: 'old',
+    };
+    const env = boot({
+      granted: false,
+      local: {
+        'mcp:servers': [
+          {
+            id: 's1',
+            label: 'S',
+            url: 'https://mcp.example/mcp',
+            transport: 'http',
+            authKind: 'oauth',
+            enabled: true,
+          },
+        ],
+        'mcp:oauth-configs': { s1: oldConfig },
+      },
+    });
+    await start();
+    const reply = await env.rpc({
+      type: 'mcp-auth-start',
+      id: 's1',
+      authKind: 'oauth',
+      oauth: {
+        authorizationEndpoint: 'https://auth.other.example/authorize',
+        tokenEndpoint: 'https://auth.other.example/token',
+        clientId: 'new',
+      },
+    });
+    expect(reply.ok).toBe(false);
+    expect(env.local['mcp:oauth-configs']).toEqual({ s1: oldConfig });
+  });
+});
+
+describe('a stylesheet push from a document that is no longer current', () => {
+  it('is dropped instead of landing in the new document’s record', async () => {
+    const env = boot();
+    await start();
+    env.commit(OLD, 'doc-old');
+    await env.rpc({ type: 'user-message', text: 'overhaul the design' });
+    const turn = turns[0];
+    if (!turn?.interact) throw new Error('no turn');
+    await turn.interact.control({ type: 'click', selector: 'a.next' });
+    env.commit(NEW, 'doc-new'); // agent nav: the turn rebases onto NEW
+
+    // A late push raised on the OLD document.
+    env.push(
+      { type: 'stylesheet-recorded', sheet: { id: 'default', css: 'body { color: red; }' } },
+      'doc-old',
+    );
+    // …and one from the current document, which must land.
+    env.push(
+      { type: 'stylesheet-recorded', sheet: { id: 'fresh', css: 'body { color: blue; }' } },
+      'doc-new',
+    );
+    await vi.waitFor(() => {
+      const record = env.session['changeset:7'] as
+        | { changeset: { url: string; stylesheets: Array<{ id: string }> } }
+        | undefined;
+      expect(record?.changeset.url).toBe(NEW);
+      expect(record?.changeset.stylesheets.map((sheet) => sheet.id)).toEqual(['fresh']);
+    });
   });
 });

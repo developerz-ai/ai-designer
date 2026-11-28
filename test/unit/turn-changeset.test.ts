@@ -114,3 +114,25 @@ describe('TurnChangeset.close — the tab was removed', () => {
     expect(saved).toHaveLength(0);
   });
 });
+
+describe('TurnChangeset.persist — a navigation during the save', () => {
+  it('does not republish the old snapshot to the mirror nav-clear just reseeded', async () => {
+    let committed = OLD;
+    const mirrored: Changeset[] = [];
+    const turn = new TurnChangeset(
+      new ChangesetStore(emptyChangeset(OLD, '2026-07-13T00:00:00Z', SESSION_ID)),
+      {
+        committedUrl: async () => committed,
+        save: async () => {
+          committed = NEW; // the page committed a new document while the save was in flight
+        },
+        mirror: async (cs) => {
+          mirrored.push(cs);
+        },
+      },
+    );
+    turn.store.record(anEdit);
+    await turn.persist();
+    expect(mirrored).toHaveLength(0);
+  });
+});

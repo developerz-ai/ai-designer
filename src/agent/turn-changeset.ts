@@ -60,9 +60,15 @@ export class TurnChangeset {
     if (this.closed) return;
     const committed = await this.deps.committedUrl();
     if (this.closed || this.current.current.url !== committed) return;
-    const state = this.current.snapshot();
+    const source = this.current;
+    const state = source.snapshot();
     await this.deps.save(state);
-    if (this.closed) return;
+    // Re-check the document before MIRRORING: a navigation that committed during the save has
+    // had nav-clear reseed Ship's mirror for the new document — republishing this snapshot over
+    // it would put the dead page's edits back in front of Ship. (Same if the store was rebased.)
+    if (this.closed || this.current !== source) return;
+    if ((await this.deps.committedUrl()) !== state.changeset.url) return;
+    if (this.closed || this.current !== source) return;
     await this.deps.mirror(state.changeset);
   }
 
