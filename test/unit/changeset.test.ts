@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ChangesetState, Edit, emptyChangeset } from '@/shared/changeset';
+import { ChangesetState, Edit, emptyChangeset, hasShippableWork } from '@/shared/changeset';
 
 // changeset schema unit (#142): the Edit refines rejecting degenerate deltas — a null→null
 // AttrChange (a no-op, not a change) and contradictory same-name class ops (add+remove in one
@@ -101,5 +101,21 @@ describe('Edit schema: degenerate delta refines (#142)', () => {
     };
     const parsed = ChangesetState.safeParse(state);
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe('hasShippableWork', () => {
+  const base = emptyChangeset(
+    'https://x.test/',
+    '2026-07-14T00:00:00Z',
+    '00000000-0000-4000-8000-000000000000',
+  );
+
+  it('is false for an empty changeset', () => {
+    expect(hasShippableWork(base)).toBe(false);
+  });
+
+  it('is true for a stylesheet-only changeset (a full-page injectCss overhaul)', () => {
+    expect(hasShippableWork({ ...base, stylesheets: [{ id: 'default', css: 'a{}' }] })).toBe(true);
   });
 });

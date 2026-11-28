@@ -42,7 +42,7 @@ function proseLines(md: string): string[] {
   return out;
 }
 
-function expectNoInjectedProse(md: string, after = '### 2. After'): void {
+function expectNoInjectedProse(md: string, after = '### 2. `After`'): void {
   const prose = proseLines(md);
   // The fence must have CLOSED: the edit rendered after it is prose again. A fence left open would
   // hide the injection and everything after it, and the checks below would pass vacuously.
@@ -80,7 +80,7 @@ describe('changeset-md: page content cannot break out of the brief’s structure
         { id: 'next', css: 'p{}', intent: 'After sheet' },
       ] as Changeset['stylesheets']),
     );
-    expectNoInjectedProse(md, '### After sheet');
+    expectNoInjectedProse(md, '### `After sheet`');
   });
 
   it('a value with a pipe (escaped or not) never enters the table; it renders fenced', () => {
@@ -159,5 +159,127 @@ describe('changeset-md: page content cannot break out of the brief’s structure
   it('a fenced block carries its content verbatim', () => {
     const md = renderChangeset(changeset([edit({ text: { before: INJECTION, after: 'x' } })]));
     expect(md).toContain(INJECTION);
+  });
+});
+
+describe('changeset-md: attribute, class and selector text go through code spans', () => {
+  // Page text with a backtick AND a newline: inside bare backticks the backtick closed the span
+  // and the newline started a fresh line, so the brief grew a real heading and a live link.
+  const HOSTILE = 'old`\n\n# Injected heading\n\n[click](https://evil.example)';
+  const SPAN = '``old` # Injected heading [click](https://evil.example)``';
+
+  function headings(md: string): string[] {
+    return proseLines(md).filter((l) => l.startsWith('# '));
+  }
+
+  it('an attribute name / before / after cannot inject a heading or a link', () => {
+    const set = renderChangeset(
+      changeset([edit({ attrs: [{ name: 'title', before: null, after: HOSTILE }] })]),
+    );
+    expect(headings(set)).toEqual([]);
+    expect(set).toContain(`**Attribute:** \`title\`: *(absent)* → ${SPAN}`);
+
+    const removed = renderChangeset(
+      changeset([edit({ attrs: [{ name: HOSTILE, before: HOSTILE, after: null }] })]),
+    );
+    expect(headings(removed)).toEqual([]);
+    expect(removed).toContain(`**Attribute removed:** ${SPAN} (was ${SPAN})`);
+  });
+
+  it('a class name cannot inject', () => {
+    const md = renderChangeset(changeset([edit({ classes: [{ op: 'add', name: HOSTILE }] })]));
+    expect(headings(md)).toEqual([]);
+    expect(md).toContain(`**Class added:** ${SPAN}`);
+  });
+
+  it('the target, a move ref and a wrap end selector cannot inject', () => {
+    const sel = { value: HOSTILE, strategy: 'css-path' as const, fragile: false };
+    const md = renderChangeset(
+      changeset([
+        edit({ selector: sel, structural: { op: 'move', refSelector: sel } as Edit['structural'] }),
+        edit({
+          structural: { op: 'wrap', html: '<div></div>', endSelector: sel } as Edit['structural'],
+        }),
+        edit({
+          structural: { op: 'insert', html: '<p></p>', refSelector: sel } as Edit['structural'],
+        }),
+      ]),
+    );
+    expect(headings(md)).toEqual([]);
+    expect(md).toContain(`**Target:** ${SPAN} (css-path)`);
+    expect(md).toContain(`moves to ${SPAN}`);
+    expect(md).toContain(`**through** ${SPAN}`);
+    expect(md).toContain(`added beforeend ${SPAN}:`);
+  });
+});
+
+describe('changeset-md: attribute replacement and stylesheet headers', () => {
+  it('a replaced attribute shows what it was, telling absent apart from empty', () => {
+    const md = renderChangeset(
+      changeset([
+        edit({
+          attrs: [
+            { name: 'title', before: 'Old`name', after: 'New' },
+            { name: 'alt', before: '', after: 'Logo' },
+            { name: 'role', before: null, after: 'button' },
+          ],
+        }),
+      ]),
+    );
+    expect(md).toContain('**Attribute:** `title`: ``Old`name`` → `New`');
+    expect(md).toContain('**Attribute:** `alt`: *(empty)* → `Logo`');
+    expect(md).toContain('**Attribute:** `role`: *(absent)* → `button`');
+  });
+
+  it('a stylesheet intent with a newline cannot open a section of its own', () => {
+    const md = renderStylesheet(
+      changeset([], [
+        {
+          id: 'theme',
+          css: 'a{}',
+          intent: 'Tokens\n\n# Injected heading\n[click](https://evil.example)',
+        },
+      ] as Changeset['stylesheets']),
+    );
+    expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
+    expect(md).toContain('### `Tokens # Injected heading [click](https://evil.example)`');
+  });
+
+  it('an edit intent with a newline cannot open a section of its own', () => {
+    const md = renderChangeset(changeset([edit({ intent: 'Hero\n# Injected heading' })]));
+    expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
+  });
+});
+
+describe('changeset-md: heading intents render as one code span', () => {
+  const HOSTILE = 'see https://evil.example and [x](y)\n# Injected';
+
+  /** Everything after the prefix is a single code span — no text outside backticks. */
+  function expectSpanOnly(line: string | undefined, prefix: string): void {
+    expect(line?.startsWith(prefix)).toBe(true);
+    const rest = (line ?? '').slice(prefix.length);
+    const ticks = /^`+/.exec(rest)?.[0] ?? '';
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(rest.endsWith(ticks)).toBe(true);
+    expect(rest).toContain('https://evil.example');
+    expect(rest).toContain('[x](y)');
+  }
+
+  it('a stylesheet intent with a bare URL and a link is fully inside the span', () => {
+    const md = renderStylesheet(
+      changeset([], [{ id: 'theme', css: 'a{}', intent: HOSTILE }] as Changeset['stylesheets']),
+    );
+    expectSpanOnly(
+      md.split('\n').find((l) => l.startsWith('### ')),
+      '### ',
+    );
+  });
+
+  it('an edit intent with a bare URL and a link is fully inside the span', () => {
+    const md = renderChangeset(changeset([edit({ intent: HOSTILE })]));
+    expectSpanOnly(
+      md.split('\n').find((l) => l.startsWith('### 1. ')),
+      '### 1. ',
+    );
   });
 });

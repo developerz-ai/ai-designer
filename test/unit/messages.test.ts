@@ -1314,3 +1314,23 @@ describe('Conversation / history schemas (slice 08)', () => {
     );
   });
 });
+
+describe('ContentToSw: stylesheet-reverted (injectCss undo)', () => {
+  it('accepts a removal (css null) and a restore (css string)', () => {
+    expect(
+      ContentToSw.safeParse({ type: 'stylesheet-reverted', id: 'default', css: null }).success,
+    ).toBe(true);
+    expect(
+      ContentToSw.safeParse({ type: 'stylesheet-reverted', id: 'default', css: 'a{}' }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a revert with no css field or an over-long id', () => {
+    expect(ContentToSw.safeParse({ type: 'stylesheet-reverted', id: 'default' }).success).toBe(
+      false,
+    );
+    expect(
+      ContentToSw.safeParse({ type: 'stylesheet-reverted', id: 'x'.repeat(65), css: null }).success,
+    ).toBe(false);
+  });
+});

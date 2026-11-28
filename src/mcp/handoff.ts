@@ -14,7 +14,13 @@
 // itself.
 
 import { toMarkdown } from '@/changeset/report-md';
-import type { Changeset, Edit } from '@/shared/changeset';
+import {
+  type Changeset,
+  type Edit,
+  hasShippableWork,
+  type StylesheetEdit,
+} from '@/shared/changeset';
+import { cyrb53 } from '@/shared/hash';
 import type { Report, ReportImage } from '@/shared/report';
 
 /** ai-dev's UI-work agent template (docs/idea/handoff.md "The task call"). */
@@ -80,6 +86,9 @@ export interface TaskSpecPayload {
   readonly url: string;
   /** The session's recorded edits — always present (may be empty for a diagnostics-only report). */
   readonly edits: readonly Edit[];
+  /** The session's injected page-level stylesheets (`injectCss`), latest version per id — the
+   *  authored CSS a full-page overhaul ships as. Always present (empty when none were injected). */
+  readonly stylesheets: readonly StylesheetEdit[];
   /** The agent-authored Markdown brief; set for a `Report` handoff, omitted for a bare changeset. */
   readonly brief?: string;
   /** The single problem this task addresses, when a report was decomposed into one task per problem. */
@@ -128,7 +137,7 @@ export interface ShipTarget {
  * Expand a ship request into the concrete `task(create)` specs to dispatch — the multi-task fan-out.
  * One spec for a changeset or a single-task report; one spec PER problem for a decomposed report
  * (each a focused brief narrowed to that problem, sharing the session's identity/images/edits).
- * Throws on nothing to hand off (an empty changeset) or a missing repo — Ship keeps the user's work
+ * Throws on nothing to hand off (a changeset with neither edits nor stylesheets) or a missing repo — Ship keeps the user's work
  * rather than opening a meaningless PR (docs/idea/handoff.md "Failure").
  */
 export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
@@ -136,7 +145,7 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
   if (!repo) throw new Error('ship: no repo mapped for this page');
 
   if (source.kind === 'changeset') {
-    if (source.changeset.edits.length === 0) throw new Error('ship: changeset has no edits');
+    if (!hasShippableWork(source.changeset)) throw new Error('ship: changeset has no edits');
     return [changesetSpec(source.changeset, repo, source.title, target.branch)];
   }
 
@@ -145,8 +154,15 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
   const edits = changeset?.edits ?? [];
 
   if (multiTask && report.problems.length > 0) {
-    return report.problems.map((problem) =>
-      reportSpec(
+    // The same problem string twice is two findings, not one: without telling the copies apart
+    // their digests (and so idempotency keys) collide and the backend dedupes the second task onto
+    // the first. Only a repeat carries its occurrence, so the first copy's key — and every
+    // non-duplicated problem's key — stays what it was (a retry still lands on its task).
+    const seen = new Map<string, number>();
+    return report.problems.map((problem) => {
+      const occurrence = seen.get(problem) ?? 0;
+      seen.set(problem, occurrence + 1);
+      return reportSpec(
         focusReport(report, problem),
         repo,
         url,
@@ -155,8 +171,9 @@ export function planTasks(source: ShipSource, target: ShipTarget): TaskSpec[] {
         problem,
         undefined,
         target.branch,
-      ),
-    );
+        occurrence,
+      );
+    });
   }
   return [reportSpec(report, repo, url, edits, changeset, undefined, source.title, target.branch)];
 }
@@ -179,9 +196,11 @@ function changesetSpec(
         repo,
         branch,
         edits: changeset.edits,
+        ...stylesheetDigest(changeset.stylesheets),
       }),
       url: changeset.url,
       edits: changeset.edits,
+      stylesheets: changeset.stylesheets,
       ...(branch ? { branch } : {}),
     },
   };
@@ -201,7 +220,10 @@ function reportSpec(
   problem?: string,
   title?: string,
   branch?: string,
+  // 0 for the first (or only) copy of `problem`; n for its n-th repeat in the same report.
+  occurrence = 0,
 ): TaskSpec {
+  const stylesheets = changeset?.stylesheets ?? [];
   return {
     template: TASK_TEMPLATE,
     repo,
@@ -217,11 +239,14 @@ function reportSpec(
               branch,
               edits,
               problem,
+              ...(occurrence > 0 ? { occurrence } : {}),
+              ...stylesheetDigest(stylesheets),
             }),
           }
         : {}),
       url,
       edits,
+      stylesheets,
       brief: toMarkdown(report, changeset),
       images: report.images,
       ...(problem ? { problem } : {}),
@@ -243,17 +268,10 @@ function dispatchKey(sessionId: string, work: Record<string, unknown>): string {
   return `${sessionId}:${cyrb53(JSON.stringify(work)).toString(36)}`;
 }
 
-function cyrb53(text: string): number {
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c6ce57;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+// Stylesheets join the digest only when there are some, so a session with none keeps the exact
+// key it had before stylesheets reached the handoff (a retry across the upgrade still dedupes).
+function stylesheetDigest(stylesheets: readonly StylesheetEdit[]): { stylesheets?: unknown } {
+  return stylesheets.length > 0 ? { stylesheets } : {};
 }
 
 /** Narrow a report to a single problem for a per-problem task — same shared context (summary,
@@ -263,10 +281,11 @@ function focusReport(report: Report, problem: string): Report {
   return { ...report, problems: [problem] };
 }
 
-/** First edit's intent as the task headline, else a generic fallback. */
+/** First edit's intent as the task headline, else the first stylesheet's (a stylesheet-only
+ *  session), else a generic fallback. */
 function titleFromEdits(changeset: Changeset): string {
-  const first = changeset.edits[0];
-  return clampTitle(first?.intent || 'Apply design changes');
+  const first = changeset.edits[0]?.intent || changeset.stylesheets[0]?.intent;
+  return clampTitle(first || 'Apply design changes');
 }
 
 /** The report summary's first line as the task headline, else a generic fallback. */

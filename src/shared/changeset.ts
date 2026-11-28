@@ -206,6 +206,13 @@ export type Changeset = z.infer<typeof Changeset>;
 export const ChangesetState = z.object({
   changeset: Changeset,
   redoStack: z.array(Edit).default([]),
+  // Per sheet id, digests (`@/shared/hash` cyrb53) of every css text recorded since the last
+  // `clear()`. A page-side undo (`stylesheet-reverted`) may only restore one of these: after a
+  // Clear the page still holds its CSS, so an undo can name text from BEFORE the Clear, which
+  // must not re-enter what Ship hands off. Optional so every earlier record still parses.
+  // `[id, digests]` PAIRS, not a record: an id is free text, and parsing a `__proto__` key into an
+  // object assigns the prototype instead of an entry — that sheet's history would vanish.
+  stylesheetHistory: z.array(z.tuple([z.string(), z.array(z.string())])).optional(),
 });
 export type ChangesetState = z.infer<typeof ChangesetState>;
 
@@ -217,4 +224,11 @@ export function emptyChangeset(url: string, createdAt: string, sessionId: string
 
 export function addEdit(changeset: Changeset, edit: Edit): Changeset {
   return { ...changeset, edits: [...changeset.edits, edit] };
+}
+
+/** Whether a changeset carries anything Ship can hand off: a recorded edit OR an injected
+ *  stylesheet. A stylesheet-only session (a full-page `injectCss` overhaul) is real work — gating
+ *  Ship on `edits.length` alone told it "nothing to ship" while the page showed the redesign. */
+export function hasShippableWork(changeset: Changeset): boolean {
+  return changeset.edits.length > 0 || changeset.stylesheets.length > 0;
 }

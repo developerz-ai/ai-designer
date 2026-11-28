@@ -264,3 +264,48 @@ describe('mcp/store OAuth endpoint config (non-secret, rehydrated after SW evict
     expect(await getOAuthConfigs()).toEqual({});
   });
 });
+
+describe('mcp store: concurrent writes', () => {
+  // get() reads, then yields before answering, so unserialized read-modify-write writers both read the same
+  // old record and the second set() drops the first one's update.
+  function slowReads(): void {
+    const real = chrome.storage.local.get.bind(chrome.storage.local);
+    chrome.storage.local.get = (async (keys: string) => {
+      const snapshot = await real(keys); // read NOW, answer later: the window a racing write hits
+      await new Promise((r) => setTimeout(r, 0));
+      return snapshot;
+    }) as typeof chrome.storage.local.get;
+  }
+
+  it('two servers saved together both persist', async () => {
+    slowReads();
+    await Promise.all([
+      saveServer({ id: 'a', label: 'A', url: 'https://a.example/mcp' }),
+      saveServer({ id: 'b', label: 'B', url: 'https://b.example/mcp' }),
+    ]);
+    expect((await listServers()).map((s) => s.id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('two origin mappings set together both persist', async () => {
+    slowReads();
+    await Promise.all([
+      setOriginRepo('a.example', { repo: 'acme/a' }),
+      setOriginRepo('b.example', { repo: 'acme/b' }),
+    ]);
+    expect(await getOriginRepoMap()).toEqual({
+      'a.example': { repo: 'acme/a' },
+      'b.example': { repo: 'acme/b' },
+    });
+  });
+
+  it('two OAuth configs saved together both persist', async () => {
+    slowReads();
+    const cfg = {
+      authorizationEndpoint: 'https://auth.example/authorize',
+      tokenEndpoint: 'https://auth.example/token',
+      clientId: 'c',
+    };
+    await Promise.all([saveOAuthConfig('a', cfg), saveOAuthConfig('b', cfg)]);
+    expect(Object.keys(await getOAuthConfigs()).sort()).toEqual(['a', 'b']);
+  });
+});

@@ -220,7 +220,12 @@ describe('createTaskBackend', () => {
     template: 'frontend_dev',
     repo: 'acme/store',
     title: 'Recolor CTA',
-    spec: { source: 'developerz-designer', url: 'http://localhost:3000/x', edits: [] },
+    spec: {
+      source: 'developerz-designer',
+      url: 'http://localhost:3000/x',
+      edits: [],
+      stylesheets: [],
+    },
   };
 
   it('creates a task, forwarding the full args and parsing the handle', async () => {
@@ -288,5 +293,43 @@ describe('createTaskBackend', () => {
     const execute: TaskToolExecute = async () => ({});
     const final = await createTaskBackend(execute).watch('t1', () => {});
     expect(final).toEqual({ status: 'unknown' });
+  });
+});
+
+describe('createTaskBackend: MCP isError results surface the server text', () => {
+  const args: TaskCreateArgs = {
+    action: 'create',
+    template: 'frontend_dev',
+    repo: 'acme/store',
+    title: 'Recolor CTA',
+    spec: {
+      source: 'developerz-designer',
+      url: 'http://localhost:3000/x',
+      edits: [],
+      stylesheets: [],
+    },
+  };
+  const refusal = {
+    isError: true,
+    content: [{ type: 'text', text: 'repo acme/store is not connected to this workspace' }],
+  };
+
+  it('create throws the server reason, not "did not return a task id"', async () => {
+    const backend = createTaskBackend(vi.fn<TaskToolExecute>(async () => refusal));
+    await expect(backend.create(args)).rejects.toThrow(
+      'ship: backend task create failed: repo acme/store is not connected to this workspace',
+    );
+  });
+
+  it('watch throws the server reason instead of reporting status "unknown"', async () => {
+    const onStatus = vi.fn();
+    const backend = createTaskBackend(vi.fn<TaskToolExecute>(async () => refusal));
+    await expect(backend.watch('t1', onStatus)).rejects.toThrow(/task watch failed: repo acme/);
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
+  it('an error envelope with no text still fails, with a generic reason', async () => {
+    const backend = createTaskBackend(vi.fn<TaskToolExecute>(async () => ({ isError: true })));
+    await expect(backend.create(args)).rejects.toThrow(/^ship: backend task create failed$/);
   });
 });

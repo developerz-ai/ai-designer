@@ -48,6 +48,7 @@ function fakeFactory(tools: ToolSet = toolSet('task', 'kb')) {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('namespaceTool', () => {
@@ -115,26 +116,58 @@ describe('createConnection', () => {
     expect(toolsFn).toHaveBeenCalledTimes(1);
   });
 
-  it('passes resolved getHeaders() to the transport, refreshing per open', async () => {
+  it('calls getHeaders() on every request instead of freezing it at open', async () => {
+    // The transport-level half only; the real expiring-token path (headerResolverFor + an
+    // advancing clock) is in mcp-auth.test.ts, which runs in node for crypto.subtle.
+    let current = 'Bearer one';
+    const getHeaders = vi.fn(async () => ({ Authorization: current }));
     const { connect } = fakeFactory();
-    const getHeaders = vi
-      .fn()
-      .mockResolvedValueOnce({ Authorization: 'Bearer one' })
-      .mockResolvedValueOnce({ Authorization: 'Bearer two' });
     const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp', getHeaders }, { connect });
-
-    await conn.tools();
-    await conn.close();
     await conn.tools();
 
-    expect(connect.mock.calls[0]?.[0].transport).toMatchObject({
-      type: 'http',
-      url: 'https://x/mcp',
-      headers: { Authorization: 'Bearer one' },
+    const sent: (string | null)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get('Authorization'));
+        return new Response('{}');
+      }),
+    );
+    const transport = connect.mock.calls[0]?.[0].transport as {
+      headers?: Record<string, string>;
+      fetch: typeof globalThis.fetch;
+    };
+    // Not frozen into the transport at open: a static header would outlive the token.
+    expect(transport.headers).toBeUndefined();
+
+    await transport.fetch('https://x/mcp', { headers: { 'content-type': 'application/json' } });
+    current = 'Bearer two'; // the resolver's answer changed — no reopen
+    await transport.fetch('https://x/mcp', { headers: { 'content-type': 'application/json' } });
+
+    expect(sent).toEqual(['Bearer one', 'Bearer two']);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(conn.isOpen()).toBe(true);
+  });
+
+  it('keeps the SDK headers on a request while laying auth over them', async () => {
+    const getHeaders = vi.fn(async () => ({ Authorization: 'Bearer fresh' }));
+    const { connect } = fakeFactory();
+    const conn = createConnection({ id: 'ai-dev', url: 'https://x/mcp', getHeaders }, { connect });
+    await conn.tools();
+    const native = vi.fn(async (_input: unknown, _init?: RequestInit) => new Response('{}'));
+    vi.stubGlobal('fetch', native);
+    const transport = connect.mock.calls[0]?.[0].transport as { fetch: typeof globalThis.fetch };
+
+    await transport.fetch('https://x/mcp', {
+      method: 'POST',
+      headers: { 'mcp-session-id': 's1', Authorization: 'Bearer stale' },
     });
-    expect(connect.mock.calls[1]?.[0].transport).toMatchObject({
-      headers: { Authorization: 'Bearer two' },
-    });
+
+    const init = native.mock.calls[0]?.[1];
+    const headers = new Headers(init?.headers);
+    expect(init?.method).toBe('POST');
+    expect(headers.get('mcp-session-id')).toBe('s1');
+    expect(headers.get('Authorization')).toBe('Bearer fresh');
   });
 
   it('falls back to static headers when no resolver is given', async () => {

@@ -13,7 +13,7 @@
 // and pushes the resulting `changeset` to the panel; the turn-in-flight guard lives there (a panel
 // op must not clobber a running turn's own store), so these functions assume it is safe to mutate.
 
-import type { Changeset, ChangesetState } from '@/shared/changeset';
+import type { Changeset, ChangesetState, StylesheetEdit } from '@/shared/changeset';
 import type { MutationEvent } from '@/shared/messages';
 import { retractFromEdits } from './revert-match';
 import { ChangesetStore } from './store';
@@ -27,7 +27,12 @@ export type ChangesetOp =
   | { readonly kind: 'redo' }
   | { readonly kind: 'clear' }
   | { readonly kind: 'remove'; readonly index: number }
-  | { readonly kind: 'retract'; readonly event: MutationEvent };
+  | { readonly kind: 'retract'; readonly event: MutationEvent }
+  // The content script's `stylesheet-recorded` / `stylesheet-reverted` pushes, folded into
+  // `Changeset.stylesheets` when no turn holds the tab's store (the turn's own store takes them
+  // directly otherwise — background.ts).
+  | { readonly kind: 'record-stylesheet'; readonly sheet: StylesheetEdit }
+  | { readonly kind: 'revert-stylesheet'; readonly id: string; readonly css: string | null };
 
 /** The ports the curation core needs, injected so it stays chrome-free + testable. */
 export interface ChangesetPorts {
@@ -115,6 +120,14 @@ export async function applyChangesetOp(
       }
       break;
     }
+    case 'record-stylesheet':
+      store.recordStylesheet(op.sheet);
+      break;
+    case 'revert-stylesheet':
+      // Removing an unknown sheet ⇒ no-op, nothing persisted/mirrored (same rule as an
+      // unmatched retract).
+      if (!store.revertStylesheet(op.id, op.css)) return view(store);
+      break;
   }
   await ports.save(store.snapshot());
   await ports.mirror(store.current);

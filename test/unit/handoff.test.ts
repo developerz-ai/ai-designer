@@ -610,3 +610,63 @@ describe('the dispatched brief carries the changeset', () => {
     expect(brief).not.toContain('## Proposed CSS');
   });
 });
+
+describe('planTasks: injected stylesheets reach the handoff', () => {
+  const sheet = { id: 'default', css: ':root{--brand:#f97316}', intent: 'Brand tokens' };
+  const target = { repo: 'acme/store' };
+
+  it('ships a stylesheet-only changeset instead of refusing it as "no edits"', () => {
+    const specs = planTasks(
+      { kind: 'changeset', changeset: changeset({ edits: [], stylesheets: [sheet] }) },
+      target,
+    );
+    expect(specs).toHaveLength(1);
+    expect(specs[0]?.spec.stylesheets).toEqual([sheet]);
+    expect(specs[0]?.title).toBe('Brand tokens');
+  });
+
+  it('still refuses a changeset with neither edits nor stylesheets', () => {
+    expect(() =>
+      planTasks({ kind: 'changeset', changeset: changeset({ edits: [] }) }, target),
+    ).toThrow(/no edits/);
+  });
+
+  it('carries stylesheets on a report task and folds them into the idempotency key', () => {
+    const withSheet = planTasks(
+      { kind: 'report', report: report(), changeset: changeset({ stylesheets: [sheet] }) },
+      target,
+    );
+    const without = planTasks({ kind: 'report', report: report(), changeset: changeset() }, target);
+    expect(withSheet[0]?.spec.stylesheets).toEqual([sheet]);
+    expect(without[0]?.spec.stylesheets).toEqual([]);
+    expect(withSheet[0]?.spec.idempotencyKey).not.toBe(without[0]?.spec.idempotencyKey);
+    expect(withSheet[0]?.spec.brief).toContain('--brand:#f97316');
+  });
+});
+
+describe('planTasks: duplicate problems in one report', () => {
+  it('gives two identical problem strings distinct keys, leaving the first copy key stable', () => {
+    const cs = changeset();
+    const dup = planTasks(
+      {
+        kind: 'report',
+        report: report({ problems: ['Nav overflows', 'Nav overflows'] }),
+        changeset: cs,
+        multiTask: true,
+      },
+      { repo: 'acme/store' },
+    );
+    const single = planTasks(
+      {
+        kind: 'report',
+        report: report({ problems: ['Nav overflows'] }),
+        changeset: cs,
+        multiTask: true,
+      },
+      { repo: 'acme/store' },
+    );
+    expect(dup).toHaveLength(2);
+    expect(dup[0]?.spec.idempotencyKey).not.toBe(dup[1]?.spec.idempotencyKey);
+    expect(dup[0]?.spec.idempotencyKey).toBe(single[0]?.spec.idempotencyKey);
+  });
+});

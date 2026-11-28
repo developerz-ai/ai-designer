@@ -28,7 +28,7 @@ describe('host-permissions: originPattern', () => {
 });
 
 interface PermFake {
-  contains: (p: { origins?: string[] }) => Promise<boolean>;
+  contains: ReturnType<typeof vi.fn>;
   request: ReturnType<typeof vi.fn>;
 }
 
@@ -42,11 +42,15 @@ function installPermissions(opts: {
   const held = new Set(opts.granted ?? []);
   const request = vi.fn((p: { origins?: string[] }) => {
     if (opts.rejectRequest) return Promise.reject(new Error('user gesture required'));
+    // Real Chrome: an origin already held resolves true at once, with no prompt.
+    if ((p.origins ?? []).every((o) => held.has(o))) return Promise.resolve(true);
     if (opts.grant) for (const o of p.origins ?? []) held.add(o);
     return Promise.resolve(Boolean(opts.grant));
   });
   const permissions: PermFake = {
-    contains: (p) => Promise.resolve((p.origins ?? []).every((o) => held.has(o))),
+    contains: vi.fn((p: { origins?: string[] }) =>
+      Promise.resolve((p.origins ?? []).every((o) => held.has(o))),
+    ),
     request,
   };
   (globalThis as { chrome?: unknown }).chrome = { permissions };
@@ -59,10 +63,25 @@ afterEach(() => {
 });
 
 describe('host-permissions: ensureHostAccess', () => {
-  it('is a no-op when the origin is already granted (no request prompt)', async () => {
-    const perm = installPermissions({ granted: ['https://openrouter.ai/*'] });
+  it('reports ok for an already-granted origin (request resolves true, no prompt)', async () => {
+    installPermissions({ granted: ['https://openrouter.ai/*'] });
     expect(await ensureHostAccess('https://openrouter.ai/api/v1')).toEqual({ ok: true });
-    expect(perm.request).not.toHaveBeenCalled();
+  });
+
+  it('calls request() with no contains() await ahead of it (keeps the user gesture)', async () => {
+    // An await before request() ends the gesture's call stack and Chrome refuses to prompt —
+    // the same rule requestPageAccess documents. request() must be reached synchronously.
+    const perm = installPermissions({ grant: true });
+    const pending = ensureHostAccess('https://api.openai.com/v1');
+    expect(perm.request).toHaveBeenCalledTimes(1);
+    expect(perm.contains).not.toHaveBeenCalled();
+    expect(await pending).toEqual({ ok: true });
+  });
+
+  it('outside a gesture (the SW re-check) falls back to contains(): held origin is ok', async () => {
+    const perm = installPermissions({ granted: ['http://localhost/*'], rejectRequest: true });
+    expect(await ensureHostAccess('http://localhost:1234/v1')).toEqual({ ok: true });
+    expect(perm.contains).toHaveBeenCalledWith({ origins: ['http://localhost/*'] });
   });
 
   it('requests a grant for a not-yet-held custom host and reports ok on accept', async () => {

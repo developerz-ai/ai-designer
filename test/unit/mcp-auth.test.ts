@@ -6,6 +6,7 @@ import { hasSecret, setSecret } from '@/agent/key-store';
 import {
   authHeaders,
   buildAuthorizationUrl,
+  clearAuth,
   deriveCodeChallenge,
   generateCodeVerifier,
   getAccessToken,
@@ -18,6 +19,7 @@ import {
   saveApiKey,
   startOAuth,
 } from '@/mcp/auth';
+import { createConnection, type McpClientFactory } from '@/mcp/client';
 
 // mcp/auth custody + PKCE path with real WebCrypto (node env) + a real (fake) IDB + an
 // in-memory chrome.storage.local. chrome.identity + fetch are injected per call, so the flow
@@ -260,6 +262,38 @@ describe('token refresh', () => {
     expect(await getAccessToken('never', OAUTH, { now: () => 1_000_000 })).toBeNull();
   });
 
+  it('accepts a numeric-string expires_in (real providers send "3600")', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(jsonResponse({ access_token: 'acc-2', expires_in: '3600' }));
+    const refreshed = await refreshToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    expect(refreshed.expiresAt).toBe(1_000_000 + 3600 * 1000);
+  });
+
+  it('still refuses a non-numeric expires_in', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(jsonResponse({ access_token: 'acc-2', expires_in: 'soon' }));
+    await expect(refreshToken('srv', OAUTH, { fetch, now: () => 1_000_000 })).rejects.toThrow();
+  });
+
+  it('getAccessToken: concurrent callers on an expired token share ONE refresh grant', async () => {
+    // Per-request header resolution means an expiry meets several calls at once; a rotating
+    // provider revokes the session on a second use of the old refresh token.
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    const fetch = fetchReturning(
+      jsonResponse({ access_token: 'acc-2', expires_in: 3600, refresh_token: 'r2' }),
+      jsonResponse({ access_token: 'acc-3', expires_in: 3600, refresh_token: 'r3' }),
+    );
+    const deps = { fetch, now: () => 1_000_000 };
+    const tokens = await Promise.all([
+      getAccessToken('srv', OAUTH, deps),
+      getAccessToken('srv', OAUTH, deps),
+      getAccessToken('srv', OAUTH, deps),
+    ]);
+    expect(tokens).toEqual(['acc-2', 'acc-2', 'acc-2']);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await getTokenSet('srv'))?.refreshToken).toBe('r2');
+  });
+
   it('refreshToken: throws with no stored refresh token', async () => {
     await seedToken('srv', { accessToken: 'a', expiresAt: 500 });
     await expect(refreshToken('srv', OAUTH, { fetch: fetchReturning() })).rejects.toThrow(
@@ -276,5 +310,129 @@ describe('headerResolverFor', () => {
 
     await saveApiKey('srv', 'k2'); // rotated between opens
     expect(await resolve()).toEqual({ Authorization: 'Bearer k2' });
+  });
+});
+
+describe('OAuth refresh: hung endpoints and deleted credentials', () => {
+  async function seedToken(id: string, tokens: unknown): Promise<void> {
+    await setSecret(mcpSecretNames(id).token, JSON.stringify(tokens));
+  }
+
+  it('a hung token endpoint is abandoned after the timeout; the stale token is used', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    // Never answers on its own — settles only when the request is aborted.
+    const fetch = vi.fn(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    ) as unknown as typeof globalThis.fetch;
+    const token = await getAccessToken('srv', OAUTH, {
+      fetch,
+      now: () => 1_000_000,
+      tokenTimeoutMs: 20,
+    });
+    expect(token).toBe('old');
+  });
+
+  it('a refresh that lands after the credentials were deleted does not write them back', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    let answer!: (r: Response) => void;
+    const fetch = vi.fn(
+      () => new Promise<Response>((r) => (answer = r)),
+    ) as unknown as typeof globalThis.fetch;
+    const pending = getAccessToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    await clearAuth('srv'); // the server was removed / the user signed out mid-refresh
+    answer(jsonResponse({ access_token: 'acc-2', expires_in: 3600, refresh_token: 'r2' }));
+    await pending;
+
+    expect(await getTokenSet('srv')).toBeNull();
+    expect(await hasSecret(mcpSecretNames('srv').token)).toBe(false);
+  });
+
+  it('a refresh that lands after a re-authorization does not overwrite the new tokens', async () => {
+    await seedToken('srv', { accessToken: 'old', refreshToken: 'r1', expiresAt: 500 });
+    let answer!: (r: Response) => void;
+    const fetch = vi.fn(
+      () => new Promise<Response>((r) => (answer = r)),
+    ) as unknown as typeof globalThis.fetch;
+    const pending = getAccessToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    await seedToken('srv', { accessToken: 'reauth', refreshToken: 'fresh', expiresAt: 9e15 });
+    answer(jsonResponse({ access_token: 'acc-2', expires_in: 3600, refresh_token: 'r2' }));
+    await pending;
+
+    expect((await getTokenSet('srv'))?.accessToken).toBe('reauth');
+  });
+});
+
+describe('OAuth refresh: re-authorization that keeps the refresh token', () => {
+  it('a refresh landing after a re-auth with the SAME refresh token keeps the re-auth tokens', async () => {
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'old', refreshToken: 'r1', expiresAt: 500 }),
+    );
+    let answer!: (r: Response) => void;
+    const fetch = vi.fn(
+      () => new Promise<Response>((r) => (answer = r)),
+    ) as unknown as typeof globalThis.fetch;
+    const pending = getAccessToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'reauth', refreshToken: 'r1', expiresAt: 9e15 }),
+    );
+    answer(jsonResponse({ access_token: 'acc-2', expires_in: 3600 }));
+    await pending;
+
+    expect((await getTokenSet('srv'))?.accessToken).toBe('reauth');
+  });
+});
+
+describe('a real connection refreshes an expired OAuth token mid-session', () => {
+  it('the request after expiry carries the refreshed token, with no reopen', async () => {
+    // One real connection whose auth comes from headerResolverFor, a token that expires, a clock
+    // that moves past it. Lives here (node env) because the key-store needs crypto.subtle.
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'acc-1', refreshToken: 'r1', expiresAt: 2_000_000 }),
+    );
+    let clock = 1_000_000;
+    const tokenFetch = fetchReturning(
+      jsonResponse({ access_token: 'acc-2', expires_in: 3600, refresh_token: 'r2' }),
+    );
+    const getHeaders = headerResolverFor(
+      { id: 'srv', authKind: 'oauth', oauth: OAUTH },
+      { fetch: tokenFetch, now: () => clock },
+    );
+    let transport!: { fetch: typeof globalThis.fetch };
+    const connect = vi.fn(async (config: { transport: unknown }) => {
+      transport = config.transport as typeof transport;
+      return { tools: async () => ({}), close: async () => {} };
+    }) as unknown as McpClientFactory;
+    const conn = createConnection({ id: 'srv', url: 'https://s/mcp', getHeaders }, { connect });
+    await conn.tools();
+
+    const sent: (string | null)[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get('Authorization'));
+      return new Response('{}');
+    }) as typeof globalThis.fetch;
+    try {
+      await transport.fetch('https://s/mcp', { method: 'POST' });
+      clock = 2_000_000; // past expiresAt (and its skew window)
+      await transport.fetch('https://s/mcp', { method: 'POST' });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    expect(sent).toEqual(['Bearer acc-1', 'Bearer acc-2']);
+    expect(tokenFetch).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledTimes(1);
   });
 });

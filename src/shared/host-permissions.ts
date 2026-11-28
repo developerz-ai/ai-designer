@@ -11,7 +11,8 @@
 // in whichever world actually receives the gesture. The side panel does it synchronously
 // inside the Save button's click handler (`sidepanel/stores/settings.ts`); the service
 // worker calls this again before persisting (`entrypoints/background.ts`) as a no-op
-// defense-in-depth check — `contains()` is already true by then, so no second prompt.
+// defense-in-depth check — there `request()` throws (no gesture) and the `contains()` fallback
+// answers instead, already true by then, so no second prompt.
 //
 // `chrome.permissions` is available in the SW and extension pages (side panel, popup,
 // options) alike — never import this from content.ts (page world, no extension APIs).
@@ -87,13 +88,20 @@ export function originPattern(baseURL: string): string | null {
 export async function ensureHostAccess(baseURL: string): Promise<HostAccess> {
   const pattern = originPattern(baseURL);
   if (!pattern) return { ok: false, error: `Invalid provider URL: ${baseURL}` };
+  // `request()` FIRST, with no `await` in front of it — the same rule as `requestPageAccess`: an
+  // await before it ends the gesture's call stack and Chrome refuses to prompt. An origin already
+  // held (statically or at runtime) resolves true with no prompt. Outside a gesture (the SW's
+  // defense-in-depth call) `request()` throws instead; only then is `contains()` consulted, so an
+  // already-granted origin still reads ok there and a missing one surfaces the original error.
+  let granted: boolean;
   try {
-    if (await chrome.permissions.contains({ origins: [pattern] })) return { ok: true };
-    const granted = await chrome.permissions.request({ origins: [pattern] });
-    return granted
-      ? { ok: true }
-      : { ok: false, reason: 'denied', error: `Host access denied for ${pattern}` };
+    granted = await chrome.permissions.request({ origins: [pattern] });
   } catch (err) {
+    const held = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
+    if (held) return { ok: true };
     return { ok: false, error: `Could not request host access for ${pattern}: ${String(err)}` };
   }
+  return granted
+    ? { ok: true }
+    : { ok: false, reason: 'denied', error: `Host access denied for ${pattern}` };
 }

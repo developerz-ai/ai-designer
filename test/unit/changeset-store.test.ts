@@ -4,7 +4,7 @@ import {
   createSessionChangesetPersister,
   type SessionStorageArea,
 } from '@/changeset/store';
-import { type Changeset, type ChangesetState, type Edit, emptyChangeset } from '@/shared/changeset';
+import { type Changeset, ChangesetState, type Edit, emptyChangeset } from '@/shared/changeset';
 
 // changeset/store.ts unit: the session's live changeset with a linear undo/redo history. Pure and
 // chrome-free — no storage fake needed (the SessionStore owns durability; see session.test.ts).
@@ -429,5 +429,129 @@ describe('createSessionChangesetPersister (chrome.storage.session)', () => {
     await persister.save({ changeset: seed(), redoStack: [] });
     await persister.clear();
     expect(await persister.load()).toBeUndefined();
+  });
+});
+
+describe('ChangesetStore stylesheets (injectCss fold)', () => {
+  const sheet = (id: string, css: string, intent?: string) => ({
+    id,
+    css,
+    ...(intent ? { intent } : {}),
+  });
+
+  it('records a sheet and upserts a same-id re-injection in place', () => {
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    store.recordStylesheet(sheet('default', 'a{}', 'tokens'));
+    store.recordStylesheet(sheet('nav', 'nav{}'));
+    store.recordStylesheet(sheet('default', 'a{color:red}', 'tokens v2'));
+
+    expect(store.current.stylesheets).toEqual([
+      sheet('default', 'a{color:red}', 'tokens v2'),
+      sheet('nav', 'nav{}'),
+    ]);
+    expect(saved.at(-1)?.changeset.stylesheets).toHaveLength(2);
+  });
+
+  it('does not touch the edit redo stack', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.undo();
+    store.recordStylesheet(sheet('default', 'a{}'));
+    expect(store.canRedo).toBe(true);
+  });
+
+  it('revert with css:null removes the sheet; the last one going leaves an empty changeset', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet(sheet('default', 'a{}'));
+    expect(store.revertStylesheet('default', null)).toBe(true);
+    expect(store.current).toEqual(seed());
+  });
+
+  it('revert with css restores the earlier text under the same id, keeping its intent', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet(sheet('default', 'v1{}', 'tokens'));
+    store.recordStylesheet(sheet('default', 'v2{}', 'tokens'));
+    store.revertStylesheet('default', 'v1{}');
+    expect(store.current.stylesheets).toEqual([sheet('default', 'v1{}', 'tokens')]);
+  });
+
+  it('revert of an unknown id with css:null is a no-op (no persist)', () => {
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    expect(store.revertStylesheet('ghost', null)).toBe(false);
+    expect(saved).toEqual([]);
+  });
+
+  it('clear() wipes stylesheets with the edits', () => {
+    const store = new ChangesetStore(seed());
+    store.record(edit('a'));
+    store.recordStylesheet(sheet('default', 'a{}'));
+    store.clear();
+    expect(store.current.stylesheets).toEqual([]);
+    expect(store.current.edits).toEqual([]);
+  });
+});
+
+describe('ChangesetStore.revertStylesheet after clear', () => {
+  it('a restore for a sheet the record no longer holds does not re-add it', () => {
+    // clear() drops the record, not the page's CSS; a later undo of a same-id replacement must
+    // not put the cleared sheet back into what Ship hands off.
+    const saved: ChangesetState[] = [];
+    const store = new ChangesetStore(seed(), { persist: (s) => void saved.push(s) });
+    store.recordStylesheet({ id: 'default', css: 'v1{}' });
+    store.recordStylesheet({ id: 'default', css: 'v2{}' });
+    store.clear();
+    const writes = saved.length;
+    expect(store.revertStylesheet('default', 'v1{}')).toBe(false);
+    expect(store.current.stylesheets).toEqual([]);
+    expect(saved).toHaveLength(writes);
+  });
+});
+
+describe('ChangesetStore.revertStylesheet only restores text recorded since the last clear', () => {
+  it('clear -> re-record the same id -> revert to the pre-clear text drops the sheet', () => {
+    // The page now shows the pre-Clear text, which is outside the durable record; keeping the
+    // re-recorded text would ship CSS the page no longer shows, restoring the old would ship
+    // CSS the user cleared. Neither belongs in Ship.
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet({ id: 'default', css: 'old{}' });
+    store.recordStylesheet({ id: 'other', css: 'x{}' });
+    store.clear();
+    store.recordStylesheet({ id: 'default', css: 'new{}' });
+    store.recordStylesheet({ id: 'other', css: 'y{}' });
+    expect(store.revertStylesheet('default', 'old{}')).toBe(true);
+    expect(store.current.stylesheets).toEqual([{ id: 'other', css: 'y{}' }]);
+    // Its history went with it: a later restore of the post-clear text is ignored too.
+    expect(store.revertStylesheet('default', 'new{}')).toBe(false);
+  });
+
+  it.each(['constructor', '__proto__', 'toString'])(
+    'a sheet id %s (an Object.prototype name) records, reverts and round-trips',
+    (id) => {
+      const store = new ChangesetStore(seed());
+      store.recordStylesheet({ id, css: 'v1{}' });
+      store.recordStylesheet({ id, css: 'v2{}' });
+      const woken = ChangesetStore.fromState(
+        ChangesetState.parse(JSON.parse(JSON.stringify(store.snapshot()))),
+      );
+      expect(woken.revertStylesheet(id, 'v1{}')).toBe(true);
+      expect(woken.current.stylesheets).toEqual([{ id, css: 'v1{}' }]);
+      expect(woken.revertStylesheet(`fresh-${id}`, 'v1{}')).toBe(false);
+    },
+  );
+
+  it('a revert to a text recorded since the clear still applies, and survives a rehydrate', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet({ id: 'default', css: 'v1{}' });
+    store.recordStylesheet({ id: 'default', css: 'v2{}' });
+    const woken = ChangesetStore.fromState(store.snapshot());
+    expect(woken.revertStylesheet('default', 'v1{}')).toBe(true);
+    expect(woken.current.stylesheets).toEqual([{ id: 'default', css: 'v1{}' }]);
+  });
+
+  it('a legacy state with no stylesheet history still parses', () => {
+    const legacy = { changeset: seed(), redoStack: [] };
+    expect(ChangesetState.safeParse(legacy).success).toBe(true);
   });
 });

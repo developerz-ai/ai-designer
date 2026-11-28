@@ -167,7 +167,7 @@ describe('renderStylesheet with an authored sheet', () => {
         ],
       ),
     );
-    expect(md).toContain('### A token layer and a readable measure');
+    expect(md).toContain('### `A token layer and a readable measure`');
     expect(md).toContain('margin-inline: auto');
     // Per-element deltas are still there, but clearly subordinate to the authored sheet.
     expect(md).toContain('### Per-element adjustments');

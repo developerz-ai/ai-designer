@@ -23,9 +23,10 @@ export function relayToPanel(msg: ContentToSw): SwToPanel | null {
     // SW-side; no such path existed — the event was emitted and read by nothing.)
     case 'multi-select-changed':
       return { type: 'focus-multi', selectors: msg.selectors };
-    // `recorder-event` / `recorder-revert` / `diagnostics-signal` are consumed SW-side only (the
-    // Changeset fold, the revert retraction, the diagnostics buffer) — no panel store reflects
-    // them, so there is nothing to relay here.
+    // `recorder-event` / `recorder-revert` / `diagnostics-signal` / `stylesheet-recorded` /
+    // `stylesheet-reverted` are consumed SW-side only (the Changeset fold, the revert retraction,
+    // the diagnostics buffer, the stylesheet fold) — the panel sees their effect through the
+    // `changeset` push, so there is nothing to relay here.
     default:
       return null;
   }
