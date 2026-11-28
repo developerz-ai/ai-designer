@@ -324,3 +324,24 @@ describe('createSessionTools: recordEdit screenshot auto-capture (#148 item 1)',
     expect(h.store.current.edits[0]?.screenshots).toEqual({ before: 'model:b', after: 'model:a' });
   });
 });
+
+describe('createSessionTools: the store is read at use time', () => {
+  it('records into the CURRENT store when the deps swap it (the SW rebases on an agent nav)', async () => {
+    let store = new ChangesetStore(seed());
+    const deps: SessionToolDeps = {
+      get store() {
+        return store;
+      },
+      persist: () => {},
+      emit: () => {},
+    };
+    const tools = createSessionTools(deps);
+    const first = store;
+    store = new ChangesetStore(
+      emptyChangeset('https://example.com/next', '2026-07-14T00:00:00Z', SESSION_ID),
+    );
+    await run(tools.recordEdit.execute, anEdit('after the nav'));
+    expect(first.size).toBe(0);
+    expect(store.size).toBe(1);
+  });
+});

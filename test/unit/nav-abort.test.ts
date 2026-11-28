@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type CommitAbortContext, shouldAbortTurnOnCommit } from '@/agent/nav-abort';
+import {
+  type CommitAbortContext,
+  shouldAbortTurnOnCommit,
+  shouldRebaseTurnOnCommit,
+} from '@/agent/nav-abort';
 
 // nav-abort unit (#148 item 2): the full decision table for "does this main-frame commit kill the
 // running turn". The chrome glue (background.ts onCommitted) only reads state and applies the
@@ -35,5 +39,23 @@ describe('shouldAbortTurnOnCommit', () => {
 
   it('never aborts the agent’s own navigation (the runNav marker)', () => {
     expect(shouldAbortTurnOnCommit({ ...base, agentNavInFlight: true })).toBe(false);
+  });
+});
+
+describe('shouldRebaseTurnOnCommit', () => {
+  it('rebases exactly the agent-navigation commits the abort lets through', () => {
+    expect(shouldRebaseTurnOnCommit({ ...base, agentNavInFlight: true })).toBe(true);
+    expect(shouldAbortTurnOnCommit({ ...base, agentNavInFlight: true })).toBe(false);
+  });
+
+  it('never rebases a page/user navigation — that one aborts', () => {
+    expect(shouldRebaseTurnOnCommit(base)).toBe(false);
+  });
+
+  it('never rebases an iframe commit, another tab, or with no turn running', () => {
+    const agent = { ...base, agentNavInFlight: true };
+    expect(shouldRebaseTurnOnCommit({ ...agent, frameId: 2 })).toBe(false);
+    expect(shouldRebaseTurnOnCommit({ ...agent, tabId: 8 })).toBe(false);
+    expect(shouldRebaseTurnOnCommit({ ...agent, turnRunning: false })).toBe(false);
   });
 });

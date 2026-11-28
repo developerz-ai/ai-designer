@@ -23,29 +23,106 @@
 // Pure + chrome-free + no `any`, so the policy is unit-testable in isolation and the SW keeps one
 // source of truth for it (same reasoning as `capture-policy.ts`, which this deliberately mirrors).
 
-/** Message types that CHANGE THE DESIGN of a page and are recorded into the changeset. Kept as a
- *  literal set rather than derived from the `DomTool` union: the union also holds the reads, and a
- *  new tool must be classified deliberately — a mutation that silently defaults to "allowed
- *  anywhere" is exactly the failure this module exists to prevent. Mirrors the mutating half of
- *  `src/shared/messages.ts`'s `DomTool`. */
-export const DESIGN_MUTATIONS: ReadonlySet<string> = new Set([
-  'setStyle',
-  'setText',
-  'setAttr',
-  'addClass',
-  'removeClass',
-  'batch',
-  'insertNode',
-  'moveNode',
-  'removeNode',
-  'undo',
-  'discardUndo',
-]);
+import type {
+  CheckResponsiveInput,
+  ControlTool,
+  DescribeCmd,
+  DomTool,
+  PageOpInput,
+} from '@/shared/messages';
 
-/** Whether one content-routed message type mutates the design (and so is pinned to the turn's
- *  tab). Everything else — every read, every driver, every capture — may address any tab. */
-export function isDesignMutation(type: string): boolean {
-  return DESIGN_MUTATIONS.has(type);
+/** Every message the SW routes to a content script — the exact `ContentDispatch` input union. */
+export type ContentRoutedMessage = DomTool | ControlTool | DescribeCmd | CheckResponsiveInput;
+type ContentRoutedType = ContentRoutedMessage['type'];
+
+/** `true` = CHANGES THE DESIGN of a page (pinned to the turn's tab); `false` = read / driver /
+ *  capture (any tab). An exhaustive `Record` over the content-routed union, so a new message type
+ *  is a COMPILE ERROR until someone decides which side it is on — a mutation that silently
+ *  defaults to "allowed anywhere" is exactly the failure this module exists to prevent. (The old
+ *  hand-kept literal set missed seven mutators: removeAttr, the structural four, bulkStructural,
+ *  injectCss.) `pageOp` is decided per sub-op below. */
+const MUTATES_DESIGN: Readonly<Record<ContentRoutedType, boolean>> = {
+  // DomTool — mutations
+  setStyle: true,
+  setText: true,
+  setAttr: true,
+  removeAttr: true,
+  addClass: true,
+  removeClass: true,
+  batch: true,
+  insertNode: true,
+  moveNode: true,
+  removeNode: true,
+  wrapNode: true,
+  unwrapNode: true,
+  replaceNode: true,
+  bulkStructural: true,
+  injectCss: true,
+  undo: true,
+  discardUndo: true,
+  // `pageOp` is a dispatcher: its verdict depends on the op (see PAGE_OP_MUTATES_DESIGN).
+  pageOp: false,
+  // DomTool — reads
+  query: false,
+  getStyles: false,
+  screenshot: false,
+  a11ySnapshot: false,
+  diagnostics: false,
+  // ControlTool — drivers + reads (copy mode reaches reference content by driving it)
+  click: false,
+  type: false,
+  pressKey: false,
+  hover: false,
+  scrollTo: false,
+  selectOption: false,
+  waitFor: false,
+  handleDialog: false,
+  readImages: false,
+  readChart: false,
+  chartTooltip: false,
+  widgetAct: false,
+  pageFacts: false,
+  // DescribeCmd + responsive scan — reads
+  describe: false,
+  extractIdentity: false,
+  readImageContent: false,
+  checkResponsive: false,
+};
+
+/** Per-op verdict for `pageOp`, exhaustive for the same reason. Only `pageCall` is pinned: it
+ *  invokes an arbitrary page-owned function (`myChart.update`, `theme.set`) and so can restyle the
+ *  page in ways nothing can bound. The rest are reads, or drivers in the `click`/`type` sense —
+ *  `setField` (a form write, like `type`), `media`, and `freezeMotion` (reversible; it is how a
+ *  reference site is made screenshot-deterministic) — none of which lands in the changeset. */
+const PAGE_OP_MUTATES_DESIGN: Readonly<Record<PageOpInput['op']['op'], boolean>> = {
+  pageCall: true,
+  box: false,
+  overflow: false,
+  scrollContainer: false,
+  stacking: false,
+  visibility: false,
+  animations: false,
+  freezeMotion: false,
+  media: false,
+  formState: false,
+  setField: false,
+  storageKeys: false,
+  frameworkState: false,
+  pageValue: false,
+  flush: false,
+  designSystem: false,
+};
+
+/** The message types that always mutate the design — derived from the exhaustive table. */
+export const DESIGN_MUTATIONS: ReadonlySet<ContentRoutedType> = new Set(
+  (Object.keys(MUTATES_DESIGN) as ContentRoutedType[]).filter((type) => MUTATES_DESIGN[type]),
+);
+
+/** Whether one content-routed message mutates the design (and so is pinned to the turn's tab).
+ *  Everything else — every read, every driver, every capture — may address any tab. */
+export function isDesignMutation(message: ContentRoutedMessage): boolean {
+  if (message.type === 'pageOp') return PAGE_OP_MUTATES_DESIGN[message.op.op];
+  return MUTATES_DESIGN[message.type];
 }
 
 /**
@@ -58,12 +135,13 @@ export function isDesignMutation(type: string): boolean {
  * to do instead. A bare "not allowed" would send it retrying the same call with the same id.
  */
 export function mutationBlockedReason(
-  type: string,
-  messageTabId: number | undefined,
+  message: ContentRoutedMessage,
   turnTabId: number,
 ): string | null {
+  const messageTabId = message.tabId;
   if (messageTabId === undefined || messageTabId === turnTabId) return null;
-  if (!isDesignMutation(type)) return null;
+  if (!isDesignMutation(message)) return null;
+  const type = message.type === 'pageOp' ? `pageOp(${message.op.op})` : message.type;
   return (
     `\`${type}\` was aimed at tab ${messageTabId}, but this turn is designing tab ${turnTabId} — ` +
     'the page the user is looking at. Edits only ever apply to that tab, because the changeset ' +
