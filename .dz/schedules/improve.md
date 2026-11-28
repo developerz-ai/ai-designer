@@ -1,9 +1,9 @@
-# Brief: monthly improvement
+# Brief: improvement
 
-Fired on the first Monday of each month by `schedules: improve` (`weeks_of_month: [1]`).
+Fired on the first and third Monday of each month by `schedules: improve` (`weeks_of_month: [1, 3]`).
 
-Once a month, leave the extension measurably better. `CLAUDE.md` binds every change, and `non_goals` in the policy file are off limits. A red `main`,
-a missing publish and a stuck Dependabot PR belong to `health`.
+Twice a month, leave the extension measurably better. `CLAUDE.md` binds every change, and `non_goals` in the policy file are off limits. A red `main`,
+a missing publish and a stuck Dependabot PR belong to the platform's red-main ask (red `main`) and the owner (publishing).
 
 ## Signals
 
