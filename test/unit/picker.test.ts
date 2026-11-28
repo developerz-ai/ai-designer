@@ -311,6 +311,33 @@ describe('selection', () => {
     expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
   });
 
+  it("a multi chip never shares the pin's stale value — dismissing it leaves the pin", () => {
+    document.body.innerHTML = '<ul><li></li><li></li></ul>';
+    const { picker, msgs } = spawn();
+    picker.start();
+    const pin = document.querySelectorAll('li')[1];
+    if (!pin) throw new Error('fixture');
+    click(pin);
+    const picked = msgs.find((m) => m.type === 'element-picked');
+    const pinValue = picked?.type === 'element-picked' ? picked.candidates[0]?.value : undefined;
+
+    // A sibling insert: the NEW element now sits where the pin's positional value points.
+    const fresh = document.createElement('li');
+    pin.parentElement?.prepend(fresh);
+    const shifted = document.querySelectorAll('li')[1];
+    if (!shifted) throw new Error('fixture');
+    click(shifted, { shiftKey: true });
+    const multiValue = values(msgs).at(-1)?.[0];
+    expect(multiValue).toBeDefined();
+    expect(multiValue).not.toBe(pinValue);
+
+    picker.deselect(multiValue ?? '');
+
+    // Only the multi chip went; the pin's box (1) is still drawn.
+    expect(values(msgs).at(-1)).toEqual([]);
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
   it('re-attaches its host after a body swap (Turbo / pjax)', () => {
     document.body.innerHTML = '<button id="a">A</button>';
     const { picker } = spawn();

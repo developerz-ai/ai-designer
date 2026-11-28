@@ -502,9 +502,20 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     });
   }
 
+  // The value issued for a multi-selected element. A dismissal carries only selector TEXT, so two
+  // live chips must never share one: after a sibling insert a positional pick can come out
+  // identical to the pin's (now stale) value, and dismissing the multi chip would clear the pin.
+  // On that collision the element is issued by its absolute XPath — every DOM tool accepts one,
+  // and a CSS pin value can never equal it.
+  function issuedSelector(el: Element): StableSelector {
+    const sel = pickUnique(el, docOf(el));
+    if (el === pinned || sel.value !== pinnedValue) return sel;
+    return { value: xpathFor(el), strategy: 'xpath', fragile: true };
+  }
+
   // Panel resync: the emitted selector set mirrors `selected`. Emit only after a mutation.
   function emitMultiSelect(): void {
-    const issued = [...selected].map((el) => ({ el, sel: pickUnique(el, docOf(el)) }));
+    const issued = [...selected].map((el) => ({ el, sel: issuedSelector(el) }));
     multiValues = new Map(issued.map(({ el, sel }) => [sel.value, el]));
     emit({ type: 'multi-select-changed', selectors: issued.map(({ sel }) => sel) });
   }

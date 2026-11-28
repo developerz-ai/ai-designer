@@ -51,6 +51,7 @@ describe('injectCss is undoable on the shared stack', () => {
     exec({ type: 'injectCss', css: 'p{color:red}', id: 'my theme' });
     exec({ type: 'injectCss', css: 'p{color:blue}', id: 'my theme' });
     expect(document.querySelectorAll(`style[${SHEET_ATTR}]`)).toHaveLength(1);
+    expect(sheet('mytheme')?.textContent).toBe('p{color:blue}');
 
     exec({ type: 'undo' });
     expect(sheet('mytheme')?.textContent).toBe('p{color:red}');
@@ -77,10 +78,16 @@ describe('injectCss is undoable on the shared stack', () => {
   });
 
   it('discardUndo of an injectCss emits no revert — the sheet is still live', () => {
-    const { exec, emitted } = setup('<p>x</p>');
+    const { exec, emitted } = setup('<p id="a">x</p>');
+    exec({ type: 'addClass', selector: '#a', name: 'hot' });
     exec({ type: 'injectCss', css: 'p{color:red}', id: 'default' });
     exec({ type: 'discardUndo' });
     expect(emitted.filter((m) => m.type === 'stylesheet-reverted')).toEqual([]);
+
+    // The NEXT undo reaches the class edit beneath it; the discarded sheet stays live.
+    exec({ type: 'undo' });
+    expect(document.getElementById('a')?.classList.contains('hot')).toBe(false);
+    expect(sheet()?.textContent).toBe('p{color:red}');
   });
 
   it('a refused injectCss stacks nothing', () => {
@@ -93,10 +100,15 @@ describe('injectCss is undoable on the shared stack', () => {
   });
 
   it('discardUndo pops an injectCss entry without reverting it', () => {
-    const { exec } = setup('<p>x</p>');
+    const { exec } = setup('<p id="a">x</p>');
+    exec({ type: 'addClass', selector: '#a', name: 'hot' });
     exec({ type: 'injectCss', css: 'p{color:red}', id: 'default' });
     expect(exec({ type: 'discardUndo' })).toMatchObject({ data: { discarded: 'injectCss' } });
-    expect(sheet()).not.toBeNull();
+    expect(sheet()?.textContent).toBe('p{color:red}');
+
+    expect(exec({ type: 'undo' })).toMatchObject({ ok: true, data: { kind: 'addClass' } });
+    expect(document.getElementById('a')?.classList.contains('hot')).toBe(false);
+    expect(sheet()?.textContent).toBe('p{color:red}');
   });
 });
 
@@ -173,6 +185,22 @@ describe('recorded selector is the pre-mutation one', () => {
     // The selector handed back must still resolve on the page as it is now.
     expect(result.selector?.value).toBeDefined();
     expect(document.querySelectorAll(result.selector?.value ?? '')).toHaveLength(1);
+  });
+
+  it('a LATER edit of the same element keeps recording under its source selector', () => {
+    const { exec, emitted } = setup('<main><button id="buy">Buy</button></main>');
+    const first = exec({
+      type: 'setAttr',
+      selector: '#buy',
+      name: 'data-testid',
+      value: 'brand-new',
+    });
+    // The model keeps using the live selector it was handed back…
+    exec({ type: 'addClass', selector: first.selector?.value ?? '', name: 'hot' });
+    exec({ type: 'setStyle', selector: first.selector?.value ?? '', props: { color: 'red' } });
+
+    // …but every edit of that element is recorded under the selector that exists in source.
+    expect(events(emitted).map((e) => e.selector.value)).toEqual(['#buy', '#buy', '#buy']);
   });
 
   it('setAttr rewriting the keyed attribute hands back a selector that still resolves', () => {

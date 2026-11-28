@@ -177,6 +177,27 @@ function bulkStructuralChange(
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
   const doc = deps.doc ?? document;
   const { mutator, recorder } = deps;
+  // Each edited element's SOURCE selector: the pre-edit pick from its first recorded mutation.
+  // Every later edit of that element records under it too — after setAttr data-testid on `#buy`
+  // the live re-pick is `[data-testid=…]`, which exists nowhere in source. The model still gets
+  // the live re-pick back. Weak, so a node the page drops takes its entry with it.
+  const sources = new WeakMap<Element, StableSelector>();
+
+  /** The selector to RECORD an edit of `el` under — call BEFORE mutating it. */
+  function sourceOf(el: Element): StableSelector {
+    return sources.get(el) ?? pickUnique(el, doc);
+  }
+
+  /** Record a mutation of `el`, pinning `stable` as its source selector for later edits. */
+  function record(
+    el: Element,
+    stable: StableSelector,
+    mutation: ElementMutation,
+    recordExtras: RecordExtras,
+  ): void {
+    sources.set(el, stable);
+    recorder.record(stable, mutation, recordExtras);
+  }
 
   // Resolve `selector` to a single element, apply the mutation, record it, and report its
   // computed result + the resilient selector the agent should keep using. Every element-targeting
@@ -200,7 +221,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
     // The RECORDED selector is taken BEFORE the mutation, like removeNode/wrapNode do: otherwise a
     // setAttr/addClass that adds the very hook pickUnique ranks first (`data-testid`, an id, a
     // class) is recorded under a selector that does not exist in source.
-    const stable = pickUnique(el, doc);
+    const stable = sourceOf(el);
     let mutation: ElementMutation;
     try {
       mutation = apply(el);
@@ -210,7 +231,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       // the mutator's safe-at-source deny throw all become a clean refusal the agent can react to.
       return refused(err instanceof Error ? err.message : String(err));
     }
-    recorder.record(stable, mutation, extras(el, structural?.({ el, mutation, stable }), intent));
+    record(el, stable, mutation, extras(el, structural?.({ el, mutation, stable }), intent));
     // The selector handed BACK is re-picked: it must resolve on the page as it is now, which the
     // pre-mutation one may not (setAttr can rewrite the attribute it keyed on).
     return ok(mutation.computed, pickUnique(el, doc));
@@ -381,12 +402,14 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!ref) return notFound(tool.refSelector);
         const refReason = structuralTargetReason(ref, 'ref');
         if (refReason) return refused(refReason);
+        // Recorded under the PRE-move source selector (where it lives in source); the model gets
+        // the post-move re-pick back.
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.moveNode(el, ref, tool.position);
-          const stable = pickUnique(el, doc);
           // The event target is the MOVED element; the structural delta's refSelector identifies
           // the anchor it moved relative to (its own stable selector, not the raw tool string).
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: {
               op: 'move',
@@ -394,7 +417,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
               position: tool.position,
             },
           });
-          return ok(mutation.computed, stable);
+          return ok(mutation.computed, pickUnique(el, doc));
         } catch (err) {
           // e.g. moving an element into its own descendant (HierarchyRequestError) — a clean
           // refusal the agent can react to, never a throw out of the turn.
@@ -410,10 +433,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!el) return notFound(tool.selector);
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.removeNode(el);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: { op: 'remove' },
           });
@@ -456,11 +479,11 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         // The stable selector is taken BEFORE the wrap: afterwards the element sits one level
         // deeper, so a path selector computed now describes where the agent found it, which is
         // what a reader mapping this back to source needs.
-        const stable = pickUnique(el, doc);
-        const endStable = endEl ? pickUnique(endEl, doc) : undefined;
+        const stable = sourceOf(el);
+        const endStable = endEl ? sourceOf(endEl) : undefined;
         try {
           const mutation = mutator.wrapNode(el, tool.html, endEl);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: {
               op: 'wrap',
@@ -481,10 +504,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
         // Same rule as removeNode: the selector is computed BEFORE the wrapper leaves the tree.
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.unwrapNode(el);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: { op: 'unwrap', html: wrapperMarkup(mutation.before) },
           });
@@ -498,10 +521,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!el) return notFound(tool.selector);
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.replaceSubtree(el, tool.html);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             // Both halves: what it became AND what it was, so the record is a delta a reviewer can
             // reason about rather than a one-way write.
@@ -538,7 +561,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const stables = new Map<Element, StableSelector>();
         const outcome = applyStructuralBulk(targets, bulkApply(tool), {
           describe: (el) => {
-            const stable = pickUnique(el, doc);
+            const stable = sourceOf(el);
             stables.set(el, stable);
             return stable.value;
           },
@@ -547,7 +570,8 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         for (const { element, mutation } of outcome.mutations) {
           const stable = stables.get(element);
           if (!stable) continue; // unreachable: describe runs before apply for every target
-          recorder.record(
+          record(
+            element,
             stable,
             mutation,
             extras(element, bulkStructuralChange(tool.action, mutation), tool.intent),
