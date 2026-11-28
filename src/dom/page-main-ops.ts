@@ -1,3 +1,5 @@
+import { queryOne } from '@/dom/read';
+
 // MAIN-world page operations — the only things on the "let the agent run JS" list that genuinely
 // cannot be done from the isolated content world, because they need the page's own JS realm:
 // framework internals, page globals, and calling a page's own API.
@@ -43,6 +45,8 @@ const MAX_PATH_SEGMENTS = 8;
  * functions described rather than invoked. The page controls this input completely.
  */
 export function safeValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  // `seen` is the ANCESTOR chain, not every object visited: a value shared by two siblings is not a
+  // cycle and must serialize both times. Only re-entering an object still on the stack is.
   if (value === null) return null;
   const type = typeof value;
   if (type === 'string') return (value as string).slice(0, MAX_CHARS);
@@ -58,7 +62,14 @@ export function safeValue(value: unknown, depth = 0, seen = new WeakSet<object>(
   if (seen.has(obj)) return '[Circular]';
   if (depth >= MAX_DEPTH) return '[Depth limit]';
   seen.add(obj);
+  try {
+    return safeObject(value, obj, depth, seen);
+  } finally {
+    seen.delete(obj);
+  }
+}
 
+function safeObject(value: unknown, obj: object, depth: number, seen: WeakSet<object>): unknown {
   if (Array.isArray(value)) {
     const out = value.slice(0, MAX_ARRAY).map((v) => safeValue(v, depth + 1, seen));
     if (value.length > MAX_ARRAY) out.push(`[+${value.length - MAX_ARRAY} more]`);
@@ -302,7 +313,10 @@ export function runMainOp(op: MainOp, win: Window = window): MainOpResult {
   try {
     switch (op.op) {
       case 'frameworkState': {
-        const el = win.document.querySelector(op.selector);
+        // The same resolver every DOM tool uses: the selector engine emits ` >>> ` shadow paths and
+        // XPaths, neither of which `querySelector` accepts. (read.ts → selector.ts carry no runtime
+        // zod and no chrome.*, so they are safe to bundle into this world.)
+        const el = queryOne(win.document, op.selector);
         if (!el) return fail(`No element matches selector: ${op.selector}`);
         return ok(readFrameworkState(el));
       }

@@ -216,6 +216,12 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
   // shift-multi set because the panel treats it the same way: `orderedReferences` puts it first.
   // It exists so the pin gets an outline and the badge numbering matches the chips.
   let pinned: Element | null = null;
+  // The selector values the PANEL holds, as issued: the pin's winner at pick time, and the exact
+  // list the last `multi-select-changed` carried. `deselect` matches against these rather than a
+  // recomputed `pickUnique` — a sibling insert shifts an nth-of-type value, and a recompute would
+  // then miss the chip the user is dismissing.
+  let pinnedValue: string | null = null;
+  let multiValues = new Map<string, Element>();
 
   function mkEl(tag: string, className: string): HTMLElement {
     const node = doc.createElement(tag);
@@ -224,7 +230,12 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
   }
 
   function ensureUi(): Ui {
-    if (ui) return ui;
+    if (ui) {
+      // A Turbo / pjax navigation swaps <body> wholesale and takes our host with it. The shadow
+      // tree is intact on the detached host, so put it back rather than paint into a void.
+      if (!ui.host.isConnected) (doc.body ?? doc.documentElement).appendChild(ui.host);
+      return ui;
+    }
     const host = doc.createElement('div');
     host.id = PICKER_HOST_ID;
     host.setAttribute('data-dz-designer', 'picker');
@@ -294,6 +305,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
 
   function renderHover(target: Element): void {
     if (!ui) return;
+    ensureUi();
     const rect = rectOf(target);
     place(ui.hover, rect);
     ui.hover.classList.remove('dz-hidden');
@@ -342,6 +354,7 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
    */
   function renderSelected(): void {
     if (!ui) return;
+    ensureUi();
     ui.selectedLayer.textContent = '';
     // A pin that was later shift-toggled into the multi set must not be drawn twice.
     const pin = pinned && !selected.has(pinned) ? pinned : null;
@@ -356,20 +369,23 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
   function clearSelected(): void {
     selected.clear();
     pinned = null;
+    pinnedValue = null;
+    multiValues = new Map();
     if (ui) ui.selectedLayer.textContent = '';
   }
 
   /** Content-world half of a chip's dismiss — see the `deselect` doc on {@link Picker}. */
   function deselect(value: string): void {
-    if (pinned && pickUnique(pinned, docOf(pinned)).value === value) {
+    if (pinned && pinnedValue === value) {
       pinned = null;
+      pinnedValue = null;
       renderSelected();
       // The pin is not part of `selected`, so there is no multi-selection change to announce —
       // the panel drops its own pin the moment the chip is dismissed.
       return;
     }
-    const hit = [...selected].find((el) => pickUnique(el, docOf(el)).value === value);
-    if (!hit) return;
+    const hit = multiValues.get(value);
+    if (!hit || !selected.has(hit)) return;
     selected.delete(hit);
     renderSelected();
     emitMultiSelect();
@@ -471,25 +487,37 @@ export function createPicker(emit: PickerEmit, doc: Document = document): Picker
     // Only the ARMED picker leaves a persistent outline. A quick pick (Alt+click) is a one-shot
     // gesture on a page the user is reading, and its confirmation is the flash below — a box that
     // stayed behind would be litter on a page nobody asked to annotate.
+    const candidates = selectorsFor(target);
     if (active) {
       pinned = target;
+      pinnedValue = candidates[0]?.value ?? null;
       renderSelected();
     }
     emit({
       type: 'element-picked',
-      candidates: selectorsFor(target),
+      candidates,
       xpath: xpathFor(target),
       rect: rectOf(target),
       styles: getStyles(target).styles,
     });
   }
 
+  // The value issued for a multi-selected element. A dismissal carries only selector TEXT, so two
+  // live chips must never share one: after a sibling insert a positional pick can come out
+  // identical to the pin's (now stale) value, and dismissing the multi chip would clear the pin.
+  // On that collision the element is issued by its absolute XPath — every DOM tool accepts one,
+  // and a CSS pin value can never equal it.
+  function issuedSelector(el: Element): StableSelector {
+    const sel = pickUnique(el, docOf(el));
+    if (el === pinned || sel.value !== pinnedValue) return sel;
+    return { value: xpathFor(el), strategy: 'xpath', fragile: true };
+  }
+
   // Panel resync: the emitted selector set mirrors `selected`. Emit only after a mutation.
   function emitMultiSelect(): void {
-    emit({
-      type: 'multi-select-changed',
-      selectors: [...selected].map((s) => pickUnique(s, docOf(s))),
-    });
+    const issued = [...selected].map((el) => ({ el, sel: issuedSelector(el) }));
+    multiValues = new Map(issued.map(({ el, sel }) => [sel.value, el]));
+    emit({ type: 'multi-select-changed', selectors: issued.map(({ sel }) => sel) });
   }
 
   function toggleMulti(target: Element): void {

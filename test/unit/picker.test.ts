@@ -271,6 +271,86 @@ describe('selection', () => {
     expect(values(msgs).length).toBe(before);
   });
 
+  it('deselect() matches the value ISSUED at pick time, even after a sibling insert shifts it', () => {
+    document.body.innerHTML = '<ul><li></li><li></li><li></li></ul>';
+    const { picker, msgs } = spawn();
+    picker.start();
+    const items = document.querySelectorAll('li');
+    const target = items[1];
+    if (!target) throw new Error('fixture');
+    click(items[0] as Element, { shiftKey: true });
+    click(target, { shiftKey: true });
+    const issued = values(msgs).at(-1)?.[1];
+    if (!issued) throw new Error('nothing issued');
+
+    // The page inserts a sibling ahead of it: a recomputed nth-of-type value no longer matches.
+    target.parentElement?.prepend(document.createElement('li'));
+    picker.deselect(issued);
+
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+    // The SURVIVOR is the other element — a recompute matched the shifted first <li> instead.
+    const survivors = values(msgs).at(-1) ?? [];
+    expect(survivors).toHaveLength(1);
+    expect(document.querySelector(survivors[0] ?? '')).toBe(items[0]);
+  });
+
+  it('deselect() drops a pin by its issued value after the page shifted it', () => {
+    document.body.innerHTML = '<ul><li></li><li></li></ul>';
+    const { picker, msgs } = spawn();
+    picker.start();
+    const target = document.querySelectorAll('li')[1];
+    if (!target) throw new Error('fixture');
+    click(target);
+    const picked = msgs.find((m) => m.type === 'element-picked');
+    const issued = picked?.type === 'element-picked' ? picked.candidates[0]?.value : undefined;
+    if (!issued) throw new Error('nothing issued');
+
+    target.parentElement?.prepend(document.createElement('li'));
+    picker.deselect(issued);
+
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(0);
+  });
+
+  it("a multi chip never shares the pin's stale value — dismissing it leaves the pin", () => {
+    document.body.innerHTML = '<ul><li></li><li></li></ul>';
+    const { picker, msgs } = spawn();
+    picker.start();
+    const pin = document.querySelectorAll('li')[1];
+    if (!pin) throw new Error('fixture');
+    click(pin);
+    const picked = msgs.find((m) => m.type === 'element-picked');
+    const pinValue = picked?.type === 'element-picked' ? picked.candidates[0]?.value : undefined;
+
+    // A sibling insert: the NEW element now sits where the pin's positional value points.
+    const fresh = document.createElement('li');
+    pin.parentElement?.prepend(fresh);
+    const shifted = document.querySelectorAll('li')[1];
+    if (!shifted) throw new Error('fixture');
+    click(shifted, { shiftKey: true });
+    const multiValue = values(msgs).at(-1)?.[0];
+    expect(multiValue).toBeDefined();
+    expect(multiValue).not.toBe(pinValue);
+
+    picker.deselect(multiValue ?? '');
+
+    // Only the multi chip went; the pin's box (1) is still drawn.
+    expect(values(msgs).at(-1)).toEqual([]);
+    expect(shadow().querySelectorAll('.dz-box')).toHaveLength(1);
+  });
+
+  it('re-attaches its host after a body swap (Turbo / pjax)', () => {
+    document.body.innerHTML = '<button id="a">A</button>';
+    const { picker } = spawn();
+    picker.start();
+    document.body.replaceWith(document.createElement('body'));
+    document.body.innerHTML = '<button id="b">B</button>';
+    expect(document.getElementById(PICKER_HOST_ID)).toBeNull();
+
+    over(byId('b'));
+
+    expect(document.getElementById(PICKER_HOST_ID)).not.toBeNull();
+  });
+
   it('deselect() with a value that matches nothing is a silent no-op', () => {
     document.body.innerHTML = '<button id="a">A</button>';
     const { picker, msgs } = spawn();

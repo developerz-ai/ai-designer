@@ -308,6 +308,32 @@ describe('scanViewportUnits', () => {
     expect(overlap?.severity).toBe('moderate');
   });
 
+  it("ignores the editor's own fixed full-viewport hosts", () => {
+    mount(
+      '<div id="top">top</div><div id="picker" data-dz-designer="picker"></div>' +
+        '<div id="overlay" data-dz-designer="overlay"></div>',
+    );
+    setM(q('#top'), { box: box(375, 60, 0, 0), computed: { position: 'fixed' } });
+    for (const own of ['#picker', '#overlay']) {
+      setM(q(own), { box: box(375, 800, 0, 0), computed: { position: 'fixed' } });
+    }
+
+    const findings = scanViewportUnits(document, window, { probe: fakeProbe(375) });
+
+    expect(findings.filter((f) => f.detail.includes('overlap'))).toEqual([]);
+  });
+
+  it('still counts a page element carrying the setStyle marker', () => {
+    // `data-dz-designer="dz-N"` marks a STYLED page element, not our chrome.
+    mount('<div id="top" data-dz-designer="dz-1">top</div><div id="bar">bar</div>');
+    setM(q('#top'), { box: box(375, 60, 0, 0), computed: { position: 'fixed' } });
+    setM(q('#bar'), { box: box(375, 60, 0, 30), computed: { position: 'fixed' } });
+
+    const findings = scanViewportUnits(document, window, { probe: fakeProbe(375) });
+
+    expect(findings.some((f) => f.detail.includes('overlap'))).toBe(true);
+  });
+
   it('does not flag a width in vw or a non-vh height', () => {
     mount('<div id="a" style="width:100vw"></div><div id="b" style="height:200px"></div>');
 

@@ -99,6 +99,20 @@ describe('overlay lifecycle', () => {
   });
 });
 
+describe('overlay survives a body swap (Turbo / pjax)', () => {
+  it('re-attaches its host on the next step instead of narrating into a detached tree', () => {
+    const o = spawn();
+    o.enable();
+    document.body.replaceWith(document.createElement('body'));
+    expect(host()).toBeNull();
+
+    o.step({ kind: 'info', label: 'after swap' });
+
+    expect(hostCount()).toBe(1);
+    expect(now().textContent).toBe('after swap');
+  });
+});
+
 describe('overlay disabled adds nothing to the page', () => {
   it('step before enable mounts no DOM', () => {
     const o = spawn();

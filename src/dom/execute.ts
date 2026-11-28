@@ -2,10 +2,14 @@ import { detectFrameworkHints } from '@/dom/framework-hints';
 import {
   attrDenyReason,
   type ElementMutation,
+  elementAttrDenyReason,
   type Mutator,
   type PageMutation,
+  SHEET_ATTR,
   SHEET_ID,
+  textDenyReason,
 } from '@/dom/mutate';
+import { isOwnChrome } from '@/dom/own-chrome';
 import { a11ySnapshot, getStyles, query, queryOne } from '@/dom/read';
 import type { RecordExtras, Recorder, RecorderEmit } from '@/dom/recorder';
 import { pickUnique } from '@/dom/selector';
@@ -93,8 +97,11 @@ function leafOnly(el: Element): string | null {
 // too — recorded and undoable, but invisible to the agent's selectors.
 function ownChromeReason(el: Element): string | null {
   if (el.id === SHEET_ID) return `Refused: #${SHEET_ID} is the editor's own overrides sheet.`;
-  if (el.closest('[data-dz-designer="picker"], [data-dz-designer="overlay"]'))
-    return 'Refused: that is part of the editor’s own UI, not page content.';
+  // An injectCss sheet is ours too: edit it through injectCss (same id), which keeps the CSS
+  // policy, the undo stack and the changeset's stylesheet record in step.
+  if (el.hasAttribute(SHEET_ATTR))
+    return 'Refused: that is an editor-injected stylesheet; re-run injectCss with its id to change it.';
+  if (isOwnChrome(el)) return 'Refused: that is part of the editor’s own UI, not page content.';
   return null;
 }
 
@@ -170,6 +177,27 @@ function bulkStructuralChange(
 export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
   const doc = deps.doc ?? document;
   const { mutator, recorder } = deps;
+  // Each edited element's SOURCE selector: the pre-edit pick from its first recorded mutation.
+  // Every later edit of that element records under it too — after setAttr data-testid on `#buy`
+  // the live re-pick is `[data-testid=…]`, which exists nowhere in source. The model still gets
+  // the live re-pick back. Weak, so a node the page drops takes its entry with it.
+  const sources = new WeakMap<Element, StableSelector>();
+
+  /** The selector to RECORD an edit of `el` under — call BEFORE mutating it. */
+  function sourceOf(el: Element): StableSelector {
+    return sources.get(el) ?? pickUnique(el, doc);
+  }
+
+  /** Record a mutation of `el`, pinning `stable` as its source selector for later edits. */
+  function record(
+    el: Element,
+    stable: StableSelector,
+    mutation: ElementMutation,
+    recordExtras: RecordExtras,
+  ): void {
+    sources.set(el, stable);
+    recorder.record(stable, mutation, recordExtras);
+  }
 
   // Resolve `selector` to a single element, apply the mutation, record it, and report its
   // computed result + the resilient selector the agent should keep using. Every element-targeting
@@ -190,6 +218,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
     if (!el) return notFound(selector);
     const reason = guard?.(el);
     if (reason) return refused(reason);
+    // The RECORDED selector is taken BEFORE the mutation, like removeNode/wrapNode do: otherwise a
+    // setAttr/addClass that adds the very hook pickUnique ranks first (`data-testid`, an id, a
+    // class) is recorded under a selector that does not exist in source.
+    const stable = sourceOf(el);
     let mutation: ElementMutation;
     try {
       mutation = apply(el);
@@ -199,9 +231,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       // the mutator's safe-at-source deny throw all become a clean refusal the agent can react to.
       return refused(err instanceof Error ? err.message : String(err));
     }
-    const stable = pickUnique(el, doc);
-    recorder.record(stable, mutation, extras(el, structural?.({ el, mutation, stable }), intent));
-    return ok(mutation.computed, stable);
+    record(el, stable, mutation, extras(el, structural?.({ el, mutation, stable }), intent));
+    // The selector handed BACK is re-picked: it must resolve on the page as it is now, which the
+    // pre-mutation one may not (setAttr can rewrite the attribute it keyed on).
+    return ok(mutation.computed, pickUnique(el, doc));
   }
 
   // The RecordExtras every element-targeting record shares (#9): the target's framework hints,
@@ -277,7 +310,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         return mutate(
           tool.selector,
           (el) => mutator.setText(el, tool.value),
-          contentGuard(leafOnly),
+          contentGuard((el) => leafOnly(el) ?? textDenyReason(el, tool.value)),
           undefined,
           tool.intent,
         );
@@ -289,7 +322,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         return mutate(
           tool.selector,
           (el) => mutator.setAttr(el, tool.name, tool.value),
-          contentGuard(),
+          contentGuard((el) => elementAttrDenyReason(el, tool.name, tool.value)),
           undefined,
           tool.intent,
         );
@@ -369,12 +402,14 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!ref) return notFound(tool.refSelector);
         const refReason = structuralTargetReason(ref, 'ref');
         if (refReason) return refused(refReason);
+        // Recorded under the PRE-move source selector (where it lives in source); the model gets
+        // the post-move re-pick back.
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.moveNode(el, ref, tool.position);
-          const stable = pickUnique(el, doc);
           // The event target is the MOVED element; the structural delta's refSelector identifies
           // the anchor it moved relative to (its own stable selector, not the raw tool string).
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: {
               op: 'move',
@@ -382,7 +417,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
               position: tool.position,
             },
           });
-          return ok(mutation.computed, stable);
+          return ok(mutation.computed, pickUnique(el, doc));
         } catch (err) {
           // e.g. moving an element into its own descendant (HierarchyRequestError) — a clean
           // refusal the agent can react to, never a throw out of the turn.
@@ -398,10 +433,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!el) return notFound(tool.selector);
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.removeNode(el);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: { op: 'remove' },
           });
@@ -444,11 +479,11 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         // The stable selector is taken BEFORE the wrap: afterwards the element sits one level
         // deeper, so a path selector computed now describes where the agent found it, which is
         // what a reader mapping this back to source needs.
-        const stable = pickUnique(el, doc);
-        const endStable = endEl ? pickUnique(endEl, doc) : undefined;
+        const stable = sourceOf(el);
+        const endStable = endEl ? sourceOf(endEl) : undefined;
         try {
           const mutation = mutator.wrapNode(el, tool.html, endEl);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: {
               op: 'wrap',
@@ -469,10 +504,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
         // Same rule as removeNode: the selector is computed BEFORE the wrapper leaves the tree.
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.unwrapNode(el);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             structural: { op: 'unwrap', html: wrapperMarkup(mutation.before) },
           });
@@ -486,10 +521,10 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         if (!el) return notFound(tool.selector);
         const reason = structuralTargetReason(el, 'target');
         if (reason) return refused(reason);
-        const stable = pickUnique(el, doc);
+        const stable = sourceOf(el);
         try {
           const mutation = mutator.replaceSubtree(el, tool.html);
-          recorder.record(stable, mutation, {
+          record(el, stable, mutation, {
             ...extras(el, undefined, tool.intent),
             // Both halves: what it became AND what it was, so the record is a delta a reviewer can
             // reason about rather than a one-way write.
@@ -526,7 +561,7 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         const stables = new Map<Element, StableSelector>();
         const outcome = applyStructuralBulk(targets, bulkApply(tool), {
           describe: (el) => {
-            const stable = pickUnique(el, doc);
+            const stable = sourceOf(el);
             stables.set(el, stable);
             return stable.value;
           },
@@ -535,7 +570,8 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
         for (const { element, mutation } of outcome.mutations) {
           const stable = stables.get(element);
           if (!stable) continue; // unreachable: describe runs before apply for every target
-          recorder.record(
+          record(
+            element,
             stable,
             mutation,
             extras(element, bulkStructuralChange(tool.action, mutation), tool.intent),
@@ -553,10 +589,15 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           : { type: 'tool-result', ok: false, data, error: bulkError(outcome) };
       }
       case 'injectCss': {
-        // Page-level: no element target, so this does NOT go through the recorder (a
-        // `MutationEvent` requires a selector). It emits `stylesheet-recorded` instead, which the
+        // Page-level: no element target, so no `MutationEvent` (which requires a selector) — its
+        // undo is stacked via `recordPage`. It emits `stylesheet-recorded` instead, which the
         // SW folds into `Changeset.stylesheets` — the shape a full-page overhaul actually ships.
-        let mutation: PageMutation<{ bytes: number; id: string; replaced: boolean }>;
+        let mutation: PageMutation<{
+          bytes: number;
+          id: string;
+          replaced: boolean;
+          prior: string | null;
+        }>;
         try {
           mutation = mutator.injectCss(tool.css, tool.id);
         } catch (err) {
@@ -564,6 +605,16 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           // the agent can act on, never a throw out of the turn.
           return refused(err instanceof Error ? err.message : String(err));
         }
+        // On the SAME undo stack as every element edit, so `undo` after injectCss reverts the
+        // sheet (restores its prior text for this id, or removes it) — not the edit before it.
+        recorder.recordPage(
+          {
+            kind: 'injectCss',
+            sheetId: mutation.computed.id,
+            restoredCss: mutation.computed.prior,
+          },
+          mutation,
+        );
         deps.emit?.({
           type: 'stylesheet-recorded',
           sheet: {
@@ -583,7 +634,12 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
           const event = recorder.undo();
           // An empty undo log is a valid no-op, not an error: undoing with nothing to revert is
           // a benign state the agent should not have to treat as a failure.
-          return event ? ok(event) : ok({ undone: false });
+          if (!event) return ok({ undone: false });
+          if (event.kind !== 'injectCss') return ok(event);
+          // A reverted sheet must leave (or roll back in) `Changeset.stylesheets`, else Ship hands
+          // off CSS the user took back. The CSS text stays OFF the model's result.
+          deps.emit?.({ type: 'stylesheet-reverted', id: event.sheetId, css: event.restoredCss });
+          return ok({ kind: event.kind, sheetId: event.sheetId });
         } catch (err) {
           // A failed revert (e.g. a structural anchor churned away by the page) keeps its log
           // entry (the recorder re-pushes on throw) and surfaces an honest refusal.
@@ -593,7 +649,9 @@ export function createDomExecutor(deps: DomExecutorDeps): DomExecutor {
       case 'discardUndo': {
         // Pop the top entry WITHOUT reverting it — the deliberate, loud escape when a permanently
         // churned anchor wedges the LIFO top (every `undo` retries the same failing entry,
-        // bricking the older ones). An empty log is the same benign no-op as `undo`.
+        // bricking the older ones). An empty log is the same benign no-op as `undo`. A discarded
+        // injectCss emits NO `stylesheet-reverted`: the sheet is still live, so the changeset's
+        // record of it stays true.
         const event = recorder.drop();
         return event ? ok({ discarded: event.kind }) : ok({ discarded: false });
       }
