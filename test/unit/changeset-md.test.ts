@@ -242,11 +242,37 @@ describe('changeset-md: attribute replacement and stylesheet headers', () => {
       ] as Changeset['stylesheets']),
     );
     expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
-    expect(md).toContain('### Tokens # Injected heading [click](https://evil.example)');
+    expect(md).toContain('### Tokens \\# Injected heading \\[click\\]\\(https://evil.example\\)');
   });
 
   it('an edit intent with a newline cannot open a section of its own', () => {
     const md = renderChangeset(changeset([edit({ intent: 'Hero\n# Injected heading' })]));
     expect(proseLines(md).filter((l) => l.startsWith('# '))).toEqual([]);
+  });
+});
+
+describe('changeset-md: inline Markdown in headings stays literal', () => {
+  const HOSTILE = '[click](https://evil.example) ![img](https://evil.example/x.png) **b** <b>x</b>';
+
+  /** A `](` or `<` not preceded by a backslash would still be live Markdown/HTML. */
+  function expectInert(line: string | undefined): void {
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/(^|[^\\])\]\(/);
+    expect(line).not.toMatch(/(^|[^\\])</);
+    expect(line).not.toMatch(/(^|[^\\])\*\*/);
+  }
+
+  it('a stylesheet intent renders its link, image, emphasis and html escaped', () => {
+    const md = renderStylesheet(
+      changeset([], [{ id: 'theme', css: 'a{}', intent: HOSTILE }] as Changeset['stylesheets']),
+    );
+    const line = md.split('\n').find((l) => l.startsWith('### '));
+    expectInert(line);
+    expect(line).toContain('\\[click\\]\\(https://evil.example\\)');
+  });
+
+  it('an edit intent renders its link, image, emphasis and html escaped', () => {
+    const md = renderChangeset(changeset([edit({ intent: HOSTILE })]));
+    expectInert(md.split('\n').find((l) => l.startsWith('### 1. ')));
   });
 });

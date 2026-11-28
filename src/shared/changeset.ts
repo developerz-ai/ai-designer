@@ -206,6 +206,11 @@ export type Changeset = z.infer<typeof Changeset>;
 export const ChangesetState = z.object({
   changeset: Changeset,
   redoStack: z.array(Edit).default([]),
+  // Per sheet id, digests (`@/shared/hash` cyrb53) of every css text recorded since the last
+  // `clear()`. A page-side undo (`stylesheet-reverted`) may only restore one of these: after a
+  // Clear the page still holds its CSS, so an undo can name text from BEFORE the Clear, which
+  // must not re-enter what Ship hands off. Optional so every earlier record still parses.
+  stylesheetHistory: z.record(z.string(), z.array(z.string())).optional(),
 });
 export type ChangesetState = z.infer<typeof ChangesetState>;
 

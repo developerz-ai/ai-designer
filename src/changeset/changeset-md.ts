@@ -54,10 +54,14 @@ function longestBacktickRun(text: string): number {
   return longest;
 }
 
-/** Model/page prose as ONE heading line: line breaks fold to spaces, so a newline in an intent
- *  cannot end the heading and open a section (`# …`) of its own. */
+/** Model/page prose as ONE inert heading line: line breaks fold to spaces (a newline cannot end
+ *  the heading and open a section of its own) and every inline-Markdown/HTML metacharacter is
+ *  backslash-escaped, so a `[x](url)`, image, emphasis or tag in an intent renders as its text. */
 function headingText(value: string): string {
-  return value.replace(/[\r\n]+/g, ' ').trim();
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .trim()
+    .replace(/[\\`*_[\]()<>!#|~&{}]/g, '\\$&');
 }
 
 /** A table cell: page text as a literal code span, every line break folded so the row cannot end

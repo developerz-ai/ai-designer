@@ -23,6 +23,7 @@ import {
   type Edit,
   type StylesheetEdit,
 } from '@/shared/changeset';
+import { cyrb53 } from '@/shared/hash';
 
 /** Persist the store's full state after each mutation. Injected so the store stays chrome-free and
  *  unit-testable; the SW binds it to `chrome.storage.session` via {@link createSessionChangesetPersister}.
@@ -34,6 +35,9 @@ export interface ChangesetStoreOptions {
   /** Undone edits available for `redo`, newest last — supplied when rehydrating a persisted state so
    *  undo/redo survives an SW eviction. Copied defensively; the caller's array is never mutated. */
   readonly redoStack?: readonly Edit[];
+  /** Digests of the css recorded per sheet id since the last clear — supplied when rehydrating
+   *  (see `ChangesetState.stylesheetHistory`). Copied defensively. */
+  readonly stylesheetHistory?: Readonly<Record<string, readonly string[]>>;
   /** Called after every mutation with the new full state. Best-effort; see {@link PersistChangesetState}. */
   readonly persist?: PersistChangesetState;
 }
@@ -59,18 +63,30 @@ export class ChangesetStore {
   private changeset: Changeset;
   // Edits popped by `undo`, newest last — re-applied LIFO by `redo`, cleared on a fresh `record`.
   private readonly redoStack: Edit[];
+  // Per sheet id: digests of the css texts recorded since the last clear (see revertStylesheet).
+  private stylesheetHistory: Record<string, string[]>;
   private readonly persist?: PersistChangesetState;
 
   constructor(changeset: Changeset, options: ChangesetStoreOptions = {}) {
     this.changeset = changeset;
     this.redoStack = options.redoStack ? [...options.redoStack] : [];
+    this.stylesheetHistory = Object.fromEntries(
+      Object.entries(options.stylesheetHistory ?? {}).map(([id, list]) => [id, [...list]]),
+    );
     this.persist = options.persist;
   }
 
   /** Rehydrate a store from a persisted {@link ChangesetState} (both the changeset and the redo
    *  stack), so a woken SW resumes undo/redo where it left off. */
-  static fromState(state: ChangesetState, options: Omit<ChangesetStoreOptions, 'redoStack'> = {}) {
-    return new ChangesetStore(state.changeset, { ...options, redoStack: state.redoStack });
+  static fromState(
+    state: ChangesetState,
+    options: Omit<ChangesetStoreOptions, 'redoStack' | 'stylesheetHistory'> = {},
+  ) {
+    return new ChangesetStore(state.changeset, {
+      ...options,
+      redoStack: state.redoStack,
+      stylesheetHistory: state.stylesheetHistory,
+    });
   }
 
   /** The current changeset snapshot — persist this and/or stream it to the panel. */
@@ -81,7 +97,13 @@ export class ChangesetStore {
   /** The full serializable state (changeset + redo stack) — what `persist` writes and `fromState`
    *  reads. `redoStack` is copied so a held snapshot never sees later store mutations. */
   snapshot(): ChangesetState {
-    return { changeset: this.changeset, redoStack: [...this.redoStack] };
+    return {
+      changeset: this.changeset,
+      redoStack: [...this.redoStack],
+      stylesheetHistory: Object.fromEntries(
+        Object.entries(this.stylesheetHistory).map(([id, list]) => [id, [...list]]),
+      ),
+    };
   }
 
   /** Number of edits currently in the changeset. */
@@ -172,6 +194,13 @@ export class ChangesetStore {
    *  same-id `injectCss` replaces rather than stacks, so the record holds at most one entry per id.
    *  Stylesheets live beside the edit history, not in it: the redo stack is untouched. */
   recordStylesheet(sheet: StylesheetEdit): StylesheetEdit {
+    const seen = this.stylesheetHistory[sheet.id] ?? [];
+    const digest = cssDigest(sheet.css);
+    if (!seen.includes(digest)) this.stylesheetHistory[sheet.id] = [...seen, digest];
+    return this.upsertStylesheet(sheet);
+  }
+
+  private upsertStylesheet(sheet: StylesheetEdit): StylesheetEdit {
     const { stylesheets } = this.changeset;
     const at = stylesheets.findIndex((s) => s.id === sheet.id);
     this.changeset = {
@@ -199,10 +228,11 @@ export class ChangesetStore {
       this.flush();
       return true;
     }
-    // Only an entry the record still holds is restored: `clear()` drops the record but not the
-    // page's CSS, so an undo arriving after a clear must not put the cleared sheet back into Ship.
-    if (!existing) return false;
-    this.recordStylesheet({ ...existing, css });
+    // Only a text recorded since the last clear, onto an entry the record still holds: `clear()`
+    // drops the record but not the page's CSS, so an undo can name pre-Clear text — even for an id
+    // re-recorded since — and that must not re-enter what Ship hands off.
+    if (!existing || !this.stylesheetHistory[id]?.includes(cssDigest(css))) return false;
+    this.upsertStylesheet({ ...existing, css });
     return true;
   }
 
@@ -211,6 +241,7 @@ export class ChangesetStore {
    *  the same session. */
   clear(): void {
     this.changeset = { ...this.changeset, edits: [], stylesheets: [] };
+    this.stylesheetHistory = {};
     this.redoStack.length = 0;
     this.flush();
   }
@@ -221,6 +252,11 @@ export class ChangesetStore {
     if (!this.persist) return;
     void Promise.resolve(this.persist(this.snapshot())).catch(() => {});
   }
+}
+
+// Digest, not the text: a sheet runs to 100k chars and every version would ride each persist.
+function cssDigest(css: string): string {
+  return cyrb53(css).toString(36);
 }
 
 // --- chrome.storage.session persistence ------------------------------------------------------

@@ -207,10 +207,10 @@ export async function refreshToken(
   // Compare-and-set under the token's lock: the grant took a network round trip, and in that window
   // the credentials may have been deleted (server removed, signed out) or replaced (re-authorized).
   // Writing anyway would resurrect a deleted token, or clobber the newer one with a refresh of the
-  // old session. Only the bundle this refresh started from may be replaced.
+  // old session. Only the exact bundle this refresh started from may be replaced.
   const stored = await withKeyLock(mcpSecretNames(serverId).token, async () => {
     const latest = await getTokenSet(serverId);
-    if (latest?.refreshToken !== current.refreshToken) return false;
+    if (!sameBundle(latest, current)) return false;
     await saveTokenSet(serverId, merged);
     return true;
   });
@@ -315,6 +315,17 @@ export function headerResolverFor(target: AuthTarget, deps: AuthDeps = {}): Head
 }
 
 // --- internals ---------------------------------------------------------------------------
+
+// The whole bundle, not just the refresh token: a re-authorization can hand back the SAME refresh
+// token with a new access token and expiry, and must not be overwritten by a stale refresh.
+function sameBundle(a: TokenSet | null, b: TokenSet): boolean {
+  return (
+    a !== null &&
+    a.accessToken === b.accessToken &&
+    a.refreshToken === b.refreshToken &&
+    a.expiresAt === b.expiresAt
+  );
+}
 
 function isExpired(tokens: TokenSet, now: number): boolean {
   return tokens.expiresAt != null && now >= tokens.expiresAt - EXPIRY_SKEW_MS;

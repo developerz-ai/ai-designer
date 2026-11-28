@@ -369,6 +369,30 @@ describe('OAuth refresh: hung endpoints and deleted credentials', () => {
   });
 });
 
+describe('OAuth refresh: re-authorization that keeps the refresh token', () => {
+  it('a refresh landing after a re-auth with the SAME refresh token keeps the re-auth tokens', async () => {
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'old', refreshToken: 'r1', expiresAt: 500 }),
+    );
+    let answer!: (r: Response) => void;
+    const fetch = vi.fn(
+      () => new Promise<Response>((r) => (answer = r)),
+    ) as unknown as typeof globalThis.fetch;
+    const pending = getAccessToken('srv', OAUTH, { fetch, now: () => 1_000_000 });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    await setSecret(
+      mcpSecretNames('srv').token,
+      JSON.stringify({ accessToken: 'reauth', refreshToken: 'r1', expiresAt: 9e15 }),
+    );
+    answer(jsonResponse({ access_token: 'acc-2', expires_in: 3600 }));
+    await pending;
+
+    expect((await getTokenSet('srv'))?.accessToken).toBe('reauth');
+  });
+});
+
 describe('a real connection refreshes an expired OAuth token mid-session', () => {
   it('the request after expiry carries the refreshed token, with no reopen', async () => {
     // One real connection whose auth comes from headerResolverFor, a token that expires, a clock

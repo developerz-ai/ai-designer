@@ -4,7 +4,7 @@ import {
   createSessionChangesetPersister,
   type SessionStorageArea,
 } from '@/changeset/store';
-import { type Changeset, type ChangesetState, type Edit, emptyChangeset } from '@/shared/changeset';
+import { type Changeset, ChangesetState, type Edit, emptyChangeset } from '@/shared/changeset';
 
 // changeset/store.ts unit: the session's live changeset with a linear undo/redo history. Pure and
 // chrome-free — no storage fake needed (the SessionStore owns durability; see session.test.ts).
@@ -506,5 +506,31 @@ describe('ChangesetStore.revertStylesheet after clear', () => {
     expect(store.revertStylesheet('default', 'v1{}')).toBe(false);
     expect(store.current.stylesheets).toEqual([]);
     expect(saved).toHaveLength(writes);
+  });
+});
+
+describe('ChangesetStore.revertStylesheet only restores text recorded since the last clear', () => {
+  it('clear -> re-record the same id -> revert to the pre-clear text is ignored', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet({ id: 'default', css: 'old{}' });
+    store.recordStylesheet({ id: 'old-replaced', css: 'x{}' });
+    store.clear();
+    store.recordStylesheet({ id: 'default', css: 'new{}' });
+    expect(store.revertStylesheet('default', 'old{}')).toBe(false);
+    expect(store.current.stylesheets).toEqual([{ id: 'default', css: 'new{}' }]);
+  });
+
+  it('a revert to a text recorded since the clear still applies, and survives a rehydrate', () => {
+    const store = new ChangesetStore(seed());
+    store.recordStylesheet({ id: 'default', css: 'v1{}' });
+    store.recordStylesheet({ id: 'default', css: 'v2{}' });
+    const woken = ChangesetStore.fromState(store.snapshot());
+    expect(woken.revertStylesheet('default', 'v1{}')).toBe(true);
+    expect(woken.current.stylesheets).toEqual([{ id: 'default', css: 'v1{}' }]);
+  });
+
+  it('a legacy state with no stylesheet history still parses', () => {
+    const legacy = { changeset: seed(), redoStack: [] };
+    expect(ChangesetState.safeParse(legacy).success).toBe(true);
   });
 });
