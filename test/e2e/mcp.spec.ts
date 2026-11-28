@@ -124,7 +124,10 @@ test('MCP OAuth: builds the PKCE authorization URL, without driving the consent 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await dialog.locator('#dz-auth-authz').fill('https://mock-oauth.example.com/authorize');
-  await dialog.locator('#dz-auth-token').fill('https://mock-oauth.example.com/token');
+  // The token endpoint sits on the manifest-granted host: Authorize requests host access for it
+  // (the SW's token exchange is cross-origin), and an ungranted host would open Chrome's
+  // permission prompt, which the harness can't answer.
+  await dialog.locator('#dz-auth-token').fill('https://openrouter.ai/mcp-oauth-stub/token');
   await dialog.locator('#dz-auth-client').fill('test-client-id');
   await dialog.locator('.dz-authdialog__submit').click();
 
